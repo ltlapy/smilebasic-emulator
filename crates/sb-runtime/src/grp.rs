@@ -8,7 +8,7 @@ use sb_core::value::{ArrayData, ArrayRef, Value};
 
 use crate::font::FontSize;
 use crate::graphics::{Blend, Clip, GRP_SIZE, PAGES};
-use crate::runtime::{Command, Runtime, checking, illegal, no_form, opt_int};
+use crate::runtime::{Command, Runtime, checking, illegal, many, no_form, one, opt_int};
 use crate::text::CONSOLE;
 
 fn int(v: &Value) -> Result<i32> {
@@ -150,47 +150,48 @@ impl Runtime {
         command: Command,
         args: &[Value],
         want: Want,
-    ) -> Result<Vec<Value>> {
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
         let ints = |n: usize| -> Result<Vec<i32>> { args[..n].iter().map(int).collect() };
         match (command, want, args.len()) {
-            (Command::Gtarget, Want::Value, 0) => Ok(vec![Value::Int(self.grp.target as i32)]),
+            (Command::Gtarget, Want::Value, 0) => one(out, Value::Int(self.grp.target as i32)),
             (Command::Gtarget, Want::Outs(0), 1) => {
                 self.grp.target = page_arg(&args[0])?;
-                Ok(vec![])
+                Ok(())
             }
-            (Command::Gcolor, Want::Value, 0) => Ok(vec![Value::Int(self.grp.color as i32)]),
+            (Command::Gcolor, Want::Value, 0) => one(out, Value::Int(self.grp.color as i32)),
             (Command::Gcolor, Want::Outs(0), 1) => {
                 self.grp.color = color_arg(&args[0])?;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gclip, Want::Outs(0), 0) => {
                 self.grp.clip = Clip::PAGE;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gclip, Want::Outs(0), 4) => {
                 let v = args.iter().map(coordinate).collect::<Result<Vec<_>>>()?;
                 self.grp.clip = Clip::new(v[0], v[1], v[2], v[3]);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gclip, Want::Outs(4), 0) => {
                 let c = self.grp.clip;
-                Ok([c.x0, c.y0, c.x1, c.y1].map(Value::Int).to_vec())
+                many(out, [c.x0, c.y0, c.x1, c.y1].map(Value::Int))
             }
             (Command::Gcls, Want::Outs(0), 0 | 1) => {
                 let color = args.first().map(opt_int).transpose()?.flatten();
                 self.grp.cls(color.unwrap_or(0) as u32);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gpget, Want::Value, 2) => {
                 let v = ints(2)?;
                 let p = self.grp.read(self.grp.target, v[0], v[1]);
-                Ok(vec![Value::Int(p as i32)])
+                one(out, Value::Int(p as i32))
             }
             (Command::Gpset, Want::Outs(0), 2..=4) => {
                 let v = ints(2)?;
                 let (color, blend) = self.color_and_blend(&args[2..])?;
                 self.grp.pset(v[0], v[1], color, blend);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gline | Command::Gbox | Command::Gfill, Want::Outs(0), 4..=6) => {
                 let v = ints(4)?;
@@ -201,13 +202,13 @@ impl Runtime {
                     _ => crate::graphics::Graphics::fill,
                 };
                 draw(&mut self.grp, v[0], v[1], v[2], v[3], color, blend);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gcircle, Want::Outs(0), 3..=5) => {
                 let v = ints(3)?;
                 let (color, blend) = self.color_and_blend(&args[3..])?;
                 self.grp.circle((v[0], v[1], v[2]), None, color, blend);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gcircle, Want::Outs(0), 6..=8) => {
                 let v = ints(6)?;
@@ -219,14 +220,14 @@ impl Runtime {
                 let (color, blend) = self.color_and_blend(&args[6..])?;
                 let arc = Some((v[3], v[4], sector));
                 self.grp.circle((v[0], v[1], v[2]), arc, color, blend);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gtri, Want::Outs(0), 6..=8) => {
                 let v = ints(6)?;
                 let (color, blend) = self.color_and_blend(&args[6..])?;
                 let points = [(v[0], v[1]), (v[2], v[3]), (v[4], v[5])];
                 self.grp.triangle(points, color, blend);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gpaint, Want::Outs(0), 2..=4) => {
                 let v = ints(2)?;
@@ -239,7 +240,7 @@ impl Runtime {
                 if let Some(meter) = &mut self.meter {
                     meter.charge_paint(filled);
                 }
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gcopy, Want::Outs(0), 7..=9) => {
                 let (src, rest) = match args.len() {
@@ -254,7 +255,7 @@ impl Runtime {
                 };
                 let from = (v[0], v[1], v[2], v[3]);
                 self.grp.copy(src, from, (v[4], v[5]), tint, blend);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gputchr, Want::Outs(0), 3..=8) => {
                 let v = ints(2)?;
@@ -273,7 +274,7 @@ impl Runtime {
                 let (font, user) = (&self.font, self.text[CONSOLE].user_page());
                 self.grp
                     .put_chars(font, user, (v[0], v[1]), &text, px, scale, color, blend);
-                Ok(vec![])
+                Ok(())
             }
             // GPUTCHRP X,Y,text[,font[,color[,method]]] or
             // X,Y,text,font,scale X,scale Y,color[,method[,spacing]]:
@@ -309,7 +310,7 @@ impl Runtime {
                     blend,
                     spacing,
                 );
-                Ok(vec![])
+                Ok(())
             }
             // GPUTCHRP(text[,font[,scale X[,spacing]]]): the width drawn.
             (Command::Gputchrp, Want::Value, 1..=4) => {
@@ -323,7 +324,7 @@ impl Runtime {
                 let width = self
                     .grp
                     .proportional_width(&self.font, &text, size, sx, spacing);
-                Ok(vec![Value::Int(width)])
+                one(out, Value::Int(width))
             }
             (Command::Gsave, Want::Outs(0), 1 | 2 | 5 | 6) => {
                 let (page, rest) = match args.len() {
@@ -345,7 +346,7 @@ impl Runtime {
                         *d = f64::from(p);
                     }
                 }
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gload, Want::Outs(0), 2..=4 | 6..=8) => {
                 let (rect, rest) = match args.len() {
@@ -372,7 +373,7 @@ impl Runtime {
                         && let Some(v) = v.get(..n)
                     {
                         self.grp.load_ints(rect, v, tint, blend);
-                        return Ok(vec![]);
+                        return Ok(());
                     }
                 }
                 let pixels = array_colors(&source, n)?;
@@ -387,10 +388,10 @@ impl Runtime {
                 };
                 self.grp
                     .load_rect(rect, &pixels, colors.as_deref(), tint, blend);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Gsample, Want::Value, 1) => {
-                Ok(vec![Value::Int(self.grp.sample[page_arg(&args[0])?])])
+                one(out, Value::Int(self.grp.sample[page_arg(&args[0])?]))
             }
             (Command::Gsample, Want::Outs(0), 2) => {
                 let page = page_arg(&args[0])?;
@@ -398,11 +399,11 @@ impl Runtime {
                     n @ (0 | 1) => n,
                     n => return Err(out_of_range("sampling type", n)),
                 };
-                Ok(vec![])
+                Ok(())
             }
             (Command::Garray, Want::Value, 1) => {
                 let page = page_arg(&args[0])?;
-                Ok(vec![Value::Array(self.grp.array(page))])
+                one(out, Value::Array(self.grp.array(page)))
             }
             // The array's writes show on screen after GUPDATE: on
             // hardware, drawing near them shows them too.
@@ -416,7 +417,7 @@ impl Runtime {
                     }
                 };
                 self.grp.update(page, rect);
-                Ok(vec![])
+                Ok(())
             }
             _ => Err(no_form()),
         }

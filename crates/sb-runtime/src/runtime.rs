@@ -1053,6 +1053,39 @@ pub(crate) fn no_form() -> Error {
     ErrorKind::WrongNumberOfArguments.into()
 }
 
+/// Gives a command's one value, in the `out` its group puts values in.
+#[inline]
+pub(crate) fn one(out: &mut Vec<Value>, value: Value) -> Result<()> {
+    out.push(value);
+    Ok(())
+}
+
+/// Gives a command's values, in the `out` its group puts values in.
+#[inline]
+pub(crate) fn many<const N: usize>(out: &mut Vec<Value>, values: [Value; N]) -> Result<()> {
+    out.extend(values);
+    Ok(())
+}
+
+/// [`many`] for reals.
+pub(crate) fn put_reals(out: &mut Vec<Value>, values: &[f64]) -> Result<()> {
+    out.extend(values.iter().map(|&x| Value::Real(x)));
+    Ok(())
+}
+
+/// [`many`] for integers.
+pub(crate) fn put_ints(out: &mut Vec<Value>, values: &[i32]) -> Result<()> {
+    out.extend(values.iter().map(|&n| Value::Int(n)));
+    Ok(())
+}
+
+/// Gives the values of a command whose group makes a list of them.
+#[inline]
+pub(crate) fn give(out: &mut Vec<Value>, values: Result<Vec<Value>>) -> Result<()> {
+    out.extend(values?);
+    Ok(())
+}
+
 /// An error from command `name`, which names it after the place, with the
 /// argument that was wrong when that is one of `args`: `(LOCATE:2)`.
 #[cold]
@@ -2600,16 +2633,31 @@ impl Runtime {
     /// Runs `command` as a call: a function called as a command with one
     /// OUT variable, such as `SPSET 242 OUT IX`, runs as the function, and
     /// a call no form takes is the count error SmileBASIC 4 gives for it.
-    #[inline(always)]
     pub(crate) fn run_counted(
         &mut self,
         command: Command,
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
-        let result = match self.run(command, args, want) {
+        let mut out = Vec::new();
+        self.run_counted_into(command, args, want, &mut out)?;
+        Ok(out)
+    }
+
+    /// [`Runtime::run_counted`], with the values put in `out`, which is
+    /// empty.
+    #[inline(always)]
+    pub(crate) fn run_counted_into(
+        &mut self,
+        command: Command,
+        args: &[Value],
+        want: Want,
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
+        let result = match self.run(command, args, want, out) {
             Err(e) if want == Want::Outs(1) && is_no_form(&e) => {
-                self.run(command, args, Want::Value)
+                out.clear();
+                self.run(command, args, Want::Value, out)
             }
             result => result,
         };
@@ -2619,29 +2667,33 @@ impl Runtime {
         })
     }
 
+    /// Runs `command`, putting its values in `out`, which is empty.
     pub(crate) fn run(
         &mut self,
         command: Command,
         args: &[Value],
         want: Want,
-    ) -> Result<Vec<Value>> {
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
         match (command, want) {
             (Command::Cls, Want::Outs(0)) => {
                 let (id, _) = with_screen(args, 0)?;
                 self.text[id].cls();
-                Ok(vec![])
+                Ok(())
             }
             (Command::Color, Want::Value) => {
                 let (id, _) = with_screen(args, 0)?;
-                Ok(vec![Value::Int(self.text[id].color() as i32)])
+                one(out, Value::Int(self.text[id].color() as i32))
             }
             (Command::Color, Want::Outs(0)) => {
                 let (id, rest) = with_screen(args, 1)?;
                 let color = rest[0].to_int()? as u32;
                 self.text[id].set_color(color);
-                Ok(vec![])
+                Ok(())
             }
-            (Command::Clear, Want::Outs(0)) if args.is_empty() => self.request(Request::Clear),
+            (Command::Clear, Want::Outs(0)) if args.is_empty() => {
+                give(out, self.request(Request::Clear))
+            }
             (Command::New, Want::Outs(0)) if args.len() <= 1 => {
                 self.direct_only(ErrorKind::SyntaxError)?;
                 let slots = match args.first() {
@@ -2666,7 +2718,7 @@ impl Runtime {
                         }
                     });
                     if !matches!(ask, Ask::Go) {
-                        return Ok(vec![]);
+                        return Ok(());
                     }
                 }
                 for slot in slots {
@@ -2677,14 +2729,14 @@ impl Runtime {
                     self.slot_names[slot].clear();
                     self.slot_modified[slot] = false;
                 }
-                Ok(vec![])
+                Ok(())
             }
             // CONT: direct mode only, with the same Syntax error as CLEAR in a
             // program.
             (Command::Cont, Want::Outs(0)) if args.is_empty() => {
                 self.direct_only(ErrorKind::SyntaxError)?;
                 match self.stopped {
-                    Stopped::Paused => self.request(Request::Cont),
+                    Stopped::Paused => give(out, self.request(Request::Cont)),
                     _ => Err(ErrorKind::CantContinue.into()),
                 }
             }
@@ -2700,18 +2752,18 @@ impl Runtime {
                 // if self.stopped == Stopped::Paused {
                 //     self.stopped = Stopped::Error;
                 // }
-                Ok(vec![])
+                Ok(())
             }
             (Command::Trace, Want::Outs(0)) if args.is_empty() => {
                 self.direct_only(ErrorKind::SyntaxError)?;
                 match self.stopped {
-                    Stopped::Paused => self.request(Request::Trace),
+                    Stopped::Paused => give(out, self.request(Request::Trace)),
                     _ => Err(ErrorKind::CantTrace.into()),
                 }
             }
             (Command::Run, Want::Outs(0)) if args.len() <= 1 => {
                 let slot = slot_arg(args.first())?;
-                self.request(Request::Run(slot))
+                give(out, self.request(Request::Run(slot)))
             }
             (Command::Inkey, Want::Value) if args.len() <= 1 => {
                 self.input.polled = true;
@@ -2721,20 +2773,20 @@ impl Runtime {
                     None => false,
                 };
                 let key = self.next_key_of(keyboard_only);
-                Ok(vec![Value::Str(new_str(key.into_iter().collect()))])
+                one(out, Value::Str(new_str(key.into_iter().collect())))
             }
             (Command::Locate, Want::Outs(0)) => {
                 let (id, rest) = with_screen(args, 2)?;
                 let (x, y) = (opt_int(&rest[0])?, opt_int(&rest[1])?);
                 match self.text[id].locate(x, y) {
-                    Ok(()) => Ok(vec![]),
+                    Ok(()) => Ok(()),
                     Err(n) => Err(Error::new(ErrorKind::OutOfRange).of_value(&rest[n])),
                 }
             }
             (Command::Locate, Want::Outs(2)) => {
                 let (id, _) = with_screen(args, 0)?;
                 let (x, y) = self.text[id].cursor();
-                Ok(vec![Value::Int(x as i32), Value::Int(y as i32)])
+                many(out, [Value::Int(x as i32), Value::Int(y as i32)])
             }
             (
                 Command::Prgdel
@@ -2746,7 +2798,7 @@ impl Runtime {
                 | Command::Prgset
                 | Command::Prgsize,
                 _,
-            ) => self.prg_command(command, args, want),
+            ) => give(out, self.prg_command(command, args, want)),
             (
                 Command::Clipboard
                 | Command::Envfocus
@@ -2767,19 +2819,23 @@ impl Runtime {
                 | Command::Metaload
                 | Command::Metasave,
                 _,
-            ) => self.env_command(command, args, want),
+            ) => give(out, self.env_command(command, args, want)),
             // SmileBASIC 4 checks the counts before the arguments.
             (Command::Dialog, Want::Outs(0)) if (1..=4).contains(&args.len()) => {
-                self.dialog_command(command, args, want)
+                give(out, self.dialog_command(command, args, want))
             }
             (Command::Dialog, Want::Value) if (2..=4).contains(&args.len()) => {
-                self.dialog_command(command, args, want)
+                give(out, self.dialog_command(command, args, want))
             }
             (Command::Dialog, _) => Err(no_form()),
-            (Command::Helpget | Command::Helpinfo, _) => self.help_command(command, args, want),
-            (Command::Inspect, Want::Outs(0)) if args.len() == 1 => Ok(self.inspect(&args[0])),
+            (Command::Helpget | Command::Helpinfo, _) => {
+                give(out, self.help_command(command, args, want))
+            }
+            (Command::Inspect, Want::Outs(0)) if args.len() == 1 => {
+                give(out, Ok(self.inspect(&args[0])))
+            }
             (Command::Loadg | Command::Loadv | Command::Saveg | Command::Savev, _) => {
-                self.loadsave_command(command, args, want)
+                give(out, self.loadsave_command(command, args, want))
             }
             (
                 Command::Chkfile
@@ -2791,7 +2847,7 @@ impl Runtime {
                 | Command::Result
                 | Command::Save,
                 _,
-            ) => self.file_command(command, args, want),
+            ) => give(out, self.file_command(command, args, want)),
             (
                 Command::Gbox
                 | Command::Gcircle
@@ -2814,7 +2870,7 @@ impl Runtime {
                 | Command::Gtri
                 | Command::Gupdate,
                 _,
-            ) => self.grp_command(command, args, want),
+            ) => self.grp_command(command, args, want, out),
             (
                 Command::Acls
                 | Command::Attr
@@ -2838,7 +2894,7 @@ impl Runtime {
                 | Command::Tshow
                 | Command::Xscreen,
                 _,
-            ) => self.screen_command(command, args, want),
+            ) => give(out, self.screen_command(command, args, want)),
             (
                 Command::Animdef
                 | Command::Spanim
@@ -2869,7 +2925,7 @@ impl Runtime {
                 | Command::Spused
                 | Command::Spvar,
                 _,
-            ) => self.sp_command(command, args, want),
+            ) => self.sp_command(command, args, want, out),
             (
                 Command::Chkchr
                 | Command::Scroll
@@ -2888,7 +2944,7 @@ impl Runtime {
                 | Command::Tupdate
                 | Command::Tvar,
                 _,
-            ) => self.text_command(command, args, want),
+            ) => give(out, self.text_command(command, args, want)),
             (
                 Command::Accel
                 | Command::Brepeat
@@ -2906,7 +2962,7 @@ impl Runtime {
                 | Command::Touch
                 | Command::Xctrlstyle,
                 _,
-            ) => self.input_command(command, args, want),
+            ) => self.input_command(command, args, want, out),
             (
                 Command::Date
                 | Command::Dtread
@@ -2922,7 +2978,7 @@ impl Runtime {
                 | Command::Time
                 | Command::Tmread,
                 _,
-            ) => self.system_command(command, args, want),
+            ) => self.system_command(command, args, want, out),
             (
                 Command::Beep
                 | Command::Recchk
@@ -2966,7 +3022,7 @@ impl Runtime {
                 | Command::Sndmvol
                 | Command::Sndstop,
                 _,
-            ) => self.sound_command(command, args, want),
+            ) => give(out, self.sound_command(command, args, want)),
             (
                 Command::Irread
                 | Command::Irsprite
@@ -2985,7 +3041,7 @@ impl Runtime {
                 | Command::Tcvisor
                 | Command::Vibrate,
                 _,
-            ) => self.device_command(command, args, want),
+            ) => give(out, self.device_command(command, args, want)),
             _ => Err(no_form()),
         }
     }
@@ -3010,6 +3066,18 @@ impl Host for Runtime {
     }
 
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>> {
+        let mut out = Vec::new();
+        self.call_into(id, args, want, &mut out)?;
+        Ok(out)
+    }
+
+    fn call_into(
+        &mut self,
+        id: u32,
+        args: &[Value],
+        want: Want,
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
         let command = COMMANDS[id as usize].1;
         if self.meter.is_some() {
             let cost = self.command_cost(command, args, want == Want::Value);
@@ -3030,7 +3098,7 @@ impl Host for Runtime {
                 }
             },
         };
-        let result = self.run_counted(command, args, want);
+        let result = self.run_counted_into(command, args, want, out);
         if let Some((i, before)) = before {
             self.changed |= self.sprites.list()[i].appearance() != before;
         }

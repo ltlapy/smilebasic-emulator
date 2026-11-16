@@ -10,7 +10,9 @@ use sb_core::value::{ArrayData, Value};
 
 use crate::anim::{self, Anim, MAX_KEYS, Mode, Target, Track};
 use crate::collision::{Body, Collision, Search};
-use crate::runtime::{Command, Runtime, checking, illegal, no_form, opt_int};
+use crate::runtime::{
+    Command, Runtime, checking, give, illegal, no_form, one, opt_int, put_ints, put_reals,
+};
 use crate::sprites::{DEFS, SPRITES, Sprite, SpriteDef, VarKey, WithDefs};
 
 fn int(v: &Value) -> Result<i32> {
@@ -96,10 +98,6 @@ pub(crate) fn var_key(v: &Value) -> Result<VarKey> {
         Value::Str(s) => Ok(VarKey::Str(s.borrow().clone())),
         v => Ok(VarKey::Int(int(v)?)),
     })
-}
-
-fn reals(values: &[f64]) -> Vec<Value> {
-    values.iter().map(|&x| Value::Real(x)).collect()
 }
 
 fn ints(values: &[i32]) -> Vec<Value> {
@@ -306,7 +304,8 @@ impl Runtime {
         command: Command,
         args: &[Value],
         want: Want,
-    ) -> Result<Vec<Value>> {
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
         // These check the sprite's number before how many arguments and
         // OUT variables there are.
         if let (
@@ -325,7 +324,7 @@ impl Runtime {
             (Command::Spset, Want::Outs(0), 2 | 3 | 5..=7) => {
                 let id = sprite_id(&args[0])?;
                 self.spset(Some(id), &args[1..])?;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spset, Want::Value, 1..=8) => {
                 let (range, image) = match args.len() {
@@ -338,17 +337,17 @@ impl Runtime {
                 match self.free_sprite(range.0, range.1) {
                     Some(id) => {
                         self.spset(Some(id), image)?;
-                        Ok(vec![Value::Int(id as i32)])
+                        one(out, Value::Int(id as i32))
                     }
                     None => {
                         self.spset(None, image)?;
-                        Ok(vec![Value::Int(-1)])
+                        one(out, Value::Int(-1))
                     }
                 }
             }
             (Command::Spclr, Want::Outs(0), 0) => {
                 self.sprites.clear_all();
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spclr, Want::Outs(0), 1 | 2) => {
                 let a = sprite_id(&args[0])?;
@@ -356,13 +355,13 @@ impl Runtime {
                 for id in a.min(b)..=a.max(b) {
                     self.sprites.clear(id);
                 }
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spshow | Command::Sphide, Want::Outs(0), 1 | 2) => {
                 let on = flag(args.get(1))?;
                 let shown = if command == Command::Spshow { on } else { !on };
                 self.sprite(&args[0])?.shown = shown;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spshow | Command::Sphide, Want::Value, 1) => {
                 let shown = self.sprite(&args[0])?.shown;
@@ -371,16 +370,16 @@ impl Runtime {
                 } else {
                     !shown
                 };
-                Ok(vec![Value::Int(i32::from(answer))])
+                one(out, Value::Int(i32::from(answer)))
             }
             (Command::Sphome, Want::Outs(0), 3) => {
                 let home = (real(&args[1])?, real(&args[2])?);
                 self.sprite(&args[0])?.home = home;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Sphome, Want::Outs(2), 1) => {
                 let (x, y) = self.sprite(&args[0])?.home;
-                Ok(reals(&[x, y]))
+                put_reals(out, &[x, y])
             }
             (Command::Spofs, Want::Outs(0), 2..=4) => {
                 let x = args.get(1).map(optional_real).transpose()?.flatten();
@@ -398,7 +397,7 @@ impl Runtime {
                 }
                 s.pos = (x.unwrap_or(s.pos.0), y.unwrap_or(s.pos.1));
                 s.z = z.unwrap_or(s.z);
-                Ok(vec![])
+                Ok(())
             }
             // With the flag set, where the sprite shows once its links are
             // followed.
@@ -413,20 +412,20 @@ impl Runtime {
                 } else {
                     (s.pos, s.z)
                 };
-                let mut out = reals(&[pos.0, pos.1]);
+                out.extend([Value::Real(pos.0), Value::Real(pos.1)]);
                 if n == 3 {
                     out.push(Value::Int(z));
                 }
-                Ok(out)
+                Ok(())
             }
             (Command::Sprot, Want::Outs(0), 2) => {
                 let angle = real(&args[1])?;
                 let s = self.sprite(&args[0])?;
                 stop(s, Target::R);
                 s.rot = crate::sprites::single(angle);
-                Ok(vec![])
+                Ok(())
             }
-            (Command::Sprot, Want::Value, 1) => Ok(vec![Value::Real(self.sprite(&args[0])?.rot)]),
+            (Command::Sprot, Want::Value, 1) => one(out, Value::Real(self.sprite(&args[0])?.rot)),
             (Command::Spscale, Want::Outs(0), 3) => {
                 let scale = (real(&args[1])?, real(&args[2])?);
                 let s = self.sprite(&args[0])?;
@@ -435,21 +434,21 @@ impl Runtime {
                     crate::sprites::single(scale.0),
                     crate::sprites::single(scale.1),
                 );
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spscale, Want::Outs(2), 1) => {
                 let (x, y) = self.sprite(&args[0])?.scale;
-                Ok(reals(&[x, y]))
+                put_reals(out, &[x, y])
             }
             (Command::Spcolor, Want::Outs(0), 2) => {
                 let color = int(&args[1])? as u32;
                 let s = self.sprite(&args[0])?;
                 stop(s, Target::C);
                 s.color = color;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spcolor, Want::Value, 1) => {
-                Ok(vec![Value::Int(self.sprite(&args[0])?.color as i32)])
+                one(out, Value::Int(self.sprite(&args[0])?.color as i32))
             }
             (Command::Spchr, Want::Outs(0), 2) => {
                 let n = def_id(&args[1])?;
@@ -458,7 +457,7 @@ impl Runtime {
                 stop(s, Target::I);
                 stop(s, Target::Uv);
                 s.set_def(n as i32, &def);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spchr, Want::Outs(0), n @ 3..=6) => {
                 let field = |i: usize| args.get(i).map(opt_int).transpose().map(Option::flatten);
@@ -499,38 +498,38 @@ impl Runtime {
                         if turned(a) { (h, w, a) } else { (w, h, a) }
                     }
                 };
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spchr, Want::Outs(n @ (2 | 4 | 5)), 1) => {
                 let s = self.sprite(&args[0])?;
-                Ok(ints(&[s.u, s.v, s.w, s.h, s.attr][..n as usize]))
+                put_ints(out, &[s.u, s.v, s.w, s.h, s.attr][..n as usize])
             }
-            (Command::Spchr, Want::Value, 1) => Ok(vec![Value::Int(self.sprite(&args[0])?.def)]),
+            (Command::Spchr, Want::Value, 1) => one(out, Value::Int(self.sprite(&args[0])?.def)),
             (Command::Sppage, Want::Outs(0), 2) => {
                 let p = page(&args[1])?;
                 self.sprite(&args[0])?.page = p;
-                Ok(vec![])
+                Ok(())
             }
-            (Command::Sppage, Want::Value, 1) => Ok(vec![Value::Int(self.sprite(&args[0])?.page)]),
+            (Command::Sppage, Want::Value, 1) => one(out, Value::Int(self.sprite(&args[0])?.page)),
             (Command::Sppage, Want::Outs(0), 1) => {
                 self.sprites.new_page = page(&args[0])?;
-                Ok(vec![])
+                Ok(())
             }
-            (Command::Sppage, Want::Value, 0) => Ok(vec![Value::Int(self.sprites.new_page)]),
+            (Command::Sppage, Want::Value, 0) => one(out, Value::Int(self.sprites.new_page)),
             (Command::Splayer, Want::Outs(0), 2) => {
                 let l = layer(&args[1])?;
                 self.sprite(&args[0])?.layer = l;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Splayer, Want::Value, 1) => {
-                Ok(vec![Value::Int(self.sprite(&args[0])?.layer)])
+                one(out, Value::Int(self.sprite(&args[0])?.layer))
             }
             (Command::Splayer, Want::Outs(0), 1) => {
                 self.sprites.new_layer = layer(&args[0])?;
-                Ok(vec![])
+                Ok(())
             }
-            (Command::Splayer, Want::Value, 0) => Ok(vec![Value::Int(self.sprites.new_layer)]),
-            (Command::Spdef, _, _) => self.spdef(args, want),
+            (Command::Splayer, Want::Value, 0) => one(out, Value::Int(self.sprites.new_layer)),
+            (Command::Spdef, _, _) => give(out, self.spdef(args, want)),
             // Every sprite has its variables, set or not: BASICDEMO keeps
             // its menu positions in sprite 0, which it never sets.
             (Command::Spvar, Want::Outs(0), 3) => {
@@ -546,12 +545,12 @@ impl Runtime {
                     .sprite_mut(sprite_id(&args[0])?)
                     .vars
                     .insert(key, value);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spvar, Want::Value, 2) => {
                 let key = var_key(&args[1])?;
                 let s = &self.sprites.list()[sprite_id(&args[0])?];
-                Ok(vec![s.vars.get(&key).cloned().unwrap_or(Value::Int(0))])
+                one(out, s.vars.get(&key).cloned().unwrap_or(Value::Int(0)))
             }
             (Command::Spvar, Want::Outs(0), 1 | 2) => {
                 let key = args.get(1).map(var_key).transpose()?;
@@ -562,17 +561,17 @@ impl Runtime {
                     }
                     None => s.vars.clear(),
                 }
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spanim, Want::Outs(0), 0) => {
                 for s in self.sprites.list_mut() {
                     s.anims = Default::default();
                 }
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spanim, Want::Outs(0), 1) => {
                 self.sprite(&args[0])?.anims = Default::default();
-                Ok(vec![])
+                Ok(())
             }
             // The sprite is checked first, and named.
             (Command::Spanim, Want::Outs(0), 2) => {
@@ -580,27 +579,27 @@ impl Runtime {
                 let n = anim_id(&args[1])?;
                 // A number ANIMDEF never set starts nothing.
                 match self.sprites.anim_defs[n].clone() {
-                    Some(anim) => self.start_anim(&args[0], anim),
-                    None => Ok(vec![]),
+                    Some(anim) => give(out, self.start_anim(&args[0], anim)),
+                    None => Ok(()),
                 }
             }
             (Command::Spanim, Want::Outs(0), _) => {
                 self.sprite(&args[0]).map_err(|e| e.of_arg(0))?;
                 let anim = self.anim_args(&args[1..])?;
-                self.start_anim(&args[0], anim)
+                give(out, self.start_anim(&args[0], anim))
             }
             (Command::Animdef, Want::Outs(0), 0) => {
                 self.sprites.anim_defs.fill(None);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Animdef, Want::Outs(0), 1) => {
                 self.sprites.anim_defs[anim_id(&args[0])?] = None;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Animdef, Want::Outs(0), 3..) => {
                 let n = anim_id(&args[0])?;
                 self.sprites.anim_defs[n] = Some(self.anim_args(&args[1..])?);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spstart | Command::Spstop, Want::Outs(0), 0 | 1) => {
                 let stopped = command == Command::Spstop;
@@ -612,22 +611,22 @@ impl Runtime {
                         }
                     }
                 }
-                Ok(vec![])
+                Ok(())
             }
             // Checked on hardware: stopped animations report 0.
             (Command::Spchk, Want::Value, 1) => {
                 let s = self.sprite(&args[0])?;
                 if s.anim_stopped {
-                    return Ok(vec![Value::Int(0)]);
+                    return one(out, Value::Int(0));
                 }
                 let bits = (s.anims.iter().enumerate())
                     .filter(|(_, track)| track.is_some())
                     .fold(0, |bits, (i, _)| bits | 1 << i);
-                Ok(vec![Value::Int(bits)])
+                one(out, Value::Int(bits))
             }
             (Command::Spcol, Want::Outs(0), _) => {
                 self.spcol(args)?;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spcol, Want::Outs(n @ (1 | 2 | 4..=6)), 1) => {
                 // A sprite without SPCOL reports zeros.
@@ -641,7 +640,7 @@ impl Runtime {
                 });
                 let all = [c.x, c.y, c.w, c.h, i32::from(c.scale), c.mask as i32];
                 let n = n as usize;
-                Ok(ints(if n <= 2 { &all[4..4 + n] } else { &all[..n] }))
+                put_ints(out, if n <= 2 { &all[4..4 + n] } else { &all[..n] })
             }
             (Command::Spcolvec, Want::Outs(0), 1 | 3) => {
                 let vel = match args {
@@ -649,9 +648,9 @@ impl Runtime {
                     _ => None,
                 };
                 self.sprite(&args[0])?.col_vel = vel;
-                Ok(vec![])
+                Ok(())
             }
-            (Command::Sphitsp, Want::Value, 0) => Ok(vec![Value::Int(self.hit(false, None))]),
+            (Command::Sphitsp, Want::Value, 0) => one(out, Value::Int(self.hit(false, None))),
             // A sprite that is not set hits nothing.
             (Command::Sphitsp, Want::Value, 1 | 3) => {
                 let id = sprite_id(&args[0])?;
@@ -668,7 +667,7 @@ impl Runtime {
                         -1
                     }
                 };
-                Ok(vec![Value::Int(found)])
+                one(out, Value::Int(found))
             }
             (Command::Sphitsp, Want::Value, 2) => {
                 let (id, other) = (sprite_id(&args[0])?, sprite_id(&args[1])?);
@@ -679,39 +678,39 @@ impl Runtime {
                     }
                     _ => false,
                 };
-                Ok(vec![Value::Int(i32::from(hit))])
+                one(out, Value::Int(i32::from(hit)))
             }
-            (Command::Sphitrc, Want::Value, 0) => Ok(vec![Value::Int(self.hit(true, None))]),
+            (Command::Sphitrc, Want::Value, 0) => one(out, Value::Int(self.hit(true, None))),
             (Command::Sphitrc, Want::Value, 4 | 7) => {
                 let source = Runtime::hit_rect(args)?;
                 let found = self.hit(true, Some(Search::new(source, 0, SPRITES - 1, None)));
-                Ok(vec![Value::Int(found)])
+                one(out, Value::Int(found))
             }
             (Command::Sphitrc, Want::Value, 5 | 8) => {
                 let id = sprite_id(&args[0])?;
                 self.sprite(&args[0])?;
                 let mut search = Search::new(Runtime::hit_rect(&args[1..])?, id, id, None);
                 let hit = self.sprites.next_hit(&mut search).is_some();
-                Ok(vec![Value::Int(i32::from(hit))])
+                one(out, Value::Int(i32::from(hit)))
             }
             (Command::Sphitrc, Want::Value, 6 | 9) => {
                 let (first, last) = (sprite_id(&args[0])?, sprite_id(&args[1])?);
                 let source = Runtime::hit_rect(&args[2..])?;
                 let found = self.hit(true, Some(Search::new(source, first, last, None)));
-                Ok(vec![Value::Int(found)])
+                one(out, Value::Int(found))
             }
             (Command::Sphitinfo, Want::Value, 0) => {
-                Ok(vec![Value::Real(self.sprites.hit_info.time)])
+                one(out, Value::Real(self.sprites.hit_info.time))
             }
             (Command::Sphitinfo, Want::Outs(n @ (5 | 9)), 0) => {
                 let i = self.sprites.hit_info;
                 let [(x1, y1), (x2, y2)] = i.pos;
                 let [(vx1, vy1), (vx2, vy2)] = i.vel;
-                Ok(if n == 5 {
-                    reals(&[i.time, x1, y1, x2, y2])
+                if n == 5 {
+                    put_reals(out, &[i.time, x1, y1, x2, y2])
                 } else {
-                    reals(&[i.time, x1, y1, vx1, vy1, x2, y2, vx2, vy2])
-                })
+                    put_reals(out, &[i.time, x1, y1, vx1, vy1, x2, y2, vx2, vy2])
+                }
             }
             (Command::Splink, Want::Outs(0), 2 | 3) => {
                 let (child, parent) = (sprite_id(&args[0])?, sprite_id(&args[1])?);
@@ -733,7 +732,7 @@ impl Runtime {
                 self.sprites.linked = true;
                 let s = self.sprites.sprite_mut(child);
                 (s.parent, s.link_flags) = (Some(parent), flags);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Splink, Want::Value, 1 | 2) => {
                 let kind = args.get(1).map(opt_int).transpose()?.flatten().unwrap_or(0);
@@ -746,14 +745,14 @@ impl Runtime {
                     2 => s
                         .parent
                         .and_then(|p| self.sprites.children(p).find(|&i| i > id)),
-                    3 => return Ok(vec![Value::Int(s.link_flags)]),
+                    3 => return one(out, Value::Int(s.link_flags)),
                     _ => return Err(out_of_range("link type", kind)),
                 };
-                Ok(vec![Value::Int(found.map_or(-1, |i| i as i32))])
+                one(out, Value::Int(found.map_or(-1, |i| i as i32)))
             }
             (Command::Spunlink, Want::Outs(0), 1) => {
                 self.sprite(&args[0])?.parent = None;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spfunc, Want::Outs(0), 1 | 2) => {
                 let id = sprite_id(&args[0])?;
@@ -767,11 +766,11 @@ impl Runtime {
                 };
                 // A sprite that is not set takes it too.
                 self.sprites.sprite_mut(id).func = func;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Spused, Want::Value, 1) => {
                 let id = sprite_id(&args[0])?;
-                Ok(vec![Value::Int(i32::from(self.sprites.list()[id].used))])
+                one(out, Value::Int(i32::from(self.sprites.list()[id].used)))
             }
             _ => Err(no_form()),
         }

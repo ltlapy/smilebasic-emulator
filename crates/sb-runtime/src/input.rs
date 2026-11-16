@@ -8,7 +8,9 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
 use crate::line::codes;
-use crate::runtime::{Command, Runtime, checking, keys, no_form, opt_int};
+use crate::runtime::{
+    Command, Runtime, checking, give, keys, no_form, one, opt_int, put_ints, put_reals,
+};
 
 /// Controllers 1 to 4; controller 0 combines them.
 pub const PADS: usize = 4;
@@ -914,7 +916,8 @@ impl Runtime {
         command: Command,
         args: &[Value],
         want: Want,
-    ) -> Result<Vec<Value>> {
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
         let input = &mut self.input;
         input.polled = true;
         if matches!(command, Command::Button | Command::Stick) {
@@ -925,10 +928,13 @@ impl Runtime {
                 let pad = pad_id(&args[0])?;
                 let button = opt_in_range("button", args.get(1), -1..=16, -1)?;
                 let bits = input.buttons(pad, condition(args.get(2))?);
-                Ok(vec![Value::Int(match button {
-                    -1 => bits as i32,
-                    id => (bits >> id & 1) as i32,
-                })])
+                one(
+                    out,
+                    Value::Int(match button {
+                        -1 => bits as i32,
+                        id => (bits >> id & 1) as i32,
+                    }),
+                )
             }
             (Command::Brepeat, Want::Outs(0), 3) => {
                 let id = in_range("button", &args[0], 0..=16)? as usize;
@@ -936,12 +942,12 @@ impl Runtime {
                 let start = in_range("start", &args[1], 0..=i32::MAX)?.max(1);
                 let interval = in_range("interval", &args[2], 0..=i32::MAX)?;
                 input.repeat[id] = (start as u32, interval as u32);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Brepeat, Want::Outs(2), 1) => {
                 let id = in_range("button", &args[0], 0..=16)? as usize;
                 let (start, interval) = input.repeat[id];
-                Ok(ints(&[start as i32, interval as i32]))
+                put_ints(out, &[start as i32, interval as i32])
             }
             (Command::Stick, Want::Outs(2), 1..=2) => {
                 let pad = pad_id(&args[0])?;
@@ -950,7 +956,7 @@ impl Runtime {
                     0 => input.now.stick(stick),
                     n => input.now.pads[n - 1].sticks[stick],
                 };
-                Ok(reals(&[x, y]))
+                put_reals(out, &[x, y])
             }
             (Command::Controller, Want::Value | Want::Outs(1 | 3 | 5), 1) => {
                 let pad = pad_id(&args[0])?;
@@ -969,10 +975,10 @@ impl Runtime {
                     (_, 1) => [0xFF82_8282_u32, 0xFF0F_0F0F, 0xFF00_0000, 0xFF00_0000],
                     _ => [0xFF23_2323_u32, 0xFFA0_A0A0, 0xFF00_0000, 0xFF00_0000],
                 };
-                let mut out = vec![Value::Int(kind)];
-                out.extend(colors.map(|c| Value::Int(c as i32)));
-                out.truncate(want.count());
-                Ok(out)
+                let mut values = vec![Value::Int(kind)];
+                values.extend(colors.map(|c| Value::Int(c as i32)));
+                values.truncate(want.count());
+                give(out, Ok(values))
             }
             (Command::Xctrlstyle, Want::Outs(0), 1) => {
                 in_range("style", &args[0], 0..=0)?;
@@ -980,7 +986,7 @@ impl Runtime {
                 input.ir_allowed = false;
                 input.toycons = [0; 4];
                 self.result = 1;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Xctrlstyle, Want::Outs(0), 2 | 4..=7) => {
                 let (max, style, flags) = xctrlstyle_args(args)?;
@@ -1000,25 +1006,26 @@ impl Runtime {
                     input.toycons[..n].copy_from_slice(&flags[..n]);
                 }
                 self.result = 1;
-                Ok(vec![])
+                Ok(())
             }
-            (Command::Xctrlstyle, Want::Outs(2), 0) => Ok(ints(&[input.style.0, input.style.1])),
+            (Command::Xctrlstyle, Want::Outs(2), 0) => {
+                put_ints(out, &[input.style.0, input.style.1])
+            }
             // No motion sensors: everything reads as still.
             (Command::Accel | Command::Gyroa | Command::Gyrov, Want::Outs(3), 1..=2) => {
                 sensor_args(args)?;
-                Ok(reals(&[0.0, 0.0, 0.0]))
+                put_reals(out, &[0.0, 0.0, 0.0])
             }
             (Command::Gyrosync, Want::Outs(0), 1..=2) => {
                 sensor_args(args)?;
-                Ok(vec![])
+                Ok(())
             }
             (Command::Mouse, Want::Outs(2 | 3), 0..=1) => {
                 let lcd = opt_in_range("flag", args.first(), 0..=1, 0)? == 1;
                 let m = &input.now.mouse;
                 let (x, y) = if lcd { m.display } else { (m.x, m.y) };
-                let mut out = ints(&[x, y, m.wheel]);
-                out.truncate(want.count());
-                Ok(out)
+                let values = [x, y, m.wheel];
+                put_ints(out, &values[..want.count()])
             }
             (Command::Mouse, Want::Outs(0), 2..=3) => {
                 let (x, y) = (int(&args[0])?, int(&args[1])?);
@@ -1032,12 +1039,12 @@ impl Runtime {
                         (m.x, m.y) = (x, y);
                     }
                 }
-                Ok(vec![])
+                Ok(())
             }
             (Command::Mbutton, Want::Value, 0..=2) => {
                 let (now, before) = (input.now.mouse.buttons, input.before.mouse.buttons);
                 if args.is_empty() {
-                    return Ok(vec![Value::Int(now as i32)]);
+                    return one(out, Value::Int(now as i32));
                 }
                 let id = in_range("button", &args[0], 0..=4)?;
                 let bits = match condition(args.get(1))? {
@@ -1046,7 +1053,7 @@ impl Runtime {
                     2 => now & !before,
                     _ => !now & before,
                 };
-                Ok(vec![Value::Int((bits >> id & 1) as i32)])
+                one(out, Value::Int((bits >> id & 1) as i32))
             }
             (Command::Touch, Want::Outs(3 | 4), 0..=2) => {
                 let id = opt_in_range("touch", args.first(), 0..=TOUCHES - 1, 0)?;
@@ -1059,9 +1066,8 @@ impl Runtime {
                 };
                 let (x, y) = if lcd { m.display } else { (m.x, m.y) };
                 // UNVERIFIED: what a mouse's touch area should be.
-                let mut out = ints(&[time as i32, x, y, 1]);
-                out.truncate(want.count());
-                Ok(out)
+                let values = [time as i32, x, y, 1];
+                put_ints(out, &values[..want.count()])
             }
             (Command::Keyboard, Want::Value | Want::Outs(2), 1..=2) => {
                 let usage = in_range("scan code", &args[0], 0..=255)? as u8;
@@ -1073,9 +1079,9 @@ impl Runtime {
                     2 => now && !before,
                     _ => !now && before,
                 };
-                let mut out = vec![flag(result), Value::Int(input.now.modifiers as i32)];
-                out.truncate(want.count());
-                Ok(out)
+                let values = [flag(result), Value::Int(input.now.modifiers as i32)];
+                out.extend(values.into_iter().take(want.count()));
+                Ok(())
             }
             (Command::Key, Want::Outs(0), 2) => {
                 let n = in_range("key", &args[0], 1..=5)?;
@@ -1083,19 +1089,19 @@ impl Runtime {
                 if s.len() <= KEY_LENGTH {
                     input.function_keys[n as usize - 1] = s;
                 }
-                Ok(vec![])
+                Ok(())
             }
             (Command::Key, Want::Value, 1) => {
                 let n = in_range("key", &args[0], 1..=5)?;
                 let s = input.function_keys[n as usize - 1].clone();
-                Ok(vec![Value::Str(new_str(s))])
+                one(out, Value::Str(new_str(s)))
             }
             // It holds the program until the keys have gone on, a frame.
-            (Command::Pushkey, Want::Outs(0), 1) if self.frame_wait_over() => Ok(vec![]),
+            (Command::Pushkey, Want::Outs(0), 1) if self.frame_wait_over() => Ok(()),
             (Command::Pushkey, Want::Outs(0), 1) => {
                 self.pushkey(&args[0])?;
                 self.hold_for_a_frame();
-                Ok(vec![])
+                Ok(())
             }
             _ => Err(no_form()),
         }

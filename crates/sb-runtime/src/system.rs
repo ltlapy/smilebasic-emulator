@@ -9,7 +9,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
 use crate::font::FontSize;
-use crate::runtime::{Command, Runtime, checking, no_form};
+use crate::runtime::{Command, Runtime, checking, give, many, no_form, one, put_ints};
 use crate::speed::Meter;
 use crate::text::USER_CHARS;
 
@@ -256,7 +256,8 @@ impl Runtime {
         command: Command,
         args: &[Value],
         want: Want,
-    ) -> Result<Vec<Value>> {
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
         let sys = &mut self.system;
         match (command, want, args.len()) {
             (Command::Rnd, Want::Value, 1..=2) => {
@@ -274,10 +275,10 @@ impl Runtime {
                     ));
                 }
                 if max == 0 {
-                    return Ok(vec![Value::Int(0)]);
+                    return one(out, Value::Int(0));
                 }
                 let r = sys.series[id].next() % max as u32;
-                Ok(vec![Value::Int(r as i32)])
+                one(out, Value::Int(r as i32))
             }
             (Command::Rndf, Want::Value, 0..=1) => {
                 let id = args.first().map_or(Ok(0), series_id)?;
@@ -286,7 +287,7 @@ impl Runtime {
                 let a = u64::from(sys.series[id].next() >> 5);
                 let b = u64::from(sys.series[id].next() >> 6);
                 let r = (a << 26 | b) as f64 / (1u64 << 53) as f64;
-                Ok(vec![Value::Real(r)])
+                one(out, Value::Real(r))
             }
             (Command::Randomize, Want::Outs(0), 1..=2) => {
                 let id = series_id(&args[0])?;
@@ -298,18 +299,22 @@ impl Runtime {
                     0 => sys.next_seed(),
                     n => n as u32,
                 });
-                Ok(vec![])
+                Ok(())
             }
             // A console's speed keeps the console's clock, which PERFEND
             // and MAINCNT follow too.
-            (Command::Millisec, Want::Value, 0) => Ok(vec![Value::Int(match &self.meter {
-                Some(meter) => (meter.now() / 1_000_000_000) as i32,
-                None => sys.millis(),
-            })]),
+            (Command::Millisec, Want::Value, 0) => one(
+                out,
+                Value::Int(match &self.meter {
+                    Some(meter) => (meter.now() / 1_000_000_000) as i32,
+                    None => sys.millis(),
+                }),
+            ),
             // Past XSCREEN or ACLS, the frame job has yet to raise it.
-            (Command::Maincnt, Want::Value, 0) => Ok(vec![Value::Int(
-                sys.frames.wrapping_sub(self.in_frame_job.into()) as i32,
-            )]),
+            (Command::Maincnt, Want::Value, 0) => one(
+                out,
+                Value::Int(sys.frames.wrapping_sub(self.in_frame_job.into()) as i32),
+            ),
             // PERFBEGIN and PERFEND measure time; SmileBASIC 4.4.9 shows no
             // gauge for them, nor does the emulator on its screens. Only
             // the debugger's panel lists the times kept here.
@@ -323,7 +328,7 @@ impl Runtime {
                 }
                 sys.perf[n] = Some(Instant::now());
                 sys.perf_clock[n] = self.meter.as_ref().map_or(0, Meter::now);
-                Ok(vec![])
+                Ok(())
             }
             (Command::Perfend, Want::Outs(0) | Want::Value, 1) => {
                 let n = perf_id(&args[0])?;
@@ -340,16 +345,16 @@ impl Runtime {
                     (None, false) => since.elapsed().as_micros() as u64,
                 };
                 sys.perf_stats[n].add(micros);
-                Ok(match want {
-                    Want::Value => vec![Value::Int(micros as i32)],
-                    _ => vec![],
-                })
+                if want == Want::Value {
+                    out.push(Value::Int(micros as i32));
+                }
+                Ok(())
             }
             (Command::Date, Want::Value, 0) => {
-                Ok(vec![string(sys.now().format("%Y/%m/%d").to_string())])
+                one(out, string(sys.now().format("%Y/%m/%d").to_string()))
             }
             (Command::Time, Want::Value, 0) => {
-                Ok(vec![string(sys.now().format("%H:%M:%S").to_string())])
+                one(out, string(sys.now().format("%H:%M:%S").to_string()))
             }
             (Command::Dtread, Want::Outs(3 | 4), 0..=1) => {
                 let date = match args.first() {
@@ -362,16 +367,13 @@ impl Runtime {
                         })?
                     }
                 };
-                let mut out = [
+                let values = [
                     date.year(),
                     date.month() as i32,
                     date.day() as i32,
                     date.weekday().num_days_from_sunday() as i32,
-                ]
-                .map(Value::Int)
-                .to_vec();
-                out.truncate(want.count());
-                Ok(out)
+                ];
+                put_ints(out, &values[..want.count()])
             }
             (Command::Tmread, Want::Outs(3), 0..=1) => {
                 let time = match args.first() {
@@ -384,9 +386,10 @@ impl Runtime {
                         })?
                     }
                 };
-                Ok([time.hour(), time.minute(), time.second()]
-                    .map(|n| Value::Int(n as i32))
-                    .to_vec())
+                many(
+                    out,
+                    [time.hour(), time.minute(), time.second()].map(|n| Value::Int(n as i32)),
+                )
             }
             (Command::Sysparam, _, 1..=2) => {
                 // Names may be in lower case (checked on hardware).
@@ -424,9 +427,9 @@ impl Runtime {
                             "MOUSECURSOR" => sys.mouse_cursor = on,
                             _ => return Err(wrong()),
                         }
-                        Ok(vec![])
+                        Ok(())
                     }
-                    (_, None) if want.count() == values.len() => Ok(values),
+                    (_, None) if want.count() == values.len() => give(out, Ok(values)),
                     _ => Err(wrong()),
                 }
             }
@@ -454,7 +457,7 @@ impl Runtime {
                 let (x, y) = self.font.origin(code, size).ok_or_else(|| {
                     Error::with_detail(ErrorKind::IllegalFunctionCall, "no glyph on GRPF")
                 })?;
-                Ok(vec![Value::Int(x as i32), Value::Int(y as i32)])
+                many(out, [Value::Int(x as i32), Value::Int(y as i32)])
             }
             _ => Err(no_form()),
         }
