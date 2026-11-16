@@ -386,6 +386,12 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
 - `XSCREEN`'s mode 1 applies to the program's screen. The editor's frame scales
   by Nearest at a whole factor, and otherwise with SDL's pixel art filter, or
   Bilinear when the screen's filter is Bilinear.
+- The emulator's own UI (menu bar, dialogs, notices, the debugger's panel)
+  scales by Nearest at a whole factor, with SDL's pixel art filter when drawn
+  larger, and with Bilinear when drawn smaller. Where SDL's pixel art filter is
+  only Nearest (the software, OpenGL ES 2 and Direct3D 9 renderers, and OpenGL
+  before GLSL 1.30), the UI goes to the next whole factor with Nearest, then
+  down to its size with Bilinear.
 
 ## System values
 
