@@ -599,17 +599,16 @@ impl Graphics {
     /// Draws a pixel inside the clipping rectangle, already marked.
     #[inline]
     fn plot_marked(&mut self, x: i32, y: i32, color: u32, blend: Blend) {
-        let (px, py) = (x as usize, y as usize);
         let page = self.target;
         // Without a GARRAY array, the page is the only copy.
         if self.arrays[page].is_none() {
-            let pixel = self.pixels_to_change(page).pixel_mut(px, py);
+            let pixel = self.pixels_to_change(page).pixel_mut(x, y);
             *pixel = blend.apply(*pixel, color);
             return;
         }
         let dst = self.read(page, x, y);
         let p = blend.apply(dst, color);
-        *self.pixels_to_change(page).pixel_mut(px, py) = p;
+        *self.pixels_to_change(page).pixel_mut(x, y) = p;
         if let Some(array) = &self.arrays[self.target]
             && let Ok(mut array) = array.try_borrow_mut()
             && let ArrayData::Int(v) = &mut array.data
@@ -640,7 +639,7 @@ impl Graphics {
         for &(x, y) in &points[first..] {
             if clip.contains(x, y) {
                 dirty.mark_pixel(x, y);
-                let pixel = pixels.pixel_mut(x as usize, y as usize);
+                let pixel = pixels.pixel_mut(x, y);
                 *pixel = blend.apply(*pixel, color);
             }
         }
@@ -742,7 +741,7 @@ impl Graphics {
         };
         let pixels = &mut self.pages[page];
         for (y, (left, right)) in rows {
-            let row = pixels.span_mut(y as usize, left as usize, right as usize);
+            let row = pixels.span_mut(y, left, right);
             match mirror.as_deref_mut() {
                 None if blend == Blend::Normal => row.fill(color),
                 None => {
@@ -1227,7 +1226,7 @@ impl Graphics {
             for (col, &p) in line.iter().enumerate() {
                 let px = x + col as i32;
                 if Clip::PAGE.contains(px, py) {
-                    *pixels.pixel_mut(px as usize, py as usize) = p;
+                    *pixels.pixel_mut(px, py) = p;
                 }
             }
         }

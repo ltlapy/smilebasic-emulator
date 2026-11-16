@@ -35,6 +35,13 @@ pub const fn at(x: usize, y: usize) -> usize {
     y * STRIDE + x
 }
 
+/// [`at`] in 32 bits, for pixels plotted one at a time: on aarch64 the
+/// offset then takes one instruction fewer to work out than in 64.
+#[inline]
+fn at32(x: u32, y: u32) -> usize {
+    y.wrapping_mul(STRIDE as u32).wrapping_add(x) as usize
+}
+
 /// A page's pixels, `0xAARRGGBB`. A blank page holds none and reads 0
 /// everywhere, as at start-up.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -97,20 +104,20 @@ impl Page {
     #[inline]
     pub fn pixel(&self, x: i32, y: i32) -> u32 {
         // A negative coordinate is past the page as unsigned.
-        let (x, y) = (x as u32 as usize, y as u32 as usize);
-        if self.is_blank() || x >= SIDE || y >= SIDE {
+        let (x, y) = (x as u32, y as u32);
+        if self.is_blank() || x >= SIDE as u32 || y >= SIDE as u32 {
             return 0;
         }
-        self.pixels[at(x, y)]
+        self.pixels[at32(x, y)]
     }
 
     /// A pixel on the page to change, on a page that is not blank.
     #[inline]
-    pub fn pixel_mut(&mut self, x: usize, y: usize) -> &mut u32 {
-        // Callers clip to the page; an `x` past it would land between rows
-        // or on the next row, still within the buffer, which is checked.
-        debug_assert!(x < SIDE && y < SIDE);
-        &mut self.pixels[at(x, y)]
+    pub fn pixel_mut(&mut self, x: i32, y: i32) -> &mut u32 {
+        // Callers clip to the page; a coordinate off it would land elsewhere
+        // in the buffer, whose bounds are checked.
+        debug_assert!((0..GRP_SIZE).contains(&x) && (0..GRP_SIZE).contains(&y));
+        &mut self.pixels[at32(x as u32, y as u32)]
     }
 
     /// Row `y` of a page that is not blank, [`GRP_SIZE`] pixels.
@@ -143,12 +150,16 @@ impl Page {
 
     /// Pixels `x0..=x1` of row `y` of a page that is not blank, to change.
     #[inline]
-    pub fn span_mut(&mut self, y: usize, x0: usize, x1: usize) -> &mut [u32] {
+    pub fn span_mut(&mut self, y: i32, x0: i32, x1: i32) -> &mut [u32] {
         // As for `pixel_mut`: callers clip to the page, and the slice is
         // checked against the buffer. A check here would cost GALPHA and
         // GTRI 0.1 to 0.3% of their instructions.
-        debug_assert!(x1 < SIDE, "a span ends on its row");
-        &mut self.pixels[at(x0, y)..at(x1, y) + 1]
+        debug_assert!(
+            (0..GRP_SIZE).contains(&x1) && x0 <= x1 + 1,
+            "a span on its row"
+        );
+        let row = at32(0, y as u32);
+        &mut self.pixels[row + x0 as usize..row + x1 as usize + 1]
     }
 
     /// Of rows `ys` of a page that is not blank, the `n` pixels from column
@@ -236,7 +247,8 @@ mod tests {
         for span in page.spans_mut(10, 4, 20..23) {
             span.fill(7);
         }
-        page.span_mut(SIDE - 1, SIDE - 2, SIDE - 1).fill(9);
+        page.span_mut(GRP_SIZE - 1, GRP_SIZE - 2, GRP_SIZE - 1)
+            .fill(9);
         let rows = page.to_rows();
         let at = |x: usize, y: usize| rows[y * SIDE + x];
         assert_eq!(rows.iter().filter(|&&p| p == 7).count(), 12);
@@ -255,7 +267,7 @@ mod tests {
             row.fill(0xFFFF_FFFF);
         }
         page.row_mut(3).fill(1);
-        *page.pixel_mut(SIDE - 1, SIDE - 1) = 2;
+        *page.pixel_mut(GRP_SIZE - 1, GRP_SIZE - 1) = 2;
         let raw = page.raw();
         assert_eq!(raw.len(), LEN);
         for y in 0..SIDE {
