@@ -2,6 +2,7 @@
 //! `#GSPRITE` (4095) shows the graphic page GRP0 from start-up.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use sb_core::value::Value;
 
@@ -152,7 +153,7 @@ impl Animated for WithDefs<'_> {
 }
 
 /// Variable 7, which target "V" animates, as a number.
-pub fn var_number(vars: &HashMap<VarKey, Value>) -> f64 {
+pub fn var_number(vars: &Vars) -> f64 {
     let v = vars.get(&VarKey::Int(ANIM_VAR));
     v.and_then(|v| v.to_real().ok()).unwrap_or(0.0)
 }
@@ -162,6 +163,63 @@ pub fn var_number(vars: &HashMap<VarKey, Value>) -> f64 {
 pub enum VarKey {
     Int(i32),
     Str(Vec<u16>),
+}
+
+/// SPVAR's and TVAR's variables.
+pub type Vars = HashMap<VarKey, Value, BuildHasherDefault<VarHasher>>;
+
+/// The hash of [`Vars`]: a multiply and a rotate a word, as FxHash
+/// does, where the standard library's SipHash took about a third of an
+/// SPVAR call. A program can choose keys that collide, which makes its
+/// own SPVAR calls slow and nothing else.
+#[derive(Default)]
+pub struct VarHasher(u64);
+
+impl VarHasher {
+    #[inline]
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517C_C1B7_2722_0A95);
+    }
+}
+
+impl Hasher for VarHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+
+    #[inline]
+    fn write_u8(&mut self, n: u8) {
+        self.add(u64::from(n));
+    }
+
+    #[inline]
+    fn write_u16(&mut self, n: u16) {
+        self.add(u64::from(n));
+    }
+
+    #[inline]
+    fn write_u32(&mut self, n: u32) {
+        self.add(u64::from(n));
+    }
+
+    #[inline]
+    fn write_u64(&mut self, n: u64) {
+        self.add(n);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, n: usize) {
+        self.add(n as u64);
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -186,7 +244,7 @@ pub struct Sprite {
     pub scale: (f64, f64),
     pub color: u32,
     pub layer: i32,
-    pub vars: HashMap<VarKey, Value>,
+    pub vars: Vars,
     /// Animations playing, by [`anim::Target`].
     pub anims: [Option<Box<Track>>; anim::TARGETS],
     /// SPSTOP pauses the animations until SPSTART.
@@ -291,7 +349,7 @@ impl Sprite {
             scale: (1.0, 1.0),
             color: 0xFFFF_FFFF,
             layer: 0,
-            vars: HashMap::new(),
+            vars: Vars::default(),
             anims: Default::default(),
             anim_stopped: false,
             col: None,

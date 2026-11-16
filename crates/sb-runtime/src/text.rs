@@ -1,7 +1,5 @@
 //! Text screens 0-4. Screen 4 is the console that PRINT writes to.
 
-use std::collections::HashMap;
-
 use sb_core::value::{Array, ArrayData, ArrayRef, ElemType, Value};
 
 use crate::anim::{self, ANIM_VAR, Animated, Target, Track};
@@ -11,7 +9,7 @@ use crate::framebuffer::Framebuffer;
 use crate::graphics::Graphics;
 use crate::raster;
 use crate::scene::{CursorBar, TextItem};
-use crate::sprites::{VarKey, var_number};
+use crate::sprites::{VarKey, Vars, var_number};
 
 pub const SCREENS: usize = 5;
 pub const CONSOLE: usize = 4;
@@ -206,7 +204,7 @@ pub struct TextScreen {
     /// TSTOP pauses the animations until TSTART.
     pub anim_stopped: bool,
     /// TVAR's variables.
-    pub vars: HashMap<VarKey, Value>,
+    pub vars: Vars,
     /// TFUNC: the label or DEF that CALL TEXT calls.
     pub func: Option<Vec<u16>>,
 }
@@ -242,7 +240,7 @@ impl TextScreen {
             array: None,
             anims: Default::default(),
             anim_stopped: false,
-            vars: HashMap::new(),
+            vars: Vars::default(),
             func: None,
         }
     }
