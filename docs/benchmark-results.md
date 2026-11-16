@@ -2,7 +2,7 @@
 
 [benchmarking.md](benchmarking.md) says how to take these numbers. They date
 from 2026-11-05, except the handheld sets, from 2026-11-15 and 2026-11-16,
-and the runtime commands set, from 2026-11-17.
+and the runtime commands, calls by name and sound sets, from 2026-11-17.
 Each set says what it ran on and which commits it compares. Compare rows
 within one table, as frame counts differ between sets.
 
@@ -1805,10 +1805,171 @@ What calls still cost, for later work:
 - On x86-64, the calls that are not taken in cost 20 instructions more
   since `b799de0`; aarch64 shows no change.
 
+### Sound, from `c92ad81`
+
+The sound is made on the thread that runs the program, a frame of 800
+samples at a time, so its cost comes out of the frame. On the RK3326,
+games spent 0.7 to 4.7 ms a frame outside the interpreter even when
+nearly idle, and with the instrument bank imported from the console
+nearly all of that was sound. This set ran with that bank.
+
+Method: seven programs of our own (below) and five games with the input
+scripts of the [runtime commands](#runtime-commands-from-7021a05) set,
+`--bench --fixed`, `SB_BENCH_SOUND` set, the games over the frames of
+play the device kit measured (TENSMA 500-649, RYUSI 300-449,
+SOLIDGUNNER_V 700-849, NK8_ROGUE2020 650-799, MAMANATSU 2800-2949). x86-64 counts are `perf stat -e
+instructions:u` on a scratch `release` build that switches the counters
+on and off around `Sound::render_frame` through `--control`, over the
+frames given; of SILENT's count after, a profile puts about 23 000 in
+`render_frame` and the NaN check and the rest in the switch. Profiles are
+`perf record` of the same window, flat. Times are the same build's
+clock around `render_frame` and the VM, on one core, best of 3. aarch64
+counts are qemu's Cortex-A35 model on the `dist` build under `setarch -R`,
+from whole blocks: whole frames, as the difference of two run lengths.
+Every sound checksum, screen checksum and TPERF checksum
+(`e8e5f6dc467db861` at 400 frames and `a6e1ed07824b1ad8` at 3600 without
+resources; the same with them, sound included) is the same before and
+after, on x86-64 for all cases and on aarch64 for those given there.
+
+| Case | What plays | Frames |
+|---|---|---|
+| SILENT | nothing, ever | 100-400 |
+| IDLE2 | a preset song and a BEEP, stopped after a second | 200-400 |
+| BGM1 | one preset song | 100-400 |
+| MULTI | three preset songs, a preset effect every 10 frames | 100-400 |
+| MML | 12 MML channels on instruments, drums included | 100-400 |
+| REVERB | a preset song, effects every 20 frames, `EFCSET 2` | 100-400 |
+| FADES | PSG and a WAVSET waveform, BGMPAUSE, BGMVOL, SNDMVOL fades | 100-400 |
+
+Where TENSMA's sound went at `c92ad81`, by function, x86-64
+instructions a frame (2.19 million in all; about 13 000 samples of
+voices a frame, in 16 voices on average):
+
+| Part | Instructions |
+|---|---|
+| The sampler's voice loop | 1 087 000 |
+| `bank::Reader::next_of`, decoding DSP-ADPCM a sample at a time | 922 000 |
+| `Sound::render_frame`, the mix and output | 59 000 |
+| Tracks, BEEP, NaN check, envelopes and the rest | 120 000 |
+
+A voice that sounds a whole frame cost about 84 instructions a sample
+in the loop and 55 for each sample it decoded. An idle sound system
+cost 94 000 a frame: the output loop a sample at a time, the NaN check,
+and BEEP's synthesizer cleared and added in with no voice. Each track
+that had played and stopped cost about 20 000 more, its synthesizer
+cleared and its zeros added into the mix with its fade stepped: RYUSI's
+idle tracks took 0.30 million. A preset effect, once its sequence had
+ended, rendered its 60 frames of tail a sample at a time: in MULTI,
+`Beeps::render`, `ceil`, `memset` and `Player::ended` together took 0.7
+million.
+
+What was made:
+
+- `49bafe3`: an ended effect's tail goes as one run a frame.
+- `bd2208c`: `Reader` decodes the rest of a 14-sample frame at once,
+  the nibbles' parts before the chain of predictions, and hands samples
+  out of a buffer.
+- `bf91c27`: the voice loop takes samples from that buffer itself, with
+  no call in the loop; around a call x86-64 keeps every float on the
+  stack.
+- `7560964`: `Synth::silent` lets tracks, BEEP and the mix leave out
+  synthesizers with no voice and sources that would add zeros, and the
+  loops for a gain that does not move have nothing else in them. The
+  buffers start at +0 and only take sums, so they never hold -0, and
+  adding a zero leaves them as they are.
+- `3a04a87`: a sound system keeps what its notes decode, in chunks of
+  1024 samples, at most 4 MiB, for the next notes of the same waveforms
+  (`sound::decoded`). A waveform no note plays makes way, the one
+  played longest ago first; with every waveform kept in use, a note
+  decodes on alone. A loop takes the kept samples when its history is
+  the first pass's, as for all 742 looping waveforms of the bank.
+- `71f1e60`: PSG and WAVSET notes go as runs of a step of the envelope,
+  their state in locals.
+
+Sound's instructions a frame, x86-64, `c92ad81` against `71f1e60`:
+
+| Case | Before | After | Change |
+|---|---|---|---|
+| SILENT | 93 600 | 30 900 | -67% |
+| IDLE2 | 114 200 | 31 100 | -73% |
+| BGM1 | 651 000 | 207 500 | -68% |
+| MULTI | 2 691 600 | 526 700 | -80% |
+| MML | 2 458 700 | 866 500 | -65% |
+| REVERB | 1 883 000 | 729 700 | -61% |
+| FADES | 1 273 600 | 711 200 | -44% |
+| TENSMA | 2 191 700 | 659 900 | -70% |
+| RYUSI | 688 700 | 144 000 | -79% |
+| SOLIDGUNNER_V | 4 769 800 | 1 179 400 | -75% |
+| NK8_ROGUE2020 | 1 918 100 | 477 600 | -75% |
+| MAMANATSU | 895 200 | 230 400 | -74% |
+
+The frame outside the interpreter (sound, animations, VSYNC and the
+rest), x86-64 microseconds, `c92ad81` against `71f1e60`, with the sound
+alone in brackets:
+
+| Game | Before | After |
+|---|---|---|
+| TENSMA | 127 (125) | 40 (38) |
+| RYUSI | 35 (34) | 9 (9) |
+| SOLIDGUNNER_V | 280 (272) | 79 (71) |
+| NK8_ROGUE2020 | 117 (114) | 32 (29) |
+| MAMANATSU | 57 (54) | 17 (15) |
+
+Whole frames on aarch64 (the program, the sound, and the bench's CPU
+drawing), instructions a frame over the frames given, `c92ad81` against
+`71f1e60`, each case's checksums the same before and after:
+
+| Case | Frames | Before | After | Change |
+|---|---|---|---|---|
+| SILENT | 100-160 | 142 300 | 77 000 | -65 300 |
+| IDLE2 | 200-260 | 162 600 | 77 300 | -85 300 |
+| BGM1 | 100-160 | 637 000 | 251 800 | -385 300 |
+| MULTI | 100-160 | 2 423 000 | 542 900 | -1 880 100 |
+| MML | 100-160 | 2 102 900 | 936 000 | -1 166 900 |
+| REVERB | 100-160 | 1 345 700 | 676 000 | -669 700 |
+| FADES | 100-160 | 695 100 | 361 400 | -333 700 |
+| TENSMA | 510-530 | 18 803 500 | 17 707 400 | -1 096 100 |
+
+TENSMA's 1.1 million are 7 to 8% of what an A35 runs in a frame. The sound
+checksums of MULTI, MML, REVERB, FADES, SOLIDGUNNER_V and NK8_ROGUE2020
+over their whole runs are the same on aarch64 as on x86-64, before and
+after. TENSMA's differs between the two machines, the same before and
+after. Its notes use `powf`, `sin` and `exp2` more than the others',
+and the two C libraries' last bits may differ; this was not followed
+further.
+
+The decoded waveforms took at most 3.5 MB in TENSMA, 1.3 MB in MML,
+0.96 MB in SOLIDGUNNER_V and 31 KB in NK8_ROGUE2020; no chunk was
+refused for the budget. A voice now costs about 41 x86-64 instructions a
+sample, and the voice loop is 82% of TENSMA's sound.
+
+Where the rest goes, for later work:
+
+- **The voice loop**, about 30 instructions a sample of each voice in
+  its loop: interpolating, the gains' slide, and adding into the mix,
+  whose loads and stores take a third of it. Mixing two to four voices in
+  one pass over the buffers would share the loads and stores, with each
+  voice's sums as they are.
+- **PSG and WAVSET notes**, 0.46 of FADES's 0.71 million: the filter's
+  four taps, and converting the position, an `f64`, to an index and a
+  phase each sample.
+- **The reverb**, 0.32 of REVERB's 0.73 million while `EFCEN` is on, a
+  sample at a time over six taps, four combs and two all-passes a side,
+  and 0.15 million more in `render_frame` for the effector's buses. A
+  tail that has died to exactly zero could be left out until something
+  is sent again.
+- **The first note of a waveform** decodes a chunk ahead, about 10 000
+  instructions, where it decoded 14 samples before.
+
 ## Tried and left out
 
 Each of these was measured and not kept.
 
+- **The sampler's voice state in locals, with the reader's call left in
+  the loop**: TENSMA's sound went from 1.45 to 1.55 million x86-64
+  instructions a frame, as the floats still went to the stack around
+  the call. Taking the decoded samples in the loop and calling the
+  reader outside it (`bf91c27`) gave 1.23 million (2026-11-17).
 - **The table in a variable's lowest bit** instead of its highest, to find
   the table's place in one instruction fewer: on top of `cc60440`, loops
   moved by -2.3% (VARRAY's) to +2.7% (an empty FOR); on top of the
