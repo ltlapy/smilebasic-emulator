@@ -29,6 +29,21 @@ pub trait Host {
     /// [`Value::Default`]. Must return exactly `want.count()` values.
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>>;
 
+    /// [`Host::call`], with the values put in `out`, which is empty and
+    /// kept by the VM from call to call, so that a host can give a result
+    /// without allocating a list for it. What is in `out` after an error
+    /// is dropped.
+    fn call_into(
+        &mut self,
+        id: u32,
+        args: &[Value],
+        want: Want,
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
+        *out = self.call(id, args, want)?;
+        Ok(())
+    }
+
     /// The work the VM has done so far, given before each [`Host::call`]
     /// when [`crate::vm::Vm::report_work`] asks for it.
     fn work(&mut self, _work: Work) {}

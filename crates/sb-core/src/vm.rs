@@ -433,6 +433,9 @@ pub struct Vm {
     trig_reductions: u64,
     join_chars: u64,
     str_compares: u64,
+    /// Where [`Host::call_into`] puts a host call's results, empty between
+    /// calls: kept to be used again rather than allocated for each call.
+    host_results: Vec<Value>,
     /// Whether the host hears of [`Vm::work`] before each of its calls,
     /// and then [`charges`].
     report_work: bool,
@@ -718,6 +721,7 @@ impl Vm {
             trig_reductions: 0,
             join_chars: 0,
             str_compares: 0,
+            host_results: Vec::new(),
             charges: &[],
             report_work: false,
             on_break: None,
@@ -3666,28 +3670,28 @@ impl Vm {
             host.work(self.work());
         }
         host.set_data_pos(self.data_pos, self.own_frame().map(|f| f.def));
-        let results = host.call(id, &self.stack[at..], want);
+        let called = host.call_into(id, &self.stack[at..], want, &mut self.host_results);
         self.data_moved(host);
-        let results = match results {
-            Ok(results) => results,
-            Err(e) => {
-                let e = e.in_args(&self.stack[at..]);
-                return Err(self.failed_with_args(e, at));
-            }
-        };
+        if let Err(e) = called {
+            self.host_results.clear();
+            let e = e.in_args(&self.stack[at..]);
+            return Err(self.failed_with_args(e, at));
+        }
         if host.retry() {
+            self.host_results.clear();
             return Ok(Some(RETRY));
         }
         self.stack.truncate(at);
         // As `push_results`, without going through a list for none or one.
+        let results = &mut self.host_results;
         if results.len() != want.count() {
+            results.clear();
             return Err(ErrorKind::IllegalFunctionCall.into());
         }
-        let mut results = results;
         match results.len() {
             0 => {}
             1 => self.stack.push(results.pop().expect("one value")),
-            _ => self.stack.extend(results),
+            _ => self.stack.append(results),
         }
         self.pc += 1;
         if self.report_work && host.out_of_time() {
