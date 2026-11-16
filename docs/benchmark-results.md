@@ -698,7 +698,8 @@ misses are not modeled: the target's rows lie in 240 different 4 KB pages.
 
 So this set changed no stride. The rule for changing it was a gain of a
 third or more in GCOPY or GFILL at a padded stride on the device, in every
-process; the device met it ([below](#grp-rows-on-the-device)).
+process; the device met it ([below](#grp-rows-on-the-device)), and the
+stride became 2112 ([GRP rows padded](#grp-rows-padded)).
 
 What did change, as it costs instructions whatever the caches do:
 
@@ -797,6 +798,108 @@ cluster: the gain is real, as the instruction counts fell 27.5% with it.
 GFILL's 3 to 4% is under the noise rule's 10%, though its counts fell
 10.5%. If the scenes save what the kernels do at 2064 or 2112, GCOPY
 would lose 12 to 15 ms of its 46 and GFILL about 3 ms of its 12 to 14.
+
+#### GRP rows padded
+
+`page::Page` now owns a page's buffer, and rows lie `page::STRIDE` pixels
+apart ([renderer.md](renderer.md#frame-data)). To choose the stride,
+the handheld ran four builds, alternating, six runs each, with the method of
+the set above: main (`caa624c`), the branch at stride 2048, and the branch
+at 2064 and 2112. Median `run_us` over frames 10 to 69, in ms:
+
+| Scene | `caa624c` | 2048 | 2064 | 2112 | Change at 2112, median |
+|---|---|---|---|---|---|
+| GCOPY | 46.32 (38.61 to 46.59) | 46.51 | 23.00 (22.76 to 23.26) | 22.15 (22.06 to 22.61) | -52.2% |
+| GFILL | 12.48 (11.63 to 13.44) | 13.14 | 9.90 (9.80 to 10.04) | 9.59 (9.52 to 9.73) | -23.2% |
+| GLOAD | 2.57 (2.52 to 2.59) | 2.54 | 2.70 (2.69 to 2.72) | 2.71 (2.18 to 2.72) | +5.3% |
+| GUPLOAD | 0.22 | 0.22 | 0.24 | 0.23 | +5.6% |
+| GARRAY | 10.18 | 9.40 | 9.37 | 9.31 | -8.5% |
+| GPUTCHR | 11.87 | 11.91 | 11.88 | 11.92 | +0.4% |
+| SPMOVE | 9.17 | 9.20 | 9.33 | 9.17 | -0.1% |
+| VINT | 7.76 | 7.89 | 7.77 | 7.76 | 0.0% |
+
+Every checksum is the same in all four builds.
+
+- **GCOPY and GFILL.** At 2112 every run is faster than every run of
+  `caa624c` and of the branch at 2048, which fall in the two clusters seen
+  before (GFILL at 11.6 to 11.7 and 13.1 to 13.4 ms; GCOPY once at 38.6,
+  otherwise 46.0 to 47.2). The padded builds show one cluster each. 2112 is
+  ahead of 2064 in every run, by 4% in GCOPY and 3% in GFILL, as it was in
+  the standalone kernels (6% and 5%), which share no code layout with the
+  scenes.
+- **GLOAD** stays memory bound. Its usual time moves from 2.52 to 2.59 ms to
+  2.69 to 2.72 at both padded strides, 0.15 ms; one run in each of the
+  builds at 2048 and 2112 fell in a fast cluster near 2.1 ms. Its
+  instructions do not change. GCOPY saves 24 ms where GLOAD loses 0.15.
+- **GARRAY** gains from the array being filled a row at a time
+  (`Graphics::array`, `mirror_page`), 8.9% fewer aarch64 instructions,
+  whatever the stride.
+- **GUPLOAD**'s 0.01 to 0.02 ms is of the size its runs differ by.
+
+The stride is 2112: 2048 + 64 pixels, 256 bytes, so that successive rows
+start 4 sets of the L1 apart. A page takes 2048 x 2112 x 4 bytes, 16.5 MiB,
+512 KiB (3.1%) more than before; six pages in use, 3 MiB more. 2064 would
+cost 128 KiB (0.8%) a page for 3 to 4% less of the gain. GARRAY arrays,
+files and textures keep 2048 pixels a row. `FREEMEM` counts a program's
+strings and arrays only, so pages never entered it.
+
+The branch as merged, against main (`9c1b55a`) on the handheld, six runs
+each, alternating:
+
+| Scene | `9c1b55a` (ms) | Branch (ms) | Change, median |
+|---|---|---|---|
+| GCOPY | 46.54 (45.81 to 47.54) | 22.11 (22.01 to 22.29) | -52.5% |
+| GFILL | 11.27 (10.94 to 12.65) | 9.65 (9.56 to 9.82) | -14.3% |
+| GLOAD | 2.56 (2.55 to 2.58) | 2.70 (2.19 to 2.71) | +5.4% |
+| GUPLOAD | 0.22 (0.19 to 0.22) | 0.24 (0.22 to 0.24) | +9.5% |
+| GARRAY | 10.13 (10.09 to 10.19) | 9.37 (9.15 to 9.45) | -7.5% |
+| GPUTCHR | 12.04 | 11.98 | -0.5% |
+| SPMOVE | 9.05 | 9.07 | +0.2% |
+| VINT | 7.77 | 7.77 | +0.1% |
+
+Every checksum is the same for both builds. GFILL's main runs fell mostly
+in the fast cluster this time; every run of the branch is still faster than
+every one of main's. GUPLOAD's 0.02 ms is of the size of its runs' spread.
+
+Instructions a frame, in millions, x86-64 over frames 3 to 83 and aarch64
+(qemu, `setarch -R`) over frames 3 to 6, main against the branch:
+
+| Scene | x86-64, `9c1b55a` | x86-64, branch | Change | aarch64, `9c1b55a` | aarch64, branch | Change |
+|---|---|---|---|---|---|---|
+| GFILL | 14.08 | 13.74 | -2.4% | 12.79 | 12.78 | -0.1% |
+| GALPHA | 83.00 | 83.02 | 0.0% | 57.70 | 57.68 | 0.0% |
+| GLINE | 22.19 | 22.07 | -0.5% | 20.53 | 20.40 | -0.6% |
+| GCIRCLE | 18.13 | 18.03 | -0.5% | 16.58 | 16.46 | -0.7% |
+| GTRI | 32.43 | 32.24 | -0.6% | 26.12 | 26.14 | +0.1% |
+| GPUTCHR | 27.05 | 26.95 | -0.4% | 26.75 | 26.77 | +0.1% |
+| GCOPY | 17.23 | 17.18 | -0.3% | 13.16 | 12.85 | -2.4% |
+| GLOAD | 7.91 | 7.90 | -0.1% | 7.47 | 7.46 | -0.2% |
+| GUPLOAD | 1.92 | 1.92 | +0.1% | 1.44 | 1.43 | -0.1% |
+| GARRAY | 15.29 | 14.15 | -7.5% | 14.27 | 13.00 | -8.9% |
+| SPMOVE | 78.07 | 78.07 | 0.0% | 71.58 | 71.58 | 0.0% |
+| TPRINT | 42.37 | 42.37 | 0.0% | 28.44 | 28.50 | +0.2% |
+| VINT | 8.74 | 8.74 | 0.0% | 8.14 | 8.14 | 0.0% |
+
+On x86-64 no other scene of the 32 moves by more than 0.13%, and every
+checksum is the same; TPERF's stay `e8e5f6dc467db861` at 400 frames,
+`a6e1ed07824b1ad8` at 3600 and `5d9bb17a39eefb70` at 10500. Taking rows
+whole from `Page` first cost GCOPY and GTRI 0.8 and 1.4% on x86-64, and
+offsets worked out in 64 bits cost GPUTCHR 1.5% on aarch64, until
+rectangles were checked once (`Page::spans`) and single pixels placed in
+32 bits.
+
+Uploads to the GPU pass the pitch. On GLES2 they go in bands of at most
+64 KiB, as SDL's driver copies a rectangle to a buffer of its own whenever
+the pitch is not the rectangle's width
+([renderer.md](renderer.md#grp-pages)). The device's GLES2 self-test
+passes all 26 scenes with main and with the branch. Two of its counts of
+pixels off differ: blur, 52048 off by one with main and 52072 with the
+branch, and 4x4 text, 212 far against 208. Builds of the branch at stride
+2048 with the bands and at 2112 without them give 208 too, and blur's
+count moves between those builds (52072, 52068) although their textures
+hold the same bytes. On the PC's GLES2 driver, main and the branch give
+the same 4x4 text count and blur counts 4 pixels apart. So stride and
+bands do not cause the 4x4 text change; what does was not found.
 
 ### Calls, from `48f7cfc`
 
@@ -961,7 +1064,7 @@ Instructions a frame, in millions, program and CPU drawing:
 |---|---|---|---|---|---|---|
 | VINT | 8.98 | 8.93 | -0.6% | 9.44 | 9.53 | +0.9% |
 | VREAL | 7.48 | 7.45 | -0.5% | 7.66 | 7.90 | +3.2% |
-| VSTR | 12.86 | 12.86 | +0.0% | 11.46 | 11.60 | +1.2% |
+| VSTR | 12.86 | 12.86 | 0.0% | 11.46 | 11.60 | +1.2% |
 | VARRAY | 13.58 | 13.61 | +0.2% | 14.19 | 14.32 | +0.9% |
 | VDEF | 7.01 | 5.38 | -23.3% | 7.66 | 5.85 | -23.6% |
 | VVAR | - | - | - | 33.41 | 33.72 | +0.9% |
@@ -969,11 +1072,11 @@ Instructions a frame, in millions, program and CPU drawing:
 | SPROT | - | - | - | 304.20 | 303.38 | -0.3% |
 | SPCHURN | - | - | - | 108.66 | 108.19 | -0.4% |
 | SPHIT | 51.31 | 50.95 | -0.7% | 55.52 | 55.11 | -0.7% |
-| SPANIM | - | - | - | 294.66 | 294.65 | -0.0% |
+| SPANIM | - | - | - | 294.66 | 294.65 | 0.0% |
 | TPRINT | - | - | - | 42.42 | 42.36 | -0.1% |
 | TPUT | 32.33 | 31.87 | -1.4% | 52.90 | 52.02 | -1.7% |
-| TSCROLL | - | - | - | 44.76 | 44.75 | -0.0% |
-| GAME | 20.27 | 20.14 | -0.6% | 28.56 | 28.57 | +0.0% |
+| TSCROLL | - | - | - | 44.76 | 44.75 | 0.0% |
+| GAME | 20.27 | 20.14 | -0.6% | 28.56 | 28.57 | 0.0% |
 
 VDEF, whose loop is a function call and a command call with two OUTs, goes
 down by a quarter. The other scenes move by under 2% of their frames: their

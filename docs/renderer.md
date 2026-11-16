@@ -45,10 +45,21 @@ All of it lives in `Runtime` (`crates/sb-runtime/src/runtime.rs`):
 | BACKCOLOR, FADE | `Runtime::back_color`, `screen::Fade` | |
 | XSCREEN | `screen::ScreenMode` | Width, height, sample magnification, display filter, aspect. The frame is `width*sample` by `height*sample` (`ScreenMode::frame`). |
 
-GRP pages are 6 pages of 2048x2048 `u32` (`0xAARRGGBB`), 16 MiB each. A page
-takes memory only once something is drawn on it (`Graphics::is_blank`). Each
-page has a change counter (`Graphics::changes`). GARRAY arrays mirror pages; the
-shown page takes their writes on `GUPDATE`.
+GRP pages are 6 pages of 2048x2048 `u32` (`0xAARRGGBB`). A page takes memory
+only once something is drawn on it (`Graphics::is_blank`). Each page has a
+change counter (`Graphics::changes`). GARRAY arrays mirror pages; the shown page
+takes their writes on `GUPDATE`.
+
+`page::Page` (`page.rs`) owns a page's buffer. Its rows lie `page::STRIDE`
+pixels apart, 2112, so that the same column of successive rows does not fall
+in one set of a small cache
+([benchmark-results.md](benchmark-results.md#grp-rows-padded)).
+That makes a page 16.5 MiB (2048 x 2112 x 4 bytes) instead of 16 MiB. The 64
+pixels after each row are never written or read. Code takes rows from `Page`
+as slices of 2048 pixels (`row`, `rows`, `spans`); the sprite rasterizer and
+GPU uploads step through the buffer by `page::at` and `page::STRIDE`. Files,
+GARRAY arrays, `GSAVE` and `GLOAD` keep SmileBASIC's layout of 2048 pixels a
+row, copied a row at a time.
 
 SmileBASIC 4 has no BG layer (SmileBASIC 3's BG screens are not part of it), so
 the emulator has none. Programs make tile maps from text screens with `TPAGE` or
@@ -355,6 +366,12 @@ The GPU path mirrors each page in use as a 2048x2048 texture:
   GPUTCHR and GAME are no slower than the CPU. With the path off, the marks cost
   at most 0.7% in instructions on GRP scenes; GLINE, GCIRCLE and GPUTCHR got
   cheaper, as they now do less per pixel.
+- **Pitch.** Uploads pass the page's row pitch, `page::STRIDE * 4` bytes.
+  SDL's GLES2 driver cannot unpack with a pitch of its own, so for any
+  rectangle it first copies the rows into a buffer it allocates. On GLES2 the
+  path sends at most 64 KiB of rows a call (`GLES2_BAND`), so that buffer
+  stays small and in the cache. Desktop GL unpacks with the pitch, and SDL's
+  GPU driver copies into a transfer buffer either way.
 - **Memory.** A blank page needs no texture (sprites on it draw nothing). Six
   pages in use are 96 MiB of textures, allocated on first use.
 
