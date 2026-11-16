@@ -26,6 +26,7 @@ use ab_glyph::{Font as _, FontRef, PxScale, point};
 use crate::extra_glyphs::{self, BundledSet};
 use crate::graphics::Graphics;
 use crate::half_width::HalfGlyphs;
+use crate::page::Page;
 use crate::sbfile::{self, DataValues, FileError};
 
 /// Width and height of the font page in pixels.
@@ -408,7 +409,7 @@ impl Font {
     pub fn pages(&self) -> &Graphics {
         self.1.0.get_or_init(|| {
             let mut grp = Graphics::default();
-            grp.set_page(crate::text::FONT_PAGE, self.page_image());
+            grp.set_page(crate::text::FONT_PAGE, Page::from_rows(self.page_image()));
             Rc::new(grp)
         })
     }
@@ -975,7 +976,7 @@ mod tests {
             }
         }
         let mut grp = Graphics::default();
-        grp.set_page(FONT_PAGE, page);
+        grp.set_page(FONT_PAGE, crate::page::Page::from_rows(page));
         for code in codes {
             let n = u32::from(sb4[usize::from(code)]);
             for size in [FontSize::Small, FontSize::Large] {

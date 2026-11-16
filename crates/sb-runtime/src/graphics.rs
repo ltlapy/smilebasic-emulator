@@ -380,10 +380,9 @@ impl Graphics {
         self.pages[page].pixel(x, y)
     }
 
-    /// A page's pixels row by row as shown, 2048 to a row; empty while the
-    /// page is blank.
-    pub fn page(&self, page: usize) -> &[u32] {
-        self.pages[page].raw()
+    /// A page's pixels as shown.
+    pub fn page(&self, page: usize) -> &Page {
+        &self.pages[page]
     }
 
     /// A pixel of a page as programs read it: from its GARRAY array if it
@@ -452,10 +451,10 @@ impl Graphics {
         c.filled[y] & want
     }
 
-    /// Replaces a whole page, such as GRP4 with the default sprite image.
-    /// `pixels` holds 2048x2048 pixels row by row.
-    pub fn set_page(&mut self, page: usize, pixels: Vec<u32>) {
-        self.pages[page] = Page::from_rows(pixels);
+    /// Replaces a whole page, such as GRP4 with the default sprite image;
+    /// a blank one empties it, as [`Graphics::clear_page`] does.
+    pub fn set_page(&mut self, page: usize, pixels: Page) {
+        self.pages[page] = pixels;
         self.changes[page] += 1;
         self.dirty[page].set(Dirty::ALL);
         self.mirror_page(page);
@@ -1725,7 +1724,7 @@ mod tests {
     /// Runs `draw` and checks that every pixel it changed, on any page, is in
     /// a tile marked as changed.
     fn check_marks(g: &mut Graphics, name: &str, draw: impl FnOnce(&mut Graphics)) {
-        let before: Vec<Vec<u32>> = (0..PAGES).map(|p| g.page(p).to_vec()).collect();
+        let before: Vec<Page> = (0..PAGES).map(|p| g.page(p).clone()).collect();
         (0..PAGES).for_each(|p| {
             g.take_dirty(p);
         });
@@ -1734,9 +1733,12 @@ mod tests {
         for (p, was) in before.iter().enumerate() {
             let dirty = g.take_dirty(p);
             let now = g.page(p);
-            let at = |pixels: &[u32], i: usize| pixels.get(i).copied().unwrap_or(0);
-            for i in 0..was.len().max(now.len()) {
-                if at(was, i) != at(now, i) {
+            if was.is_blank() && now.is_blank() {
+                continue;
+            }
+            let (was, now) = (was.to_rows(), now.to_rows());
+            for i in 0..was.len() {
+                if was[i] != now[i] {
                     changed += 1;
                     let (x, y) = (
                         (i % GRP_SIZE as usize) as i32,
@@ -1770,7 +1772,10 @@ mod tests {
         ] {
             let mut g = Graphics::default();
             for page in 0..PAGES {
-                g.set_page(page, vec![0xFF10_2030; (GRP_SIZE * GRP_SIZE) as usize]);
+                g.set_page(
+                    page,
+                    Page::from_rows(vec![0xFF10_2030; (GRP_SIZE * GRP_SIZE) as usize]),
+                );
             }
             g.clip = clip;
             if arrayed {
@@ -1859,7 +1864,10 @@ mod tests {
             check("LOADG", &|g| g.put_image(0, (140, 150), &image));
             check("LOADG off", &|g| g.put_image(0, (2047, 2047), &image));
             check("page replaced", &|g| {
-                g.set_page(2, vec![RED; (GRP_SIZE * GRP_SIZE) as usize])
+                g.set_page(
+                    2,
+                    Page::from_rows(vec![RED; (GRP_SIZE * GRP_SIZE) as usize]),
+                )
             });
             check("page emptied", &|g| g.clear_page(2));
             check("page drawn again", &|g| {
@@ -2957,7 +2965,7 @@ mod tests {
         let base: Vec<u32> = (0..GRP_SIZE * GRP_SIZE)
             .map(|i| (i as u32).wrapping_mul(0x9E37_79B1))
             .collect();
-        g.set_page(FONT_PAGE, font.page_image());
+        g.set_page(FONT_PAGE, Page::from_rows(font.page_image()));
         (g, base)
     }
 
@@ -3010,8 +3018,11 @@ mod tests {
         // drawing them on the page they come from is no different from
         // drawing glyphs on the font page.
         for g in [&mut slow, &mut fast] {
-            g.set_page(0, base.clone());
-            g.set_page(3, base.iter().map(|p| p.rotate_left(7)).collect());
+            g.set_page(0, Page::from_rows(base.clone()));
+            g.set_page(
+                3,
+                Page::from_rows(base.iter().map(|p| p.rotate_left(7)).collect()),
+            );
         }
         for case in 0..1500 {
             let clip = chars_clip(&mut next);
@@ -3083,7 +3094,7 @@ mod tests {
             // Glyphs drawn over would go on to change the rest.
             if target == FONT_PAGE {
                 for g in [&mut slow, &mut fast] {
-                    g.set_page(FONT_PAGE, font.page_image());
+                    g.set_page(FONT_PAGE, Page::from_rows(font.page_image()));
                 }
             }
         }
@@ -3103,8 +3114,8 @@ mod tests {
                     .collect();
                 for g in [&mut slow, &mut fast] {
                     g.target = target;
-                    g.set_page(0, base.clone());
-                    g.set_page(FONT_PAGE, font.page_image());
+                    g.set_page(0, Page::from_rows(base.clone()));
+                    g.set_page(FONT_PAGE, Page::from_rows(font.page_image()));
                 }
                 let (size, scale) = (FontSize::Large, (2, 2));
                 let y = 10;
@@ -3189,7 +3200,7 @@ mod tests {
     fn user_characters_under_tpage_minus_one_draw_nothing() {
         let font = Font::fallback();
         let (mut g, base) = chars_pages(&font);
-        g.set_page(0, base.clone());
+        g.set_page(0, Page::from_rows(base.clone()));
         let user = UserPage {
             page: -1,
             origin: (0, 0),
@@ -3208,7 +3219,7 @@ mod tests {
             Blend::Normal,
             1,
         );
-        assert!(g.page(0) == base.as_slice());
+        assert!(g.page(0).to_rows() == base);
         assert_eq!(g.proportional_width(&font, &[code], large, 1, 1), 16);
     }
 
@@ -3307,7 +3318,7 @@ mod tests {
     fn transparent_color_in_mode_1_draws_nothing() {
         let font = Font::fallback();
         let (mut g, base) = chars_pages(&font);
-        g.set_page(0, base.clone());
+        g.set_page(0, Page::from_rows(base.clone()));
         let text = [0x41, 0x49, 0x20];
         for color in [0x00FF_FFFF, 0] {
             g.put_chars(
@@ -3332,7 +3343,7 @@ mod tests {
                 1,
             );
         }
-        assert!(g.page(0) == base.as_slice());
+        assert!(g.page(0).to_rows() == base);
     }
 
     /// Scales too large to draw pixel by pixel, against what each pixel
@@ -3353,7 +3364,7 @@ mod tests {
             let x = chars_pos(&mut next, clip.x0, clip.x1, 16 * sx);
             let y = chars_pos(&mut next, clip.y0, clip.y1, 16 * sy);
             g.clip = clip;
-            g.set_page(0, base.clone());
+            g.set_page(0, Page::from_rows(base.clone()));
             g.put_chars(
                 &font,
                 UserPage::DEFAULT,

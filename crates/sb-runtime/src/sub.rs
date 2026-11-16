@@ -39,7 +39,7 @@ impl Runtime {
             rt.system.fix();
         }
         if let Some(page) = self.sprite_page() {
-            rt.set_sprite_page(page.to_vec());
+            rt.put_sprite_page(page.clone());
         }
         rt.sprites = Sprites::new(self.sprites.default_defs().to_vec());
         rt.sound.set_instruments(self.sound.instruments().cloned());
@@ -171,10 +171,7 @@ fn copy_across(
         }
         1 => {
             let (from, to) = (index(from, PAGES)?, index(to, PAGES)?);
-            match source.grp.page(from) {
-                [] => dest.grp.clear_page(to),
-                pixels => dest.grp.set_page(to, pixels.to_vec()),
-            }
+            dest.grp.set_page(to, source.grp.page(from).clone());
         }
         2 => {
             let (from, to) = (index(from, DEFS)?, index(to, DEFS)?);

@@ -3,6 +3,7 @@
 use crate::compose::{self, Paint, Placement, draw_image, draw_texels};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, GRP_SIZE, Graphics, PIECE, Tint, TintJob};
+use crate::page::{self, STRIDE};
 use crate::scene::SpriteItem;
 use crate::sprites::attr;
 
@@ -71,7 +72,7 @@ pub fn draw_in(
                 if let Some((page, u, v)) = source.plain() {
                     let (fb, m, sample, place) = (self.fb, self.m, self.sample, self.place);
                     return compose::project_image(fb, m, sample, place, bw, bh, |x, y| {
-                        let p = page[(v + y as usize) * GRP_SIZE as usize + u + x as usize];
+                        let p = page[page::at(u + x as usize, v + y as usize)];
                         (p >> 24 != 0).then(|| paint(p))
                     });
                 }
@@ -191,6 +192,7 @@ fn texel(v: f64) -> i32 {
 
 /// Where a sprite's pixels come from.
 struct Source<'a> {
+    /// The page's pixels as they lie, see [`crate::page`].
     page: &'a [u32],
     /// Which page it is; `None` for GRP-1.
     page_no: Option<usize>,
@@ -209,7 +211,7 @@ impl Source<'_> {
     /// For a sprite whose page is GRP-1 or one that is not blank.
     fn new<'a>(s: &SpriteItem, grp: &'a Graphics) -> Source<'a> {
         let (page, white) = match usize::try_from(s.page) {
-            Ok(p) => (grp.page(p), false),
+            Ok(p) => (grp.page(p).raw(), false),
             Err(_) => (&[][..], true),
         };
         Source {
@@ -233,7 +235,7 @@ impl Source<'_> {
             && self.attr & (attr::ROTATION | attr::REVH | attr::REVV) == 0
             && on_page(self.u, self.w)
             && on_page(self.v, self.h)
-            && self.page.len() == (GRP_SIZE * GRP_SIZE) as usize;
+            && self.page.len() == page::LEN;
         plain.then_some((self.page, self.u as usize, self.v as usize))
     }
 
@@ -245,11 +247,11 @@ impl Source<'_> {
         let on = !self.white
             && on_page(self.u, self.w)
             && on_page(self.v, self.h)
-            && self.page.len() == (GRP_SIZE * GRP_SIZE) as usize;
+            && self.page.len() == page::LEN;
         on.then(|| {
             let place = |lx, ly| {
                 let (x, y) = self.page_xy(lx, ly);
-                y * GRP_SIZE + x
+                page::at(x as usize, y as usize) as i32
             };
             let base = place(0, 0);
             (base, place(1, 0) - base, place(0, 1) - base)
@@ -307,7 +309,7 @@ impl Source<'_> {
             _ => None,
         };
         match (on(x), on(y)) {
-            (Some(x), Some(y)) if !self.repeat => self.page[y * GRP_SIZE as usize + x],
+            (Some(x), Some(y)) if !self.repeat => self.page[page::at(x, y)],
             _ => 0,
         }
     }
@@ -319,7 +321,7 @@ impl Source<'_> {
             return 0xFFFF_FFFF;
         }
         match (self.wrap(x), self.wrap(y)) {
-            (Some(x), Some(y)) => self.page[y * GRP_SIZE as usize + x],
+            (Some(x), Some(y)) => self.page[page::at(x, y)],
             _ => self.pixel_off_page(x, y),
         }
     }
@@ -349,7 +351,7 @@ fn draw_upright(
         return;
     }
     let grid = &*grid;
-    let stride = GRP_SIZE as usize;
+    let stride = STRIDE;
     // A tie just before the page's first texel reads that one.
     let at = |v: i32, step: usize| match source.wrap(v) {
         Some(v) => v * step,
@@ -420,7 +422,6 @@ fn draw_upright(
                 return;
             }
             if let Some((run, page_no)) = self.run {
-                let stride = GRP_SIZE as usize;
                 let shown = &self.cols[run.at..][..run.len];
                 let (first, last) = (shown[0], shown[run.len - 1]);
                 let (p0, p1) = (first / PIECE, last / PIECE);
@@ -439,7 +440,7 @@ fn draw_upright(
                     if row == NONE {
                         continue;
                     }
-                    let mut pieces = (self.grp).pieces(page_no, row / stride, p0, p1);
+                    let mut pieces = (self.grp).pieces(page_no, row / STRIDE, p0, p1);
                     let at = fy * width + self.grid.x0 as usize + run.at;
                     let line = &mut pixels[at..at + run.len];
                     let put = |dst: &mut u32, p: u32| {

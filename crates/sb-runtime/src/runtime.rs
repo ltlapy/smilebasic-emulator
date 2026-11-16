@@ -23,6 +23,7 @@ use crate::half_width::HalfGlyphs;
 use crate::hint;
 use crate::input::Input;
 use crate::line::{self, LineEdit, codes};
+use crate::page::Page;
 use crate::palette::Part;
 use crate::program_font::FontPatch;
 use crate::raster::{CpuRasterizer, RasterInput, Rasterizer, SceneBackend};
@@ -971,7 +972,7 @@ pub struct Runtime {
     /// is shown.
     pub(crate) panel_at: Option<u32>,
     /// GRP4 at start-up, which ACLS puts back.
-    sprite_page: Option<Vec<u32>>,
+    sprite_page: Option<Page>,
 }
 
 /// The text screens at start-up: the console in front of everything else
@@ -1520,13 +1521,18 @@ impl Runtime {
 
     /// The sprite image on GRP4, also put back by ACLS.
     /// The page that sprites start on, as set by [`Runtime::set_sprite_page`].
-    pub(crate) fn sprite_page(&self) -> Option<&[u32]> {
-        self.sprite_page.as_deref()
+    pub(crate) fn sprite_page(&self) -> Option<&Page> {
+        self.sprite_page.as_ref()
     }
 
+    /// Sets the sprite image from 2048x2048 pixels row by row.
     pub fn set_sprite_page(&mut self, pixels: Vec<u32>) {
-        self.grp.set_page(SPRITE_PAGE, pixels.clone());
-        self.sprite_page = Some(pixels);
+        self.put_sprite_page(Page::from_rows(pixels));
+    }
+
+    pub(crate) fn put_sprite_page(&mut self, page: Page) {
+        self.grp.set_page(SPRITE_PAGE, page.clone());
+        self.sprite_page = Some(page);
     }
 
     /// XSCREEN: the console is resized to fill the screen, keeping its
@@ -1574,7 +1580,7 @@ impl Runtime {
             self.grp.clear_page(FONT_PAGE);
             let page = self.font_page();
             if page.iter().any(|&p| p != 0) {
-                self.grp.set_page(FONT_PAGE, page);
+                self.grp.set_page(FONT_PAGE, Page::from_rows(page));
             }
         }
         self.grp.reset_state();
@@ -1689,7 +1695,8 @@ impl Runtime {
     fn with_font_page(mut self) -> Runtime {
         let page = self.font_page();
         if page.iter().any(|&p| p != 0) {
-            self.grp.set_page(crate::text::FONT_PAGE, page);
+            self.grp
+                .set_page(crate::text::FONT_PAGE, Page::from_rows(page));
         }
         self
     }
@@ -1721,14 +1728,11 @@ impl Runtime {
             return;
         }
         let original = self.font.page_image();
-        let mut page = match self.grp.page(FONT_PAGE) {
-            [] => vec![0; original.len()],
-            pixels => pixels.to_vec(),
-        };
+        let mut page = self.grp.page(FONT_PAGE).to_rows();
         self.font_patch.restore(&mut page, &original);
         patch.apply(&mut page);
         self.font_patch = patch;
-        self.grp.set_page(FONT_PAGE, page);
+        self.grp.set_page(FONT_PAGE, Page::from_rows(page));
     }
 
     /// The screen's size in pixels, before XSCREEN's sampling.
@@ -2375,16 +2379,13 @@ impl Runtime {
             let before = self.font.page_image();
             self.font = font;
             let after = self.font.page_image();
-            let mut page = match self.grp.page(FONT_PAGE) {
-                [] => vec![0; after.len()],
-                pixels => pixels.to_vec(),
-            };
+            let mut page = self.grp.page(FONT_PAGE).to_rows();
             for ((p, old), new) in page.iter_mut().zip(&before).zip(&after) {
                 if old != new {
                     *p = *new;
                 }
             }
-            self.grp.set_page(FONT_PAGE, page);
+            self.grp.set_page(FONT_PAGE, Page::from_rows(page));
         }
         self.apply_program_font();
     }

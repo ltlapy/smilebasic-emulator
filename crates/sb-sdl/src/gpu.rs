@@ -57,6 +57,7 @@ use sb_runtime::filter::{self, BlurKernel, FilterOp, MosaicGrid};
 use sb_runtime::font::FontSize;
 use sb_runtime::framebuffer::Framebuffer;
 use sb_runtime::graphics::{COUNT_BITS, Clip, Dirty, GRP_SIZE, Graphics, PAGES};
+use sb_runtime::page;
 use sb_runtime::raster::{CpuRasterizer, RasterInput, SceneBackend};
 use sb_runtime::scene::{Item, LayerPass, Projection, Scene, SpriteItem, TextItem};
 use sb_runtime::settings::Renderer;
@@ -1020,7 +1021,8 @@ impl Gpu {
             None => std::mem::take(&mut held.pending),
         };
         held.any_pending = !held.pending.is_empty();
-        let pixels = grp.page(page);
+        let pixels = grp.page(page).raw();
+        let pitch = (page::STRIDE * 4) as i32;
         let mut bytes = 0;
         let mut failed = false;
         send.for_each_area(|area| {
@@ -1031,12 +1033,11 @@ impl Gpu {
                 w,
                 h,
             };
-            let first = &pixels[(area.y0 * GRP_SIZE + area.x0) as usize..];
-            // SAFETY: the page is GRP_SIZE square, as the texture is, and
-            // the rectangle lies on it.
-            failed |= !unsafe {
-                SDL_UpdateTexture(held.texture, &rect, first.as_ptr().cast(), GRP_SIZE * 4)
-            };
+            let first = &pixels[page::at(area.x0 as usize, area.y0 as usize)..];
+            // SAFETY: the page is GRP_SIZE square, as the texture is, its
+            // rows `pitch` bytes apart, and the rectangle lies on it.
+            failed |=
+                !unsafe { SDL_UpdateTexture(held.texture, &rect, first.as_ptr().cast(), pitch) };
             bytes += w as usize * h as usize * 4;
         });
         self.failed |= failed;

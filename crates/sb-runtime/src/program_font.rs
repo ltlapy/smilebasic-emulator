@@ -100,6 +100,7 @@ impl FontPatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::page::Page;
 
     #[test]
     fn the_default_changes_nothing() {
@@ -148,7 +149,7 @@ mod tests {
         let original = rt.font.page_image();
         // The defaults leave the page as SmileBASIC's.
         rt.apply_program_font();
-        assert_eq!(rt.grp.page(FONT_PAGE), &original[..]);
+        assert_eq!(rt.grp.page(FONT_PAGE).to_rows(), original);
         let (ax, ay) = rt.font.origin('A' as u16, FontSize::Large).unwrap();
         let (sx, sy) = rt.font.origin('A' as u16, FontSize::Small).unwrap();
         let cell = |rt: &Runtime, x: u32, y: u32, n: u32| -> Vec<u32> {
@@ -172,9 +173,9 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         // A program draws over it; ACLS puts the chosen glyph back.
-        let mut page = rt.grp.page(FONT_PAGE).to_vec();
+        let mut page = rt.grp.page(FONT_PAGE).to_rows();
         page[(ay * PAGE_SIZE + ax) as usize] = 0xFFFF_0000;
-        rt.grp.set_page(FONT_PAGE, page);
+        rt.grp.set_page(FONT_PAGE, Page::from_rows(page));
         assert_ne!(cell(&rt, ax, ay, 16), bundled_a);
         rt.acls(false, false, false, false);
         assert_eq!(cell(&rt, ax, ay, 16), bundled_a);
@@ -183,7 +184,7 @@ mod tests {
         rt.apply_program_font();
         assert_eq!(cell(&rt, ax, ay, 16), original_a);
         rt.acls(false, false, false, false);
-        assert_eq!(rt.grp.page(FONT_PAGE), &original[..]);
+        assert_eq!(rt.grp.page(FONT_PAGE).to_rows(), original);
     }
 
     #[test]
@@ -195,9 +196,9 @@ mod tests {
         let outline = rt.font.page_image();
         // A program draws on the 8-pixel half, which no set changes.
         let (sx, sy) = rt.font.origin('A' as u16, FontSize::Small).unwrap();
-        let mut page = rt.grp.page(FONT_PAGE).to_vec();
+        let mut page = rt.grp.page(FONT_PAGE).to_rows();
         page[(sy * PAGE_SIZE + sx) as usize] = 0xFFFF_0000;
-        rt.grp.set_page(FONT_PAGE, page);
+        rt.grp.set_page(FONT_PAGE, Page::from_rows(page));
         // The same set changes nothing.
         rt.apply_bundled_glyphs();
         assert_eq!(rt.font.page_image(), outline);
@@ -214,19 +215,16 @@ mod tests {
                 .map(|i| page[((ay + i / 16) * PAGE_SIZE + ax + i % 16) as usize])
                 .collect()
         };
-        assert_eq!(cell(rt.grp.page(FONT_PAGE)), cell(&dot));
+        assert_eq!(cell(&rt.grp.page(FONT_PAGE).to_rows()), cell(&dot));
         assert_ne!(cell(&dot), cell(&outline));
-        assert_eq!(
-            rt.grp.page(FONT_PAGE)[(sy * PAGE_SIZE + sx) as usize],
-            0xFFFF_0000
-        );
+        assert_eq!(rt.grp.pixel(FONT_PAGE, sx as i32, sy as i32), 0xFFFF_0000);
         // The bundled program font takes the set too.
         rt.settings.program_font = [FontSource::SmileBasic, FontSource::Bundled];
         rt.apply_program_font();
-        let patched = cell(rt.grp.page(FONT_PAGE));
+        let patched = cell(&rt.grp.page(FONT_PAGE).to_rows());
         rt.settings.bundled_glyphs16 = BundledSet::Antialiased;
         rt.apply_bundled_glyphs();
-        assert_ne!(cell(rt.grp.page(FONT_PAGE)), patched);
+        assert_ne!(cell(&rt.grp.page(FONT_PAGE).to_rows()), patched);
         assert_eq!(rt.font.page_image(), outline);
     }
 }
