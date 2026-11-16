@@ -1,8 +1,9 @@
 //! A host with a few commands of its own, standing in for the runtime's, so
 //! that tests see host calls made fused and one instruction at a time alike.
 
-use sb_core::bytecode::Want;
+use sb_core::bytecode::{Compiled, Want};
 use sb_core::error::{Error, ErrorKind, Result};
+use sb_core::fuse::FastOp;
 use sb_core::host::{Exec, Host, TextHost};
 use sb_core::value::Value;
 
@@ -120,5 +121,29 @@ impl Host for CmdHost {
 
     fn input_poll(&mut self) -> Result<Option<Vec<u16>>> {
         self.text.input_poll()
+    }
+}
+
+/// Checks each entry's [`sb_core::fuse::Fast::need`] against the locals its
+/// operation and chain name, found apart from the fuser's own list of them:
+/// in what `Debug` prints, where a local is a `Var` of 0x8000 or more. The
+/// VM reads an entry's places unchecked once it has compared this with the
+/// running DEF's variables.
+#[allow(dead_code)]
+pub fn check_needs(program: &Compiled, source: &str) {
+    for (pc, f) in program.fast.iter().enumerate() {
+        let mut text = format!("{:?}", f.op);
+        if let FastOp::Chain { first, count, .. } = f.op {
+            for m in &program.micro[first as usize..][..usize::from(count)] {
+                text += &format!("{m:?}");
+            }
+        }
+        let need = (text.split("Var(").skip(1))
+            .filter_map(|t| t.split(')').next()?.parse::<u32>().ok())
+            .filter(|&v| v >= 0x8000)
+            .map(|v| v - 0x8000 + 1)
+            .max()
+            .unwrap_or(0);
+        assert_eq!(u32::from(f.need), need, "{source}\nat {pc}: {text}");
     }
 }

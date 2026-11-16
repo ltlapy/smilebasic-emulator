@@ -1307,3 +1307,63 @@ FOR I=0 TO 1:A 5+I:NEXT
     assert!(fused.0[2].contains("Int(11)"), "{fused:?}");
     assert_eq!(fused, run(false));
 }
+
+/// Runs `program` as given, fused code and all, in slices of `budget`.
+fn run_program(program: Compiled, budget: u32) -> (Vec<String>, String) {
+    let mut host = TextHost::default();
+    let mut vm = Vm::new(program);
+    let mut seen = Vec::new();
+    for _ in 0..100_000 {
+        let result = vm.run(&mut host, budget);
+        seen.push(format!("{result:?} {} {}", vm.executed(), vm.line()));
+        if matches!(result, Ok(Status::Ended) | Err(_)) {
+            return (seen, host.output);
+        }
+    }
+    panic!("did not end");
+}
+
+const BIG_AND_SMALL: &str = "\
+DEF BIG
+ VAR A,B,C,D,E,F,G,H,I,J
+ J=J+1:?J
+END
+DEF SMALL
+ VAR K
+ K=K+1:?K
+END
+BIG:SMALL:BIG:SMALL
+";
+
+/// Each entry's need is the locals it names, by a count of its own.
+#[test]
+fn each_entry_needs_the_locals_it_names() {
+    let more = [BIG_AND_SMALL, CONSTANTS_IN_DEF, DEF_OUT, DEF_RECURSIVE];
+    for source in PROGRAMS.iter().chain(&more) {
+        common::check_needs(&compiled(source, true), source);
+    }
+}
+
+/// A global place beyond the program's globals and constants makes the VM
+/// run the program without its fused code.
+#[test]
+fn entries_naming_places_beyond_the_globals_are_not_run() {
+    let many = (0..300).map(|i| format!("+{i}")).collect::<String>();
+    let donor = compiled(&format!("A=0{many}:B=A+299:?B"), true);
+    let far = (donor.fast.iter())
+        .find_map(|f| match f.op {
+            FastOp::Push(v) if v.index() > 200 => Some(f.op),
+            FastOp::Push2(_, v) if v.index() > 200 => Some(f.op),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{:?}", donor.fast));
+    let source = "A=1:B=A+2:?B";
+    let mut program = compiled(source, true);
+    let at = (program.fast.iter())
+        .position(|f| matches!(f.op, FastOp::AddStoreInt(..)))
+        .unwrap_or_else(|| panic!("{:?}", program.fast));
+    program.fast[at].op = far;
+    let vm = Vm::new(program.clone());
+    assert!(vm.program().fast.is_empty());
+    assert_eq!(run_program(program, 1).1, run(source, 1, false).1);
+}

@@ -352,6 +352,7 @@ fn random_programs_run_the_same_fused_or_not() {
             continue;
         };
         compiled += 1;
+        common::check_needs(&p, &source);
         chains += p
             .fast
             .iter()

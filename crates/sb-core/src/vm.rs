@@ -301,7 +301,9 @@ struct Unit {
 }
 
 impl Unit {
-    fn new(program: Compiled) -> Unit {
+    fn new(mut program: Compiled) -> Unit {
+        // Fused code that names a place out of range is left out.
+        crate::fuse::check(&mut program);
         let globals = (program.globals.iter())
             .map(initial_value)
             .chain(program.constants.iter().map(constant_value))
@@ -648,7 +650,9 @@ impl Vm {
 
     /// Starts with the globals in `values`, keyed by full name (`A$`), set
     /// to those values. Direct mode uses it to keep variables between lines.
-    pub fn with_globals(program: Compiled, values: &HashMap<String, Value>) -> Self {
+    pub fn with_globals(mut program: Compiled, values: &HashMap<String, Value>) -> Self {
+        // Fused code that names a place out of range is left out.
+        crate::fuse::check(&mut program);
         // Variables from earlier lines exist already, for Op::Declare.
         let declared = (program.globals.iter())
             .map(|g| values.contains_key(&g.full_name()))

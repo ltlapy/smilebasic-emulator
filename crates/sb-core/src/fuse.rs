@@ -34,6 +34,12 @@
 //! (`AddInt`, `JumpLessInt`, `AddStoreInt`, ...), as reading it from its
 //! place costs as much as reading a variable. What it works out is what
 //! the constant's place would give: constants are never written.
+//!
+//! [`check`] runs on every program the VM takes: it bounds the global
+//! places entries name, and works out each entry's [`Fast::need`] of the
+//! running DEF's variables. With the `unchecked-vars` feature, the VM
+//! counts on both to read and write those places without checking each
+//! against its table's length (`crate::vars`).
 
 use std::collections::HashMap;
 
@@ -441,6 +447,12 @@ pub struct Fast {
     pub op: FastOp,
     /// How many instructions of `code` it stands for.
     pub len: u8,
+    /// How many of the running DEF's variables it needs: one more than the
+    /// highest index of the locals it and its chain name, 0 for none. With
+    /// the `unchecked-vars` feature, the VM reads and writes an entry's
+    /// places without checking each, after checking this against the DEF's
+    /// variables, so only [`check`] sets it.
+    pub need: u16,
 }
 
 /// The instructions `var, to_slot, step_slot, ForTest, JumpIfFalse`, which [`FastOp::ForNext`] leaves to
@@ -1188,6 +1200,7 @@ pub fn fuse(program: &mut Compiled) {
     let slow = Fast {
         op: FastOp::Slow,
         len: 1,
+        need: 0,
     };
     let mut fast = vec![slow; n];
     let mut micro = Vec::new();
@@ -1199,7 +1212,11 @@ pub fn fuse(program: &mut Compiled) {
             let after = runs[pc + len] + ENTRY_COST;
             if after < least || (after == least && len >= usize::from(best.len)) {
                 least = after;
-                best = Fast { op, len: len as u8 };
+                best = Fast {
+                    op,
+                    len: len as u8,
+                    need: 0,
+                };
             }
         });
         let mut chosen = None;
@@ -1213,6 +1230,7 @@ pub fn fuse(program: &mut Compiled) {
                 best = Fast {
                     op: FastOp::Chain { first, count, next },
                     len: short,
+                    need: 0,
                 };
                 chosen = Some(steps);
             }
@@ -1236,4 +1254,241 @@ pub fn fuse(program: &mut Compiled) {
     program.fast = fast;
     program.micro = micro;
     program.constants = constants;
+    check(program);
+}
+
+/// The number of places in the VM's table of globals for `program`: its
+/// globals, then its constants, the chains' hidden places among them.
+pub fn global_places(program: &Compiled) -> usize {
+    program.globals.len() + program.constants.len()
+}
+
+/// Works out each entry's [`Fast::need`] from the places it names, and
+/// makes sure every global place is within [`global_places`]. This runs on
+/// every program before the VM does, whatever made it: if anything is out
+/// of place, the program runs without its fused code. A build with the
+/// `unchecked-vars` feature counts on both to read and write places
+/// unchecked.
+pub fn check(program: &mut Compiled) {
+    let globals = global_places(program);
+    let mut fits = true;
+    for i in 0..program.fast.len() {
+        let mut need = 0usize;
+        let mut place = |v: Var, more: usize| match v.table() {
+            0 => fits &= v.index() + more <= globals,
+            _ => need = need.max(v.index() + more),
+        };
+        fits &= places(&program.fast[i].op, &program.micro, &mut place);
+        match u16::try_from(need) {
+            Ok(need) => program.fast[i].need = need,
+            Err(_) => fits = false,
+        }
+    }
+    if !fits {
+        program.fast.clear();
+    }
+}
+
+/// Calls `place` with each place `op` reads or writes, and with how many
+/// places from there on it takes (more than one for a builtin's
+/// arguments). False if a chain's steps are not all there.
+fn places(op: &FastOp, micro: &[Micro], place: &mut dyn FnMut(Var, usize)) -> bool {
+    use FastOp as F;
+    let mut one = |v: Var| place(v, 1);
+    match *op {
+        F::Slow
+        | F::Nop
+        | F::Swap
+        | F::Reverse(_)
+        | F::Jump(_)
+        | F::JumpIfFalse(_)
+        | F::JumpIfTrue(_)
+        | F::Gosub(_)
+        | F::Return
+        | F::CallDef { .. }
+        | F::ReturnValue
+        | F::Call { .. }
+        | F::Host { .. }
+        | F::Builtin { .. }
+        | F::Unary(_)
+        | F::Truthy
+        | F::Binary(_)
+        | F::Swapped(_)
+        | F::Index1
+        | F::Index2
+        | F::StoreIndex1
+        | F::StoreIndex2 => {}
+        F::Push(a) | F::Store(a) | F::SwappedStore(_, a) | F::Under { a, .. } => one(a),
+        F::On { from, .. } => match from {
+            Selector::Stack => {}
+            Selector::Var(v) => one(v),
+            Selector::Index(base, i) => {
+                one(base);
+                one(i);
+            }
+        },
+        F::Push2(a, b)
+        | F::Move { from: a, to: b }
+        | F::Vars { a, b, .. }
+        | F::UnderStore { a, to: b, .. }
+        | F::VarsJump { a, b, .. }
+        | F::VarsJumpTrue { a, b, .. }
+        | F::Index1Vars { base: a, i: b }
+        | F::StoreIndex1Vars { base: a, i: b }
+        | F::AddStoreInt(a, _, b)
+        | F::SubStoreInt(a, _, b)
+        | F::MulStoreInt(a, _, b)
+        | F::AddStoreReal(a, _, b)
+        | F::UnlessEq(a, b, _)
+        | F::UnlessNotEq(a, b, _)
+        | F::UnlessLess(a, b, _)
+        | F::UnlessLessEq(a, b, _)
+        | F::UnlessGreater(a, b, _)
+        | F::UnlessGreaterEq(a, b, _) => {
+            one(a);
+            one(b);
+        }
+        F::UnlessEqInt(a, ..)
+        | F::UnlessNotEqInt(a, ..)
+        | F::UnlessLessInt(a, ..)
+        | F::UnlessLessEqInt(a, ..)
+        | F::UnlessGreaterInt(a, ..)
+        | F::UnlessGreaterEqInt(a, ..) => one(a),
+        F::VarsStore { a, b, to, .. }
+        | F::AddStore(a, b, to)
+        | F::SubStore(a, b, to)
+        | F::MulStore(a, b, to)
+        | F::Index1Store { base: a, i: b, to }
+        | F::Index1Nested {
+            base: a,
+            inner: b,
+            i: to,
+        }
+        | F::StoreIndex1Nested {
+            base: a,
+            inner: b,
+            i: to,
+        } => {
+            one(a);
+            one(b);
+            one(to);
+        }
+        F::CallArgs { argc, args, .. } => {
+            for &a in args.iter().take(usize::from(argc)) {
+                one(a);
+            }
+        }
+        F::ForCheck { var, to, step, .. } => {
+            one(var);
+            one(to);
+            one(step);
+        }
+        F::ForNext {
+            var,
+            step,
+            step_slot,
+            to,
+            to_slot,
+            ..
+        } => {
+            for v in [var, step, step_slot, to, to_slot] {
+                one(v);
+            }
+        }
+        F::Chain { first, count, .. } => {
+            let first = first as usize;
+            let Some(steps) = micro.get(first..first + usize::from(count)) else {
+                return false;
+            };
+            for m in steps {
+                micro_places(m, place);
+            }
+        }
+    }
+    true
+}
+
+fn micro_places(m: &Micro, place: &mut dyn FnMut(Var, usize)) {
+    use Micro as M;
+    if let M::Builtin { argc, args, to, .. } = *m {
+        place(args, usize::from(argc).max(1));
+        place(to, 1);
+        return;
+    }
+    let mut one = |v: Var| place(v, 1);
+    match *m {
+        M::Add(a, b, to)
+        | M::Sub(a, b, to)
+        | M::Mul(a, b, to)
+        | M::Div(a, b, to)
+        | M::IntDiv(a, b, to)
+        | M::Mod(a, b, to)
+        | M::And(a, b, to)
+        | M::Or(a, b, to)
+        | M::Xor(a, b, to)
+        | M::Shl(a, b, to)
+        | M::Shr(a, b, to)
+        | M::Eq(a, b, to)
+        | M::NotEq(a, b, to)
+        | M::Less(a, b, to)
+        | M::LessEq(a, b, to)
+        | M::Greater(a, b, to)
+        | M::GreaterEq(a, b, to)
+        | M::Binary(_, a, b, to)
+        | M::Index1 { base: a, i: b, to }
+        | M::StoreIndex1 {
+            value: a,
+            base: b,
+            i: to,
+        } => {
+            one(a);
+            one(b);
+            one(to);
+        }
+        M::AddInt(a, _, to)
+        | M::SubInt(a, _, to)
+        | M::MulInt(a, _, to)
+        | M::AndInt(a, _, to)
+        | M::BinaryInt(_, a, _, to)
+        | M::AddReal(a, _, to)
+        | M::SubReal(a, _, to)
+        | M::MulReal(a, _, to)
+        | M::BinaryReal(_, a, _, to)
+        | M::Neg(a, to)
+        | M::Unary(_, a, to)
+        | M::Move { from: a, to }
+        | M::Truthy(a, to) => {
+            one(a);
+            one(to);
+        }
+        M::Index2 { base, i, j, to }
+        | M::StoreIndex2 {
+            value: to,
+            base,
+            i,
+            j,
+        } => {
+            for v in [base, i, j, to] {
+                one(v);
+            }
+        }
+        M::Builtin { .. } => unreachable!("taken above"),
+        M::JumpIfFalse { cond, .. } | M::JumpIfTrue { cond, .. } | M::Push(cond) => one(cond),
+        M::JumpEq(j)
+        | M::JumpNotEq(j)
+        | M::JumpLess(j)
+        | M::JumpLessEq(j)
+        | M::JumpGreater(j)
+        | M::JumpGreaterEq(j) => {
+            one(j.a);
+            one(j.b);
+        }
+        M::JumpEqInt(j)
+        | M::JumpNotEqInt(j)
+        | M::JumpLessInt(j)
+        | M::JumpLessEqInt(j)
+        | M::JumpGreaterInt(j)
+        | M::JumpGreaterEqInt(j) => one(j.a),
+        M::Commit { .. } => {}
+    }
 }
