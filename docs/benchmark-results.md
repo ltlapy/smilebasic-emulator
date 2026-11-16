@@ -1313,6 +1313,76 @@ What a step still costs, for later work:
   hidden places could do without: they hold only numbers, but a step does
   not know whether it writes one.
 
+The `unchecked-vars` feature of `sb-core`, off by default, takes the
+bounds check out with `unsafe`, in one small module,
+`crates/sb-core/src/vars.rs`. Its invariant and checks are in that file
+and in [security.md](security.md): `fuse::check` bounds every global
+place by the program's globals and constants on every program the VM
+takes, and works out what each entry needs of the running DEF's
+variables, which `run_fused` compares with the DEF's before each entry,
+in 3 instructions an entry. Choosing an entry takes about 19 instead of
+16 with it, as LLVM now rebuilds the jump table's address and the entry
+size each time instead of keeping them in registers. A read then takes 4
+or 5 instructions and the tag's load, against 9 or 10: the table bit and
+the index split off, the table's pointer loaded from the stack, and the
+index added. A default build runs `fuse::check` too, but keeps the check
+on each read and compiles out the one before each entry. It counts what
+`9113d96` counts, within 0.3% on every loop and scene below on both
+machines, and its `run_fast` is 46228 bytes. Against `9113d96`, aarch64
+instructions an iteration with the feature on:
+
+| Loop | `9113d96` | Unchecked | Change |
+|---|---|---|---|
+| Empty | 130.9 | 119.1 | -9.0% |
+| GOSUB | 262.4 | 259.4 | -1.1% |
+| VINT's loop | 428.7 | 374.9 | -12.5% |
+| Reals | 536.5 | 492.4 | -8.2% |
+| Counters | 466.4 | 428.9 | -8.0% |
+| IF chain | 387.5 | 355.5 | -8.3% |
+| Array | 668.2 | 572.1 | -14.4% |
+| VARRAY's loop | 1144.2 | 972.9 | -15.0% |
+| VREAL's loop | 719.9 | 634.5 | -11.9% |
+| Sprites (64) | 105469 | 93079 | -11.7% |
+| DEF a sprite (64) | 124836 | 112876 | -9.6% |
+| Function DEF | 623.8 | 626.7 | +0.5% |
+| Command DEF | 530.8 | 515.0 | -3.0% |
+| Game 1 (64 sprites) | 222436 | 209783 | -5.7% |
+| Game 2 (64 sprites) | 120358 | 113247 | -5.9% |
+| Game 3 (32 sprites) | 82661 | 83801 | +1.4% |
+
+x86-64, the same loops: empty FOR 157.0 to 136.5, VINT's loop 477.2 to
+369.1, VARRAY's 1228.9 to 922.5, VREAL's 763.4 to 625.7, counters 541.9
+to 460.3, sprites 115500 to 96754, game 1 244749 to 224742, game 3 86913
+to 87058.
+
+Instructions a frame, in millions:
+
+| Scene | aarch64 `9113d96` | aarch64 unchecked | Change | x86-64 `9113d96` | x86-64 unchecked | Change |
+|---|---|---|---|---|---|---|
+| VINT | 8.13 | 7.18 | -11.8% | 8.74 | 6.81 | -22.0% |
+| VREAL | 6.86 | 6.09 | -11.2% | 7.00 | 5.76 | -17.7% |
+| VSTR | 12.82 | 13.02 | +1.6% | 11.53 | 11.60 | +0.7% |
+| VARRAY | 11.85 | 10.15 | -14.3% | 12.44 | 9.37 | -24.7% |
+| VDEF | 5.35 | 5.37 | +0.3% | 5.85 | 5.79 | -1.1% |
+| SPHIT | 50.88 | 50.96 | +0.2% | 55.05 | 55.07 | 0.0% |
+| TPUT | 31.60 | 31.54 | -0.2% | 51.63 | 51.16 | -0.9% |
+| GAME | 19.94 | 19.42 | -2.6% | 28.28 | 27.51 | -2.7% |
+
+Finding a place, aarch64 instructions an iteration, from the same traces
+as the first table:
+
+| Loop | `d081e7a` | `9113d96` | Unchecked |
+|---|---|---|---|
+| Empty | 45 | 48 | 23 |
+| VINT's loop | 178 | 156 | 75 |
+| Counters | 200 | 155 | 82 |
+| Array | 259 | 232 | 104 |
+| VREAL's loop | 237 | 210 | 104 |
+
+VSTR and game 3 run many entries that read little, where the check before
+each entry costs more than the reads save. `run_fast` shrinks from 46236
+to 41436 bytes with the feature, as the panics of the bounds checks go.
+
 ## Tried and left out
 
 Each of these was measured and not kept.

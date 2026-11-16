@@ -44,6 +44,15 @@ headless on Windows, macOS and Linux.
   Rust tests that run headless. `sb-core` checks their `PRINT` output; `sb-runtime`
   runs them on a `Machine` and checks the console and program state.
 - `cargo test --workspace` passes before every commit.
+- A change to `sb-core`'s VM or fused code also passes clippy and the tests with
+  `--features unchecked-vars`, the build without bounds checks on variables
+  (see [docs/security.md](docs/security.md)).
+- Optional, with a nightly toolchain and Miri installed:
+  `cargo +nightly miri test -p sb-core --features unchecked-vars --test fused -- entries_naming`
+  checks that build's `unsafe` reads for undefined behavior, in about ten minutes;
+  add `MIRIFLAGS=-Zmiri-tree-borrows` for the other borrow model. All of
+  `tests/fused.rs` takes hours there. `--test fuse_random` runs 5 of its programs
+  under Miri, or `SB_RANDOM_PROGRAMS` of them.
 
 ### Assets and text
 

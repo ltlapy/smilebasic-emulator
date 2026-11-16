@@ -21,6 +21,28 @@ runs on an open system and has to do it itself.
   after a DEF call's arguments are moved out in `take_args`, and on the stack
   or the DEF variables when a call ends in `cut`. A program cannot reach them
   other than through the VM stack and DEF calls.
+  A default build has no other `unsafe` in `sb-core`. The `unchecked-vars`
+  feature of `sb-core`, off by default, adds three uses in
+  `crates/sb-core/src/vars.rs`: the fused code then reads and writes the
+  places of variables and constants without a bounds check on each, for
+  about a tenth of the interpreter's instructions on arithmetic. Its
+  invariant is that every place an entry names is within its table.
+  `fuse::check` bounds every global place by the program's globals and
+  constants on every program the VM takes, before the VM shares it, and
+  works out what each entry needs of the running DEF's variables, which
+  `run_fused` compares with the DEF's before each entry. A program with a
+  place out of range runs without its fused code, and an entry that needs
+  more of the DEF's variables than there are runs one instruction at a
+  time. Each read and write also has a `debug_assert`, and tests feed the
+  VM entries moved from another DEF or program. With the feature on,
+  Miri found nothing in those tests and in five of the random programs
+  of `tests/fuse_random.rs`, under its default Stacked Borrows and with
+  `-Zmiri-tree-borrows`, nor in 12 more tests of `tests/fused.rs` under
+  Stacked Borrows. A bug there would be memory unsafety that an untrusted
+  program could reach, so leave the feature off in any build you hand to
+  others or use to run programs you did not write. Default builds run `fuse::check` too and keep the check
+  on each read and write, so a place out of range that gets past
+  `fuse::check` panics, which stops the program with `Internal Error`.
   `crates/sb-runtime/tests/scene.rs` has a counting allocator, used only by
   that test.
 - **File names.** Every name goes through the checks in
