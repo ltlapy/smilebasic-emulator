@@ -478,11 +478,18 @@ impl Beeps {
                     player.begin_block();
                     let mut done = 0;
                     while done < n {
-                        if *until_tick <= 0.0 && !player.ended() {
+                        let ended = player.ended();
+                        if *until_tick <= 0.0 && !ended {
                             player.tick(synth.as_mut());
                             *until_tick += player.tick_samples(RATE);
                         }
-                        let chunk = ((until_tick.ceil() as usize).max(1)).min(n - done);
+                        // Once the sequence has ended no tick comes, and the
+                        // notes die away in one run: a sample at a time, the
+                        // tail's 60 frames cost more than the effect did.
+                        let chunk = match ended {
+                            true => n - done,
+                            false => ((until_tick.ceil() as usize).max(1)).min(n - done),
+                        };
                         synth.render(&mut wl[done..done + chunk], &mut wr[done..done + chunk]);
                         *until_tick -= chunk as f64;
                         done += chunk;
@@ -648,6 +655,59 @@ mod tests {
         render(&mut beeps, 10);
         assert_eq!(pile_of(&beeps, h), 0);
         assert!(beeps.falling.capacity() == 0);
+    }
+
+    /// A preset effect that ends dies away in one run of samples a frame:
+    /// to the bit what it gave a sample at a time.
+    #[test]
+    fn an_effect_dies_away_as_it_did_a_sample_at_a_time() {
+        use crate::sound::sampler::tests::{ORGAN, bank};
+        let instruments = Instruments::Bank(Arc::new(bank(ORGAN, false)));
+        // A note of 16 ticks, then the end.
+        let seq = Arc::new(Sequence {
+            volume: 100,
+            start: 0,
+            code: vec![60, 127, 0x10, 0xFF],
+        });
+        let n = 800;
+        let mut beeps = Beeps::new(Some(&instruments));
+        beeps.play(0, BeepSound::Sequence(seq.clone()), 0, 64, 64, false);
+        // The loop as it was, which rendered the tail a sample at a time.
+        let mut synth = instruments.synth();
+        let mut player = Player::new(seq);
+        player.set_pitch(0, synth.as_mut());
+        let own_pan = synth.pan_offset(64);
+        assert!(own_pan);
+        let mut until_tick = 0.0;
+        let (mut wl, mut wr) = (vec![0.0; n], vec![0.0; n]);
+        let mut heard = false;
+        for frame in 0.. {
+            assert!(frame < 200, "the effect ends");
+            if beeps.beeps[0].is_none() {
+                break;
+            }
+            let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
+            beeps.render(&mut l, &mut r);
+            heard |= l.iter().any(|&s| s != 0.0);
+            player.begin_block();
+            let mut done = 0;
+            while done < n {
+                if until_tick <= 0.0 && !player.ended() {
+                    player.tick(synth.as_mut());
+                    until_tick += player.tick_samples(RATE);
+                }
+                let chunk = ((until_tick.ceil() as usize).max(1)).min(n - done);
+                synth.render(&mut wl[done..done + chunk], &mut wr[done..done + chunk]);
+                until_tick -= chunk as f64;
+                done += chunk;
+            }
+            let gain = 64.0 / WAVE_VOLUME * player.volume() * 1.0f32;
+            let bits = |v: &[f32]| v.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
+            let expect = |w: &[f32]| w.iter().map(|s| 0.0 + s * gain * 1.0).collect::<Vec<_>>();
+            assert_eq!(bits(&l), bits(&expect(&wl)), "frame {frame}");
+            assert_eq!(bits(&r), bits(&expect(&wr)), "frame {frame}");
+        }
+        assert!(heard && player.ended());
     }
 
     #[test]

@@ -847,7 +847,7 @@ pub fn times(adshr: Adshr) -> Times {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::sound::bank::Encoding;
 
@@ -872,7 +872,7 @@ mod tests {
         Sampler::new(Arc::new(bank(adshr, ignore_note_off)))
     }
 
-    fn bank(adshr: Adshr, ignore_note_off: bool) -> Bank {
+    pub(crate) fn bank(adshr: Adshr, ignore_note_off: bool) -> Bank {
         let samples: Vec<i16> = (0..8).map(|i| if i < 4 { 16384 } else { -16384 }).collect();
         Bank {
             instruments: std::iter::once(0..1).collect(),
@@ -897,7 +897,7 @@ mod tests {
         }
     }
 
-    const ORGAN: Adshr = Adshr {
+    pub(crate) const ORGAN: Adshr = Adshr {
         attack: 127,
         decay: 127,
         sustain: 127,
