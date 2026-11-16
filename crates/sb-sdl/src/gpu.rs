@@ -185,6 +185,9 @@ const GRID_TOLERANCE: f64 = 0.25;
 
 /// What the GPU's textures are measured in.
 const PAGE_SIZE: f32 = GRP_SIZE as f32;
+/// The most bytes of a page sent in one call on GLES2 where SDL copies
+/// them first, see [`Gpu::page`].
+const GLES2_BAND: i32 = 64 << 10;
 /// The cells of the atlas of fallback glyphs, up to the larger font's size.
 const ATLAS_CELL: u32 = 16;
 /// How long a side the atlas of inverted cells' characters has.
@@ -1000,6 +1003,7 @@ impl Gpu {
                 changes: !changes,
             });
         }
+        let on_gles2 = self.on_gles2;
         let held = self.pages[page].as_mut().ok_or(Reason::Refused)?;
         if held.changes != changes {
             // Another set of pages counts from elsewhere, and its marks say
@@ -1027,17 +1031,31 @@ impl Gpu {
         let mut failed = false;
         send.for_each_area(|area| {
             let (w, h) = (area.x1 - area.x0 + 1, area.y1 - area.y0 + 1);
-            let rect = SDL_Rect {
-                x: area.x0,
-                y: area.y0,
-                w,
-                h,
+            // SDL's GLES2 driver cannot unpack rows with a pitch of their
+            // own: it first copies the rectangle to a buffer it allocates,
+            // 16 MiB for a whole page. In bands, that buffer stays small
+            // and in the cache, where the driver reads it back.
+            let band = match on_gles2 && pitch != w * 4 {
+                true => (GLES2_BAND / (w * 4)).max(1),
+                false => h,
             };
-            let first = &pixels[page::at(area.x0 as usize, area.y0 as usize)..];
-            // SAFETY: the page is GRP_SIZE square, as the texture is, its
-            // rows `pitch` bytes apart, and the rectangle lies on it.
-            failed |=
-                !unsafe { SDL_UpdateTexture(held.texture, &rect, first.as_ptr().cast(), pitch) };
+            let mut y = area.y0;
+            while y <= area.y1 {
+                let rows = band.min(area.y1 + 1 - y);
+                let rect = SDL_Rect {
+                    x: area.x0,
+                    y,
+                    w,
+                    h: rows,
+                };
+                let first = &pixels[page::at(area.x0 as usize, y as usize)..];
+                // SAFETY: the page is GRP_SIZE square, as the texture is,
+                // its rows `pitch` bytes apart, and the rectangle lies on it.
+                failed |= !unsafe {
+                    SDL_UpdateTexture(held.texture, &rect, first.as_ptr().cast(), pitch)
+                };
+                y += rows;
+            }
             bytes += w as usize * h as usize * 4;
         });
         self.failed |= failed;
