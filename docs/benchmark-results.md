@@ -934,10 +934,197 @@ What calls still cost, for later work:
   hash table on each call. A cache of the last name, valid for the running
   program, would leave out most of it.
 
+### Variables and constants, from `d081e7a`
+
+This set counts what reading and writing a variable costs in the fused
+code, and what choosing an entry costs before its work. Counts are taken
+as in the [calls](#calls-from-48f7cfc) set: x86-64 with
+`perf stat -e instructions:u` on the `release` build, aarch64 with qemu's
+Cortex-A35 model on the `dist` build under `setarch -R`, from whole
+blocks. A loop's count is the difference of programs that run it 3200 and
+6400 times (the sprite and game loops 50 and 100), over the difference.
+Scenes are TPERF's, run alone with `#ONLY`. Every checksum is the same
+before and after: TPERF's `e8e5f6dc467db861` at 400 frames,
+`a6e1ed07824b1ad8` at 3600 and `5d9bb17a39eefb70` at 10500 on x86-64, the
+first two on aarch64, and each scene's.
+
+The loops are those of the [chains](#three-address-chains-from-018017d)
+and [calls](#calls-from-48f7cfc) sets, each in a DEF of its own locals.
+The scalar reals' loop uses `U#`, `W#` and `T#` for `DX#`, `DY#` and `T#`.
+Three more: `VINT, unsuffixed` is VINT's loop on `A` and `B`, and the
+globals' rows run VINT's, the counters' and VARRAY's loops at the top
+level, on globals.
+
+Where one iteration's aarch64 instructions went at `d081e7a`, from qemu's
+trace, by the source line and inlined function each instruction comes
+from (finding a place includes loading the value's tag):
+
+| Loop | Choosing an entry | Choosing a chain's step | Finding a place | A write's drop check | A write's stores | Operators | Other |
+|---|---|---|---|---|---|---|---|
+| Empty | 34 | 0 | 45 | 4 | 5 | 0 | 44 |
+| VINT's loop | 34 | 98 | 178 | 14 | 18 | 43 | 88 |
+| Counters | 98 | 52 | 200 | 12 | 19 | 65 | 99 |
+| Reals | 114 | 18 | 173 | 10 | 21 | 113 | 125 |
+| Array | 52 | 130 | 259 | 16 | 21 | 51 | 199 |
+| VREAL's loop | 35 | 130 | 237 | 18 | 33 | 67 | 264 |
+
+Finding a place is 30 to 38% of every loop. One operation, from the
+disassembly of `run_fast`:
+
+- **A read** (`get`) takes 9 or 10 instructions and the tag's load: the
+  table bit shifted and masked, the address of the two tables, which live
+  on the stack, the table's length loaded, compared and branched on, its
+  pointer loaded, and the index added.
+- **A write** (`at_var` and `put`) takes the same 9 to find the place, 3
+  to look at the old value's tag in case it holds a string or array to drop,
+  and 2 stores.
+- **Choosing an entry** takes 16: the entry table's length (on the stack)
+  compared with `pc`, the entry's address (`madd`, as an entry is 20 bytes),
+  its length loaded and taken from the budget, its kind loaded, the jump
+  table and the indirect branch, and two register moves.
+- **Choosing a chain's step** took 16: the step's end compared, then six
+  loads of all of the step's fields before the jump table, whatever its
+  kind.
+- **A constant** costs a read like any variable's, as constants are places
+  after the globals.
+
+A variable's suffix gives nothing to build on: it only sets the starting
+value ([sb4-pitfalls.md](sb4-pitfalls.md)): `A%="X"` stores a string, and
+a variable of any suffix can hold any kind of value. Only constants and
+the chains' hidden places are known to hold numbers.
+
+What was made:
+
+- `cc60440`: a chain's steps are matched where they are rather than copied
+  out first, so each kind loads only its own fields. Choosing a step falls
+  from 16 to about 10 instructions.
+- `9113d96`: an operator with a constant integer or real on its right
+  carries the number in its entry or step instead of reading it from its
+  place: `AddInt`, `SubInt`, `MulInt`, `AndInt` and `BinaryInt`, their
+  real forms, the comparison jumps of chains (`JumpLessInt` and the others),
+  and `AddStoreInt`, `SubStoreInt`, `MulStoreInt`, `AddStoreReal` and the
+  `Unless` entries' integer forms. A constant on the left of an operator
+  whose sides can change places (`+`, `*`, `AND`, `OR`, `XOR`, `==`, `!=`)
+  goes to the right; for reals that gives the same result, as a constant is
+  never NaN. Each saves the constant's read and one tag check, about 12
+  instructions.
+- `4ae34d1`: the random programs of `tests/fuse_random.rs` call COMMON
+  DEFs of a slot they EXEC, a DEF 40 calls deep and DEFs whose variables
+  have the globals' names, and put strings, arrays, reals and integers into
+  variables of any suffix.
+
+aarch64 instructions an iteration:
+
+| Loop | `d081e7a` | `cc60440` | `9113d96` | Change |
+|---|---|---|---|---|
+| Empty | 132.0 | 132.2 | 130.9 | -0.8% |
+| GOSUB | 279.4 | 278.8 | 262.4 | -6.1% |
+| VINT's loop | 473.1 | 450.9 | 428.7 | -9.4% |
+| VINT's loop, globals | 472.5 | - | 429.1 | -9.2% |
+| VINT's loop, unsuffixed | 473.0 | - | 429.0 | -9.3% |
+| Reals | 574.5 | 571.7 | 536.5 | -6.6% |
+| Counters | 547.0 | 537.7 | 466.4 | -14.7% |
+| Counters, globals | 546.7 | - | 466.5 | -14.7% |
+| IF chain | 441.3 | 438.4 | 387.5 | -12.2% |
+| Array | 728.0 | - | 668.2 | -8.2% |
+| VARRAY's loop | 1318.8 | 1263.3 | 1144.2 | -13.2% |
+| VARRAY's loop, globals | 1319.1 | - | 1143.8 | -13.3% |
+| VREAL's loop | 786.4 | 758.1 | 719.9 | -8.5% |
+| Sprites (64) | 111368 | - | 105469 | -5.3% |
+| DEF a sprite (64) | 130598 | - | 124836 | -4.4% |
+| Function DEF | 630.0 | - | 623.8 | -1.0% |
+| Command DEF | 528.9 | - | 530.8 | +0.4% |
+| Game 1 (64 sprites) | 229721 | - | 222436 | -3.2% |
+| Game 2 (64 sprites) | 124839 | - | 120358 | -3.6% |
+| Game 3 (32 sprites) | 82930 | - | 82661 | -0.3% |
+
+x86-64 instructions an iteration:
+
+| Loop | `d081e7a` | `9113d96` | Change |
+|---|---|---|---|
+| Empty | 156.4 | 157.0 | +0.4% |
+| GOSUB | 315.1 | 302.8 | -3.9% |
+| VINT's loop | 521.4 | 477.2 | -8.5% |
+| Reals | 652.5 | 620.7 | -4.9% |
+| Counters | 615.0 | 541.9 | -11.9% |
+| IF chain | 497.9 | 449.0 | -9.8% |
+| Array | 808.3 | 725.4 | -10.3% |
+| VARRAY's loop | 1416.9 | 1228.9 | -13.3% |
+| VREAL's loop | 864.1 | 763.4 | -11.7% |
+| Sprites (64) | 124595 | 115500 | -7.3% |
+| DEF a sprite (64) | 145528 | 136388 | -6.3% |
+| Function DEF | 729.6 | 729.8 | 0.0% |
+| Command DEF | 610.0 | 610.4 | +0.1% |
+| Game 1 (64 sprites) | 256148 | 244749 | -4.5% |
+| Game 2 (64 sprites) | 138473 | 131474 | -5.1% |
+| Game 3 (32 sprites) | 86948 | 86913 | 0.0% |
+
+The globals' and unsuffixed rows match the locals' within 0.5 on both
+machines: the two tables cost the same, and a suffix changes nothing.
+
+Instructions a frame, in millions, program and CPU drawing, aarch64 over
+frames 3 to 6 and x86-64 over frames 3 to 83:
+
+| Scene | aarch64 `d081e7a` | aarch64 `9113d96` | Change | x86-64 `d081e7a` | x86-64 `9113d96` | Change |
+|---|---|---|---|---|---|---|
+| VINT | 8.93 | 8.13 | -8.9% | 9.15 | 8.74 | -4.5% |
+| VREAL | 7.46 | 6.86 | -8.1% | 7.49 | 7.00 | -6.5% |
+| VSTR | 12.88 | 12.82 | -0.5% | 11.57 | 11.53 | -0.4% |
+| VARRAY | 13.60 | 11.85 | -12.9% | 13.71 | 12.44 | -9.3% |
+| VDEF | 5.38 | 5.35 | -0.5% | 5.85 | 5.85 | 0.0% |
+| VVAR | - | - | - | 33.61 | 33.49 | -0.3% |
+| SPHIT | 50.96 | 50.88 | -0.2% | 55.10 | 55.05 | -0.1% |
+| TPUT | 31.86 | 31.60 | -0.8% | 51.87 | 51.63 | -0.5% |
+| GAME | 20.13 | 19.94 | -0.9% | 28.30 | 28.28 | -0.1% |
+
+SPMOVE, SPROT, SPCHURN, SPANIM, TPRINT and TSCROLL move by under 0.1% on
+x86-64. GAME's interpreter is about a quarter of its frame, and most of
+its statements read array elements and reals into reals, which carry few
+constants.
+
+`run_fast` is 40612 bytes of aarch64 code at `d081e7a`, 41132 at
+`cc60440` and 46236 at `9113d96`: each new entry and step kind inlines its
+operator's work on integers and reals, about 190 bytes. A loop runs only
+the kinds it uses.
+
+What a step still costs, for later work:
+
+- Finding a place, 9 or 10 instructions a read and a write, of which 3 are
+  the bounds check against a table's length kept on the stack. Safe Rust
+  keeps the check: a mask leaves a test of the length, and only a table of
+  fixed size, `&[Value; 32768]`, drops it, which would take 512 KB of
+  globals a slot and frames padded to as many variables
+  ([tried and left out](#tried-and-left-out)).
+- Choosing an entry, 16 instructions, the indirect branch included.
+- A write's look at the old value, 3 instructions, which only the chains'
+  hidden places could do without: they hold only numbers, but a step does
+  not know whether it writes one.
+
 ## Tried and left out
 
 Each of these was measured and not kept.
 
+- **The table in a variable's lowest bit** instead of its highest, to find
+  the table's place in one instruction fewer: on top of `cc60440`, loops
+  moved by -2.3% (VARRAY's) to +2.7% (an empty FOR); on top of the
+  constants, 5 of 8 loops came out worse, by up to 3.5% (a GOSUB loop). LLVM
+  lays out `run_fused`'s registers anew, which outweighs the instruction
+  (2026-11-16).
+- **A write that drops a string out of line**, a cold call to clear the
+  place and then `mem::forget(mem::replace(..))` for the stores, to keep
+  the drop's code out of the 70 or so places that write a number:
+  `run_fast` 432 bytes smaller, but VINT's loop 424 to 465 aarch64
+  instructions and VARRAY's 1124 to 1202, as the call kept values out of
+  registers (2026-11-16).
+- **Bounds checks folded in safe Rust.** For `v[i & (v.len() - 1)]` LLVM
+  keeps a test of the length for zero; with the mask kept elsewhere it
+  keeps the whole check. Only an index into a fixed-size array,
+  `&[Value; 32768]` with the index masked to 15 bits, has none, which would
+  mean 512 KB for each slot's globals, and padding every DEF call's
+  variables to the same, as a call's variables follow each other in one
+  list (2026-11-16).
+- **Steps typed by suffix**, for `A%=B%+1`: a suffix only sets a
+  variable's starting value, so the tag check stays (2026-11-16).
 - **Handing a builtin's or host's call back from `run_fused` with its id
   and counts**, in an enum: LLVM kept copies of the entry's tag in six
   registers for it and the table of entries on the stack, about 6 aarch64
