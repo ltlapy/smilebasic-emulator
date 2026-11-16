@@ -373,6 +373,8 @@ impl Command {
             Gbox | Gcircle | Gclip | Gcls | Gcolor | Gcopy | Gfill | Gline | Gload | Gpaint
             | Gpget | Gpset | Gputchr | Gputchrp | Gsample | Gsave | Garray | Gtarget | Gtri
             | Gupdate => Group::Grp,
+            Chkchr | Scroll | Tarray | Tcoord | Tcopy | Tfill | Tload | Tanim | Tchk | Tfunc
+            | Tput | Tsave | Tstart | Tstop | Tupdate | Tvar => Group::Text,
             _ => Group::Other,
         }
     }
@@ -419,6 +421,7 @@ enum Group {
     Input,
     System,
     Grp,
+    Text,
     Other,
 }
 
@@ -2712,6 +2715,7 @@ impl Runtime {
             Group::Input => self.input_command(command, args, want, out),
             Group::System => self.system_command(command, args, want, out),
             Group::Grp => self.grp_command(command, args, want, out),
+            Group::Text => give(out, self.text_command(command, args, want)),
             Group::Other => self.run_other(command, args, want, out),
         }
     }
@@ -2921,25 +2925,6 @@ impl Runtime {
                 | Command::Xscreen,
                 _,
             ) => give(out, self.screen_command(command, args, want)),
-            (
-                Command::Chkchr
-                | Command::Scroll
-                | Command::Tarray
-                | Command::Tcoord
-                | Command::Tcopy
-                | Command::Tfill
-                | Command::Tload
-                | Command::Tanim
-                | Command::Tchk
-                | Command::Tfunc
-                | Command::Tput
-                | Command::Tsave
-                | Command::Tstart
-                | Command::Tstop
-                | Command::Tupdate
-                | Command::Tvar,
-                _,
-            ) => give(out, self.text_command(command, args, want)),
             (
                 Command::Beep
                 | Command::Recchk
