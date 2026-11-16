@@ -92,3 +92,6 @@ equivalent to public domain by its author's declaration; each has its
 `LICENSE.txt` there.
 GeneralUser GS in `crates/sb-sdl/sounds` is under its own license, in
 `GeneralUser-GS-LICENSE.txt` there.
+`crates/sb-runtime/fonts/sb4-order` is not a font: it holds the order of
+SmileBASIC 4's font page (each character code's glyph number), taken from
+its `font.map`, and no glyphs.

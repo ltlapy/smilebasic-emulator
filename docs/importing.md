@@ -19,6 +19,13 @@ U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
 `crates/sb-runtime/fonts/symbols.txt` at 8 pixels, and drawn at twice that
 size in the 16-pixel font.
 
+The stand-in font's glyphs sit on the font page (GRP5) where SmileBASIC 4's
+own font has them, so programs that draw their own font page work without
+importing. For this the emulator carries the order of SmileBASIC 4's font
+page, which glyph number each character code has, taken from its font.map
+(`crates/sb-runtime/fonts/sb4-order`). It holds none of SmileBASIC 4's
+glyphs or metrics.
+
 Music plays with [GeneralUser GS](https://www.schristiancollins.com/generaluser)
 by S. Christian Collins, bundled in `crates/sb-sdl/sounds`, until SmileBASIC's
 own instruments are imported. File > Settings > Sound picks between them and

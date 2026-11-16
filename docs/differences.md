@@ -343,6 +343,17 @@ window comes back.
   A program that reads the font page sees the replaced pixels: `GSAVE` from
   GRP5, `GSPOIT` and `GPGET` on it, `GARRAY` of it, and sprites or text using
   it. `FONTINFO` and `CHKCHR` answer as before.
+- Font page without an imported font: the bundled stand-in font puts each
+  character on GRP5 where SmileBASIC 4's font has it, by the glyph numbers of
+  its font.map ([importing.md](importing.md#without-importing)). A program
+  that loads or draws its own font page for SmileBASIC 4 shows its glyphs for
+  every character SmileBASIC 4 has, and `FONTINFO` gives SmileBASIC 4's
+  places. The glyphs on the page are the bundled fonts' own. Some characters
+  SmileBASIC 4 has, such as Greek and Cyrillic, have no bundled 8-pixel glyph
+  and show the box in their 8-pixel cell. Characters SmileBASIC 4 shows as the
+  box but the bundled fonts have take the glyph numbers SmileBASIC 4 leaves
+  unused, while they last; the rest, Hangul among them, are drawn from the
+  bundled fonts directly and do not follow what a program draws on GRP5.
 - Filters: a filter's result goes to 8 bits before the layer's color is
   multiplied in. SmileBASIC 4 applies both in one draw, with one
   rounding, so a tinted, filtered layer can be 1 off.
