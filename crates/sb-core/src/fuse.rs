@@ -28,11 +28,18 @@
 //! goes on from if a later one cannot do its work. Each address takes the
 //! entry or chain that costs least, by rough instruction counts, on to the
 //! next jump.
+//!
+//! An operator with a constant number on its right, or on its left where
+//! the sides can change places, carries the number in its entry or step
+//! (`AddInt`, `JumpLessInt`, `AddStoreInt`, ...), as reading it from its
+//! place costs as much as reading a variable. What it works out is what
+//! the constant's place would give: constants are never written.
 
 use std::collections::HashMap;
 
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::bytecode::{Addr, Compiled, DefInfo, Literal, Op, Slot, Want};
+use crate::value::Num;
 
 /// A number's place, for [`FastOp`]s: a variable of the running DEF or of the
 /// slot, or a constant. Constants follow the globals in the VM's table of
@@ -164,6 +171,13 @@ pub enum FastOp {
     AddStore(Var, Var, Var),
     SubStore(Var, Var, Var),
     MulStore(Var, Var, Var),
+    /// The same with a constant integer on the right, carried in the entry.
+    AddStoreInt(Var, i32, Var),
+    SubStoreInt(Var, i32, Var),
+    MulStoreInt(Var, i32, Var),
+    /// `AddStore` with a constant real on the right, as [`real_bits`] keeps
+    /// it: an `f64` would make every entry 4 bytes longer.
+    AddStoreReal(Var, [u32; 2], Var),
     /// `VarsJump` of a comparison, with the operator in the entry's kind:
     /// a jump unless `a op b`.
     UnlessEq(Var, Var, Addr),
@@ -172,6 +186,13 @@ pub enum FastOp {
     UnlessLessEq(Var, Var, Addr),
     UnlessGreater(Var, Var, Addr),
     UnlessGreaterEq(Var, Var, Addr),
+    /// The same with a constant integer on the right.
+    UnlessEqInt(Var, i32, Addr),
+    UnlessNotEqInt(Var, i32, Addr),
+    UnlessLessInt(Var, i32, Addr),
+    UnlessLessEqInt(Var, i32, Addr),
+    UnlessGreaterInt(Var, i32, Addr),
+    UnlessGreaterEqInt(Var, i32, Addr),
     /// `a, b, Binary, JumpIfFalse`
     VarsJump {
         op: BinaryOp,
@@ -289,6 +310,17 @@ pub enum Micro {
     GreaterEq(Var, Var, Var),
     /// The other operators.
     Binary(BinaryOp, Var, Var, Var),
+    /// `a op k` with `k` a constant integer, carried in the step.
+    AddInt(Var, i32, Var),
+    SubInt(Var, i32, Var),
+    MulInt(Var, i32, Var),
+    AndInt(Var, i32, Var),
+    BinaryInt(BinaryOp, Var, i32, Var),
+    /// `a op x` with `x` a constant real.
+    AddReal(Var, f64, Var),
+    SubReal(Var, f64, Var),
+    MulReal(Var, f64, Var),
+    BinaryReal(BinaryOp, Var, f64, Var),
     Neg(Var, Var),
     Unary(UnaryOp, Var, Var),
     /// `base[i]` to `to`.
@@ -344,6 +376,13 @@ pub enum Micro {
     JumpLessEq(Jump),
     JumpGreater(Jump),
     JumpGreaterEq(Jump),
+    /// The same with a constant integer on the right.
+    JumpEqInt(JumpInt),
+    JumpNotEqInt(JumpInt),
+    JumpLessInt(JumpInt),
+    JumpLessEqInt(JumpInt),
+    JumpGreaterInt(JumpInt),
+    JumpGreaterEqInt(JumpInt),
     /// The statements before are done: a later step that cannot do its
     /// work leaves the rest to `step` from `to`, with `charged` of the
     /// chain's instructions run.
@@ -364,6 +403,26 @@ pub struct Jump {
     pub b: Var,
     pub target: Addr,
     pub when: bool,
+}
+
+/// [`Jump`] with a constant integer for `b`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JumpInt {
+    pub a: Var,
+    pub k: i32,
+    pub target: Addr,
+    pub when: bool,
+}
+
+/// A real as [`FastOp::AddStoreReal`] keeps it.
+pub fn real_bits(x: f64) -> [u32; 2] {
+    let bits = x.to_bits();
+    [bits as u32, (bits >> 32) as u32]
+}
+
+#[inline(always)]
+pub fn real_of(bits: [u32; 2]) -> f64 {
+    f64::from_bits(u64::from(bits[0]) | u64::from(bits[1]) << 32)
 }
 
 /// Where [`FastOp::On`] finds the number that picks its label.
@@ -404,6 +463,27 @@ impl Constants<'_> {
         self.list.push(literal);
         self.found.insert(key, var);
         Some(var)
+    }
+
+    /// The number `v` holds, if it is a constant: never written, so that a
+    /// step may carry it in itself instead of reading it.
+    fn literal(&self, v: Var) -> Option<Num> {
+        let k = v.index().checked_sub(self.first)?;
+        if v.table() != 0 || k < TEMPS {
+            return None;
+        }
+        match self.list.get(k)? {
+            Literal::Int(n) => Some(Num::Int(*n)),
+            Literal::Real(x) => Some(Num::Real(*x)),
+            Literal::Str(_) => None,
+        }
+    }
+
+    fn int(&self, v: Var) -> Option<i32> {
+        match self.literal(v)? {
+            Num::Int(n) => Some(n),
+            Num::Real(_) => None,
+        }
     }
 
     /// The place of what `op` pushes, if it is a variable or a number.
@@ -518,28 +598,44 @@ fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(F
         Some(Op::Binary(op)) => {
             let op = *op;
             add(F::Vars { op, a, b }, 3);
+            // A constant on the left of `+` or `*` goes to the right.
+            let (l, r) = match commutes(op) && c.literal(a).is_some() && c.literal(b).is_none() {
+                true => (b, a),
+                false => (a, b),
+            };
             if let Some(to) = store(code.get(3)) {
                 add(
-                    match op {
-                        BinaryOp::Add => F::AddStore(a, b, to),
-                        BinaryOp::Sub => F::SubStore(a, b, to),
-                        BinaryOp::Mul => F::MulStore(a, b, to),
-                        op => F::VarsStore { op, a, b, to },
+                    match (op, c.literal(r)) {
+                        (BinaryOp::Add, Some(Num::Int(k))) => F::AddStoreInt(l, k, to),
+                        (BinaryOp::Sub, Some(Num::Int(k))) => F::SubStoreInt(l, k, to),
+                        (BinaryOp::Mul, Some(Num::Int(k))) => F::MulStoreInt(l, k, to),
+                        (BinaryOp::Add, Some(Num::Real(x))) => F::AddStoreReal(l, real_bits(x), to),
+                        (BinaryOp::Add, _) => F::AddStore(a, b, to),
+                        (BinaryOp::Sub, _) => F::SubStore(a, b, to),
+                        (BinaryOp::Mul, _) => F::MulStore(a, b, to),
+                        (op, _) => F::VarsStore { op, a, b, to },
                     },
                     4,
                 );
             }
             if let Some(Op::JumpIfFalse(t) | Op::TestIfFalse(t)) = code.get(3) {
                 let t = *t;
+                let int = c.int(b);
                 add(
-                    match op {
-                        BinaryOp::Eq => F::UnlessEq(a, b, t),
-                        BinaryOp::NotEq => F::UnlessNotEq(a, b, t),
-                        BinaryOp::Less => F::UnlessLess(a, b, t),
-                        BinaryOp::LessEq => F::UnlessLessEq(a, b, t),
-                        BinaryOp::Greater => F::UnlessGreater(a, b, t),
-                        BinaryOp::GreaterEq => F::UnlessGreaterEq(a, b, t),
-                        op => F::VarsJump {
+                    match (op, int) {
+                        (BinaryOp::Eq, Some(k)) => F::UnlessEqInt(a, k, t),
+                        (BinaryOp::NotEq, Some(k)) => F::UnlessNotEqInt(a, k, t),
+                        (BinaryOp::Less, Some(k)) => F::UnlessLessInt(a, k, t),
+                        (BinaryOp::LessEq, Some(k)) => F::UnlessLessEqInt(a, k, t),
+                        (BinaryOp::Greater, Some(k)) => F::UnlessGreaterInt(a, k, t),
+                        (BinaryOp::GreaterEq, Some(k)) => F::UnlessGreaterEqInt(a, k, t),
+                        (BinaryOp::Eq, _) => F::UnlessEq(a, b, t),
+                        (BinaryOp::NotEq, _) => F::UnlessNotEq(a, b, t),
+                        (BinaryOp::Less, _) => F::UnlessLess(a, b, t),
+                        (BinaryOp::LessEq, _) => F::UnlessLessEq(a, b, t),
+                        (BinaryOp::Greater, _) => F::UnlessGreater(a, b, t),
+                        (BinaryOp::GreaterEq, _) => F::UnlessGreaterEq(a, b, t),
+                        (op, _) => F::VarsJump {
                             op,
                             a,
                             b,
@@ -750,6 +846,15 @@ impl Chain {
             | M::Greater(_, _, to)
             | M::GreaterEq(_, _, to)
             | M::Binary(_, _, _, to)
+            | M::AddInt(_, _, to)
+            | M::SubInt(_, _, to)
+            | M::MulInt(_, _, to)
+            | M::AndInt(_, _, to)
+            | M::BinaryInt(_, _, _, to)
+            | M::AddReal(_, _, to)
+            | M::SubReal(_, _, to)
+            | M::MulReal(_, _, to)
+            | M::BinaryReal(_, _, _, to)
             | M::Neg(_, to)
             | M::Unary(_, _, to)
             | M::Truthy(_, to)
@@ -762,9 +867,50 @@ impl Chain {
     }
 }
 
-fn binary_micro(op: BinaryOp, a: Var, b: Var, to: Var) -> Micro {
+/// The operators whose sides can change places with the same result, to
+/// bring a constant to the right: for reals too, as only one side can be
+/// NaN, a constant being none.
+fn commutes(op: BinaryOp) -> bool {
+    use BinaryOp as B;
+    matches!(
+        op,
+        B::Add | B::Mul | B::And | B::Or | B::Xor | B::Eq | B::NotEq
+    )
+}
+
+/// `a op b` to `to`, with a constant `b` carried in the step. Comparisons
+/// keep their places, which a jump after them takes in.
+fn binary_micro(c: &Constants, op: BinaryOp, a: Var, b: Var, to: Var) -> Micro {
     use BinaryOp as B;
     use Micro as M;
+    let (a, b) = match commutes(op) && c.literal(a).is_some() && c.literal(b).is_none() {
+        true => (b, a),
+        false => (a, b),
+    };
+    let compares = matches!(
+        op,
+        B::Eq | B::NotEq | B::Less | B::LessEq | B::Greater | B::GreaterEq
+    );
+    match (c.literal(b), compares) {
+        (Some(Num::Int(k)), false) => {
+            return match op {
+                B::Add => M::AddInt(a, k, to),
+                B::Sub => M::SubInt(a, k, to),
+                B::Mul => M::MulInt(a, k, to),
+                B::And => M::AndInt(a, k, to),
+                op => M::BinaryInt(op, a, k, to),
+            };
+        }
+        (Some(Num::Real(x)), false) => {
+            return match op {
+                B::Add => M::AddReal(a, x, to),
+                B::Sub => M::SubReal(a, x, to),
+                B::Mul => M::MulReal(a, x, to),
+                op => M::BinaryReal(op, a, x, to),
+            };
+        }
+        _ => {}
+    }
     match op {
         B::Add => M::Add(a, b, to),
         B::Sub => M::Sub(a, b, to),
@@ -857,7 +1003,7 @@ fn chain(
             Op::Binary(op) => {
                 let b = ch.pop()?;
                 let a = ch.pop()?;
-                ch.make(|to| binary_micro(op, a, b, to))?;
+                ch.make(|to| binary_micro(c, op, a, b, to))?;
             }
             Op::Unary(op) => {
                 let a = ch.pop()?;
@@ -958,13 +1104,29 @@ fn chain(
                     ) if to == cond => Some(Jump { a, b, target, when }),
                     _ => None,
                 };
-                let last = match (compared, ch.micro.last()) {
-                    (Some(j), Some(Micro::Eq(..))) => Micro::JumpEq(j),
-                    (Some(j), Some(Micro::NotEq(..))) => Micro::JumpNotEq(j),
-                    (Some(j), Some(Micro::Less(..))) => Micro::JumpLess(j),
-                    (Some(j), Some(Micro::LessEq(..))) => Micro::JumpLessEq(j),
-                    (Some(j), Some(Micro::Greater(..))) => Micro::JumpGreater(j),
-                    (Some(j), Some(Micro::GreaterEq(..))) => Micro::JumpGreaterEq(j),
+                // With a constant integer on the right, it carries that.
+                let int = compared.and_then(|j| {
+                    let k = c.int(j.b)?;
+                    Some(JumpInt {
+                        a: j.a,
+                        k,
+                        target,
+                        when,
+                    })
+                });
+                let last = match (int, compared, ch.micro.last()) {
+                    (Some(j), _, Some(Micro::Eq(..))) => Micro::JumpEqInt(j),
+                    (Some(j), _, Some(Micro::NotEq(..))) => Micro::JumpNotEqInt(j),
+                    (Some(j), _, Some(Micro::Less(..))) => Micro::JumpLessInt(j),
+                    (Some(j), _, Some(Micro::LessEq(..))) => Micro::JumpLessEqInt(j),
+                    (Some(j), _, Some(Micro::Greater(..))) => Micro::JumpGreaterInt(j),
+                    (Some(j), _, Some(Micro::GreaterEq(..))) => Micro::JumpGreaterEqInt(j),
+                    (_, Some(j), Some(Micro::Eq(..))) => Micro::JumpEq(j),
+                    (_, Some(j), Some(Micro::NotEq(..))) => Micro::JumpNotEq(j),
+                    (_, Some(j), Some(Micro::Less(..))) => Micro::JumpLess(j),
+                    (_, Some(j), Some(Micro::LessEq(..))) => Micro::JumpLessEq(j),
+                    (_, Some(j), Some(Micro::Greater(..))) => Micro::JumpGreater(j),
+                    (_, Some(j), Some(Micro::GreaterEq(..))) => Micro::JumpGreaterEq(j),
                     _ if when => Micro::JumpIfTrue { cond, target },
                     _ => Micro::JumpIfFalse { cond, target },
                 };

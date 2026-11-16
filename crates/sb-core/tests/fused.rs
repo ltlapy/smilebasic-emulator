@@ -231,7 +231,70 @@ const PROGRAMS: &[&str] = &[
     "DIM M[4]:A=2\n?1:M[A-1]=A*A:M[A+1]=M[A-1]+A:M[A+9]=1:?2",
     "DIM M[4]:FOR I=0 TO 3:X=I*2+1:Y=X*X-I:M[I]=X+Y:NEXT:?M[3]",
     "A=1:B=2:C=(A+B)*(A+B*(A+B*(A+B*(A+B*(A+B*(A+B*(A+B*(A+B)))))))):?C",
+    // Constants carried in entries and steps, on either side, against every
+    // kind of value, where they overflow and where they fail.
+    CONSTANTS,
+    CONSTANTS_IN_DEF,
+    "A%=2147483647:A%=A%+1:?A%:B%=-2147483648:B%=B%-1:?B%:C%=65536:C%=C%*65536:?C%",
+    "A%=2147483647:A%=(A%+1)*2:?A%:B%=-2147483648:B%=(B%-1)*1:?B%:C=46341:C=C*46341+0:?C",
+    "X#=0.5:X#=X#+0.25:?X#:X#=X#+1:?X#:Y=3:Y=Y+0.5:?Y;TYPEOF(Y):Z#=0.1:Z#=Z#*3+0.5:?Z#",
+    "N#=1E308*10:M#=N#-N#:?1+M#;M#+1;2*M#;M#*2;M#-1;1 AND M#;M# OR 2;M#==1;1==M#",
+    "N#=1E308*10:?N#+1;1+N#;N#*2;-1*N#;N#-1E308:IF N#>1 THEN ?\"BIG\"",
+    "X#=1E300:?1:Y=X# AND 1:?Y",
+    "X#=1E300:?1:Y=(X#*2) AND 1:?Y",
+    "X#=2.5:?3 AND X#;X# AND 3;X# OR 1;X# XOR 7;X#<<1;(X#*2)>>1;X# MOD 2;(X#+1) MOD 2",
+    "A=7:?(A+1) MOD 0",
+    "A=7:B=(A+1) DIV 0",
+    "A=7:B=A MOD 0",
+    "S$=\"Q\":?1:S$=S$+1:?2",
+    "S$=\"Q\":?1:T$=S$*2:?T$:U$=(S$+\"R\")*2:?U$:V$=2*S$",
+    "S$=\"Q\":?1:IF S$==1 THEN ?2",
+    "S$=\"Q\":?1:IF S$<1 THEN ?2",
+    "S$=\"Q\":?1:B=(S$+\"R\")-1:?2",
+    "DIM A[2]:?1:A=A+1",
+    "DIM A[2]:?1:IF A>=0 THEN ?2",
+    "A=5:B=10-A:C=2-(A*2):D=100/(A+1):E=7 MOD (A-1):F=1<<(A-3):G=3<A:H=(A*2)<4:?B;C;D;E;F;G;H",
+    "K=0:IF 0==K THEN ?\"Z\"\nIF 1!=K THEN ?\"N\"\nIF K+1==1 THEN ?\"O\"\nIF (K+1)*2>=2 THEN ?\"T\"",
 ];
+
+/// Constants on both sides of each operator, in entries and in chains, the
+/// variables changing kind as they go.
+const CONSTANTS: &str = "\
+FOR I=0 TO 5
+ IF I==3 THEN A=\"S\" ELSE A=I+0.5*(I AND 1)
+ IF I==3 THEN ?\"STRING\":CONTINUE
+ B=A+1:C=A-2:D=A*3:E=1+A:F=2*A:?B;C;D;E;F
+ B=(A+1)*2:C=(A-2)*3:D=(A*3) AND 7:E=(A+1) OR 8:F=(A*2) XOR 5:?B;C;D;E;F
+ B=(A*2)<<2:C=(A*4)>>1:D=(A+9) MOD 4:E=(A+9) DIV 2:F=(A+1)/4:?B;C;D;E;F
+ B=A+0.25:C=A-0.5:D=A*1.5:E=(A+1)/0.5:F=(A+1) MOD 1.5:?B;C;D;E;F
+ IF A==2 THEN ?\"EQ\"
+ IF A!=2 THEN ?\"NE\"
+ IF A<2 THEN ?\"LT\"
+ IF A<=2 THEN ?\"LE\"
+ IF A>2 THEN ?\"GT\"
+ IF A>=2 THEN ?\"GE\"
+ IF A*2==4 THEN ?\"EQ2\"
+ IF A*2!=4 THEN ?\"NE2\"
+ IF A*2<4 THEN ?\"LT2\"
+ IF A*2<=4 THEN ?\"LE2\"
+ IF A*2>4 THEN ?\"GT2\"
+ IF A*2>=4 THEN ?\"GE2\"
+ IF A*2>=4 || A<1 THEN ?\"OR2\"
+ X#=A:X#=X#+0.75:Y%=A:Y%=Y%+1:Y%=Y%*2:Y%=Y%-3:?X#;Y%
+NEXT
+";
+const CONSTANTS_IN_DEF: &str = "\
+DEF F N
+ VAR A,B,C
+ A=N:B=A+1:C=(A*3) AND 5
+ IF C>=2 THEN B=B-1
+ IF (A+1)*2<6 THEN C=C+10
+ ?A;B;C
+END
+VAR A=100
+FOR I=0 TO 4:F I:F I+0.5:NEXT
+?A
+";
 
 const DEF_OUT: &str = "\
 DEF TWO A,B OUT X,Y
@@ -541,6 +604,59 @@ fn constants_are_not_variables() {
     assert_eq!(names, ["A", "B", "C#"]);
     assert!(matches!(vm.global("C#"), Some(sb_core::value::Value::Real(x)) if *x == 30.0));
     assert!(!vm.program().constants.is_empty());
+}
+
+/// Constants beside an operator are carried in the entry or step, from
+/// either side where the sides can change places.
+#[test]
+fn constants_are_carried_in_entries_and_steps() {
+    use sb_core::fuse::Micro;
+    let source = "FOR I=0 TO 3:A=A+1:B=B-2:C=3*C:D#=D#+0.5\nIF A<5 THEN ?A\n\
+                  E=(A+1)*2:F#=(D#-0.5)*1.5:IF A*2>=4 THEN ?E\nNEXT";
+    let program = compiled(source, true);
+    let ops: Vec<FastOp> = program.fast.iter().map(|f| f.op).collect();
+    let has = |f: &dyn Fn(&FastOp) -> bool| ops.iter().any(f);
+    assert!(
+        has(&|o| matches!(o, FastOp::AddStoreInt(_, 1, _))),
+        "{ops:?}"
+    );
+    assert!(
+        has(&|o| matches!(o, FastOp::SubStoreInt(_, 2, _))),
+        "{ops:?}"
+    );
+    assert!(
+        has(&|o| matches!(o, FastOp::MulStoreInt(_, 3, _))),
+        "{ops:?}"
+    );
+    assert!(has(&|o| matches!(o, FastOp::AddStoreReal(..))), "{ops:?}");
+    assert!(
+        has(&|o| matches!(o, FastOp::UnlessLessInt(_, 5, _))),
+        "{ops:?}"
+    );
+    let micro = &program.micro;
+    assert!(
+        micro.iter().any(|m| matches!(m, Micro::AddInt(_, 1, _))),
+        "{micro:?}"
+    );
+    assert!(
+        micro.iter().any(|m| matches!(m, Micro::MulInt(_, 2, _))),
+        "{micro:?}"
+    );
+    assert!(
+        micro
+            .iter()
+            .any(|m| matches!(m, Micro::SubReal(_, x, _) if *x == 0.5))
+    );
+    assert!(
+        micro
+            .iter()
+            .any(|m| matches!(m, Micro::MulReal(_, x, _) if *x == 1.5))
+    );
+    assert!(
+        micro
+            .iter()
+            .any(|m| matches!(m, Micro::JumpGreaterEqInt(j) if j.k == 4))
+    );
 }
 
 /// Statements of several operators run as chains.

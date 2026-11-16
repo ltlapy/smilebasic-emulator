@@ -1630,6 +1630,26 @@ impl Vm {
                     }
                 }};
             }
+            // The same with a constant the entry carries for `b`, as the
+            // constant's place holds it.
+            macro_rules! store_k {
+                ($op:expr, $a:expr, $k:expr, $to:expr) => {{
+                    let Some(n) = ops::binary_numbers($op, get(&vars, $a), &$k) else {
+                        break;
+                    };
+                    put(at_var(&mut vars, $to), n);
+                }};
+            }
+            macro_rules! unless_k {
+                ($op:expr, $a:expr, $k:expr, $target:expr) => {{
+                    let Some(n) = ops::binary_numbers($op, get(&vars, $a), &Value::Int($k)) else {
+                        break;
+                    };
+                    if !num_truth(n) {
+                        next = $target as usize;
+                    }
+                }};
+            }
             match fast.op {
                 FastOp::Slow => break,
                 FastOp::Nop => {}
@@ -1936,6 +1956,18 @@ impl Vm {
                 FastOp::AddStore(a, b, to) => store!(BinaryOp::Add, a, b, to),
                 FastOp::SubStore(a, b, to) => store!(BinaryOp::Sub, a, b, to),
                 FastOp::MulStore(a, b, to) => store!(BinaryOp::Mul, a, b, to),
+                FastOp::AddStoreInt(a, k, to) => store_k!(BinaryOp::Add, a, Value::Int(k), to),
+                FastOp::SubStoreInt(a, k, to) => store_k!(BinaryOp::Sub, a, Value::Int(k), to),
+                FastOp::MulStoreInt(a, k, to) => store_k!(BinaryOp::Mul, a, Value::Int(k), to),
+                FastOp::AddStoreReal(a, x, to) => {
+                    store_k!(BinaryOp::Add, a, Value::Real(crate::fuse::real_of(x)), to)
+                }
+                FastOp::UnlessEqInt(a, k, t) => unless_k!(BinaryOp::Eq, a, k, t),
+                FastOp::UnlessNotEqInt(a, k, t) => unless_k!(BinaryOp::NotEq, a, k, t),
+                FastOp::UnlessLessInt(a, k, t) => unless_k!(BinaryOp::Less, a, k, t),
+                FastOp::UnlessLessEqInt(a, k, t) => unless_k!(BinaryOp::LessEq, a, k, t),
+                FastOp::UnlessGreaterInt(a, k, t) => unless_k!(BinaryOp::Greater, a, k, t),
+                FastOp::UnlessGreaterEqInt(a, k, t) => unless_k!(BinaryOp::GreaterEq, a, k, t),
                 FastOp::UnlessEq(a, b, t) => unless!(BinaryOp::Eq, a, b, t),
                 FastOp::UnlessNotEq(a, b, t) => unless!(BinaryOp::NotEq, a, b, t),
                 FastOp::UnlessLess(a, b, t) => unless!(BinaryOp::Less, a, b, t),
@@ -2096,6 +2128,24 @@ impl Vm {
                                 }
                             }};
                         }
+                        // With the constant for `b` in the step.
+                        macro_rules! binary_k {
+                            ($op:expr, $a:expr, $k:expr, $to:expr) => {{
+                                let n = ops::binary_numbers($op, get(&vars, $a), &$k);
+                                let Some(n) = n else { fail!() };
+                                put(at_var(&mut vars, $to), n);
+                            }};
+                        }
+                        macro_rules! jump_k {
+                            ($op:expr, $j:expr) => {{
+                                let n =
+                                    ops::binary_numbers($op, get(&vars, $j.a), &Value::Int($j.k));
+                                let Some(n) = n else { fail!() };
+                                if num_truth(n) == $j.when {
+                                    next = $j.target as usize;
+                                }
+                            }};
+                        }
                         use BinaryOp as B;
                         use Micro as M;
                         match *m {
@@ -2117,6 +2167,15 @@ impl Vm {
                             M::Greater(a, b, to) => binary!(B::Greater, a, b, to),
                             M::GreaterEq(a, b, to) => binary!(B::GreaterEq, a, b, to),
                             M::Binary(op, a, b, to) => binary!(op, a, b, to),
+                            M::AddInt(a, k, to) => binary_k!(B::Add, a, Value::Int(k), to),
+                            M::SubInt(a, k, to) => binary_k!(B::Sub, a, Value::Int(k), to),
+                            M::MulInt(a, k, to) => binary_k!(B::Mul, a, Value::Int(k), to),
+                            M::AndInt(a, k, to) => binary_k!(B::And, a, Value::Int(k), to),
+                            M::BinaryInt(op, a, k, to) => binary_k!(op, a, Value::Int(k), to),
+                            M::AddReal(a, x, to) => binary_k!(B::Add, a, Value::Real(x), to),
+                            M::SubReal(a, x, to) => binary_k!(B::Sub, a, Value::Real(x), to),
+                            M::MulReal(a, x, to) => binary_k!(B::Mul, a, Value::Real(x), to),
+                            M::BinaryReal(op, a, x, to) => binary_k!(op, a, Value::Real(x), to),
                             M::Neg(a, to) => {
                                 let n = ops::unary_number(UnaryOp::Neg, get(&vars, a));
                                 let Some(n) = n else { fail!() };
@@ -2197,6 +2256,12 @@ impl Vm {
                             M::JumpLessEq(j) => jump!(B::LessEq, j),
                             M::JumpGreater(j) => jump!(B::Greater, j),
                             M::JumpGreaterEq(j) => jump!(B::GreaterEq, j),
+                            M::JumpEqInt(j) => jump_k!(B::Eq, j),
+                            M::JumpNotEqInt(j) => jump_k!(B::NotEq, j),
+                            M::JumpLessInt(j) => jump_k!(B::Less, j),
+                            M::JumpLessEqInt(j) => jump_k!(B::LessEq, j),
+                            M::JumpGreaterInt(j) => jump_k!(B::Greater, j),
+                            M::JumpGreaterEqInt(j) => jump_k!(B::GreaterEq, j),
                             M::Commit { to, charged } => done = (to as usize, u64::from(charged)),
                             M::Truthy(a, to) => {
                                 let Some(yes) = truth(get(&vars, a)) else {
