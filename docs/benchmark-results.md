@@ -635,9 +635,9 @@ The same column of successive rows falls in one L1 set, and in one of four
 L2 sets. Counts come from qemu's Cortex-A35 model
 over frames 3 to 6 of the `dist` build, as in the
 [chains](#three-address-chains-from-018017d) set, and from `perf stat` on
-x86-64 over frames 3 to 83. The device was off the network for this set:
-its times below are those of the sets above, and the new build's are not
-measured yet.
+x86-64 over frames 3 to 83. The device times in the first table are those
+of the sets above; the device's own run of this set is
+[at its end](#grp-rows-on-the-device).
 
 What each scene's program does a frame, and what it costs:
 
@@ -693,12 +693,12 @@ The two clusters of times fit the two placements: scattered frames give
 GCOPY 180 thousand fewer misses a frame than contiguous ones, and the
 clusters lie about 10 ms apart, which prices a miss at about 55 ns. At that
 price, padding would save GCOPY about 5 ms a frame with scattered frames
-and 15 ms with contiguous ones, of 45 to 55: 10 to 27%. Neither the
-placement nor the price is measured on the device yet, and translation
+and 15 ms with contiguous ones, of 45 to 55: 10 to 27%. Translation
 misses are not modeled: the target's rows lie in 240 different 4 KB pages.
 
-So no stride was changed. The device has to show a gain of a third or more
-in GCOPY or GFILL at a padded stride first, in every run.
+So this set changed no stride. The rule for changing it was a gain of a
+third or more in GCOPY or GFILL at a padded stride on the device, in every
+process; the device met it ([below](#grp-rows-on-the-device)).
 
 What did change, as it costs instructions whatever the caches do:
 
@@ -725,6 +725,78 @@ scenes on x86-64, GPUTCHR moves by +0.4% as LLVM inlines `put_chars`
 differently, and the rest by under 0.5%. TPERF's checksums stay
 `e8e5f6dc467db861` at 400 frames, `a6e1ed07824b1ad8` at 3600 and
 `5d9bb17a39eefb70` at 10500.
+
+#### GRP rows on the device
+
+The handheld of the [handheld set](#handheld-cpu-from-cc49c48), front end
+stopped and pinned to one core, ran the standalone benchmark in five
+processes, each timing every stride in two rounds of 30 frames with the
+pass over the target area, then six more processes at strides 2048 and
+2112 with huge pages asked for and refused. Each round maps its pages
+anew. The device's kernel, 4.4, has no transparent huge pages, so the
+last six run as the first five do.
+
+The kernels, ms a frame, median of the five processes' ten rounds, and the
+change against stride 2048:
+
+| Kernel | 2048 | 2064 | 2112 | 3072 |
+|---|---|---|---|---|
+| GCOPY, `da44ce5` | 42.29 | 22.64 (-46.5%) | 23.65 (-44.1%) | 27.77 (-34.3%) |
+| GCOPY, `bfa7e32` | 30.58 | 18.30 (-40.1%) | 17.18 (-43.8%) | 21.50 (-29.7%) |
+| GFILL | 7.07 | 4.41 (-37.6%) | 4.21 (-40.4%) | 5.62 (-20.4%) |
+| GLOAD | 1.78 | 2.37 (+33.0%) | 2.37 (+33.2%) | 1.77 (-0.8%) |
+
+Taking each process's best round, `bfa7e32`'s GCOPY gained 40 to 51% at
+2064 and 44 to 59% at 2112, and GFILL 35 to 45% and 35 to 54%. At 2048
+the processes' best times were 30.45 to 36.89 ms for GCOPY and 6.50 to
+8.36 ms for GFILL; at 2064 and 2112, 14.95 to 18.43 and 3.87 to 4.64. The
+ranges do not overlap, so the gain holds in every process and meets the
+rule: padding page rows pays. GLOAD, the control, falls in two clusters at
+every stride, 1.73 to 1.92 ms and 2.17 to 2.40, and more of its rounds
+fell in the slow one at the padded strides: 7 and 8 of 10 at 2064 and
+2112, against 2 at 2048 and 3 at 3072. A padded build has to time GLOAD
+again.
+
+Stride 3072 gained 16 to 42% for `bfa7e32`'s GCOPY, where the simulation
+has it alias as 2048 does. The L2 model does not account for all the
+misses that cost. One reading, not tested: the 32 KB 4-way L1 holds 8 KB a
+way, so rows 8 KB apart fall in one set and rows 12 KB apart alternate
+between two.
+
+The two clusters of times at stride 2048 are 42.07 to 42.59 ms and 50.15
+to 51.10 for `da44ce5`'s GCOPY, and 6.50 to 7.22 and 8.36 to 8.73 for
+GFILL. Of
+the 11 processes, 5 ran in the slow cluster, and each process stayed in
+its cluster through both rounds, although each round mapped its pages on
+other frames. The placement report does not separate them. In every round
+but one, 229 or more of the target rows' 240 pages used 4 of the 8 values
+of physical address bits 12 to 14, in slow and fast processes alike; the
+one round spread over all 8 was fast, as was its process's other round.
+At the padded strides, where a row crosses into the next page, 73 to 92%
+of neighboring pages are physically neighbors too: the kernel hands out
+mostly contiguous frames. The clusters are neither the pages' placement
+nor huge pages. What a process keeps through its rounds, such as its
+frame buffer, its inputs and where its code and stack lie, was not
+measured.
+
+The scenes, median `run_us` over frames 10 to 69, five runs a build, the
+builds alternating:
+
+| Scene | `da44ce5` (ms) | `bfa7e32` (ms) | Change, best | Change, median |
+|---|---|---|---|---|
+| GFILL | 12.62 to 14.12 | 12.13 to 13.65 | -3.9% | -3.1% |
+| GCOPY | 49.58 to 59.77 | 45.42 to 46.32 | -8.4% | -21.3% |
+| GLOAD | 2.06 to 2.22 | 2.07 to 2.12 | +0.5% | -0.9% |
+| GUPLOAD | 0.22 to 0.23 | 0.22 to 0.23 | 0.0% | 0.0% |
+| VINT | 8.40 to 8.41 | 8.41 to 8.42 | +0.1% | 0.0% |
+| TPRINT | 3.52 to 3.54 | 3.46 to 3.57 | -1.7% | -0.6% |
+
+Every checksum is the same for both builds. `bfa7e32`'s GCOPY took 45.4 to
+46.3 ms in all five runs, while `da44ce5`'s fell four times in its slow
+cluster: the gain is real, as the instruction counts fell 27.5% with it.
+GFILL's 3 to 4% is under the noise rule's 10%, though its counts fell
+10.5%. If the scenes save what the kernels do at 2064 or 2112, GCOPY
+would lose 12 to 15 ms of its 46 and GFILL about 3 ms of its 12 to 14.
 
 ### Calls, from `48f7cfc`
 
@@ -917,6 +989,74 @@ branch, with `host_call` (1828 bytes) and `builtin_call` (1708) outside it.
 Making the calls in the fused loop added little to it; `step` shrank from
 16648 to 15056 bytes, as its call arms went to those functions.
 
+The handheld of the [handheld set](#handheld-cpu-from-cc49c48) ran
+`72a5db7`, the last commit before this set, and `d081e7a`, its end, with
+that set's method, quiet and pinned, the builds alternating within each
+round with those of the [next set](#variables-and-constants-from-d081e7a).
+Times are the best of three runs, and for GFILL, GCOPY, GLOAD and GUPLOAD
+the median of five, as their runs fall in two clusters. The last column is
+the change in aarch64 instructions a frame, in millions: for VINT to VDEF,
+SPHIT and GAME from the table above (`48f7cfc` against the branch), for
+the rest counted on these two builds the same way. Every checksum is the
+same.
+
+| Scene | `72a5db7` (ms) | `d081e7a` (ms) | Change | Instructions (M) |
+|---|---|---|---|---|
+| VINT | 8.41 | 8.61 | +2.4% | -0.05 |
+| VREAL | 7.27 | 7.39 | +1.7% | -0.03 |
+| VSTR | 15.74 | 15.23 | -3.2% | 0.00 |
+| VARRAY | 13.51 | 13.78 | +2.0% | +0.03 |
+| VDEF | 7.27 | 5.71 | -21.4% | -1.63 |
+| VVAR | 43.46 | 44.87 | +3.2% | +0.22 |
+| SPMOVE | 10.94 | 9.63 | -12.0% | -0.62 |
+| SPROT | 7.76 | 6.65 | -14.2% | -0.80 |
+| SPCHURN | 30.14 | 29.99 | -0.5% | -0.43 |
+| SPHIT | 26.09 | 27.96 | +7.2% | -0.36 |
+| SPANIM | 7.96 | 7.93 | -0.5% | 0.00 |
+| TPRINT | 3.46 | 3.43 | -0.8% | -0.13 |
+| TPUT | 19.10 | 17.17 | -10.1% | -0.46 |
+| TSCROLL | 4.28 | 4.23 | -1.2% | - |
+| TMULTI | 0.73 | 0.72 | -1.2% | - |
+| GFILL | 13.82 | 13.04 | -5.7% | - |
+| GALPHA | 61.28 | 60.84 | -0.7% | - |
+| GLINE | 18.83 | 18.13 | -3.7% | - |
+| GCIRCLE | 14.30 | 13.94 | -2.5% | - |
+| GTRI | 22.25 | 21.52 | -3.3% | - |
+| GPUTCHR | 12.27 | 12.12 | -1.2% | - |
+| GCOPY | 48.43 | 46.43 | -4.1% | - |
+| GLOAD | 2.58 | 2.58 | -0.1% | - |
+| GUPLOAD | 0.22 | 0.22 | -2.0% | - |
+| GARRAY | 10.30 | 10.23 | -0.7% | -0.06 |
+| LCOMP | 0.90 | 0.79 | -12.3% | -0.16 |
+| LBLUR | 0.53 | 0.49 | -8.0% | - |
+| LMOSAIC | 0.54 | 0.49 | -8.2% | - |
+| LCOLOR | 0.63 | 0.57 | -9.5% | - |
+| LMATRIX | 0.66 | 0.59 | -9.8% | -0.09 |
+| LRASTER | 1.05 | 1.04 | -0.5% | -0.06 |
+| GAME | 8.93 | 8.79 | -1.5% | -0.13 |
+
+The game loops, run 10 times a frame with a `VSYNC` after, timed the same
+way, best of five (their checksums include the start-up banner, which
+names the build, so they differ by build and were not compared):
+
+| Loop | `72a5db7` (ms) | `d081e7a` (ms) | Change | aarch64 instructions |
+|---|---|---|---|---|
+| Game 1 | 3.82 | 2.98 | -22.2% | -17.1% |
+| Game 2 | 2.14 | 1.93 | -9.8% | -11.0% |
+| Game 3 | 1.52 | 1.29 | -15.2% | -15.2% |
+
+The device runs at 1.008 GHz and 1.3 to 1.8 cycles an instruction in the
+interpreter, so a million instructions is 1.3 to 1.8 ms. Real, as the time
+moves with the counts: VDEF (-1.56 ms, -1.63 M), SPMOVE (-1.31 ms,
+-0.62 M), SPROT (-1.11 ms, -0.80 M), LCOMP and LMATRIX (-0.11 and
+-0.07 ms, -0.16 and -0.09 M), and the three game loops. These save 0.7 to
+2.1 ms a million instructions. LBLUR, LMOSAIC and LCOLOR gain as LCOMP
+does and were not counted. TPUT's -1.93 ms is about three times what its
+-0.46 M explain: part of it is layout, as `72a5db7` ran it 1.2 ms slower
+than `0dc842c` did in the chains set. Layout, with no count behind it:
+VINT, VREAL and VARRAY up 2%, VVAR up 3%, SPHIT up 7%, VSTR down 3%. The
+other scenes move by under 6%.
+
 What calls still cost, for later work:
 
 - A function of the runtime returns its value in a `Vec`: 137 aarch64
@@ -1086,6 +1226,79 @@ constants.
 `cc60440` and 46236 at `9113d96`: each new entry and step kind inlines its
 operator's work on integers and reals, about 190 bytes. A loop runs only
 the kinds it uses.
+
+The handheld ran `d081e7a`, `500b8ca` (this set as merged) and `0f41de0`
+in the same rounds as the [calls](#calls-from-48f7cfc) set's builds, with
+the same method. `0f41de0`, on branch `vars-unchecked` and not in `main`,
+reads the fused code's places without a bounds check on each; its
+`run_fast` is 41436 bytes. Times are the best of three runs, the median of
+five for GFILL, GCOPY, GLOAD and GUPLOAD. The instruction columns are the
+change in aarch64 instructions a frame, in millions: for VINT to VDEF,
+SPHIT and GAME from the table above and the same count of `0f41de0`, for
+the rest counted on these builds. Every checksum is the same.
+
+| Scene | `d081e7a` (ms) | `500b8ca` (ms) | Change | Instructions (M) | `0f41de0` (ms) | Change from `500b8ca` | Instructions (M) |
+|---|---|---|---|---|---|---|---|
+| VINT | 8.61 | 7.90 | -8.3% | -0.80 | 6.96 | -11.8% | -0.96 |
+| VREAL | 7.39 | 7.17 | -3.1% | -0.60 | 6.42 | -10.5% | -0.77 |
+| VSTR | 15.23 | 16.04 | +5.4% | -0.06 | 15.17 | -5.4% | +0.21 |
+| VARRAY | 13.78 | 12.52 | -9.2% | -1.75 | 10.78 | -13.9% | -1.70 |
+| VDEF | 5.71 | 5.34 | -6.4% | -0.03 | 5.29 | -1.1% | +0.02 |
+| VVAR | 44.87 | 46.73 | +4.1% | -0.18 | 42.70 | -8.6% | +0.07 |
+| SPMOVE | 9.63 | 9.12 | -5.2% | -0.17 | 8.63 | -5.4% | -0.24 |
+| SPROT | 6.65 | 6.10 | -8.4% | -0.10 | 5.87 | -3.8% | -0.02 |
+| SPCHURN | 29.99 | 29.49 | -1.7% | -0.02 | 28.75 | -2.5% | +0.12 |
+| SPHIT | 27.96 | 27.35 | -2.2% | -0.08 | 25.29 | -7.5% | +0.09 |
+| SPANIM | 7.93 | 8.17 | +3.1% | 0.00 | 7.96 | -2.6% | +0.01 |
+| TPRINT | 3.43 | 3.44 | +0.4% | 0.00 | 3.42 | -0.7% | +0.06 |
+| TPUT | 17.17 | 16.85 | -1.9% | -0.26 | 16.58 | -1.6% | -0.07 |
+| TSCROLL | 4.23 | 4.24 | +0.1% | - | 4.24 | +0.2% | - |
+| TMULTI | 0.72 | 0.72 | -0.3% | - | 0.72 | -0.2% | - |
+| GFILL | 13.04 | 12.60 | -3.3% | - | 12.66 | +0.5% | - |
+| GALPHA | 60.84 | 60.91 | +0.1% | - | 60.67 | -0.4% | - |
+| GLINE | 18.13 | 17.65 | -2.7% | - | 17.51 | -0.8% | - |
+| GCIRCLE | 13.94 | 13.78 | -1.1% | - | 13.58 | -1.5% | - |
+| GTRI | 21.52 | 21.49 | -0.1% | - | 21.34 | -0.7% | - |
+| GPUTCHR | 12.12 | 12.29 | +1.3% | - | 11.97 | -2.6% | - |
+| GCOPY | 46.43 | 46.71 | +0.6% | - | 47.84 | +2.4% | - |
+| GLOAD | 2.58 | 2.55 | -1.0% | - | 2.55 | 0.0% | - |
+| GUPLOAD | 0.22 | 0.22 | -0.2% | - | 0.21 | -0.9% | - |
+| GARRAY | 10.23 | 10.31 | +0.9% | -0.57 | 8.90 | -13.7% | -0.91 |
+| LCOMP | 0.79 | 0.77 | -2.9% | +0.02 | 0.75 | -2.9% | -0.03 |
+| LBLUR | 0.49 | 0.48 | -2.6% | - | 0.47 | -2.1% | - |
+| LMOSAIC | 0.49 | 0.48 | -2.4% | - | 0.47 | -2.1% | - |
+| LCOLOR | 0.57 | 0.56 | -2.5% | - | 0.54 | -2.2% | - |
+| LMATRIX | 0.59 | 0.58 | -1.7% | 0.00 | 0.56 | -3.2% | 0.00 |
+| LRASTER | 1.04 | 0.98 | -6.4% | -0.06 | 0.89 | -8.6% | -0.06 |
+| GAME | 8.79 | 8.70 | -1.1% | -0.19 | 7.80 | -10.3% | -0.52 |
+
+The game loops of the calls set, timed the same way, best of five, with
+the change in aarch64 instructions from the table above:
+
+| Loop | `d081e7a` (ms) | `500b8ca` (ms) | Change | Instructions | `0f41de0` (ms) | Change from `500b8ca` | Instructions |
+|---|---|---|---|---|---|---|---|
+| Game 1 | 2.98 | 2.91 | -2.2% | -3.2% | 2.77 | -4.9% | -5.7% |
+| Game 2 | 1.93 | 1.88 | -2.7% | -3.6% | 1.81 | -3.3% | -5.9% |
+| Game 3 | 1.29 | 1.20 | -6.4% | -0.3% | 1.24 | +2.7% | +1.4% |
+
+`500b8ca` against `d081e7a`: real, as the time moves with the counts, are
+VINT (-0.71 ms, -0.80 M), VARRAY (-1.26 ms, -1.75 M), VREAL by less than
+its count (-0.22 ms, -0.60 M), TPUT, LRASTER, and game loops 1 and 2.
+GARRAY's -0.57 M does not show. Where the counts stay within 0.2 M, the
+times move both ways: VSTR, VVAR and SPANIM up 3 to 5%, VDEF, SPMOVE and
+SPROT down 5 to 8%, game 3 down 6%. That is layout. A cost from the
+46 KB `run_fast`, past the 32 KB instruction cache, would make the scenes
+it does not speed up slower together, and they do not.
+
+`0f41de0` against `500b8ca`, the measured gain of the option: VINT -11.8%
+(-0.94 ms, -0.96 M), VREAL -10.5% (-0.75 ms, -0.77 M), VARRAY -13.9%
+(-1.74 ms, -1.70 M) and GARRAY -13.7% (-1.41 ms, -0.91 M), with the
+counts, as are GAME's -10.3% (-0.90 ms, -0.52 M) and game loops 1 and 2,
+-4.9 and -3.3% against -5.7 and -5.9% of instructions. VSTR, whose count
+rises by 0.21 M, takes 5.4% less, and the sprite scenes 2.5 to 7.5% less
+with their counts within 0.25 M: none of them loses, and their gains
+beyond the counts are layout. The largest rises, game 3's +2.7% with
++1.4% of instructions and GCOPY's +2.4%, are within the noise.
 
 What a step still costs, for later work:
 
