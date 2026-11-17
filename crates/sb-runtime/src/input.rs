@@ -406,6 +406,45 @@ pub struct Input {
     /// Keyboard keys whose press [`Input::hide_press`] keeps from
     /// KEYBOARD, by USB usage ID, until they are released.
     hidden_presses: [u64; 4],
+    /// What went down and what went up since the last frame, as the
+    /// frontend saw it happen; see [`Input::tap`].
+    taps: Taps,
+}
+
+/// What [`Input::tap`] saw go down or up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tap {
+    /// A controller, 0 to 3 for controllers 1 to 4, and BUTTON's bits.
+    Buttons(usize, u32),
+    /// A keyboard key, by USB usage ID.
+    Key(u8),
+}
+
+/// Presses and releases between two frames, which [`Input::live`] alone,
+/// read once a frame, can miss.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Taps {
+    /// Controllers 1 to 4's buttons that went down, then those that went up.
+    down: [u32; PADS],
+    up: [u32; PADS],
+    /// The same for keyboard keys, by USB usage ID.
+    keys_down: [u64; 4],
+    keys_up: [u64; 4],
+}
+
+/// `now` with what changed and changed back since `before`: held for one
+/// frame what went down and up again, and let go for one frame what went
+/// up and down again.
+fn with_taps<T>(before: T, now: T, down: T, up: T) -> T
+where
+    T: Copy
+        + std::ops::BitAnd<Output = T>
+        + std::ops::BitOr<Output = T>
+        + std::ops::Not<Output = T>,
+{
+    let tapped = down & !before & !now;
+    let blinked = up & before & now;
+    (now | tapped) & !blinked
 }
 
 /// The keys a program has read for itself: those `KEYBOARD` asked about,
@@ -456,16 +495,54 @@ impl Default for Input {
             keys_read: KeysRead::default(),
             polled: false,
             hidden_presses: [0; 4],
+            taps: Taps::default(),
         }
     }
 }
 
 impl Input {
+    /// A controller's buttons or a keyboard key went down or up, as the
+    /// frontend saw it happen between two frames. [`Input::live`] holds
+    /// only what is down when the frontend reads it, once a frame; with
+    /// this, a press and its release that both came in between read as
+    /// held for one frame, with the press and the release on the frames
+    /// either side, and a release and a new press read as let go for one
+    /// frame.
+    ///
+    /// SmileBASIC 4 reads the controllers every 1/60 s, more often than a
+    /// person presses and releases a button. The emulator's frames come
+    /// further apart on a slow computer, which would lose a short tap. At
+    /// 60 frames a second a program sees no difference: a person cannot
+    /// time a press to fall between two frames.
+    // UNVERIFIED: whether SmileBASIC 4 can miss a press shorter than a
+    // frame, and if it shows one, that it shows it held for a frame.
+    pub fn tap(&mut self, tap: Tap, down: bool) {
+        let t = &mut self.taps;
+        match (tap, down) {
+            (Tap::Buttons(pad, bits), true) => t.down[pad % PADS] |= bits,
+            (Tap::Buttons(pad, bits), false) => t.up[pad % PADS] |= bits,
+            (Tap::Key(usage), true) => t.keys_down[usize::from(usage >> 6)] |= 1 << (usage & 63),
+            (Tap::Key(usage), false) => t.keys_up[usize::from(usage >> 6)] |= 1 << (usage & 63),
+        }
+    }
+
     /// Starts a frame: what the frontend reports is what the program sees
-    /// until the next frame.
+    /// until the next frame, with the presses and releases
+    /// [`Input::tap`] saw since the last.
     pub fn latch(&mut self) {
         self.before = self.now;
         self.now = self.live;
+        if self.taps != Taps::default() {
+            let t = std::mem::take(&mut self.taps);
+            for (i, pad) in self.now.pads.iter_mut().enumerate() {
+                let was = self.before.pads[i].buttons;
+                pad.buttons = with_taps(was, pad.buttons, t.down[i], t.up[i]);
+            }
+            for i in 0..4 {
+                let (was, now) = (self.before.keys[i], self.now.keys[i]);
+                self.now.keys[i] = with_taps(was, now, t.keys_down[i], t.keys_up[i]);
+            }
+        }
         if self.hidden_presses != [0; 4] {
             self.latch_hidden_presses();
         }
@@ -506,6 +583,7 @@ impl Input {
     pub fn forget(&mut self) {
         self.now = self.live;
         self.before = self.live;
+        self.taps = Taps::default();
         self.held = [[0; BUTTON_IDS]; PADS + 1];
         self.touch = (0, 0);
         // What is held goes on counting as held, and types nothing more
@@ -1192,6 +1270,74 @@ mod tests {
         assert_eq!(input.buttons(1, 2), 0);
         press(&mut input, 0);
         assert_eq!(input.buttons(1, 3), 1 << 3 | 1 << 14 | 1 << 16);
+    }
+
+    #[test]
+    fn a_tap_between_frames_holds_for_one_frame() {
+        let a = 1 << 3;
+        let mut input = Input::default();
+        press(&mut input, 0);
+        // Down and up again before the next frame: live never shows it.
+        input.tap(Tap::Buttons(0, a), true);
+        input.tap(Tap::Buttons(0, a), false);
+        press(&mut input, 0);
+        assert_eq!(input.buttons(1, 0) & a, a);
+        assert_eq!(input.buttons(1, 2) & a, a);
+        assert_eq!(input.buttons(1, 1) & a, a);
+        press(&mut input, 0);
+        assert_eq!(input.buttons(1, 0) & a, 0);
+        assert_eq!(input.buttons(1, 3) & a, a);
+        press(&mut input, 0);
+        assert_eq!(input.buttons(1, 3), 0);
+        // On the second controller, and as controller 0.
+        input.tap(Tap::Buttons(1, a), true);
+        input.tap(Tap::Buttons(1, a), false);
+        press(&mut input, 0);
+        assert_eq!(input.buttons(2, 2) & a, a);
+        assert_eq!(input.buttons(0, 2) & a, a);
+    }
+
+    #[test]
+    fn a_release_between_frames_lets_go_for_one_frame() {
+        let a = 1 << 3;
+        let mut input = Input::default();
+        press(&mut input, a);
+        press(&mut input, a);
+        input.tap(Tap::Buttons(0, a), false);
+        input.tap(Tap::Buttons(0, a), true);
+        press(&mut input, a);
+        assert_eq!(input.buttons(1, 0) & a, 0);
+        assert_eq!(input.buttons(1, 3) & a, a);
+        press(&mut input, a);
+        assert_eq!(input.buttons(1, 2) & a, a);
+    }
+
+    #[test]
+    fn taps_seen_by_live_change_nothing() {
+        let a = 1 << 3;
+        let mut input = Input::default();
+        press(&mut input, 0);
+        // A press the frame reads as held anyway, and its release later.
+        input.tap(Tap::Buttons(0, a), true);
+        press(&mut input, a);
+        assert_eq!(input.buttons(1, 2) & a, a);
+        input.tap(Tap::Buttons(0, a), false);
+        press(&mut input, 0);
+        assert_eq!(input.buttons(1, 3) & a, a);
+        press(&mut input, 0);
+        assert_eq!(input.buttons(1, 0) | input.buttons(1, 3), 0);
+    }
+
+    #[test]
+    fn a_key_tapped_between_frames_reads_for_one_frame() {
+        let mut input = Input::default();
+        input.latch();
+        input.tap(Tap::Key(0x28), true);
+        input.tap(Tap::Key(0x28), false);
+        input.latch();
+        assert!(input.now.key(0x28) && !input.before.key(0x28));
+        input.latch();
+        assert!(!input.now.key(0x28) && input.before.key(0x28));
     }
 
     #[test]
