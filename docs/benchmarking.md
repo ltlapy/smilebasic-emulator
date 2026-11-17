@@ -694,7 +694,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `editor` | Opens the editor |
 | `apart` | Has the editor in its own window |
 | `panel` | Shows the debugger's panel |
-| `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast` | Once the rest is set up, shows the menu bar (as F8 does), the bar with its File menu open, the help beside the editor, the About dialog, the editor colors window, the settings window at its Editor page, or a notice |
+| `menu`, `file-menu`, `view-menu`, `help`, `about`, `colors`, `settings`, `toast` | Once the rest is set up, shows the menu bar (as F8 does), the bar with its File or View menu open, the help beside the editor, the About dialog, the editor colors window, the settings window at its Editor page, or a notice |
 | `cpu-smart` | Scales `XSCREEN`'s mode 1 on the CPU, the fallback for a renderer that cannot make the texture the GPU route needs |
 | `scale=N` | Lays the editor's own window out at UI scale N instead of the desktop's |
 | `slow=MS` | From when the timing begins, makes each present of the main window that waits for vsync take MS milliseconds more, as a compositor that throttles a covered window does (SDL's Wayland backend waits up to 50 ms) |
@@ -728,7 +728,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `pad:NAME`, `padup:NAME` | Presses or releases the first controller's button SDL calls NAME, as both the event and what is held. `b` is the right face button, as SDL goes by Xbox labels |
 | `editor-focus` | Gives the editor's own window the keys |
 | `main-focus` | Takes the keys from the editor's own window, back to the main one |
-| `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast` | Shows that part of the UI then, as the parts of the same names do once the rest is set up |
+| `menu`, `file-menu`, `view-menu`, `help`, `about`, `colors`, `settings`, `toast` | Shows that part of the UI then, as the parts of the same names do once the rest is set up |
 
 `lost`, `fail`, `refuse:N`, `panic`, `unsaved` and `sleep:MS` try the
 renderer's failures.

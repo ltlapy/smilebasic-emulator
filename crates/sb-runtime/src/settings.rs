@@ -184,6 +184,9 @@ pub struct Settings {
     pub file_hint_shown: bool,
     /// How the screen is scaled to the window; `None` follows XSCREEN.
     pub screen_filter: Option<Filter>,
+    /// The main window covers its display, as View > Fullscreen sets it
+    /// on the desktop. The Simple UI is fullscreen whatever this says.
+    pub fullscreen: bool,
     /// Who draws the screens.
     pub renderer: Renderer,
     /// Keys also press the first controller's buttons.
@@ -288,6 +291,7 @@ impl Default for Settings {
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
+            fullscreen: false,
             renderer: Renderer::DEFAULT,
             keyboard_buttons: true,
             swap_ab_xy: false,
@@ -350,6 +354,7 @@ impl Settings {
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
+            fullscreen: false,
             renderer: Renderer::Auto,
             keyboard_buttons: true,
             swap_ab_xy: false,
@@ -543,6 +548,7 @@ impl Settings {
                 "complete_above" => &mut s.complete_above,
                 "simple_ui" => &mut s.simple_ui,
                 "simple_ui_welcome_shown" => &mut s.simple_ui_welcome_shown,
+                "fullscreen" => &mut s.fullscreen,
                 "complete_after" => {
                     if let Some(n) = value.parse().ok().filter(|n| COMPLETE_AFTER.contains(n)) {
                         s.complete_after = n;
@@ -708,6 +714,7 @@ impl Settings {
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n\
+             fullscreen={}\n\
              {renderer}\
              keyboard_buttons={}\n\
              swap_ab_xy={}\n\
@@ -758,6 +765,7 @@ impl Settings {
             choice_name(&FONT_SOURCE, &self.program_font[1]),
             choice_name(&BUNDLED_SET, &self.bundled_glyphs16),
             self.file_hint_shown,
+            self.fullscreen,
             self.keyboard_buttons,
             self.swap_ab_xy,
             self.smilebasic_instruments,
@@ -818,6 +826,7 @@ mod tests {
             file_confirm: FileConfirm::Notify,
             file_hint_shown: true,
             screen_filter: None,
+            fullscreen: true,
             renderer: Renderer::DEFAULT.other(),
             keyboard_buttons: false,
             smilebasic_instruments: false,

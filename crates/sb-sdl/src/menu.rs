@@ -66,6 +66,8 @@ pub enum Action {
     /// Open the editor colors window.
     EditColors,
     ScreenFilter(Option<Filter>),
+    /// The main window covers its display, or not (Ctrl+Shift+F11).
+    ToggleFullscreen,
     /// The debugger's commands, for a stopped program.
     Continue,
     StepInto,
@@ -103,14 +105,18 @@ pub struct Context {
     pub detached: bool,
     /// A subprogram runs beside the main program.
     pub sub: bool,
+    /// The main window covers its display.
+    pub fullscreen: bool,
 }
 
 impl Action {
     /// The mark before an item: a check box for toggles, a radio button
     /// for choices, blank for commands.
-    fn mark(self, settings: &Settings) -> &'static str {
+    fn mark(self, settings: &Settings, context: Context) -> &'static str {
         let check = |on: bool| if on { "[x]" } else { "[ ]" };
         match self {
+            // The window's own state, as the system may change it too.
+            Action::ToggleFullscreen => check(context.fullscreen),
             Action::ToggleUpperCase => check(settings.upper_case_letters),
             Action::ToggleEditorWindow => check(settings.editor_window),
             Action::ToggleTidyOnEnd => check(settings.tidy_on_end),
@@ -351,6 +357,8 @@ const MENUS: &[Menu] = &[
                     item("Bilinear", Action::ScreenFilter(Some(Filter::Bilinear))),
                 ],
             ),
+            LINE,
+            keyed("Fullscreen", "Ctrl+Shift+F11", Action::ToggleFullscreen),
         ],
     },
     Menu {
@@ -423,10 +431,10 @@ pub enum Click {
 
 /// An item's text: a check box or radio button for settings, an arrow
 /// for submenus, or the same width of space otherwise.
-fn item_text(item: &Item, settings: &Settings, marks: bool) -> String {
+fn item_text(item: &Item, settings: &Settings, context: Context, marks: bool) -> String {
     match item.entry {
         _ if !marks => item.label.to_string(),
-        Entry::Do(action) => format!("{} {}", action.mark(settings), item.label),
+        Entry::Do(action) => format!("{} {}", action.mark(settings, context), item.label),
         Entry::Sub(_) => format!("    {}", item.label),
         Entry::Line => String::new(),
     }
@@ -435,8 +443,8 @@ fn item_text(item: &Item, settings: &Settings, marks: bool) -> String {
 /// Whether a list has check boxes or radio buttons, which leave room
 /// before every label.
 fn has_marks(items: &[Item]) -> bool {
-    let settings = Settings::default();
-    (items.iter()).any(|i| matches!(i.entry, Entry::Do(a) if a.mark(&settings) != "   "))
+    let (settings, context) = (Settings::default(), Context::default());
+    (items.iter()).any(|i| matches!(i.entry, Entry::Do(a) if a.mark(&settings, context) != "   "))
 }
 
 /// What goes on an item's right: its keys, or the arrow of a submenu.
@@ -474,10 +482,10 @@ fn title_rect(index: usize) -> Rect {
 
 /// The width of a dropdown holding `items`.
 fn list_width(items: &[Item]) -> u32 {
-    let settings = Settings::default();
+    let (settings, context) = (Settings::default(), Context::default());
     let widest = |text: &dyn Fn(&Item) -> u32| items.iter().map(text).max().unwrap_or(0);
     let marks = has_marks(items);
-    let labels = widest(&|i| text_width(&item_text(i, &settings, marks)));
+    let labels = widest(&|i| text_width(&item_text(i, &settings, context, marks)));
     let keys = widest(&|i| text_width(item_keys(i)));
     labels + if keys > 0 { keys + 4 * PAD } else { 0 } + 3 * PAD
 }
@@ -733,7 +741,7 @@ impl MenuBar {
                 font,
                 r.x + PAD,
                 r.y + 4,
-                &item_text(item, settings, marks),
+                &item_text(item, settings, context, marks),
                 color,
             );
             let keys = item_keys(item);
@@ -760,20 +768,15 @@ mod tests {
         paused: false,
         detached: false,
         sub: false,
+        fullscreen: false,
     };
     const RUNNING: Context = Context {
         running: true,
-        editing: false,
-        paused: false,
-        detached: false,
-        sub: false,
+        ..IDLE
     };
     const EDITING: Context = Context {
-        running: false,
         editing: true,
-        paused: false,
-        detached: false,
-        sub: false,
+        ..IDLE
     };
 
     fn menu(title: &str) -> usize {
@@ -828,7 +831,7 @@ mod tests {
         let mut settings = Settings::default();
         Action::ToggleKeyboardButtons.toggle(&mut settings);
         assert!(!settings.keyboard_buttons);
-        assert_eq!(Action::ToggleKeyboardButtons.mark(&settings), "[ ]");
+        assert_eq!(Action::ToggleKeyboardButtons.mark(&settings, IDLE), "[ ]");
     }
 
     #[test]
@@ -927,7 +930,31 @@ mod tests {
         let mut settings = Settings::default();
         Action::ScreenFilter(None).toggle(&mut settings);
         assert_eq!(settings.screen_filter, None);
-        assert_eq!(Action::ScreenFilter(None).mark(&settings), "(*)");
+        assert_eq!(Action::ScreenFilter(None).mark(&settings, IDLE), "(*)");
+    }
+
+    #[test]
+    fn fullscreen_is_checked_by_the_window() {
+        let view = menu("View");
+        let i = (MENUS[view].items.iter())
+            .position(|i| i.label == "Fullscreen")
+            .unwrap();
+        assert_eq!(MENUS[view].items[i].keys, "Ctrl+Shift+F11");
+        let mut bar = MenuBar::default();
+        bar.mouse_move(Some((10, 5)));
+        bar.click(at(title_rect(view)), IDLE);
+        assert_eq!(
+            bar.click(at(item_rect(view, i)), RUNNING),
+            Click::Chosen(Action::ToggleFullscreen),
+            "also while a program runs"
+        );
+        let settings = Settings::default();
+        let full = Context {
+            fullscreen: true,
+            ..IDLE
+        };
+        assert_eq!(Action::ToggleFullscreen.mark(&settings, IDLE), "[ ]");
+        assert_eq!(Action::ToggleFullscreen.mark(&settings, full), "[x]");
     }
 
     #[test]
@@ -965,8 +992,8 @@ mod tests {
 
         let mut settings = Settings::default();
         Action::ColorPreset(2).toggle(&mut settings);
-        assert_eq!(Action::ColorPreset(2).mark(&settings), "(*)");
-        assert_eq!(Action::ColorPreset(0).mark(&settings), "( )");
+        assert_eq!(Action::ColorPreset(2).mark(&settings, IDLE), "(*)");
+        assert_eq!(Action::ColorPreset(0).mark(&settings, IDLE), "( )");
         Action::EditorSize(EditorSize::Small).toggle(&mut settings);
         assert_eq!(settings.editor_size, EditorSize::Small);
     }

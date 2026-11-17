@@ -411,16 +411,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let (mut display_w, mut display_h) = profile_display;
     // The offscreen driver of headless runs has a 1024x768 display, which
     // would change the size that runs are compared at.
-    let usable = (video
+    let usable = video
         .get_primary_display()
-        .and_then(|d| d.get_usable_bounds()))
-    .ok()
-    .filter(|_| !headless())
-    .map(|r| (r.width(), r.height()));
+        .and_then(|d| d.get_usable_bounds());
+    let usable = usable.ok().filter(|_| !headless());
+    let usable = usable.map(|r| (r.width(), r.height()));
     let (window_w, window_h) = window::start_size(profile_display, usable);
     let mut builder = video.window(TITLE, window_w, window_h);
     builder.position_centered().resizable().high_pixel_density();
-    if simple_ui {
+    if simple_ui || machine.rt.settings.fullscreen {
         builder.fullscreen();
     }
     let window = builder.build()?;
@@ -444,7 +443,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // ...and the project manager's, for importing and exporting.
     let (chosen_folder, folder_choice) = std::sync::mpsc::channel::<(PathBuf, Transfer)>();
     let mut canvas = make_canvas(&window, &[])?;
-    drop(window);
+    // The window outlives each renderer made for it, for what is kept of
+    // it at the end.
+    let main_window = window;
     if simple_ui {
         let size = machine.rt.settings.simple_ui_size;
         (display_w, display_h) = simple_ui::ui_size(canvas.output_size()?, size);
@@ -553,13 +554,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // list: it takes all input but a dialog's.
     let mut welcome = (simple_ui && !machine.rt.settings.simple_ui_welcome_shown)
         .then(|| Welcome::new((display_w, display_h)));
-    // Select, for the menu and quitting; where the list was left; the
-    // program it ran last, for Restart; and whether turning the Simple
-    // UI on made the window fullscreen, for turning it off.
+    // Select, for the menu and quitting; where the list was left; and the
+    // program it ran last, for Restart.
     let mut hotkeys = simple_ui::Hotkeys::default();
     let mut list_memory = simple_ui::Memory::default();
     let mut ran_from_list = restart;
-    let mut fullscreen_by_simple_ui = simple_ui;
     let mut color_window: Option<ColorWindow> = None;
     let mut settings_window: Option<SettingsWindow> = None;
     let mut shortcuts_window: Option<ShortcutsWindow> = None;
@@ -910,6 +909,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             if b.opens("file-menu") {
                 menu.open_menu(0);
+            }
+            if b.opens("view-menu") {
+                menu.open_menu(2);
             }
             if b.opens("settings") {
                 let mut window = SettingsWindow::new(size);
@@ -1362,8 +1364,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 simple_ui = !simple_ui;
                 machine.rt.settings.simple_ui = simple_ui;
                 let window = canvas.window_mut();
+                // The Simple UI is fullscreen; the desktop goes back to
+                // what it was, as View > Fullscreen keeps it.
                 if simple_ui {
-                    fullscreen_by_simple_ui = window.fullscreen_state() == FullscreenType::Off;
+                    let desktop = window.fullscreen_state() != FullscreenType::Off;
+                    machine.rt.settings.fullscreen = desktop;
                     let _ = window.set_fullscreen(true);
                     // What needs a keyboard or a mouse closes.
                     (manager, file_dialog, side, debug_menu) = (None, None, None, None);
@@ -1374,12 +1379,28 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         welcome = Some(Welcome::new((display_w, display_h)));
                     }
                 } else {
-                    if std::mem::take(&mut fullscreen_by_simple_ui) {
-                        let _ = window.set_fullscreen(false);
-                    }
+                    let _ = window.set_fullscreen(machine.rt.settings.fullscreen);
                     (game_list, pause_menu, welcome) = (None, None, None);
                 }
                 plus_down = None;
+                continue;
+            }
+            // Ctrl+Shift+F11 turns the desktop's fullscreen on or off,
+            // whatever shows. The Simple UI is always fullscreen. Like
+            // Ctrl+Shift+F12 it types nothing and starts no tool, though
+            // KEYBOARD sees the keys held, as it sees every key.
+            if let Event::KeyDown {
+                keycode: Some(Keycode::F11),
+                keymod,
+                repeat,
+                ..
+            } = event
+                && ctrl(keymod)
+                && shift(keymod)
+            {
+                if !simple_ui && !repeat {
+                    toggle_fullscreen(canvas.window_mut(), &mut machine.rt.settings);
+                }
                 continue;
             }
             // Select+A, or F8, opens and closes the Simple UI's pause menu,
@@ -2277,7 +2298,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     clicks,
                     ..
                 } => match if ui_window && !simple_ui {
-                    menu.click(to_display(x, y), menu_context(machine))
+                    menu.click(to_display(x, y), menu_context(machine, canvas.window()))
                 } else {
                     Click::Ignored
                 } {
@@ -2377,6 +2398,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                     Click::Chosen(Action::EditColors) => {
                         color_window = Some(ColorWindow::new((display_w, display_h)));
+                    }
+                    Click::Chosen(Action::ToggleFullscreen) => {
+                        toggle_fullscreen(canvas.window_mut(), &mut machine.rt.settings);
                     }
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Ignored
@@ -3355,7 +3379,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         ui::set_font(machine.rt.settings.ui_font);
         ui::set_bundled_glyphs(machine.rt.settings.bundled_glyphs16);
         let cursor_on = (blink / 25).is_multiple_of(2);
-        let context = menu_context(machine);
+        let context = menu_context(machine, canvas.window());
         let settings = &machine.rt.settings;
         let editor_creator = editor_gfx
             .get()
@@ -3570,10 +3594,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let keep = machine.rt.settings.editor_window_keep_place;
     if let Some(gfx) = editor_gfx.get().filter(|_| editor_shown && keep) {
         let place = window_place(gfx.canvas.borrow().window());
-        if machine.rt.settings.editor_window_place != Some(place) {
-            machine.rt.settings.editor_window_place = Some(place);
-            save_settings(&settings_path, &machine.rt.settings);
-        }
+        machine.rt.settings.editor_window_place = Some(place);
+    }
+    // The desktop starts fullscreen next time if it is now, whoever made
+    // it so.
+    if !simple_ui {
+        machine.rt.settings.fullscreen = main_window.fullscreen_state() != FullscreenType::Off;
+    }
+    // A bench run leaves the settings as they were, as it does above, so
+    // that runs in one data directory start alike.
+    if machine.rt.settings != saved_settings && bench.is_none() {
+        save_settings(&settings_path, &machine.rt.settings);
     }
     Ok(())
 }
@@ -4189,14 +4220,24 @@ fn choose_extra_font(window: &Window, send: std::sync::mpsc::Sender<PathBuf>, to
 }
 
 /// What the menu bar's items depend on.
-fn menu_context(machine: &Machine) -> Context {
+fn menu_context(machine: &Machine, main: &Window) -> Context {
     Context {
         running: machine.is_running(),
         editing: machine.is_editing(),
         paused: machine.paused_at().is_some() && !machine.is_running(),
         detached: machine.is_detached(),
         sub: machine.sub_running(),
+        fullscreen: main.fullscreen_state() != FullscreenType::Off,
     }
+}
+
+/// Turns the main window's fullscreen on or off, as View > Fullscreen and
+/// Ctrl+Shift+F11 do, and keeps the choice. Desktop fullscreen: the
+/// display's mode stays as it is.
+fn toggle_fullscreen(main: &mut Window, settings: &mut Settings) {
+    let on = main.fullscreen_state() == FullscreenType::Off;
+    let _ = main.set_fullscreen(on);
+    settings.fullscreen = on;
 }
 
 /// The debugger's keys: Shift+F5 continues and Ctrl+Shift+F5 restarts;
@@ -4589,7 +4630,7 @@ fn panel_menu(
 /// A right click's menu on the editor: the name at the cursor, the
 /// debugger's commands for its line, and the clipboard.
 fn editor_menu(machine: &mut Machine) -> Vec<(String, bool, Choice)> {
-    let paused = menu_context(machine).paused;
+    let paused = machine.paused_at().is_some() && !machine.is_running();
     let mut items = Vec::new();
     if let Some(word) = machine.editor().word_or_selection() {
         let short: String = word.chars().take(20).collect();

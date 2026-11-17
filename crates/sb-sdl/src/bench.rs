@@ -29,9 +29,9 @@
 //!   the loop took: events, running the program, waiting for the next frame; then the
 //!   frames the standby thread ran while the loop was held up, and its microseconds
 //!   running them;
-//! - `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast`:
-//!   shows the menu bar (as F8 does), the bar with its File menu open, the
-//!   help beside the editor, the About dialog, the editor colors window,
+//! - `menu`, `file-menu`, `view-menu`, `help`, `about`, `colors`, `settings`,
+//!   `toast`: shows the menu bar (as F8 does), the bar with its File or View
+//!   menu open, the help beside the editor, the About dialog, the editor colors window,
 //!   the settings window at its Editor page, or a notice, once the rest is
 //!   set up;
 //! - `cpu-smart`: scales XSCREEN's mode 1 on the CPU, the fallback for a
@@ -262,9 +262,8 @@ impl Bench {
                     "panel" => bench.panel = true,
                     "occluded" => bench.occluded = true,
                     "cpu-smart" => bench.cpu_smart = true,
-                    "menu" | "file-menu" | "help" | "about" | "colors" | "settings" | "toast" => {
-                        bench.extras.push(part.to_string())
-                    }
+                    "menu" | "file-menu" | "view-menu" | "help" | "about" | "colors"
+                    | "settings" | "toast" => bench.extras.push(part.to_string()),
                     "" => {}
                     _ => eprintln!("SB_UI_BENCH: unknown part {part:?}"),
                 },

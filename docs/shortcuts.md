@@ -73,6 +73,15 @@ The emulator shows this list too, in Help > Keyboard shortcuts.
 | F9, F10, F11 | Start `TOOL1` to `TOOL3` |
 | F12 | Projects |
 | F5, in the projects | Run the selected project's MAIN.PRG, or the selected program from the file list |
+| Ctrl+Shift+F11 | Fullscreen, or back to a window |
+
+View > Fullscreen does the same as Ctrl+Shift+F11. Fullscreen covers the
+display without changing its resolution, and the screen is scaled as View >
+Screen filter says. With the editor in its own window, only the main window
+goes fullscreen. The emulator starts fullscreen if it was when it quit
+(`fullscreen=true` in `settings.txt`). Ctrl+Shift+F11 and Ctrl+Shift+F12 type
+nothing and start no tool; as with every key, a program can still see them
+held with `KEYBOARD`.
 
 ## Buttons
 
@@ -107,7 +116,8 @@ The menu needs the mouse or keys.
 The Simple UI is for a gamepad without a keyboard, as on a Linux handheld:
 fullscreen, no menu bar or editor, and a list of the projects instead of
 DIRECT mode. Start it with `smilebasic --simple-ui`, or turn it on and off
-with Ctrl+Shift+F12, which keeps the choice. Programs never see − (Select).
+with Ctrl+Shift+F12, which keeps the choice. Turning it off goes back to a
+window, or to fullscreen if the desktop was. Programs never see − (Select).
 
 The first time the Simple UI starts, a welcome screen asks you to press A.
 The button you press, the right or the bottom one, works as A from then on,
