@@ -131,9 +131,6 @@ impl SimpleUiSize {
 pub struct Settings {
     /// Letters type in upper case unless Shift or Caps Lock is on.
     pub upper_case_letters: bool,
-    /// Ctrl+C stops the program, besides Pause/Break. Off by default, since
-    /// programs can read Ctrl+C.
-    pub ctrl_c_stops: bool,
     /// SAVE turns full-width letters and digits into ASCII.
     pub half_width_on_save: bool,
     /// SAVE, SAVEV, SAVEG, DELETE, RENAME and METASAVE write in SmileBASIC
@@ -269,7 +266,6 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             upper_case_letters: true,
-            ctrl_c_stops: false,
             half_width_on_save: true,
             write_system_projects: false,
             editor_wrap: false,
@@ -333,7 +329,6 @@ impl Settings {
     pub fn for_tests() -> Self {
         Settings {
             upper_case_letters: true,
-            ctrl_c_stops: false,
             half_width_on_save: true,
             write_system_projects: false,
             editor_wrap: false,
@@ -521,7 +516,6 @@ impl Settings {
             }
             let flag = match key {
                 "upper_case_letters" => &mut s.upper_case_letters,
-                "ctrl_c_stops" => &mut s.ctrl_c_stops,
                 "localized_errors" => &mut s.localized_errors,
                 "half_width_on_save" => &mut s.half_width_on_save,
                 "write_system_projects" => &mut s.write_system_projects,
@@ -692,7 +686,6 @@ impl Settings {
         format!(
             "# SmileBASIC emulator settings\n\
              upper_case_letters={}\n\
-             ctrl_c_stops={}\n\
              half_width_on_save={}\n\
              write_system_projects={}\n\
              editor_wrap={}\n\
@@ -744,7 +737,6 @@ impl Settings {
              simple_ui_welcome_shown={}\n\
              {}{}",
             self.upper_case_letters,
-            self.ctrl_c_stops,
             self.half_width_on_save,
             self.write_system_projects,
             self.editor_wrap,
@@ -815,7 +807,6 @@ mod tests {
     fn round_trips() {
         let s = Settings {
             upper_case_letters: false,
-            ctrl_c_stops: true,
             editor_wrap: true,
             editor_window_keep_place: true,
             tidy_on_end: true,
@@ -964,16 +955,31 @@ mod tests {
     #[test]
     fn skips_what_it_does_not_know() {
         let s = Settings::from_text(
-            "# comment\nfuture_option=1\nctrl_c_stops = true\neditor_wrap=maybe\n\
+            "# comment\nfuture_option=1\nupper_case_letters = false\neditor_wrap=maybe\n\
              file_confirm=loud\neditor_window_place=1,2,0,4\n\
              editor_window_place=1,2,3\nno equals sign\neditor_tab_step=0\nlanguage=fr\n",
         );
         assert_eq!(
             s,
             Settings {
-                ctrl_c_stops: true,
+                upper_case_letters: false,
                 ..Settings::default()
             }
         );
+    }
+
+    /// The setting that made Ctrl+C stop programs is gone: a file that
+    /// still has it loads, and the next save leaves it out.
+    #[test]
+    fn drops_ctrl_c_stops() {
+        let s = Settings::from_text("ctrl_c_stops=true\neditor_wrap=true\n");
+        assert_eq!(
+            s,
+            Settings {
+                editor_wrap: true,
+                ..Settings::default()
+            }
+        );
+        assert!(!s.to_text().contains("ctrl_c"));
     }
 }

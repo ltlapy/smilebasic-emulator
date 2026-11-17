@@ -151,14 +151,6 @@ const PAGES: &[Page] = &[
                 |s| s.upper_case_letters ^= true,
             ),
             check(
-                "Ctrl+C stops the running program",
-                "Ctrl+C stops a running program, as Pause/Break and F5 do. Off by \
-                 default, so that programs can read Ctrl+C as a key. In the editor \
-                 Ctrl+C still copies.",
-                |s| s.ctrl_c_stops,
-                |s| s.ctrl_c_stops ^= true,
-            ),
-            check(
                 "Japanese explanation under errors",
                 "Under each error message, also print the Japanese line that the \
                  Japanese edition of SmileBASIC 4 shows for that error. Off by \

@@ -2464,6 +2464,20 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 {
                     typing.key_down(&mut machine.rt, keymod, repeat, Some(code))
                 }
+                // Ctrl+C is a break, as the + button is, in a program and
+                // on a DIRECT mode line that runs. It types nothing, also
+                // as it repeats.
+                Event::KeyDown {
+                    keycode: Some(Keycode::C),
+                    keymod,
+                    repeat,
+                    ..
+                } if ctrl(keymod) && !shift(keymod) && !on_editor && machine.is_running() => {
+                    if !repeat {
+                        machine.keyboard_break();
+                    }
+                    eat_text = true;
+                }
                 Event::KeyDown {
                     keycode: Some(key @ (Keycode::C | Keycode::X)),
                     keymod,
@@ -2486,17 +2500,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } if ctrl(keymod) && !on_editor && machine.rt.wants_line() => {
                     paste(machine, &clipboard, &mut toasts)
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::C),
-                    keymod,
-                    ..
-                } if machine.rt.settings.ctrl_c_stops
-                    && ctrl(keymod)
-                    && !shift(keymod)
-                    && !on_editor =>
-                {
-                    machine.keyboard_break()
                 }
                 // Ctrl+Shift+V pastes everywhere, also as keys to programs.
                 Event::KeyDown {
