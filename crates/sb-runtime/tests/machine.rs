@@ -883,10 +883,10 @@ fn direct_commands_ignore_the_rest_of_the_line() {
             "RUN 1.5",
             "Illegal function call (RUN: a slot number literal)",
         ),
-        (
-            "RUN -1",
-            "Illegal function call (RUN: a slot number literal)",
-        ),
+        // A minus reads as slot 0 (checked on hardware with RUN -3).
+        ("RUN -1", "SLOT0"),
+        ("RUN -3", "SLOT0"),
+        ("SUBRUN", "Syntax error (SUBRUN: a file name literal)"),
     ] {
         enter(&mut m, line);
         assert_eq!(last(&m), out, "{line}");
@@ -913,8 +913,11 @@ fn list_reads_literals() {
     m.set_slot(1, "?1\n?2\n?3".to_string());
     let last = |m: &Machine| rows(m)[rows(m).len() - 2].clone();
     for (line, out) in [
-        ("LIST 1.5", "Type mismatch (LIST: not an integer)"),
-        ("LIST 1:2.5", "Type mismatch (LIST: not an integer)"),
+        // Checked on hardware: a real first is a Syntax error, and a
+        // word after the `:` a Type mismatch.
+        ("LIST 1.5", "Syntax error (LIST: a line, a slot or ERR)"),
+        ("LIST 1:2.5", "Type mismatch (LIST: a line number)"),
+        ("LIST 1:A", "Type mismatch (LIST: a line number)"),
         ("LIST 1000000", "Out of range (LIST: line 1000000)"),
         ("LIST 6:", "Out of range (LIST: slot 6)"),
         ("LIST 10+1", "Syntax error (LIST: a line, a slot or ERR)"),

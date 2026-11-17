@@ -402,13 +402,21 @@ fn parse_direct(line: &str) -> Result<Direct, Error> {
         // UNVERIFIED for NEW: that it reads its slot as RUN does.
         "RUN" | "NEW" => match token(rest).0 {
             Token::End => word.clone(),
+            // `RUN -3` runs slot 0 (checked on hardware). UNVERIFIED: that
+            // a lone minus reads as 0, the number after it not read, and
+            // that NEW differs.
+            Token::Other if word == "RUN" && rest.trim_start().starts_with('-') => {
+                format!("{word} 0")
+            }
             Token::Int(n) if (n as usize) < SLOTS => format!("{word} {n}"),
             Token::Int(n) => return error(ErrorKind::OutOfRange, &format!("slot {n}")),
             _ => return error(ErrorKind::IllegalFunctionCall, "a slot number literal"),
         },
         // UNVERIFIED: that anything but a string literal is an Illegal
-        // function call.
+        // function call. Nothing at all is a Syntax error (checked on
+        // hardware).
         "SUBRUN" => match token(rest).0 {
+            Token::End => return error(ErrorKind::SyntaxError, "a file name literal"),
             Token::Str(file) if file.encode_utf16().count() > 65 => {
                 return error(ErrorKind::StringTooLong, "file name");
             }
@@ -422,20 +430,21 @@ fn parse_direct(line: &str) -> Result<Direct, Error> {
 }
 
 /// Reads LIST's arguments: none, ERR, a line, or a slot, `:` and an
-/// optional line, each a number literal.
+/// optional line, each an integer literal. A real is a Syntax error as
+/// the first, and anything but a line number after the `:` is a Type
+/// mismatch (checked on hardware: `LIST 1.5`, `LIST 1:A`).
 fn parse_list(rest: &str) -> Result<List, Error> {
     let error = |kind, detail: &str| Error::with_detail(kind, format!("LIST: {detail}"));
     // A line or a slot.
     let number = |token: Token| match token {
         Token::Int(n) => Ok(n as usize),
-        Token::Real => Err(error(ErrorKind::TypeMismatch, "not an integer")),
         _ => Err(error(ErrorKind::IllegalFunctionCall, "a number literal")),
     };
     let (first, rest) = token(rest);
     let first = match first {
         Token::End => return Ok(List::At(None, None)),
         Token::Word(word) if word.eq_ignore_ascii_case("ERR") => return Ok(List::Error),
-        Token::Int(_) | Token::Real | Token::BadNumber => number(first)?,
+        Token::Int(_) | Token::BadNumber => number(first)?,
         _ => return Err(error(ErrorKind::SyntaxError, "a line, a slot or ERR")),
     };
     let line_range = |line: usize| match line {
@@ -447,11 +456,8 @@ fn parse_list(rest: &str) -> Result<List, Error> {
         (Token::Colon, rest) => {
             let line = match token(rest).0 {
                 Token::End => 0,
-                token @ (Token::Int(_) | Token::Real | Token::BadNumber) => {
-                    line_range(number(token)?)?
-                }
-                // UNVERIFIED: the error for a word after the `:`.
-                _ => return Err(error(ErrorKind::SyntaxError, "a line number")),
+                token @ (Token::Int(_) | Token::BadNumber) => line_range(number(token)?)?,
+                _ => return Err(error(ErrorKind::TypeMismatch, "a line number")),
             };
             match first {
                 slot if slot < SLOTS => Ok(List::At(Some(slot), Some(line))),
