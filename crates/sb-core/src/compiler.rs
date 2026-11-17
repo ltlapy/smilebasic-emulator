@@ -973,8 +973,15 @@ impl Compiler<'_> {
                 // An error found as the value compiles, as a division by
                 // zero of constants, is placed at the `=`, as one found as
                 // it parses is.
-                // UNVERIFIED: for errors other than Divide by zero.
-                self.expr(value).map_err(|e| e.at_pos(self.line, *eq_col))?;
+                // UNVERIFIED: for errors other than Divide by zero. A
+                // function compiled in place that has the wrong number of
+                // arguments is placed at the statement (checked on
+                // hardware: `Q=ABS(Z,Z)` at `Q`), and so, UNVERIFIED, is
+                // one of the DEF functions outside a DEF.
+                self.expr(value).map_err(|e| match e.kind {
+                    ErrorKind::WrongNumberOfArguments | ErrorKind::CantUseOutsideDef => e,
+                    _ => e.at_pos(self.line, *eq_col),
+                })?;
                 self.store(target)?;
             }
             StmtKind::Var(decls) => {

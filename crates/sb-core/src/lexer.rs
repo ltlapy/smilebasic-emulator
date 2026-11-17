@@ -212,8 +212,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
 /// reads tokens as it compiles, so the errors before it come first.
 pub fn tokenize_partial(source: &str) -> (Vec<Token>, Option<LexError>) {
     let mut lexer = Lexer::new(source);
-    let failed = lexer.run().err();
-    if let Some(e) = &failed {
+    let mut failed = lexer.run().err();
+    if let Some(e) = &mut failed {
+        e.span = lexer.place(e.span);
         lexer.push(TokenKind::Invalid(e.kind.clone()), e.span);
     }
     let end = failed.as_ref().map_or(lexer.span(), |e| e.span);
@@ -227,6 +228,8 @@ struct Lexer {
     line: u32,
     col: u32,
     tokens: Vec<Token>,
+    /// The error found is placed at its own token (see [`Lexer::place`]).
+    own_place: bool,
 }
 
 fn is_ident_start(c: char) -> bool {
@@ -245,6 +248,7 @@ impl Lexer {
             line: 1,
             col: 1,
             tokens: Vec::new(),
+            own_place: false,
         }
     }
 
@@ -272,6 +276,23 @@ impl Lexer {
 
     fn error(&self, kind: LexErrorKind, span: Span) -> LexError {
         LexError { kind, span }
+    }
+
+    /// Where the error found reading the token at `at` is placed: at the
+    /// token before it in the statement, as SmileBASIC 4 does (checked on
+    /// hardware: `?1E1000` at `?`, `A=&H_` at `=`), or at the token itself
+    /// when it starts the statement.
+    #[cold]
+    fn place(&self, at: Span) -> Span {
+        let before = self.tokens.last();
+        match before {
+            Some(t)
+                if !self.own_place && !matches!(t.kind, TokenKind::Newline | TokenKind::Colon) =>
+            {
+                t.span
+            }
+            _ => at,
+        }
     }
 
     fn push(&mut self, kind: TokenKind, span: Span) {
@@ -567,6 +588,9 @@ impl Lexer {
             value = value.wrapping_mul(radix) | d;
         }
         if digits == 0 {
+            // A bare `&H` at the end of the line is placed at itself
+            // (checked on hardware: `?&H`). UNVERIFIED: why.
+            self.own_place = matches!(self.peek(), None | Some('\r' | '\n'));
             return Err(self.error(LexErrorKind::MissingDigits, start));
         }
         // `&HFFFFFFFF` is -1: the 32 bits are reinterpreted as signed.
@@ -930,7 +954,8 @@ mod tests {
     fn tokens_stop_at_the_first_error() {
         let (tokens, e) = tokenize_partial("A=1\nB=&H100000000:C=&H");
         let kinds: Vec<_> = tokens.iter().map(|t| t.kind.clone()).collect();
-        let at = Span { line: 2, col: 3 };
+        // Placed at the token before.
+        let at = Span { line: 2, col: 2 };
         assert_eq!(
             &kinds[4..],
             [

@@ -770,13 +770,13 @@ fn constants_exist_from_where_they_stand() {
         (e.kind, e.line, e.col)
     };
     let undefined = ErrorKind::UndefinedConstant;
-    assert_eq!(at("?#A\nCONST #A=1"), (undefined, 1, 2));
+    assert_eq!(at("?#A\nCONST #A=1"), (undefined, 1, 1));
     assert_eq!(at("ENUM #B=#A\nENUM #A").0, undefined);
-    assert_eq!(at("DEF F\n?#A\nEND\nCONST #A=1"), (undefined, 2, 2));
+    assert_eq!(at("DEF F\n?#A\nEND\nCONST #A=1"), (undefined, 2, 1));
     assert_eq!(at("CONST #A=#B,#B=1"), (undefined, 1, 10));
     assert_eq!(at("CONST #A=#A"), (undefined, 1, 10));
     assert_eq!(at("DATA #A\nCONST #A=1"), (undefined, 1, 6));
-    assert_eq!(at("?1:?#A:CONST #A=1").2, 5);
+    assert_eq!(at("?1:?#A:CONST #A=1").2, 4);
     // A CONST in a DEF counts for the lines after it.
     assert_eq!(output("DEF F\nCONST #A=2\nEND\n?#A"), "2\n");
     assert_eq!(output("DEF F\nCONST #A=2\nEND\nDEF G\n?#A\nEND\nG"), "2\n");
@@ -1542,17 +1542,21 @@ fn folded_errors_in_a_value_are_placed_at_the_equals_sign() {
     assert_eq!(place("Z=0:A=1/Z\n"), (1, 5));
 }
 
-/// Undefined constant is placed at the `#`, not at the `=`.
+/// Undefined constant is placed at the token before it (checked on
+/// hardware: `A=#NONE` at the `=`, `?#ZZ` at the `?`).
 #[test]
-fn undefined_constants_are_placed_at_the_constant() {
+fn undefined_constants_are_placed_at_the_token_before() {
     let place = |source: &str| {
         let e = run(source).unwrap_err();
         assert_eq!(e.kind, ErrorKind::UndefinedConstant, "{source}");
         (e.line, e.col)
     };
-    assert_eq!(place("A=#NONE\n"), (1, 3));
-    assert_eq!(place("B=2:A=#NONE\n"), (1, 7));
-    assert_eq!(place("?1\nA=1+#NONE\n"), (2, 5));
+    assert_eq!(place("A=#NONE\n"), (1, 2));
+    assert_eq!(place("B=2:A=#NONE\n"), (1, 6));
+    assert_eq!(place("?1\nA=1+#NONE\n"), (2, 4));
+    assert_eq!(place("IF #NONE THEN\nENDIF"), (1, 1));
+    // In a value of CONST or ENUM, at the constant itself.
+    assert_eq!(place("CONST #ON=#NONE"), (1, 11));
 }
 
 #[test]
@@ -2492,9 +2496,9 @@ fn compile_errors_before_a_syntax_error_come_first() {
         (e.kind, e.line, e.col)
     };
     let undefined = ErrorKind::UndefinedConstant;
-    assert_eq!(at("?#ZZ:?("), (undefined, 1, 2));
+    assert_eq!(at("?#ZZ:?("), (undefined, 1, 1));
     assert_eq!(at("?1\nCONST #A=1/0\n?("), (ErrorKind::DivideByZero, 2, 1));
-    assert_eq!(at("IF #ZZ THEN ?("), (undefined, 1, 4));
+    assert_eq!(at("IF #ZZ THEN ?("), (undefined, 1, 1));
     assert_eq!(at("FOR I=0 TO 1:?#ZZ:?(:NEXT").0, undefined);
     assert_eq!(at("WHILE 1\n?#ZZ\nIF 1 THEN\n?(\nENDIF\nWEND").0, undefined);
     assert_eq!(at("REPEAT:?#ZZ:?(:UNTIL 1").0, undefined);
@@ -2518,23 +2522,29 @@ fn compile_errors_before_a_syntax_error_come_first() {
         let _ = sb_core::compile_direct(&src[..end], &host, 0);
     }
     // SmileBASIC 4 reads tokens as it compiles: a token that does not
-    // lex is an error where it stands, after the ones before it.
+    // lex is an error after the ones before it, placed at the token
+    // before it (checked on hardware).
     assert_eq!(at("?#ZZ:?&H100000000").0, undefined);
-    assert_eq!(at("?#ZZ\n?1\n?2\n?3\nA=&H100000000"), (undefined, 1, 2));
+    assert_eq!(at("?#ZZ\n?1\n?2\n?3\nA=&H100000000"), (undefined, 1, 1));
     assert_eq!(at("?(\nA=&H100000000").1, 1);
     assert_eq!(
         at("FOR I=0 TO 1\nA=&H100000000\nNEXT"),
-        (ErrorKind::SyntaxError, 2, 3)
+        (ErrorKind::SyntaxError, 2, 2)
     );
-    assert_eq!(at("?1:A=&H100000000"), (ErrorKind::SyntaxError, 1, 6));
-    assert_eq!(at("?#ZZ\nA=1E309"), (undefined, 1, 2));
+    assert_eq!(at("?1:A=&H100000000"), (ErrorKind::SyntaxError, 1, 5));
+    assert_eq!(at("?1E1000"), (ErrorKind::SyntaxError, 1, 1));
+    assert_eq!(at("A=&H_"), (ErrorKind::SyntaxError, 1, 2));
+    // A bare `&H` at the end of the line, at itself.
+    assert_eq!(at("?&H"), (ErrorKind::SyntaxError, 1, 2));
+    assert_eq!(at("?1\n&H1000000000"), (ErrorKind::SyntaxError, 2, 1));
+    assert_eq!(at("?#ZZ\nA=1E309"), (undefined, 1, 1));
     // The pre-pass's errors come where their statements stand too.
-    assert_eq!(at("?#ZZ\nCONST #A=1,#A=2"), (undefined, 1, 2));
-    assert_eq!(at("?#ZZ\nOPTION FOO"), (undefined, 1, 2));
-    assert_eq!(at("?#ZZ\nDEF F\nEND\nDEF F\nEND"), (undefined, 1, 2));
-    assert_eq!(at("?#ZZ\nDEF LAST\nEND"), (undefined, 1, 2));
-    assert_eq!(at("?#ZZ\nENUM #A=1.5"), (undefined, 1, 2));
-    assert_eq!(at("?#ZZ\nDATA A"), (undefined, 1, 2));
+    assert_eq!(at("?#ZZ\nCONST #A=1,#A=2"), (undefined, 1, 1));
+    assert_eq!(at("?#ZZ\nOPTION FOO"), (undefined, 1, 1));
+    assert_eq!(at("?#ZZ\nDEF F\nEND\nDEF F\nEND"), (undefined, 1, 1));
+    assert_eq!(at("?#ZZ\nDEF LAST\nEND"), (undefined, 1, 1));
+    assert_eq!(at("?#ZZ\nENUM #A=1.5"), (undefined, 1, 1));
+    assert_eq!(at("?#ZZ\nDATA A"), (undefined, 1, 1));
     assert_eq!(at("DEF F\nCONST #A=1/0\nEND\n?#ZZ").1, 2);
     assert_eq!(
         at("CONST #A=1,#A=2\n?#ZZ"),
@@ -2545,7 +2555,7 @@ fn compile_errors_before_a_syntax_error_come_first() {
         ErrorKind::DuplicateFunction
     );
     // A DEF's body compiles where it stands, before the code after it.
-    assert_eq!(at("DEF F\n?#ZZ\nEND\n?\"A\"*-1"), (undefined, 2, 2));
+    assert_eq!(at("DEF F\n?#ZZ\nEND\n?\"A\"*-1"), (undefined, 2, 1));
     assert_eq!(at("?\"A\"*-1\nDEF F\n?#ZZ\nEND").1, 1);
     assert_eq!(at("DEF F\n?1\nEND\nDEF G\n?#ZZ\nEND\n?#YY").1, 5);
 }
@@ -3014,4 +3024,22 @@ fn an_array_named_in_its_own_sizes() {
         error_at("OPTION STRICT:DIM A[A]"),
         (ErrorKind::UndefinedVariable, 1, 21)
     );
+}
+
+/// Where compile errors are placed, as ENVSTAT's columns show on hardware.
+#[test]
+fn compile_errors_are_placed_as_on_hardware() {
+    // A function compiled in place with the wrong number of arguments:
+    // at the statement, in an assignment too.
+    let wrong = ErrorKind::WrongNumberOfArguments;
+    assert_eq!(error_at("Q=ABS(1,2)"), (wrong, 1, 1));
+    assert_eq!(error_at("B=2:Q=CHKCALL(\"A\",1)"), (wrong, 1, 5));
+    assert_eq!(error_at("DEF F:Q=ABS(Z,Z):END"), (wrong, 1, 7));
+    // A variable in a CONST value, at its name.
+    assert_eq!(
+        error_at("CONST #A=Z"),
+        (ErrorKind::IllegalConstantExpression, 1, 10)
+    );
+    // CASE with no WHEN, at what came instead.
+    assert_eq!(error_at("CASE 1:ENDCASE"), (ErrorKind::SyntaxError, 1, 8));
 }

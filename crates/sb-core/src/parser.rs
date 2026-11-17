@@ -119,6 +119,7 @@ pub fn parse_partial(source: &str, direct: bool) -> (Program, Option<ParseError>
         depth: 0,
         failed: None,
         direct,
+        constant_value: false,
     };
     // statement() keeps every error, so a block gives none of its own.
     let stmts = parser.block(&[]).unwrap_or_else(|e| {
@@ -148,6 +149,7 @@ pub fn parse_expression(source: &str) -> Result<Expr, ParseError> {
         depth: 0,
         failed: None,
         direct: false,
+        constant_value: false,
     };
     let expr = parser.expr()?;
     while matches!(parser.peek(), TokenKind::Newline) {
@@ -180,6 +182,9 @@ struct Parser {
     failed: Option<ParseError>,
     /// Parsing a line typed in DIRECT mode.
     direct: bool,
+    /// Parsing a value of CONST, ENUM or DATA, worked out as the program
+    /// compiles.
+    constant_value: bool,
 }
 
 /// A block being parsed. SmileBASIC 4 names the innermost one when the
@@ -268,6 +273,33 @@ impl Parser {
             i += 1;
         }
         self.tokens[i].span
+    }
+
+    /// Where a `#constant` at the token ahead stands for its errors: at
+    /// the token before it in the statement, as SmileBASIC 4 places
+    /// constants it does not know (checked on hardware: `?#ZZ` at `?`,
+    /// `A=#NONE` at `=`), but at itself in a value of CONST or ENUM
+    /// (`CONST #A=#NONE`).
+    // UNVERIFIED: in DATA.
+    fn constant_span(&self) -> Span {
+        let before = self.pos.checked_sub(1).map(|i| &self.tokens[i]);
+        match before {
+            Some(t)
+                if !self.constant_value
+                    && !matches!(t.kind, TokenKind::Newline | TokenKind::Colon) =>
+            {
+                t.span
+            }
+            _ => self.span(),
+        }
+    }
+
+    /// A value of CONST, ENUM or DATA.
+    fn constant_expr(&mut self) -> PResult<Expr> {
+        let outer = std::mem::replace(&mut self.constant_value, true);
+        let expr = self.expr();
+        self.constant_value = outer;
+        expr
     }
 
     fn advance(&mut self) -> TokenKind {
@@ -628,7 +660,7 @@ impl Parser {
                 StmtKind::Def(Box::new(self.def(common, span)?))
             }
             K::Call => self.call_statement()?,
-            K::Data => StmtKind::Data(self.comma_list(Self::expr)?),
+            K::Data => StmtKind::Data(self.comma_list(Self::constant_expr)?),
             K::Read => StmtKind::Read(self.comma_list(Self::lvalue)?),
             K::Restore => StmtKind::Restore(self.target()?),
             K::Swap => {
@@ -704,7 +736,7 @@ impl Parser {
                         let span = p.span();
                         let name = p.constant_name()?;
                         p.expect(&TokenKind::Assign, "'='")?;
-                        Ok((name, span, p.expr()?))
+                        Ok((name, span, p.constant_expr()?))
                     })?));
                 }
                 ("ENUM", TokenKind::Constant(_)) => {
@@ -714,7 +746,7 @@ impl Parser {
                         let name = p.constant_name()?;
                         let value = if p.eat(&TokenKind::Assign) {
                             let at = p.operand_span();
-                            Some((p.expr()?, at))
+                            Some((p.constant_expr()?, at))
                         } else {
                             None
                         };
@@ -1115,8 +1147,14 @@ impl Parser {
         while matches!(self.peek(), TokenKind::Newline | TokenKind::Colon) {
             self.advance();
         }
+        // The Syntax error is placed at what came instead (checked on
+        // hardware: `CASE 1:ENDCASE` at `ENDCASE`).
         if !matches!(self.peek(), TokenKind::Keyword(K::When | K::Otherwise)) {
-            return self.expected("WHEN");
+            let at = self.span();
+            return self.expected("WHEN").map_err(|e| ParseError {
+                stmt: Some(at),
+                ..e
+            });
         }
         let mut arms: Vec<WhenArm> = Vec::new();
         let mut otherwise = None;
@@ -1433,7 +1471,7 @@ impl Parser {
             TokenKind::Real(x) => Expr::Real(x),
             TokenKind::Str(s) => Expr::Str(s),
             TokenKind::Label(name) => Expr::Label(name),
-            TokenKind::Constant(name) => Expr::Constant(name, self.span()),
+            TokenKind::Constant(name) => Expr::Constant(name, self.constant_span()),
             TokenKind::Ident { name, suffix } => {
                 let at = self.span();
                 self.advance();
