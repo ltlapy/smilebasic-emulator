@@ -67,6 +67,14 @@ runs on an open system and has to do it itself.
   by the product of their sizes.
 - **Memory.** `sb_core::memory` keeps a program's strings and arrays
   within SmileBASIC 4's own total and raises `Out of memory` beyond it.
+  `INSPECT` makes its lines a page at a time, as they are shown.
+- **Waveforms.** `WAVSET` and `WAVSETA` waveforms are outside that total,
+  as in SmileBASIC 4, whose limit for them is not known, so they have
+  none. A sample takes 2 bytes, and a waveform is at most an array long.
+  Each instrument holds one, and a `BEEP` note holds the one it started
+  with, so an interpreter holds at most 96 (32 instruments, 16 `BEEP`
+  handles, 48 notes falling away): about 6.4 GB from arrays as large as
+  memory allows, twice that with a subprogram.
 - **Time.** A program runs a limited number of instructions per frame, so
   a loop cannot hold up the window. Calls and `GOSUB`s have depth limits.
 - **Failures.** A panic while running a frame stops the program with
