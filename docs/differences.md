@@ -497,6 +497,21 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   exactly. With the editor in its own window, only the main window changes.
   The window keeps its size out of fullscreen when the emulator quits
   (`window_size` in `settings.txt`) and starts at it next time.
+- View > "Keep 16:9 when resizing", on by default (`keep_16_9` in
+  `settings.txt`), keeps the main window at the display's 16:9 while you
+  resize it, so the screen and the UI fill it with no bars. The emulator
+  asks the system for that shape. Where the system ignores it, as some
+  Wayland compositors do, the emulator sets the nearest 16:9 size once the
+  window has kept its size for 0.3 seconds: the same width, or where that
+  height does not fit the display, the same height. If the system refuses
+  that size twice in a row, the emulator leaves the window alone until you
+  turn the item on again. Turning it on puts a window of another shape
+  right at once. Fullscreen and maximized windows keep the size the system
+  gives them: the emulator does not change what it asks for while the
+  window is in either state, as SDL sets the size again when it does. The
+  editor in its own window can take any shape. With the item off, or in
+  fullscreen or maximized on a display of another shape, the window is not
+  16:9 and the screen and editor are placed as described above.
 - With the Simple UI on, the screen fills the display at its aspect ratio, and
   the filter is the pause menu's Screen filter (`simple_ui_filter` in
   `settings.txt`), not View > Screen filter. A 640x480 display seldom holds

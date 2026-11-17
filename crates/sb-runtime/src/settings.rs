@@ -191,6 +191,9 @@ pub struct Settings {
     /// quit, in the system's window coordinates, which View > Window size
     /// sets; `None` for the profile's display.
     pub window_size: Option<[u32; 2]>,
+    /// View > "Keep 16:9 when resizing": the main window keeps the
+    /// display's shape while it is resized, out of fullscreen.
+    pub keep_16_9: bool,
     /// Who draws the screens.
     pub renderer: Renderer,
     /// Keys also press the first controller's buttons.
@@ -305,6 +308,7 @@ impl Default for Settings {
             screen_filter: Some(Filter::Nearest),
             fullscreen: false,
             window_size: None,
+            keep_16_9: true,
             renderer: Renderer::DEFAULT,
             keyboard_buttons: true,
             swap_ab_xy: false,
@@ -371,6 +375,7 @@ impl Settings {
             screen_filter: Some(Filter::Nearest),
             fullscreen: false,
             window_size: None,
+            keep_16_9: true,
             renderer: Renderer::Auto,
             keyboard_buttons: true,
             swap_ab_xy: false,
@@ -576,6 +581,7 @@ impl Settings {
                 "simple_ui" => &mut s.simple_ui,
                 "simple_ui_welcome_shown" => &mut s.simple_ui_welcome_shown,
                 "fullscreen" => &mut s.fullscreen,
+                "keep_16_9" => &mut s.keep_16_9,
                 "complete_after" => {
                     if let Some(n) = value.parse().ok().filter(|n| COMPLETE_AFTER.contains(n)) {
                         s.complete_after = n;
@@ -747,6 +753,7 @@ impl Settings {
              screen_filter={filter}\n\
              fullscreen={}\n\
              window_size={}\n\
+             keep_16_9={}\n\
              {renderer}\
              keyboard_buttons={}\n\
              swap_ab_xy={}\n\
@@ -801,6 +808,7 @@ impl Settings {
             self.file_hint_shown,
             self.fullscreen,
             (self.window_size).map_or(String::new(), |[w, h]| format!("{w},{h}")),
+            self.keep_16_9,
             self.keyboard_buttons,
             self.swap_ab_xy,
             self.smilebasic_instruments,
@@ -865,6 +873,7 @@ mod tests {
             screen_filter: None,
             fullscreen: true,
             window_size: Some([2560, 1440]),
+            keep_16_9: false,
             renderer: Renderer::DEFAULT.other(),
             keyboard_buttons: false,
             smilebasic_instruments: false,
@@ -926,6 +935,9 @@ mod tests {
         }
         let text = Settings::default().to_text();
         assert!(text.contains("window_size=\n") && text.contains("fullscreen=false\n"));
+        // The main window keeps 16:9 unless told not to.
+        assert!(Settings::default().keep_16_9 && text.contains("keep_16_9=true\n"));
+        assert!(!Settings::from_text("keep_16_9=false\n").keep_16_9);
     }
 
     #[test]

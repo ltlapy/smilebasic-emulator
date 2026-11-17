@@ -716,7 +716,7 @@ the project that `run=` names from the data directory, so use a scratch one
 |---|---|
 | `targets` | Acts as if the renderer reset its targets, and spoils what the GPU path holds |
 | `device` | Acts as if the renderer reset its device |
-| `resize:W:H` | Sets the window's size |
+| `resize:W:H` | Sets the window's size. With View > "Keep 16:9 when resizing" on, the default, SDL makes it 16:9: put `keep_16_9=false` in the data directory's `settings.txt` for another shape |
 | `editor-resize:W:H` | Sets the editor's own window's size |
 | `fullscreen`, `windowed` | Changes the window's mode |
 | `window-size:N` | Chooses item N of View > Window size, from 0 for 0.5x |

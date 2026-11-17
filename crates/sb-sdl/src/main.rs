@@ -507,6 +507,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut menu_layer = Layer::default();
     // The emulator's windows on the editor's window, at the display's size.
     let mut windows_layer = Layer::default();
+    // View > "Keep 16:9 when resizing": what puts the main window's shape
+    // right where the system ignores the shape asked for, and whether
+    // that shape is asked for now.
+    let mut keep_shape = window::KeepShape::default();
+    // SDL asks for no shape at first; asking sets the window's size again.
+    let mut shape_asked = false;
+    // The console without a desktop, whose one window is the display.
+    let kms = video.current_video_driver() == "kmsdrm";
     let mut editor_texture: Option<(Texture, TextureKind)> = None;
     let mut editor_grp = PageTexture::default();
     let mut editor_space = (1, 1);
@@ -1297,6 +1305,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 && !from_editor
             {
                 main_presents.resized();
+            }
+            if let Event::Window {
+                win_event: WindowEvent::Resized(..),
+                ..
+            } = event
+                && !from_editor
+            {
+                keep_shape.resized(Instant::now());
             }
             // Back from another program, which may have changed the files.
             if let Event::Window {
@@ -2478,6 +2494,19 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         let (main, settings) = (canvas.window_mut(), &mut machine.rt.settings);
                         set_window_scale(main, settings, profile_display, window::SCALES[i].1);
                     }
+                    Click::Chosen(Action::ToggleKeepShape) => {
+                        let on = !machine.rt.settings.keep_16_9;
+                        machine.rt.settings.keep_16_9 = on;
+                        // Put right at once where the window is not 16:9.
+                        let main = canvas.window_mut();
+                        let free = !on || kms || shape_free(main);
+                        let room = main_room(main);
+                        if let Some((w, h)) =
+                            keep_shape.now(main.size(), free, profile_display, room)
+                        {
+                            let _ = main.set_size(w, h);
+                        }
+                    }
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Ignored
                         if let Some(open) = &mut side
@@ -2858,6 +2887,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // editor shows where it did until the next frame.
         let apart = apart && machine.is_editing();
         let ui_editor = ui_editor && apart;
+        if !simple_ui {
+            let main = canvas.window_mut();
+            let on = machine.rt.settings.keep_16_9;
+            keep_main_shape(
+                main,
+                &mut keep_shape,
+                &mut shape_asked,
+                on && !kms,
+                profile_display,
+            );
+        }
         if quit {
             let unsaved = machine.unsaved_slots();
             if unsaved.is_empty() {
@@ -4511,6 +4551,58 @@ fn set_window_scale(main: &mut Window, settings: &mut Settings, display: (u32, u
             || y + h as i32 > room.y() + room.height() as i32)
     {
         main.set_position(WindowPos::Centered, WindowPos::Centered);
+    }
+}
+
+/// Whether the main window's shape is left as it is: fullscreen or
+/// maximized, where the system or the display decides its size.
+fn shape_free(main: &Window) -> bool {
+    main.fullscreen_state() != FullscreenType::Off || main.is_maximized()
+}
+
+/// The room the main window has on its display, in window coordinates:
+/// the usable area less the window's borders, where the system says.
+fn main_room(main: &Window) -> Option<(u32, u32)> {
+    let usable = main
+        .get_display()
+        .and_then(|d| d.get_usable_bounds())
+        .ok()?;
+    let (top, left, bottom, right) = main.border_size().unwrap_or_default();
+    let less = |v: u32, a: u16, b: u16| v.saturating_sub(u32::from(a) + u32::from(b));
+    Some((
+        less(usable.width(), left, right),
+        less(usable.height(), top, bottom),
+    ))
+}
+
+/// Keeps the main window at the shape of `display`, 16:9, while `on`:
+/// asks the system for that shape, and where the system ignores it, sets
+/// the nearest size of that shape once a resize has settled (see
+/// [`window::KeepShape`]). `asked` is whether the shape is asked for now.
+///
+/// A fullscreen or maximized window is left as it is, and so is what it
+/// asks for: SDL sets the window's size again when the shape asked for
+/// changes, which would take it out of fullscreen on some systems.
+fn keep_main_shape(
+    main: &mut Window,
+    keep: &mut window::KeepShape,
+    asked: &mut bool,
+    on: bool,
+    display: (u32, u32),
+) {
+    let free = shape_free(main);
+    if !free && *asked != on {
+        *asked = on;
+        let ratio = match on {
+            true => display.0 as f32 / display.1.max(1) as f32,
+            false => 0.0,
+        };
+        // SAFETY: the window is alive; SDL takes 0 to clear the ratio.
+        unsafe { sdl3::sys::video::SDL_SetWindowAspectRatio(main.raw(), ratio, ratio) };
+    }
+    let room = main_room(main);
+    if let Some((w, h)) = keep.tick(Instant::now(), main.size(), !on || free, display, room) {
+        let _ = main.set_size(w, h);
     }
 }
 

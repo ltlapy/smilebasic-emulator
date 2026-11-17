@@ -73,6 +73,8 @@ pub enum Action {
     ToggleFullscreen,
     /// The main window's size: an item of [`SCALES`].
     WindowSize(usize),
+    /// The main window keeps 16:9 while it is resized.
+    ToggleKeepShape,
     /// The debugger's commands, for a stopped program.
     Continue,
     StepInto,
@@ -128,6 +130,7 @@ impl Action {
             Action::ToggleFullscreen => check(context.fullscreen),
             Action::WindowSize(i) if context.window_size == Some(i) => "(*)",
             Action::WindowSize(_) => "( )",
+            Action::ToggleKeepShape => check(settings.keep_16_9),
             Action::ToggleUpperCase => check(settings.upper_case_letters),
             Action::ToggleEditorWindow => check(settings.editor_window),
             Action::ToggleTidyOnEnd => check(settings.tidy_on_end),
@@ -382,6 +385,7 @@ const MENUS: &[Menu] = &[
             ),
             LINE,
             sub("Window size", &WINDOW_SIZES),
+            item("Keep 16:9 when resizing", Action::ToggleKeepShape),
             keyed("Fullscreen", "Ctrl+Shift+F11", Action::ToggleFullscreen),
         ],
     },
@@ -1387,6 +1391,28 @@ mod tests {
         // On 640 pixels at 1x, the bar's titles leave room for it.
         let last = title_rect(MENUS.len() - 1);
         assert!(fit_status(status, 640 - last.x - last.w - 2 * PAD).is_some());
+    }
+
+    #[test]
+    fn keeping_16_9_is_a_check_item_of_view() {
+        let view = menu("View");
+        let items = MENUS[view].items;
+        let i = (items.iter())
+            .position(|i| i.label == "Keep 16:9 when resizing")
+            .unwrap();
+        // Between the window's size and fullscreen.
+        assert_eq!(items[i - 1].label, "Window size");
+        assert_eq!(items[i + 1].label, "Fullscreen");
+        let mut bar = MenuBar::default();
+        bar.open_menu(view, "");
+        assert_eq!(
+            bar.click(at(item_rect(view, i)), RUNNING),
+            Click::Chosen(Action::ToggleKeepShape)
+        );
+        let mut settings = Settings::default();
+        assert_eq!(Action::ToggleKeepShape.mark(&settings, IDLE), "[x]");
+        settings.keep_16_9 = false;
+        assert_eq!(Action::ToggleKeepShape.mark(&settings, IDLE), "[ ]");
     }
 
     #[test]

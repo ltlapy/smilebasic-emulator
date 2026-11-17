@@ -9,6 +9,7 @@ use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
 use sdl3::event::Event;
 use sdl3::render::FRect;
+use std::time::{Duration, Instant};
 
 /// View > Window size: each item's label and the multiple of the
 /// profile's display (1280x720 for SmileBASIC 4) it sets the main
@@ -113,6 +114,128 @@ pub fn start_size((w, h): (u32, u32), usable: Option<(u32, u32)>) -> (u32, u32) 
     match usable {
         Some((uw, uh)) if uw > 0 && uh > 0 => (w.min(uw), h.min(uh)),
         _ => (w, h),
+    }
+}
+
+/// The size nearest to `(w, h)` with the shape of `display` (16:9 for
+/// SmileBASIC 4) that fits `room`, the display's usable area less the
+/// window's borders, if known; `None` where the size is that shape to a
+/// pixel already. The width stays and the height follows, unless that
+/// leaves the room; then the height stays and the width follows, and
+/// where neither fits, the largest size of the shape that does.
+pub fn snap_to_shape(
+    (w, h): (u32, u32),
+    display: (u32, u32),
+    room: Option<(u32, u32)>,
+) -> Option<(u32, u32)> {
+    let (dw, dh) = (u64::from(display.0.max(1)), u64::from(display.1.max(1)));
+    let (w64, h64) = (u64::from(w), u64::from(h));
+    // Off by more than a pixel of height.
+    if (h64 * dw).abs_diff(w64 * dh) <= dw || w == 0 || h == 0 {
+        return None;
+    }
+    let along = |v: u64, from: u64, to: u64| ((v * to + from / 2) / from).max(1) as u32;
+    let (rw, rh) = room
+        .filter(|&(rw, rh)| rw > 0 && rh > 0)
+        .unwrap_or((u32::MAX, u32::MAX));
+    let tall = (w, along(w64, dw, dh));
+    let wide = (along(h64, dh, dw), h);
+    let fits = |(sw, sh): (u32, u32)| sw <= rw && sh <= rh;
+    let size = if fits(tall) {
+        tall
+    } else if fits(wide) {
+        wide
+    } else {
+        let by_width = (rw, along(u64::from(rw), dw, dh));
+        match fits(by_width) {
+            true => by_width,
+            false => (along(u64::from(rh), dh, dw), rh),
+        }
+    };
+    (size != (w, h)).then_some(size)
+}
+
+/// How long the main window's size has to stay before View > "Keep 16:9
+/// when resizing" puts it right: a drag sends sizes more often than this.
+pub const SETTLE: Duration = Duration::from_millis(300);
+
+/// How many sizes in a row the system may refuse before the window's
+/// shape is left as it is, until the item is turned on again.
+const STRIKES: u32 = 2;
+
+/// Puts the main window back to the display's shape after the user
+/// resizes it, where the system ignores the shape the window asks for
+/// (some Wayland compositors do): once the size has settled, never during
+/// a drag, and never in a loop with a system that keeps refusing.
+#[derive(Debug, Default)]
+pub struct KeepShape {
+    /// When the window was last resized, until its size has settled.
+    resized: Option<Instant>,
+    /// The size last asked for, until the window's size settles after it.
+    asked: Option<(u32, u32)>,
+    /// The sizes asked for in a row that the system did not give.
+    strikes: u32,
+}
+
+impl KeepShape {
+    /// The window's size changed, by the user, the system or a size
+    /// asked for.
+    pub fn resized(&mut self, now: Instant) {
+        self.resized = Some(now);
+    }
+
+    /// The item was turned on, or the window has to be put right at once:
+    /// starts afresh and gives the size to ask for, if any. `free` is a
+    /// window the shape is not kept for: fullscreen or maximized.
+    pub fn now(
+        &mut self,
+        size: (u32, u32),
+        free: bool,
+        display: (u32, u32),
+        room: Option<(u32, u32)>,
+    ) -> Option<(u32, u32)> {
+        *self = KeepShape::default();
+        self.ask(size, free, display, room)
+    }
+
+    /// The size to ask for now, once the window's size has settled after
+    /// a change: see [`KeepShape::now`].
+    pub fn tick(
+        &mut self,
+        now: Instant,
+        size: (u32, u32),
+        free: bool,
+        display: (u32, u32),
+        room: Option<(u32, u32)>,
+    ) -> Option<(u32, u32)> {
+        let since = self.resized?;
+        if now.duration_since(since) < SETTLE {
+            return None;
+        }
+        self.resized = None;
+        let wanted = snap_to_shape(size, display, room);
+        // The size that settled after one asked for: given, or refused.
+        if self.asked.take().is_some() {
+            match wanted {
+                None => self.strikes = 0,
+                Some(_) => self.strikes += 1,
+            }
+        }
+        self.ask(size, free, display, room)
+    }
+
+    fn ask(
+        &mut self,
+        size: (u32, u32),
+        free: bool,
+        display: (u32, u32),
+        room: Option<(u32, u32)>,
+    ) -> Option<(u32, u32)> {
+        if free || self.strikes >= STRIKES {
+            return None;
+        }
+        self.asked = snap_to_shape(size, display, room);
+        self.asked
     }
 }
 
@@ -801,6 +924,100 @@ mod tests {
         assert_eq!(map.to_screen(0.5, 0.5), (0, 0));
         assert_eq!(map.to_screen(320.5, 400.5), (320, 400));
         assert_eq!(map.to_screen(639.5, 479.5), (639, 479));
+    }
+
+    #[test]
+    fn a_window_snaps_to_16_9() {
+        let sb4 = (1280, 720);
+        let snap = |size, room| snap_to_shape(size, sb4, room);
+        // 16:9 already, to a pixel of height: nothing.
+        for size in [
+            (1280, 720),
+            (640, 360),
+            (1920, 1080),
+            (1366, 768),
+            (1281, 720),
+            (1280, 721),
+        ] {
+            assert_eq!(snap(size, None), None, "{size:?}");
+        }
+        // The width stays.
+        assert_eq!(snap((640, 480), None), Some((640, 360)));
+        assert_eq!(snap((800, 600), None), Some((800, 450)));
+        assert_eq!(snap((1280, 700), None), Some((1280, 720)));
+        assert_eq!(snap((1000, 1000), Some((1920, 1040))), Some((1000, 563)));
+        // A height past the room: the height stays instead.
+        assert_eq!(snap((1900, 900), Some((1920, 1000))), Some((1600, 900)));
+        // Neither fits: the largest that does.
+        assert_eq!(snap((1900, 1000), Some((1700, 900))), Some((1600, 900)));
+        assert_eq!(snap((1000, 1000), Some((800, 1000))), Some((800, 450)));
+        // An unknown or empty room is no limit; nothing has no shape.
+        assert_eq!(snap((640, 480), Some((0, 0))), Some((640, 360)));
+        assert_eq!(snap((0, 480), None), None);
+    }
+
+    #[test]
+    fn the_shape_is_put_right_once_the_size_settles() {
+        let sb4 = (1280, 720);
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut keep = KeepShape::default();
+        // Nothing resized, nothing to do.
+        assert_eq!(keep.tick(at(1000), (640, 480), false, sb4, None), None);
+        // A drag: sizes keep coming, and nothing is asked until they stop.
+        for (ms, w) in [(0, 700), (50, 720), (100, 760), (150, 800)] {
+            keep.resized(at(ms));
+            assert_eq!(keep.tick(at(ms + 10), (w, 600), false, sb4, None), None);
+        }
+        assert_eq!(keep.tick(at(400), (800, 600), false, sb4, None), None);
+        assert_eq!(
+            keep.tick(at(450), (800, 600), false, sb4, None),
+            Some((800, 450))
+        );
+        // Asked once: no more without another resize.
+        assert_eq!(keep.tick(at(2000), (800, 600), false, sb4, None), None);
+        // Given: the settled size is 16:9, and nothing more is asked.
+        keep.resized(at(2100));
+        assert_eq!(keep.tick(at(2500), (800, 450), false, sb4, None), None);
+        // Fullscreen or maximized windows are left as they are.
+        keep.resized(at(3000));
+        assert_eq!(keep.tick(at(3500), (1920, 1040), true, sb4, None), None);
+    }
+
+    #[test]
+    fn a_system_that_keeps_refusing_is_left_alone() {
+        let sb4 = (1280, 720);
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut keep = KeepShape::default();
+        let mut asked = 0;
+        // A tiling window manager that puts the window back to 800x600
+        // after every size asked for.
+        for round in 0..20u64 {
+            keep.resized(at(round * 1000));
+            if keep
+                .tick(at(round * 1000 + 500), (800, 600), false, sb4, None)
+                .is_some()
+            {
+                asked += 1;
+            }
+        }
+        assert_eq!(asked, 2);
+        // The user resizing it does not start it again...
+        keep.resized(at(30_000));
+        assert_eq!(keep.tick(at(31_000), (900, 700), false, sb4, None), None);
+        // ...turning the item on again does, once.
+        assert_eq!(keep.now((900, 700), false, sb4, None), Some((900, 506)));
+        assert_eq!(keep.now((900, 700), true, sb4, None), None);
+        // A refusal followed by a size given clears the count.
+        let mut keep = KeepShape::default();
+        keep.resized(at(0));
+        assert!(keep.tick(at(500), (800, 600), false, sb4, None).is_some());
+        keep.resized(at(600));
+        assert!(keep.tick(at(1000), (800, 600), false, sb4, None).is_some());
+        keep.resized(at(1100));
+        assert_eq!(keep.tick(at(1500), (800, 450), false, sb4, None), None);
+        assert_eq!(keep.strikes, 0);
     }
 
     #[test]
