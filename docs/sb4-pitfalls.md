@@ -340,6 +340,19 @@ TEST76K, done by hand, and TEST76R, recorded over HDMI, ran on a Switch 2.
   in `WHEN 1:WHEN 2:?"X"`, a 1 prints X too. SmileBASIC 4's own programs list
   several values this way. A `WHEN` meant to do nothing needs a statement of
   its own, or its value kept out of the `CASE`.
+- A function's name without parentheses is a variable. `T=MILLISEC` reads a
+  variable named MILLISEC, which is 0 unless the program set it, so
+  `WHILE MILLISEC-T<25:WEND` never ends; under `OPTION STRICT` it is
+  `Undefined variable` as the program compiles. This holds for every built-in
+  function (`MAINCNT`, `FREEMEM`, `RND`, `ABS`) and for a `DEF` function. Only
+  `NAME(...)` calls. SmileBASIC 3 had `MAINCNT` and `MILLISEC` as system
+  variables, so code carried over from it needs the parentheses added.
+  SmileBASIC 4's own TGAME_SHOOTER has `IF MAINCNT AND 15 THEN RETURN` in a
+  `DEF`, where that `RETURN` never runs. (Not yet seen on hardware.)
+- A variable may have a built-in function's name: `MILLISEC=5`, `VAR MILLISEC`
+  and `DIM RND[3]` are accepted, and `RND(1)` still calls the function. The
+  name alone as a statement is a command call instead: `MILLISEC` on its own
+  is `Wrong number of OUT arguments` as it runs. (Not yet seen on hardware.)
 
 ### `DEF`, `OUT` and `RETURN`
 
