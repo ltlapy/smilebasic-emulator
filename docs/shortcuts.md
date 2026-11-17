@@ -114,7 +114,8 @@ The button you press, the right or the bottom one, works as A from then on,
 and the one across from it as B. Enter continues without changing this.
 
 The pause menu pauses the program. It has Resume, Restart, Return to Game
-list and Quit Emulator; over the list it has Close and Quit Emulator. Under
+list and Quit Emulator; over the list it has Close and Quit Emulator. Its
+top right corner shows the emulator's version, as Help > About does. Under
 Settings it has:
 
 - Screen filter: how the screen is scaled, described in

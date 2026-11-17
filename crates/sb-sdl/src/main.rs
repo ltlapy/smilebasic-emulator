@@ -215,16 +215,20 @@ impl FrameGuard {
     }
 }
 
+/// The version as Help > About and the Simple UI's pause menu show it:
+/// [`sb_runtime::VERSION`], with the build's options after it, so that a
+/// bug report shows a build with options, such as unchecked-vars.
+fn version_with_options() -> String {
+    match sb_runtime::BUILD_OPTIONS {
+        "" => sb_runtime::VERSION.to_string(),
+        options => format!("{} {options}", sb_runtime::VERSION),
+    }
+}
+
 /// What Help > About says.
 fn about_lines(drawn_by: &str) -> Vec<String> {
-    let version = sb_runtime::VERSION;
-    // A bug report then shows a build with options, such as unchecked-vars.
-    let options = match sb_runtime::BUILD_OPTIONS {
-        "" => String::new(),
-        options => format!(" {options}"),
-    };
     vec![
-        format!("SmileBASIC emulator {version}{options}"),
+        format!("SmileBASIC emulator {}", version_with_options()),
         "An emulator for SmileBASIC 4 programs.".to_string(),
         String::new(),
         "MIT OR Apache-2.0.".to_string(),

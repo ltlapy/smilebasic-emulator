@@ -219,6 +219,9 @@ pub struct PauseMenu {
     settings: MenuSettings,
     /// The UI's size.
     size: (u32, u32),
+    /// The emulator's version at the top right, as much of it as fits
+    /// beside the title, or nothing.
+    version: Option<String>,
 }
 
 impl PauseMenu {
@@ -241,14 +244,17 @@ impl PauseMenu {
         }
         rows.extend([Some(Choice::Quit), None]);
         rows.extend(SETTINGS.map(Some));
-        PauseMenu {
+        let mut menu = PauseMenu {
             rows,
             focus: 0,
             scroll: 0,
             running,
             settings,
             size,
-        }
+            version: None,
+        };
+        menu.version = menu.fitting_version();
+        menu
     }
 
     /// The settings it shows.
@@ -261,6 +267,7 @@ impl PauseMenu {
         if size != self.size {
             self.size = size;
             self.keep_in_sight();
+            self.version = self.fitting_version();
         }
     }
 
@@ -355,6 +362,10 @@ const MENU_HEADING: u32 = 32;
 const SETTINGS_HEADING: &str = "Settings";
 /// The room for an arrow on either side of a setting's value.
 const ARROW: u32 = 16;
+/// The version's 8x8 cells, half the height of the title's.
+const VERSION_CELL: u32 = 8;
+/// At least this much between the title and the version.
+const VERSION_GAP: u32 = 16;
 const MENU_HINTS: [Hint; 3] = [
     (&[Cap::Name("A")], "Choose"),
     (&[Cap::Name("B")], "Resume"),
@@ -429,6 +440,46 @@ impl PauseMenu {
             Choice::Swap => Some(on_off(s.swap)),
             _ => None,
         }
+    }
+
+    fn heading(&self) -> &'static str {
+        if self.running { "Paused" } else { "Menu" }
+    }
+
+    /// Where the title goes in the frame `f`.
+    fn title_place(&self, f: Rect) -> Rect {
+        Rect {
+            x: f.x + PAD,
+            y: f.y + PAD + 4,
+            w: text_width(self.heading()),
+            h: CHAR,
+        }
+    }
+
+    /// Where `version` goes in the frame `f`: at the top right, its foot
+    /// level with the title's.
+    fn version_place(f: Rect, version: &str) -> Rect {
+        let w = VERSION_CELL * version.encode_utf16().count() as u32;
+        Rect {
+            x: (f.x + f.w).saturating_sub(PAD + w),
+            y: f.y + PAD + 4 + CHAR - VERSION_CELL - 2,
+            w,
+            h: VERSION_CELL,
+        }
+    }
+
+    /// The version with the build's options if that fits right of the
+    /// title, else the version alone if that does, else nothing.
+    fn fitting_version(&self) -> Option<String> {
+        let f = self.frame();
+        let title = self.title_place(f);
+        let fits = |text: &String| {
+            let r = Self::version_place(f, text);
+            r.x >= title.x + title.w + VERSION_GAP
+        };
+        let full = crate::version_with_options();
+        let plain = sb_runtime::VERSION.to_string();
+        [full, plain].into_iter().find(fits)
     }
 
     /// The rows that fit in the UI at once, between the heading and the
@@ -519,8 +570,12 @@ impl PauseMenu {
         fill(fb, shadow, 0xFF00_0000);
         fill(fb, f, BACKDROP);
         border(fb, f, DISABLED);
-        let heading = if self.running { "Paused" } else { "Menu" };
-        draw_text(fb, font, f.x + PAD, f.y + PAD + 4, heading, DISABLED);
+        let title = self.title_place(f);
+        draw_text(fb, font, title.x, title.y, self.heading(), DISABLED);
+        if let Some(version) = &self.version {
+            let r = Self::version_place(f, version);
+            draw_text_scaled(fb, font, r.x, r.y, version, DISABLED, 1);
+        }
         let shown = self.rows.iter().enumerate().skip(self.scroll);
         for (i, (at, &row)) in shown.take(self.shown_rows()).enumerate() {
             let r = self.item(f, i);
@@ -1867,6 +1922,41 @@ mod tests {
         assert_eq!(big.shown_rows(), big.rows.len());
         let small = menu(true, true, true, (320, 240));
         assert!(small.shown_rows() < small.rows.len());
+    }
+
+    #[test]
+    fn the_version_shows_right_of_the_title_and_clear_of_it() {
+        for size in SIZES.into_iter().chain([(274, 240), (200, 240)]) {
+            for running in [true, false] {
+                let menu = menu(running, running, running, size);
+                let f = menu.frame();
+                let title = menu.title_place(f);
+                let Some(version) = &menu.version else {
+                    // Only where the menu is too narrow for it.
+                    assert!(size.0 < 274, "{size:?}");
+                    continue;
+                };
+                assert!(version.starts_with(sb_runtime::VERSION), "{version}");
+                let r = PauseMenu::version_place(f, version);
+                // Inside the frame, on the title's row above the first
+                // row, and clear of the title.
+                assert!(r.x > f.x + 1 && r.x + r.w + PAD <= f.x + f.w, "{size:?}");
+                assert!(r.y >= f.y + PAD && r.y + r.h <= menu.item(f, 0).y);
+                assert!(r.x >= title.x + title.w + VERSION_GAP, "{size:?}");
+                assert!(r.h < title.h, "smaller than the title");
+                let mut fb = Framebuffer::new(size.0, size.1);
+                menu.draw(&mut fb, &Font::blank());
+            }
+        }
+        // The build's options come after the version where they fit, as
+        // a version without a commit leaves room for.
+        let menu = menu(true, true, true, (640, 480));
+        let f = menu.frame();
+        let title = menu.title_place(f);
+        let room =
+            |text: &str| PauseMenu::version_place(f, text).x >= title.x + title.w + VERSION_GAP;
+        assert!(room("0.1.0 unchecked-vars"));
+        assert!(!room("0.1.0+abc1234 unchecked-vars"));
     }
 
     #[test]
