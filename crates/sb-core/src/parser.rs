@@ -645,6 +645,7 @@ impl Parser {
                 let name = Var {
                     name: format!("{keyword:?}").to_ascii_uppercase(),
                     suffix: None,
+                    at: span,
                 };
                 self.command(name)?
             }
@@ -729,8 +730,9 @@ impl Parser {
                 _ => {}
             }
         }
+        let at = self.span();
         self.advance();
-        self.command(Var { name, suffix })
+        self.command(Var { name, suffix, at })
     }
 
     fn assignment(&mut self) -> PResult<StmtKind> {
@@ -840,8 +842,9 @@ impl Parser {
     fn var_name(&mut self) -> PResult<Var> {
         match self.peek().clone() {
             TokenKind::Ident { name, suffix } => {
+                let at = self.span();
                 self.advance();
-                Ok(Var { name, suffix })
+                Ok(Var { name, suffix, at })
             }
             _ => self.expected("variable name"),
         }
@@ -1432,8 +1435,9 @@ impl Parser {
             TokenKind::Label(name) => Expr::Label(name),
             TokenKind::Constant(name) => Expr::Constant(name, self.span()),
             TokenKind::Ident { name, suffix } => {
+                let at = self.span();
                 self.advance();
-                let var = Var { name, suffix };
+                let var = Var { name, suffix, at };
                 if self.eat(&TokenKind::LParen) {
                     return Ok(Expr::Call {
                         name: var,
@@ -1472,12 +1476,13 @@ impl Parser {
             }
             // DIM(array) is a function despite DIM being reserved.
             TokenKind::Keyword(Keyword::Dim) if *self.peek_at(1) == TokenKind::LParen => {
-                self.advance();
-                self.advance();
                 let name = Var {
                     name: "DIM".into(),
                     suffix: None,
+                    at: self.span(),
                 };
+                self.advance();
+                self.advance();
                 return Ok(Expr::Call {
                     name,
                     args: self.call_args()?,
@@ -1520,7 +1525,7 @@ mod tests {
     fn var(name: &str) -> Var {
         Var {
             name: name.into(),
-            suffix: None,
+            ..Var::default()
         }
     }
 
@@ -1595,12 +1600,14 @@ mod tests {
                 base: Box::new(Expr::Call {
                     name: Var {
                         name: "MID".into(),
-                        suffix: Some(lexer::Suffix::Str)
+                        suffix: Some(lexer::Suffix::Str),
+                        ..Var::default()
                     },
                     args: vec![
                         Some(Expr::Var(Var {
                             name: "A".into(),
-                            suffix: Some(lexer::Suffix::Str)
+                            suffix: Some(lexer::Suffix::Str),
+                            ..Var::default()
                         })),
                         None,
                         Some(Expr::Int(2)),

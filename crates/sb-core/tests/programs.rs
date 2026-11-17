@@ -736,7 +736,7 @@ fn duplicate_constants() {
     // A value not worked out as the program compiles: its own error in
     // CONST and ENUM, a Syntax error in DATA (SmileBASIC 4.4.8).
     let illegal = ErrorKind::IllegalConstantExpression;
-    assert_eq!(at("?1\nCONST #A=Z"), (illegal, 2, 1));
+    assert_eq!(at("?1\nCONST #A=Z"), (illegal, 2, 10));
     assert_eq!(at("CONST #A=1+LEN(Z$)").0, illegal);
     assert_eq!(at("ENUM #A,#B=Z").0, illegal);
     assert_eq!(at("DATA Z").0, ErrorKind::SyntaxError);
@@ -846,10 +846,10 @@ fn option_strict_holds_from_where_it_stands() {
     };
     let undefined = ErrorKind::UndefinedVariable;
     assert_eq!(output("A=1:OPTION STRICT:?A"), "1\n");
-    assert_eq!(at("OPTION STRICT:?B"), (undefined, 1, 15));
+    assert_eq!(at("OPTION STRICT:?B"), (undefined, 1, 16));
     assert_eq!(at("?1:OPTION STRICT:?1:B=2").2, 21);
     // A VAR further down does not count yet.
-    assert_eq!(at("OPTION STRICT\n?A\nVAR A"), (undefined, 2, 1));
+    assert_eq!(at("OPTION STRICT\n?A\nVAR A"), (undefined, 2, 2));
     assert_eq!(output("OPTION STRICT:VAR A=1:?A"), "1\n");
     assert_eq!(output("OPTION STRICT:VAR A=A+1:?A"), "1\n");
     // In a block, and through to the end of the program.
@@ -861,7 +861,7 @@ fn option_strict_holds_from_where_it_stands() {
     assert_eq!(at("DEF F\nOPTION STRICT\nEND\n?B").1, 4);
     assert_eq!(
         at("DEF F\n?A\nOPTION STRICT\n?A\n?B\nEND"),
-        (undefined, 5, 1)
+        (undefined, 5, 2)
     );
     assert_eq!(at("DEF F\nOPTION STRICT\nEND\nDEF G\n?B\nEND").1, 5);
     assert_eq!(at("DEF F\nOPTION STRICT\n?L\nVAR L\nEND").1, 3);
@@ -876,7 +876,7 @@ fn option_strict_holds_from_where_it_stands() {
     assert_eq!(output("A=3\nOPTION STRICT\nDEF F\n?A\nEND\nF"), "3\n");
     assert_eq!(at("OPTION STRICT\nDEF F\n?A\nEND\nVAR A").1, 3);
     // The first error in the source comes first.
-    assert_eq!(at("DEF F\n?B\nEND\nOPTION STRICT\n?C"), (undefined, 5, 1));
+    assert_eq!(at("DEF F\n?B\nEND\nOPTION STRICT\n?C"), (undefined, 5, 2));
     assert_eq!(at("OPTION STRICT\nDEF F\n?B\nEND\n?C").1, 3);
     assert_eq!(at("OPTION STRICT\n?C\nDEF F\n?B\nEND").1, 2);
     // A second OPTION STRICT changes nothing.
@@ -2970,4 +2970,48 @@ fn commands_called_as_functions_check_as_they_run() {
     assert_eq!(error("DIM A[4]\nQ=ARYOP(0,A,A,A)").0, outs);
     let e = run("DIM A[0]\nQ=PUSH(A,1)").unwrap_err();
     assert_eq!(e.to_string(), "Wrong number of OUT arguments in 2(PUSH)");
+}
+
+fn error_at(source: &str) -> (ErrorKind, u32, u32) {
+    let e = run(source).expect_err(source);
+    (e.kind, e.line, e.col)
+}
+
+/// A DEF meets its variables in source order (checked on hardware).
+/// Before its VAR, a name is the global that top-level code above the DEF
+/// made, and the VAR then makes the DEF's own; with no such global, the
+/// use makes the DEF's own, and the VAR is Duplicate variable, placed at
+/// its name.
+#[test]
+fn a_def_meets_its_variables_in_source_order() {
+    assert_eq!(output("A=5\nDEF F:?A:VAR A=1:?A:END:F:?A"), "5\n1\n5\n");
+    assert_eq!(output("VAR A=5\nDEF F\n?A\nVAR A\n?A\nEND\nF"), "5\n0\n");
+    assert_eq!(output("DEF G:?A:END\nDEF F:VAR A:?A:END\nG:F"), "0\n0\n");
+    let duplicate = ErrorKind::DuplicateVariable;
+    assert_eq!(error_at("DEF F:?A:VAR A:END"), (duplicate, 1, 14));
+    assert_eq!(error_at("DEF F\n?A\nVAR A\nEND"), (duplicate, 3, 5));
+    assert_eq!(error_at("DEF F:?A:VAR A=1:END\nA=5:F"), (duplicate, 1, 14));
+    assert_eq!(error_at("DEF F:VAR A:VAR A:END"), (duplicate, 1, 17));
+    assert_eq!(error_at("?A:VAR A"), (duplicate, 1, 8));
+    assert_eq!(error_at("DIM A[16]:Z=0\nDIM A,Z OUT Q"), (duplicate, 2, 5));
+    let undefined = ErrorKind::UndefinedVariable;
+    assert_eq!(
+        error_at("OPTION STRICT\nDEF F:?A:VAR A:END"),
+        (undefined, 2, 8)
+    );
+    assert_eq!(
+        error_at("REPEAT:OPTION STRICT:UNTIL !B"),
+        (undefined, 1, 29)
+    );
+}
+
+/// `DIM A[A]` compiles its sizes before A exists (checked on hardware).
+#[test]
+fn an_array_named_in_its_own_sizes() {
+    assert_eq!(output("DIM A[A]:?LEN(A)"), "0\n");
+    assert_eq!(output("A%=3\nDEF F:DIM A%[A%]:?LEN(A%):END:F"), "3\n");
+    assert_eq!(
+        error_at("OPTION STRICT:DIM A[A]"),
+        (ErrorKind::UndefinedVariable, 1, 21)
+    );
 }

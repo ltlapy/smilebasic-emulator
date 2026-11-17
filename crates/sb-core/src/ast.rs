@@ -16,10 +16,19 @@ pub struct Stmt {
     pub col: u32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Var {
     pub name: String,
     pub suffix: Option<Suffix>,
+    /// Where the name stands, for the errors placed at it (Undefined
+    /// variable, Duplicate variable). Not part of what the name is.
+    pub at: Span,
+}
+
+impl PartialEq for Var {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.suffix == other.suffix
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -48,6 +48,7 @@ pub fn compile(
         pending: Vec::new(),
         defint_at: None,
         first_seen: HashMap::new(),
+        declaring: None,
         def: None,
         loops: Vec::new(),
         patches: Vec::new(),
@@ -109,12 +110,10 @@ pub fn compile(
 struct DefScope {
     index: u32,
     is_function: bool,
+    /// The DEF's variables made so far, in source order: its parameters,
+    /// those of its VARs, and those a use made. SmileBASIC 4 compiles in one
+    /// pass, so a VAR further down does not exist before it.
     locals: HashMap<Key, u32>,
-    declared: HashSet<Key>,
-    /// By local slot, whether the local was made ahead of time for a VAR
-    /// further down that neither it nor a use has reached yet. Kept only
-    /// with an OPTION STRICT, under which such a local does not exist yet.
-    ahead: Vec<bool>,
 }
 
 struct Loop {
@@ -172,6 +171,8 @@ struct Compiler<'h> {
     /// Where each variable of the scope being compiled is first seen,
     /// worked out only when there is a [`Self::defint_at`].
     first_seen: HashMap<Key, (u32, u32)>,
+    /// The array a VAR or DIM declares, while its sizes compile.
+    declaring: Option<Key>,
     def: Option<DefScope>,
     loops: Vec<Loop>,
     /// Jumps to labels, resolved when their scope is finished.
@@ -203,6 +204,17 @@ fn too_many(n: usize) -> Result<()> {
 
 fn err(kind: ErrorKind, detail: impl Into<String>) -> Error {
     Error::with_detail(kind, detail)
+}
+
+/// `Undefined variable`, placed at the name, as SmileBASIC 4 places the
+/// errors of a variable's name.
+#[cold]
+fn undefined_variable(var: &Var) -> Error {
+    err(
+        ErrorKind::UndefinedVariable,
+        full_name(&var.name, var.suffix),
+    )
+    .at_pos(var.at.line, var.at.col)
 }
 
 /// The numbers of arguments of a function SmileBASIC 4 compiles in place
@@ -443,8 +455,16 @@ impl Compiler<'_> {
                 }
             }
             StmtKind::Data(items) => {
+                // UNVERIFIED: that DATA places the Syntax error of a
+                // variable at the statement, not at its name.
+                let unplaced = |mut e: Error| {
+                    if e.kind == ErrorKind::SyntaxError {
+                        e.line = 0;
+                    }
+                    at(e)
+                };
                 for e in items {
-                    let value = self.const_eval(e).map_err(at)?;
+                    let value = self.const_eval(e).map_err(unplaced)?;
                     self.out.data.push(value);
                 }
             }
@@ -587,6 +607,12 @@ impl Compiler<'_> {
                     Kind::Function(_) => return Err(ErrorKind::WrongNumberOfArguments.into()),
                     _ => return Err(ErrorKind::IllegalFunctionCall.into()),
                 }
+            }
+            // A variable's name: CONST and ENUM place their error there
+            // (checked on hardware: `CONST #A=Z` at `Z`).
+            Expr::Var(v) => {
+                return Err(err(ErrorKind::SyntaxError, "not a constant expression")
+                    .at_pos(v.at.line, v.at.col));
             }
             _ => return Err(err(ErrorKind::SyntaxError, "not a constant expression")),
         })
@@ -844,35 +870,16 @@ impl Compiler<'_> {
                 return Ok(slot);
             }
             if !strict {
-                match slot {
-                    // A DEF makes no global.
-                    Slot::Global(_) if self.def.is_some() => {}
-                    Slot::Global(_) => {
-                        self.global_used.insert(k);
-                        self.made(slot);
-                    }
-                    Slot::Local(_) => self.made(slot),
+                // A DEF makes no global.
+                if self.def.is_none() {
+                    self.global_used.insert(k);
+                    self.made(slot);
                 }
                 return Ok(slot);
             }
-            // A local made ahead for a VAR further down, where SmileBASIC 4
-            // takes a global of the name if top-level code above made one.
-            // This keeps the local, as it does without OPTION STRICT.
-            if let Slot::Local(_) = slot {
-                let global = match self.global_first.get(&k) {
-                    Some(&i) if i < self.def_at => self.global_slots.get(&k).copied(),
-                    _ => None,
-                };
-                if global.is_some_and(|n| self.exists(Slot::Global(n))) {
-                    return Ok(slot);
-                }
-            }
         }
         if strict {
-            return Err(err(
-                ErrorKind::UndefinedVariable,
-                full_name(&var.name, var.suffix),
-            ));
+            return Err(undefined_variable(var));
         }
         let slot = match self.def {
             Some(_) => Slot::Local(self.local_slot(k)),
@@ -887,28 +894,18 @@ impl Compiler<'_> {
     }
 
     /// Whether `slot` exists by now, in a program with an OPTION STRICT:
-    /// a global that a top-level VAR or use above made, or a local that is
-    /// not waiting for its VAR.
+    /// a global that a top-level VAR or use above made, or a local.
     fn exists(&self, slot: Slot) -> bool {
         match slot {
             Slot::Global(n) => self.global_made[n as usize],
-            Slot::Local(n) => {
-                let ahead = &self.def.as_ref().expect("a local is in a DEF").ahead;
-                !ahead.get(n as usize).copied().unwrap_or(false)
-            }
+            Slot::Local(_) => true,
         }
     }
 
     /// Records that `slot` exists from here on (see [`Self::exists`]).
     fn made(&mut self, slot: Slot) {
-        match slot {
-            Slot::Global(n) => self.global_made[n as usize] = true,
-            Slot::Local(n) => {
-                let ahead = &mut self.def.as_mut().expect("a local is in a DEF").ahead;
-                if let Some(a) = ahead.get_mut(n as usize) {
-                    *a = false;
-                }
-            }
+        if let Slot::Global(n) = slot {
+            self.global_made[n as usize] = true;
         }
     }
 
@@ -1299,19 +1296,23 @@ impl Compiler<'_> {
     fn var_decl(&mut self, d: &VarDecl) -> Result<()> {
         let k = key(&d.var);
         // Using a variable before its DIM or VAR also makes the DIM a
-        // duplicate (checked on hardware).
-        let first = match &mut self.def {
-            Some(def) => def.declared.insert(k.clone()),
+        // duplicate (checked on hardware), in a DEF too, unless the use
+        // was of a global that top-level code above the DEF made: the VAR
+        // then makes the DEF's own from there on.
+        let first = match &self.def {
+            Some(def) => !def.locals.contains_key(&k),
             None => {
                 (self.global_var_seen.insert(k.clone()) && !self.global_used.contains(&k))
                     || self.direct
             }
         };
         if !first {
+            let at = d.var.at;
             return Err(err(
                 ErrorKind::DuplicateVariable,
                 full_name(&d.var.name, d.var.suffix),
-            ));
+            )
+            .at_pos(at.line, at.col));
         }
         let slot = match &self.def {
             Some(_) => Slot::Local(self.local_slot(k)),
@@ -1342,7 +1343,7 @@ impl Compiler<'_> {
                 if dims.len() > crate::value::MAX_DIMS {
                     return Err(err(ErrorKind::SyntaxError, "more than 4 dimensions"));
                 }
-                self.exprs(dims)?;
+                self.sizes(dims, key(&d.var))?;
                 self.emit(Op::NewArray {
                     elem,
                     dims: dims.len() as u8,
@@ -1363,7 +1364,7 @@ impl Compiler<'_> {
                 } else if dims.len() > crate::value::MAX_DIMS {
                     return Err(err(ErrorKind::SyntaxError, "more than 4 dimensions"));
                 }
-                self.exprs(dims)?;
+                self.sizes(dims, key(&d.var))?;
                 self.emit(Op::NewArray {
                     elem,
                     dims: dims.len().max(1) as u8,
@@ -1377,6 +1378,45 @@ impl Compiler<'_> {
             }
         }
         self.emit(Op::Store(slot));
+        Ok(())
+    }
+
+    /// The sizes of the array `k` that a VAR or DIM declares.
+    fn sizes(&mut self, dims: &[Expr], k: Key) -> Result<()> {
+        self.declaring = Some(k);
+        let sizes = self.exprs(dims);
+        self.declaring = None;
+        sizes
+    }
+
+    /// The array a VAR or DIM declares, named in its own sizes (`DIM
+    /// A[A]`). SmileBASIC 4 compiles the sizes before the array exists:
+    /// the name is a global that top-level code above the DEF made, or
+    /// under OPTION STRICT `Undefined variable` (checked on hardware).
+    // UNVERIFIED: that without OPTION STRICT it is a new variable's 0, so
+    // `DIM A[A]` makes an array of no elements (it is no error there).
+    #[cold]
+    fn declaring_ref(&mut self, v: &Var) -> Result<()> {
+        let k = key(v);
+        let global = match (&self.def, self.global_first.get(&k)) {
+            (Some(_), Some(&i)) if i < self.def_at => self.global_slots.get(&k).copied(),
+            _ => None,
+        };
+        if let Some(n) =
+            global.filter(|&n| self.strict_at.is_none() || self.global_made[n as usize])
+        {
+            self.emit(Op::Load(Slot::Global(n)));
+            return Ok(());
+        }
+        if self.strict_at.is_some_and(|at| (self.line, self.col) >= at) {
+            return Err(undefined_variable(v));
+        }
+        let op = match elem_type(v.suffix, self.starts_int(&k)) {
+            ElemType::Int => Op::Int(0),
+            ElemType::Real => Op::Real(0.0),
+            ElemType::Str => Op::Str(self.string_const(Vec::new())),
+        };
+        self.emit(op);
         Ok(())
     }
 
@@ -1832,6 +1872,12 @@ impl Compiler<'_> {
                 }
             },
             Expr::Var(v) => {
+                if let Some((name, suffix)) = &self.declaring
+                    && *name == v.name
+                    && *suffix == v.suffix
+                {
+                    return self.declaring_ref(v);
+                }
                 let slot = self.slot(v)?;
                 self.emit(Op::Load(slot));
             }
@@ -2196,8 +2242,6 @@ impl Compiler<'_> {
             index,
             is_function: def.is_function,
             locals: HashMap::new(),
-            declared: HashSet::new(),
-            ahead: Vec::new(),
         });
         let params = match &def.params {
             Params::Fixed(p) => p.as_slice(),
@@ -2228,22 +2272,7 @@ impl Compiler<'_> {
                         .at_pos(self.line, self.col),
                 );
             }
-            self.local_slot(k.clone());
-            self.def.as_mut().expect("set above").declared.insert(k);
-        }
-        // Names declared with VAR anywhere in the body are local.
-        let mut used = Vec::new();
-        let mut declared = Vec::new();
-        collect_vars(&def.body, &mut used, &mut declared);
-        let strict = self.strict_at.is_some();
-        for k in declared {
-            let made = self.out.defs[index as usize].locals.len();
-            let slot = self.local_slot(k) as usize;
-            let ahead = &mut self.def.as_mut().expect("set above").ahead;
-            if strict && slot >= made {
-                ahead.resize(slot, false);
-                ahead.push(true);
-            }
+            self.local_slot(k);
         }
         self.block(&def.body)?;
         if def.is_function {
