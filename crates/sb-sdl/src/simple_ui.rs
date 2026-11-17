@@ -1,5 +1,6 @@
 //! The Simple UI: the frontend laid out for a small screen and a gamepad
-//! alone. The UI is as many pixels as the screen at a whole scale, the
+//! alone. The UI is as many pixels as the screen at a whole scale, or at
+//! one and a half times one at the Medium size, the
 //! emulator starts in a list of the projects instead of DIRECT mode,
 //! Select (SDL's Back, the − button) with A opens a pause menu, and Select
 //! with Start quits. Programs never see Select: BUTTON has no bit for it.
@@ -29,32 +30,48 @@ const UI_LINES: u32 = 480;
 /// The smallest UI that the Simple UI's screens are laid out for.
 const SMALLEST_UI: (u32, u32) = (320, 240);
 
-/// The whole number of screen pixels a UI pixel takes on an output of
-/// `out` pixels: one for every 480 lines, or twice that at
-/// [`SimpleUiSize::Large`] as long as the UI keeps 320x240 pixels.
-pub fn ui_scale((w, h): (u32, u32), size: SimpleUiSize) -> u32 {
-    let normal = (h / UI_LINES).max(1);
+/// How many half screen pixels a UI pixel takes on an output of `out`
+/// pixels: two for every 480 lines at [`SimpleUiSize::Normal`], and 1.5
+/// or 2 times that many at Medium and Large as long as the UI keeps
+/// 320x240 pixels. Normal and Large are whole scales; Medium is a half
+/// more than a whole one where Normal's is odd: 1.5 on a 640x480 or
+/// 1280x720 display, 3 on a 1920x1080 one.
+fn ui_halves((w, h): (u32, u32), size: SimpleUiSize) -> u32 {
+    let normal = 2 * (h / UI_LINES).max(1);
+    let most = (2 * w / SMALLEST_UI.0).min(2 * h / SMALLEST_UI.1);
     match size {
         SimpleUiSize::Normal => normal,
-        SimpleUiSize::Large => {
-            let most = (w / SMALLEST_UI.0).min(h / SMALLEST_UI.1);
-            (2 * normal).min(most).max(normal)
-        }
+        SimpleUiSize::Medium => (normal * 3 / 2).min(most).max(normal),
+        // A whole scale.
+        SimpleUiSize::Large => (2 * normal).min(most & !1).max(normal),
     }
 }
 
-/// The UI's size on an output of `out` pixels: the output at
-/// [`ui_scale`], so that the 16-pixel UI font stays sharp. 640x480 gives
-/// 640x480, or 320x240 at Large; 1920x1080 gives 960x540, or 480x270.
+/// The UI's size on an output of `out` pixels: the output at the scale
+/// [`ui_halves`] gives, so that the 16-pixel UI font stays sharp. 640x480 gives
+/// 640x480, 427x320 at Medium or 320x240 at Large; 1920x1080 gives
+/// 960x540, 640x360 or 480x270. At a scale that is not whole, the UI
+/// takes the part of a pixel left over, so that it covers the output.
 pub fn ui_size((w, h): (u32, u32), size: SimpleUiSize) -> (u32, u32) {
-    let scale = ui_scale((w, h), size);
-    ((w / scale).max(1), (h / scale).max(1))
+    let halves = ui_halves((w, h), size);
+    let across = |n: u32| match halves % 2 {
+        0 => n / (halves / 2),
+        _ => (2 * n).div_ceil(halves),
+    };
+    (across(w).max(1), across(h).max(1))
 }
 
-/// Where a UI of `ui` pixels goes on an output of `out` pixels: at the
-/// largest whole scale that fits, centered across and at the top, as the
-/// desktop's display is.
-pub fn display_rect((w, h): (u32, u32), (out_w, out_h): (u32, u32)) -> FRect {
+/// Where a UI of `ui` pixels goes on an output of `out` pixels at
+/// `size`: at the largest whole scale that fits, centered across and at
+/// the top, as the desktop's display is. At a scale that is not whole,
+/// it starts at the output's top left corner, on a whole pixel, and may
+/// go past the right and bottom edges by less than a pixel of its own.
+pub fn display_rect((w, h): (u32, u32), (out_w, out_h): (u32, u32), size: SimpleUiSize) -> FRect {
+    let halves = ui_halves((out_w, out_h), size);
+    if halves % 2 == 1 && (w, h) == ui_size((out_w, out_h), size) {
+        let scale = halves as f32 / 2.0;
+        return FRect::new(0.0, 0.0, w as f32 * scale, h as f32 * scale);
+    }
     let scale = (out_w / w.max(1)).min(out_h / h.max(1)).max(1);
     let (sw, sh) = (w * scale, h * scale);
     FRect::new(
@@ -365,6 +382,7 @@ fn filter_name(filter: SimpleUiFilter) -> &'static str {
 fn ui_size_name(size: SimpleUiSize) -> &'static str {
     match size {
         SimpleUiSize::Normal => "Normal",
+        SimpleUiSize::Medium => "Medium",
         SimpleUiSize::Large => "Large",
     }
 }
@@ -1504,10 +1522,20 @@ mod tests {
         s
     }
 
-    /// UI sizes from the smallest handled to the largest expected.
-    const SIZES: [(u32, u32); 5] = [(320, 240), (640, 360), (640, 480), (960, 540), (1280, 720)];
+    /// UI sizes from the smallest handled to the largest expected, with
+    /// Medium's on 640x480 and 1280x720.
+    const SIZES: [(u32, u32); 7] = [
+        (320, 240),
+        (427, 320),
+        (640, 360),
+        (640, 480),
+        (854, 480),
+        (960, 540),
+        (1280, 720),
+    ];
 
     const NORMAL: SimpleUiSize = SimpleUiSize::Normal;
+    const MEDIUM: SimpleUiSize = SimpleUiSize::Medium;
     const LARGE: SimpleUiSize = SimpleUiSize::Large;
 
     #[test]
@@ -1521,15 +1549,15 @@ mod tests {
         assert_eq!(ui_size((320, 240)), (320, 240));
         let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
         assert_eq!(
-            box_of(display_rect((640, 480), (640, 480))),
+            box_of(display_rect((640, 480), (640, 480), NORMAL)),
             (0.0, 0.0, 640.0, 480.0)
         );
         assert_eq!(
-            box_of(display_rect((960, 540), (1920, 1080))),
+            box_of(display_rect((960, 540), (1920, 1080), NORMAL)),
             (0.0, 0.0, 1920.0, 1080.0)
         );
         // An odd output loses a pixel's part rather than its whole scale.
-        let r = display_rect(ui_size((2560, 1441)), (2560, 1441));
+        let r = display_rect(ui_size((2560, 1441)), (2560, 1441), NORMAL);
         assert_eq!(box_of(r), (0.5, 0.0, 2559.0, 1440.0));
     }
 
@@ -1549,13 +1577,56 @@ mod tests {
             // Either fills the output as the other does, so the program's
             // screen keeps its place.
             let place = |size| {
-                let r = display_rect(ui_size(out, size), out);
+                let r = display_rect(ui_size(out, size), out, size);
                 (r.x, r.y, r.w, r.h)
             };
             assert_eq!(place(NORMAL), place(LARGE), "{out:?}");
         }
-        assert_eq!(ui_scale((640, 480), LARGE), 2);
-        assert_eq!(ui_scale((1920, 1080), LARGE), 4);
+        assert_eq!(ui_halves((640, 480), LARGE), 4);
+        assert_eq!(ui_halves((1920, 1080), LARGE), 8);
+    }
+
+    #[test]
+    fn medium_is_one_and_a_half_times_normal() {
+        for (out, halves, medium) in [
+            // 1.5 times: 24-pixel text on a 640x480 display.
+            ((640, 480), 3, (427, 320)),
+            ((1280, 720), 3, (854, 480)),
+            ((800, 480), 3, (534, 320)),
+            ((960, 544), 3, (640, 363)),
+            // 4.5 times, where Normal's is 3.
+            ((2560, 1440), 9, (569, 320)),
+            // Where Normal's scale is even, 1.5 times it is whole.
+            ((1920, 1080), 6, (640, 360)),
+            // No smaller than 320x240: as Normal.
+            ((480, 272), 2, (480, 272)),
+            ((320, 240), 2, (320, 240)),
+        ] {
+            assert_eq!(ui_halves(out, MEDIUM), halves, "{out:?}");
+            let ui = ui_size(out, MEDIUM);
+            assert_eq!(ui, medium, "{out:?}");
+            assert!(ui.0 >= SMALLEST_UI.0 && ui.1 >= SMALLEST_UI.1);
+            let r = display_rect(ui, out, MEDIUM);
+            let scale = halves as f32 / 2.0;
+            if halves % 2 == 1 {
+                // At the corner, scaled the same both ways, covering the
+                // output and past it by less than a UI pixel.
+                assert_eq!((r.x, r.y), (0.0, 0.0), "{out:?}");
+                assert_eq!((r.w / ui.0 as f32, r.h / ui.1 as f32), (scale, scale));
+                for (shown, out) in [(r.w, out.0), (r.h, out.1)] {
+                    assert!(shown >= out as f32 && shown < out as f32 + scale);
+                }
+            } else {
+                // A whole scale, laid out as Normal and Large are.
+                let whole = (out.0 / ui.0).min(out.1 / ui.1);
+                assert_eq!(r.w, (ui.0 * whole) as f32, "{out:?}");
+            }
+        }
+        // Between Normal and Large, wherever the three differ.
+        for out in [(640, 480), (1280, 720), (2560, 1440)] {
+            let [n, m, l] = SimpleUiSize::ALL.map(|size| ui_halves(out, size));
+            assert!(n < m && m < l, "{out:?}");
+        }
     }
 
     #[test]
@@ -1722,11 +1793,17 @@ mod tests {
     fn ui_size_and_the_swap_step_as_the_filter_does() {
         let mut menu = focused_on(menu(true, true, true, (640, 480)), Choice::UiSize);
         assert_eq!(menu.pad(Button::DPadRight), Some(Choice::UiSize));
+        assert_eq!(menu.settings().ui_size, MEDIUM);
+        assert_eq!(menu.value(Choice::UiSize), Some("Medium"));
+        assert_eq!(menu.pad(Button::East), Some(Choice::UiSize));
         assert_eq!(menu.settings().ui_size, LARGE);
         assert_eq!(menu.pad(Button::East), Some(Choice::UiSize));
-        assert_eq!(menu.settings().ui_size, NORMAL);
+        assert_eq!(menu.settings().ui_size, NORMAL, "round");
         assert_eq!(menu.key(Keycode::Left), Some(Choice::UiSize));
         assert_eq!(menu.value(Choice::UiSize), Some("Large"));
+        assert_eq!(menu.key(Keycode::Left), Some(Choice::UiSize));
+        assert_eq!(menu.value(Choice::UiSize), Some("Medium"));
+        assert_eq!(menu.key(Keycode::Right), Some(Choice::UiSize));
         menu.key(Keycode::Down);
         for (step, on) in [(Button::East, true), (Button::DPadLeft, false)] {
             assert_eq!(menu.pad(step), Some(Choice::Swap));
@@ -1790,6 +1867,31 @@ mod tests {
         assert_eq!(big.shown_rows(), big.rows.len());
         let small = menu(true, true, true, (320, 240));
         assert!(small.shown_rows() < small.rows.len());
+    }
+
+    #[test]
+    fn the_screens_lay_out_at_each_size_on_640x480() {
+        let tmp = TempDir::new("each-size");
+        let s = storage(&tmp, 30);
+        for (size, ui, rows) in [
+            (NORMAL, (640, 480), 17),
+            (MEDIUM, (427, 320), 10),
+            (LARGE, (320, 240), 7),
+        ] {
+            assert_eq!(ui_size((640, 480), size), ui);
+            let list = GameList::new(&s, ui, &Memory::default());
+            assert_eq!(list.view.rows(), rows, "{size:?}");
+            // The pause menu shows every row down to Medium.
+            let menu = menu(true, true, true, ui);
+            let all = menu.shown_rows() == menu.rows.len();
+            assert_eq!(all, size != LARGE, "{size:?}");
+            // The welcome screen wraps no line, with the name large.
+            let welcome = Welcome::new(ui);
+            assert_eq!(welcome.lines.len(), WELCOME_LINES.len(), "{size:?}");
+            assert!(welcome.big_title && welcome.text_height() <= ui.1);
+            // The hints keep the menu's.
+            assert!(hints_shown(ui.0, &PROJECTS_HINTS) >= 3, "{size:?}");
+        }
     }
 
     #[test]
@@ -2031,14 +2133,16 @@ mod tests {
             let mut list = GameList::new(&s, size, &Memory::default());
             let view = &list.view;
             let room = view.pane.w - 2 * PAD;
-            // The row cuts it up to 640 wide, and from there the info has
+            // The row cuts it below 960 wide, and from 427 the info has
             // it all.
             let title = &view.titles[0];
-            assert_eq!(title.ends_with('~'), size.0 <= 640, "{title}");
+            assert_eq!(title.ends_with('~'), size.0 < 960, "{title}");
             assert!(text_width(title) + 2 * PAD <= view.list.w);
             let info = &view.infos[0];
             let whole = info.title.concat() == "宇宙".repeat(12);
-            assert_eq!(whole, size.0 >= 640, "{:?}", info.title);
+            // Two lines of twelve where they fit, from 427 wide.
+            assert_eq!(whole, room >= 12 * CHAR, "{:?}", info.title);
+            assert_eq!(whole, size.0 >= 427, "{:?}", info.title);
             assert!(info.title.len() <= TITLE_LINES);
             let lines = info.title.iter().chain(&info.about);
             assert!(lines.clone().all(|l| text_width(l) <= room), "{size:?}");

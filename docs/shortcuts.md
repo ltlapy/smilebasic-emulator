@@ -119,8 +119,12 @@ Settings it has:
 
 - Screen filter: how the screen is scaled, described in
   [differences.md](differences.md#screen-scaling).
-- UI size: Normal, or Large to draw the list, menus and dialogs twice as
-  large (320x240 on a 640x480 display). The program's screen keeps its size.
+- UI size: how large the list, menus and dialogs are drawn. Normal draws
+  them at the largest whole scale that leaves 480 lines or more (1x on a
+  640x480 display), Medium at 1.5 times that (24-pixel text, a 427x320 UI on
+  640x480), and Large at twice that (320x240 on 640x480). Where Normal is
+  2x, as on 1920x1080, Medium is 3x. The program's screen keeps its size.
+  In `settings.txt` this is `simple_ui_size=normal`, `medium` or `large`.
 - Swap A/B and X/Y: A and B trade places, as do X and Y, for programs too.
   The desktop has it in File > Settings > Input.
 

@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_ui_stays_nearest() {
+    fn simple_ui_stays_nearest_but_at_medium() {
         let outputs = [
             (320, 240),
             (480, 320),
@@ -422,9 +422,19 @@ mod tests {
         for out in outputs {
             for size in SimpleUiSize::ALL {
                 let ui = crate::simple_ui::ui_size(out, size);
-                let display = crate::simple_ui::display_rect(ui, out);
+                let display = crate::simple_ui::display_rect(ui, out, size);
                 let scale = display.w / ui.0 as f32;
-                assert_eq!(sampling(scale), Sampling::Nearest, "{out:?} {size:?}");
+                assert_eq!(display.h / ui.1 as f32, scale, "{out:?} {size:?}");
+                // Medium is a half more than a whole scale where Normal's
+                // is odd, and drawn as pixel art then.
+                let whole = scale.fract() == 0.0;
+                assert!(whole || size == SimpleUiSize::Medium && scale.fract() == 0.5);
+                let want = if whole {
+                    Sampling::Nearest
+                } else {
+                    Sampling::PixelArt
+                };
+                assert_eq!(sampling(scale), want, "{out:?} {size:?}");
             }
         }
     }

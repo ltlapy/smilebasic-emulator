@@ -402,7 +402,8 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   larger, and with Bilinear when drawn smaller. Where SDL's pixel art filter is
   only Nearest (the software, OpenGL ES 2 and Direct3D 9 renderers, and OpenGL
   before GLSL 1.30), the UI goes to the next whole factor with Nearest, then
-  down to its size with Bilinear.
+  down to its size with Bilinear. The Simple UI's Medium size is such a
+  scale on most displays: 1.5 times on 640x480 and 1280x720.
 
 ## System values
 

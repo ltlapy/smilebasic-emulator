@@ -607,6 +607,12 @@ the project that `run=` names from the data directory, so use a scratch one
 `lost`, `fail`, `refuse:N`, `panic`, `unsaved` and `sleep:MS` try the
 renderer's failures.
 
+Under `--simple-ui`, `run=` starts nothing: the game list shows. `key:` drives
+it as a keyboard does: `key:Down` and `key:Return` run a project from the list,
+`key:Tab` shows its programs, and `key:F8` opens the pause menu. The welcome
+screen shows unless `settings.txt` in the scratch data directory has
+`simple_ui_welcome_shown=true`, and `simple_ui_size` there sets the UI size.
+
 The report says who drew, and why any frame stayed on the CPU. It gives the
 mean, median, 99th percentile and maximum of each stage:
 

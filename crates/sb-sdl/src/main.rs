@@ -977,11 +977,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         let (win_w, _) = canvas.window().size();
         let display = match simple_ui {
-            true => simple_ui::display_rect((display_w, display_h), (out_w, out_h)),
+            true => simple_ui::display_rect(
+                (display_w, display_h),
+                (out_w, out_h),
+                machine.rt.settings.simple_ui_size,
+            ),
             false => display_rect(display_w, display_h, out_w, out_h),
         };
         let settings = &machine.rt.settings;
-        let (shown, _) = screen_place(&mode, settings, simple_ui, out_w, display.h);
+        // A UI at a scale that is not whole can go past the bottom edge;
+        // the program's screen stays on the output.
+        let screen_h = display.h.min(out_h as f32);
+        let (shown, _) = screen_place(&mode, settings, simple_ui, out_w, screen_h);
         let main_map = Mapping {
             px: out_w as f32 / win_w.max(1) as f32,
             display,
@@ -2922,7 +2929,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         mode = machine.screen_mode();
         let settings = &machine.rt.settings;
         let rect;
-        (rect, filter) = screen_place(&mode, settings, simple_ui, out_w, display.h);
+        (rect, filter) = screen_place(&mode, settings, simple_ui, out_w, screen_h);
         let editing = machine.is_editing() && !machine.is_detached();
         let renderer = machine.rt.settings.renderer;
         if renderer_applied != Some(renderer) {
@@ -5097,7 +5104,7 @@ mod tests {
         let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
         let out = (640, 480);
         let ui = simple_ui::ui_size(out, SimpleUiSize::Normal);
-        let display = simple_ui::display_rect(ui, out);
+        let display = simple_ui::display_rect(ui, out, SimpleUiSize::Normal);
         let settings = |simple_ui_filter| Settings {
             screen_filter: Some(Filter::Nearest),
             simple_ui_filter,
@@ -5140,8 +5147,23 @@ mod tests {
         // The UI's size leaves the program's screen as it is.
         let large_ui = simple_ui::ui_size(out, SimpleUiSize::Large);
         assert_eq!(large_ui, (320, 240));
-        let large_display = simple_ui::display_rect(large_ui, out);
+        let large_display = simple_ui::display_rect(large_ui, out, SimpleUiSize::Large);
         assert_eq!(box_of(large_display), box_of(display));
+        // Medium's UI goes past the output by part of a pixel, and the
+        // screen stays on the output, where Normal puts it.
+        for out in [(640, 480), (1280, 720), (1280, 800)] {
+            let at = |size| {
+                let display = simple_ui::display_rect(simple_ui::ui_size(out, size), out, size);
+                let screen_h = display.h.min(out.1 as f32);
+                let (rect, _) = screen_place(&mode, &Settings::default(), true, out.0, screen_h);
+                box_of(rect)
+            };
+            assert_eq!(
+                at(SimpleUiSize::Medium),
+                at(SimpleUiSize::Normal),
+                "{out:?}"
+            );
+        }
     }
 
     #[test]

@@ -102,6 +102,9 @@ pub enum SimpleUiSize {
     /// a 640x480 display.
     #[default]
     Normal,
+    /// One and a half times that scale: 427x320 on a 640x480 display,
+    /// where the 16-pixel text is 24 pixels tall.
+    Medium,
     /// Twice that scale, so that the text is twice as tall: 320x240 on a
     /// 640x480 display.
     Large,
@@ -109,7 +112,11 @@ pub enum SimpleUiSize {
 
 impl SimpleUiSize {
     /// Every choice, in the order the pause menu steps through them.
-    pub const ALL: [SimpleUiSize; 2] = [SimpleUiSize::Normal, SimpleUiSize::Large];
+    pub const ALL: [SimpleUiSize; 3] = [
+        SimpleUiSize::Normal,
+        SimpleUiSize::Medium,
+        SimpleUiSize::Large,
+    ];
 
     /// The choice `step` places after this one, round from the last to
     /// the first.
@@ -401,8 +408,9 @@ const SIMPLE_UI_FILTER: [(SimpleUiFilter, &str); 5] = [
     (SimpleUiFilter::Xscreen, "xscreen"),
 ];
 
-const SIMPLE_UI_SIZE: [(SimpleUiSize, &str); 2] = [
+const SIMPLE_UI_SIZE: [(SimpleUiSize, &str); 3] = [
     (SimpleUiSize::Normal, "normal"),
+    (SimpleUiSize::Medium, "medium"),
     (SimpleUiSize::Large, "large"),
 ];
 
@@ -902,10 +910,30 @@ mod tests {
         assert!(!s.simple_ui, "each has a key of its own");
         let s = Settings::from_text("simple_ui_size=huge\nswap_ab_xy=1\n");
         assert_eq!(s, Settings::default());
-        let large = SimpleUiSize::Large;
-        assert_eq!(SimpleUiSize::Normal.step(1), large);
-        assert_eq!(SimpleUiSize::Normal.step(-1), large);
-        assert_eq!(large.step(1), SimpleUiSize::Normal);
+        for (text, size) in [
+            ("normal", SimpleUiSize::Normal),
+            ("medium", SimpleUiSize::Medium),
+            ("large", SimpleUiSize::Large),
+        ] {
+            let s = Settings::from_text(&format!("simple_ui_size={text}\n"));
+            assert_eq!(s.simple_ui_size, size, "{text}");
+            assert!(s.to_text().contains(&format!("simple_ui_size={text}\n")));
+        }
+        // Unknown values, and names in another case, keep the default.
+        for text in ["Medium", "1.5", ""] {
+            let s = Settings::from_text(&format!("simple_ui_size={text}\n"));
+            assert_eq!(s.simple_ui_size, SimpleUiSize::Normal, "{text:?}");
+        }
+        let (normal, medium, large) = (
+            SimpleUiSize::Normal,
+            SimpleUiSize::Medium,
+            SimpleUiSize::Large,
+        );
+        assert_eq!(normal.step(1), medium);
+        assert_eq!(medium.step(1), large);
+        assert_eq!(large.step(1), normal);
+        assert_eq!(normal.step(-1), large);
+        assert_eq!(large.step(-1), medium);
     }
 
     #[test]
