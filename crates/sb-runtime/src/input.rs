@@ -409,6 +409,12 @@ pub struct Input {
     /// What went down and what went up since the last frame, as the
     /// frontend saw it happen; see [`Input::tap`].
     taps: Taps,
+    /// The program read the controls, the keyboard, the mouse or the
+    /// touch screen in this frame.
+    pub(crate) read: bool,
+    /// The last frame ended with the program part-way through its trip
+    /// round its main loop; see [`Input::latch`].
+    pub(crate) carry: bool,
 }
 
 /// What [`Input::tap`] saw go down or up.
@@ -496,6 +502,8 @@ impl Default for Input {
             polled: false,
             hidden_presses: [0; 4],
             taps: Taps::default(),
+            read: false,
+            carry: false,
         }
     }
 }
@@ -529,11 +537,38 @@ impl Input {
     /// Starts a frame: what the frontend reports is what the program sees
     /// until the next frame, with the presses and releases
     /// [`Input::tap`] saw since the last.
+    ///
+    /// When the last frame ended with the program part-way through its
+    /// trip ([`Input::carry`]) and it read nothing in it, what was held
+    /// before that frame stays what this one compares with, and what
+    /// changed in that frame counts as a tap, so that a press or release
+    /// in that frame still shows as one in this. Otherwise a trip that
+    /// takes two frames and reads BUTTON in its second misses each press
+    /// that starts in its first.
+    // UNVERIFIED: what SmileBASIC 4 shows a program whose trip takes more
+    // than a frame. This keeps the presses at unlimited speed, where the
+    // emulator's frames can be slower than the console's; a program that
+    // keeps 60 frames a second never has such a frame.
     pub fn latch(&mut self) {
-        self.before = self.now;
+        let carry = std::mem::take(&mut self.carry) && !self.read;
+        self.read = false;
+        let mut t = std::mem::take(&mut self.taps);
+        if carry {
+            // What changed in the frame nothing read counts as taps.
+            let (was, now) = (&self.before, &self.now);
+            for i in 0..PADS {
+                let (a, b) = (was.pads[i].buttons, now.pads[i].buttons);
+                (t.down[i], t.up[i]) = (t.down[i] | b & !a, t.up[i] | a & !b);
+            }
+            for i in 0..4 {
+                let (a, b) = (was.keys[i], now.keys[i]);
+                (t.keys_down[i], t.keys_up[i]) = (t.keys_down[i] | b & !a, t.keys_up[i] | a & !b);
+            }
+        } else {
+            self.before = self.now;
+        }
         self.now = self.live;
-        if self.taps != Taps::default() {
-            let t = std::mem::take(&mut self.taps);
+        if t != Taps::default() {
             for (i, pad) in self.now.pads.iter_mut().enumerate() {
                 let was = self.before.pads[i].buttons;
                 pad.buttons = with_taps(was, pad.buttons, t.down[i], t.up[i]);
@@ -1024,6 +1059,7 @@ impl Runtime {
     ) -> Result<()> {
         let input = &mut self.input;
         input.polled = true;
+        input.read = true;
         if matches!(command, Command::Button | Command::Stick) {
             input.buttons_read = true;
         }

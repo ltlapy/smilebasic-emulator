@@ -2844,6 +2844,7 @@ impl Runtime {
             }
             (Command::Inkey, Want::Value) if args.len() <= 1 => {
                 self.input.polled = true;
+                self.input.read = true;
                 self.input.keys_read.typed();
                 let keyboard_only = match args.first() {
                     Some(flag) => opt_int(flag)?.is_some_and(|flag| flag != 0),

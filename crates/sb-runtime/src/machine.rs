@@ -1983,6 +1983,8 @@ impl Machine {
         self.frame += 1;
         self.rt.in_frame_job = false;
         self.follow_edits();
+        // A console's speed misses what the console would.
+        self.rt.input.carry = self.mid_loop() && self.rt.meter.is_none();
         self.rt.begin_frame();
         // The subprogram's SNDMVOL does nothing: the main program's sets
         // the level of both.

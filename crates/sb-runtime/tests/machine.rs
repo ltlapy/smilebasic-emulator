@@ -728,8 +728,8 @@ fn kept_frames_keep_a_restarted_relative_animation_in_place() {
     assert_eq!(last_line_kept(program, true, 1000).trim(), "100");
 }
 
-/// The presses of A that a program counts with BUTTON(0,#B_RRIGHT,2) once a
-/// trip, each trip taking `work` FOR steps, when A is held for `hold`
+/// The presses and releases of A that a program counts with BUTTON once
+/// a trip, each trip taking `work` FOR steps, when A is held for `hold`
 /// calls of [`Machine::frame`] every 20, 15 times.
 fn presses_counted(work: u32, hold: u32, keep: bool) -> String {
     let mut m = machine();
@@ -737,9 +737,10 @@ fn presses_counted(work: u32, hold: u32, keep: bool) -> String {
     m.set_slot(
         0,
         format!(
-            "CLS:N=0:WHILE 1:FOR I=1 TO {work}:NEXT\n\
+            "CLS:N=0:R=0:WHILE 1:FOR I=1 TO {work}:NEXT\n\
              IF BUTTON(0,#B_RRIGHT,2) THEN INC N\n\
-             LOCATE 0,0:?N;\" \";:VSYNC:WEND\n"
+             IF BUTTON(0,#B_RRIGHT,3) THEN INC R\n\
+             LOCATE 0,0:?N;\" \";R;\" \";:VSYNC:WEND\n"
         ),
     );
     m.run_slot(0);
@@ -752,15 +753,22 @@ fn presses_counted(work: u32, hold: u32, keep: bool) -> String {
 }
 
 /// A trip longer than a frame's work reads BUTTON in one of the frames it
-/// takes, and a press shows only on the frame it starts in, so presses
-/// go missing; SmileBASIC 4 at full speed sees them all. Kept frames give
-/// the trip one frame, which sees them all.
+/// takes, and a press or release shows only on the frame it comes in. A
+/// frame that ends part-way through the trip, with nothing read, passes
+/// its presses and releases on to the next, so that none go missing, also
+/// those that start and end in it; kept frames give the trip one frame.
 #[test]
-fn kept_frames_keep_presses_a_long_trip_would_miss() {
-    assert_eq!(presses_counted(1000, 3, false), "15");
-    let missed: u32 = presses_counted(120_000, 3, false).parse().unwrap();
-    assert!(missed < 15, "{missed}");
-    assert_eq!(presses_counted(120_000, 3, true), "15");
+fn presses_survive_trips_longer_than_a_frame() {
+    for hold in [1, 3] {
+        for keep in [false, true] {
+            assert_eq!(presses_counted(1000, hold, keep), "15 15", "{hold} {keep}");
+            assert_eq!(
+                presses_counted(120_000, hold, keep),
+                "15 15",
+                "{hold} {keep}"
+            );
+        }
+    }
 }
 
 /// Kept frames do not spend a frame that would leave the program at its

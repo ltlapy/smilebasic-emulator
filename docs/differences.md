@@ -253,6 +253,16 @@ music keep time. A frame it does draw shows the scene the program finished:
 - The drawing waits up to three frames for a program part-way through its loop.
 - When even that cannot keep up, the program's loop slows down rather than the
   drawing showing half a scene.
+- A frame that ends with the program part-way through its loop, having read
+  no input, passes its button and key presses and releases on to the next
+  frame. A press or release then shows on the frame the program reads
+  `BUTTON` or `KEYBOARD` in, and one that started and ended inside such a
+  frame shows as held for one frame. On a slow computer a loop can take two
+  frames, and a program that reads `BUTTON` once a loop would otherwise miss
+  every press that started in the loop's first frame. A program that keeps
+  60 frames a second never has such a frame. At a console's speed the
+  emulator does not do this. What SmileBASIC 4 shows a program whose loop
+  takes more than a frame is not known.
 
 When the system holds the window up, as GNOME does while you drag or resize it,
 another thread runs the program and its sound, and the window shows nothing new
