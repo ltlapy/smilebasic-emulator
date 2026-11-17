@@ -2233,6 +2233,11 @@ impl Machine {
         }
     }
 
+    /// Whether the debugger is stepping through the program.
+    pub fn is_stepping(&self) -> bool {
+        self.stepping.is_some()
+    }
+
     /// Whether a debugger's step is running and has waited for input, so
     /// that the keys belong on the screen until it stops.
     pub fn step_wants_keys(&self) -> bool {

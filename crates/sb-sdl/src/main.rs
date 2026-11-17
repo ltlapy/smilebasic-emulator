@@ -130,10 +130,6 @@ const MOST_SKIPPED: u32 = 3;
 /// How long a frame run to catch up runs a program that does not wait for
 /// the next one; [`pacing::RunTime`] sizes the others' time.
 const CATCH_UP_RUN_TIME: Duration = Duration::from_millis(1);
-/// Frames in a row whose drawing is left out because the program is
-/// part-way through its main loop and drawing would make them late, so
-/// that a program that never reaches VSYNC still shows.
-const MOST_UNDRAWN: u32 = 3;
 /// Holding the + button, or F5 for it, this long stops a program even
 /// past ON BREAK GOTO (checked on hardware).
 const FORCED_STOP: Duration = Duration::from_secs(1);
@@ -545,8 +541,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // leaves the menu bar and the stop keys working.
     let mut program_dialog: Option<ProgramView> = None;
     let mut blink = 0u32;
+    // Frames in a row left undrawn, what a drawing costs, and whether the
+    // last trip showed something that every frame is drawn for.
     let mut undrawn = 0u32;
-    let mut draw_time = Duration::ZERO;
+    let mut draw_time = pacing::DrawTime::default();
+    let mut had_to_draw = true;
+    // Whether the last present waited for the vsync of a display at 60 Hz,
+    // and when such a present last came back.
+    let mut was_locked = false;
+    let mut vsync_at = Instant::now();
     // The time the frames give the program, sized to what the drawing
     // leaves.
     let mut run_time = pacing::RunTime::default();
@@ -651,11 +654,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             standby::Lend {
                 frames: !((menu.shown || pause_menu.is_some() || welcome.is_some())
                     && machine.is_running()),
+                run_time: frame_time(machine, &run_time, &draw_time),
                 machine: &mut *machine,
                 guard: &mut frame_guard,
                 toasts: &mut toasts,
                 clock: &mut clock,
-                run_time: run_time.limit(),
             }
         };
     }
@@ -1172,6 +1175,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         });
         kept.add(held);
         if kept.frames > 0 {
+            // Frames the standby thread ran went undrawn.
+            undrawn += kept.frames;
             machine.rt.clipboard.settle();
             if let Some(b) = &mut bench {
                 b.kept(kept);
@@ -3016,7 +3021,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // runs slower than real time.
         let (count_before, mut calls) = (machine.rt.main_count(), 0u32);
         if !paused {
-            machine.time_limit = Some(run_time.limit());
+            machine.time_limit = Some(frame_time(machine, &run_time, &draw_time));
             frame_guard.run(machine, &mut toasts, Machine::frame);
             calls += 1;
             if let Some(b) = &mut bench {
@@ -3037,9 +3042,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // make the frame drawn next show a half-made scene. That trip
         // has the time a frame gives, or a trip that a frame holds would
         // be cut short here.
+        //
+        // A program whose trips fit a frame catches up a trip round this
+        // loop at a time instead, which leaves drawings out for it.
         let mut skipped = 0;
-        while !paused && skipped < MOST_SKIPPED && clock.behind(Instant::now()) {
-            let whole = 2 * machine.loop_time() + draw_time <= 2 * FRAME;
+        while !paused
+            && skipped < MOST_SKIPPED
+            && clock.behind(Instant::now())
+            && !fits_frame(machine, draw_time.cost())
+        {
+            let whole = 2 * machine.loop_time() + draw_time.cost() <= 2 * FRAME;
             machine.time_limit = Some(if whole && machine.at_sync() {
                 run_time.limit()
             } else {
@@ -3056,6 +3068,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             clock.caught_up();
             skipped += 1;
         }
+        // Frames run to catch up went undrawn too.
+        undrawn += skipped;
         let ran = run_began.elapsed();
         {
             // A call that went on with a kept frame started none.
@@ -3173,21 +3187,56 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         blink = blink.wrapping_add(1);
 
-        // A drawing that would make the frame late, of a scene the program
-        // is still making, is left for when the program gets to its VSYNC.
-        if !paused
-            && undrawn < MOST_UNDRAWN
-            && machine.mid_loop()
-            && !machine.sub_running()
-            && !machine.is_editing()
-            && !bench.as_ref().is_some_and(bench::Bench::shoots)
-            && clock.late_at(Instant::now() + draw_time)
+        // A drawing that would end after the frame's time is left out if
+        // the program is still making the scene, or if it would cost the
+        // program its next frame; see `Scene::drawing`. What the window
+        // shows besides the program's screens is drawn every frame, and so
+        // is the frame after it went.
+        let must = paused
+            || modal
+            || !machine.is_running()
+            || machine.is_editing()
+            || machine.sub_running()
+            || machine.is_stepping()
+            || machine.panel_open()
+            || machine.program_dialog().is_some()
+            || main_presents.excused();
+        let drawn_from = run_began + ran;
+        let (left, cost) = (clock.left(drawn_from), draw_time.cost());
+        let drawing = if must || had_to_draw || cost <= left {
+            // A drawing that ends in the frame needs no more looking into.
+            pacing::Drawing::Draw
+        } else if pacing::hidden(canvas.window())
+            || bench.as_ref().is_some_and(|b| b.occluded() || b.shoots())
         {
+            // A window that is not shown is not presented anyway, and the
+            // bench's shot is of this frame.
+            pacing::Drawing::Draw
+        } else {
+            let scene = pacing::Scene {
+                must: false,
+                undrawn,
+                mid_loop: machine.mid_loop(),
+                fits: fits_frame(machine, cost),
+                locked: was_locked,
+                left,
+                late: clock.late(drawn_from),
+                to_vsync: pacing::to_vsync(vsync_at, drawn_from),
+                draw: cost,
+                run: machine.loop_time(),
+            };
+            scene.drawing()
+        };
+        had_to_draw = must;
+        if drawing != pacing::Drawing::Draw {
             undrawn += 1;
             if let Some(b) = &mut bench {
                 b.undrawn();
             }
-            pacing::delay(clock.end(Instant::now(), false));
+            let wait = clock.end(Instant::now(), false);
+            if drawing == pacing::Drawing::Wait {
+                pacing::delay(wait);
+            }
             lap!(Wait);
             continue;
         }
@@ -3241,17 +3290,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 (true, machine.editor_revision())
             }
             false => {
-                let start = Instant::now();
-                let drawn = machine.screen_revision();
                 match &mut gpu {
                     // The debugger's panel wants the frame on the CPU.
                     Some(gpu) if !panel_was_shown => machine.render_screens_with(gpu),
                     _ => {
                         machine.render();
                     }
-                }
-                if machine.screen_revision() != drawn {
-                    draw_time = start.elapsed();
                 }
                 (false, machine.screen_revision())
             }
@@ -3865,7 +3909,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // another rate it can hold the loop up for one of the display's
         // frames besides.
         let waited = presented && vsync;
-        let rest = trip_began.elapsed().saturating_sub(ran);
+        was_locked = locked;
+        if locked {
+            vsync_at = present_began + present_took;
+        }
+        let trip = trip_began.elapsed();
+        // The drawing began when the program's frames had run. With a
+        // present that waited for the vsync of a display at 60 Hz it ends
+        // where the present began: the wait is no cost, as the frame ends
+        // there anyway. At another rate the wait holds the loop up.
+        let in_step = waited && at_60_hz;
+        let drawn_to = match in_step {
+            true => present_began,
+            false => trip_began + trip,
+        };
+        draw_time.drew(drawn_to.saturating_duration_since(drawn_from), in_step);
+        let rest = trip.saturating_sub(ran);
         run_time.drew(match (waited, at_60_hz) {
             (false, _) => Some(rest),
             (true, true) => Some(rest.saturating_sub(present_took)),
@@ -5165,6 +5224,34 @@ fn close_bar_on_start(menu: &mut MenuBar, was_running: &mut bool, running: bool)
         menu.shown = false;
     }
     *was_running = running;
+}
+
+/// Whether the program waits at its VSYNC and its last trip round its main
+/// loop fits a frame by itself, so that it can have a trip in every frame
+/// if drawings that cost `draw` are left out, as many as may be. Only at
+/// unlimited speed, where a frame has a time limit, and for the main
+/// program alone.
+fn fits_frame(machine: &Machine, draw: Duration) -> bool {
+    let trip = machine.loop_time();
+    let frames = pacing::MOST_UNDRAWN + 1;
+    machine.is_running()
+        && machine.at_sync()
+        && !trip.is_zero()
+        && trip <= pacing::MOST_RUN_TIME
+        && frames * trip + draw <= frames * FRAME
+        && machine.rt.settings.speed == sb_runtime::speed::Speed::Unlimited
+        && !machine.sub_running()
+        && !machine.is_editing()
+}
+
+/// The time a frame gives a program that does not wait for the next one.
+/// A program whose trip round its main loop fits a frame gets the most,
+/// whatever the drawing takes: the drawing is what is then left out.
+fn frame_time(machine: &Machine, run: &pacing::RunTime, draw: &pacing::DrawTime) -> Duration {
+    match fits_frame(machine, draw.cost()) {
+        true => pacing::MOST_RUN_TIME,
+        false => run.limit(),
+    }
 }
 
 /// Gives the machine the setting for a program too slow for the computer:

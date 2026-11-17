@@ -754,6 +754,11 @@ the notice for a program slower than real time about 5 seconds after it
 starts: run it for 400 frames with `settle=0` and `shot=` to capture it, and
 the report's `slow hint` line gives the frame it showed at.
 
+`draw=US` and `vblank` stand for a computer whose drawing is slow: a program
+whose trip takes 11 ms with `draw=7000` cannot have both in a frame, and the
+`undrawn` line and the log's `drawn` column show which drawings the window
+left out to keep the program at 60 trips a second.
+
 The report says who drew, and why any frame stayed on the CPU. It gives the
 mean, median, 99th percentile and maximum of each stage:
 
@@ -779,7 +784,7 @@ Below the stages come:
 | `frames` | Program frames run per second of the time timed: calls of the machine's frame, including those that went on with a kept frame |
 | `maincnt` | How far `MAINCNT` went per second of the time timed: below 60 when frames were kept for a program too slow for the computer |
 | `missed` | Frames in the time timed in which the program missed part of its trip round its main loop, as `smilebasic-check --window` counts them ([Per-frame costs and overload](#per-frame-costs-and-overload)): out of time part-way through it, held at its `VSYNC` to catch up, and `VSYNC`s that waited for the next frame where SmileBASIC 4 would go straight on |
-| `undrawn` | Trips in the time timed that ran the program and left the drawing out, because it would have ended after the frame's time ([differences.md](differences.md#speed)) |
+| `undrawn` | Trips in the time timed that ran the program and left the drawing out, because it would have ended after the frame's time ([differences.md](differences.md#speed)). They are not in `missed`: the program lost nothing |
 | `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](frame-thread.md)), in how many trips, and the time it took |
 | `slow hint` | The frame the notice for a program slower than real time first showed at, or that it did not show |
 | `sound` | What the sound device's buffer went through |

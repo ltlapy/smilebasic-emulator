@@ -240,7 +240,8 @@ SmileBASIC 4 runs a fixed amount of code each frame (see
 [sb4-pitfalls.md](sb4-pitfalls.md)). The emulator runs code that does not wait
 for the next frame for as long as the frame leaves after drawing, which is far
 more on any recent computer: the 1/60 s frame less what the last frames'
-events, drawing and presenting took and 2 ms to spare, from 10 to 14 ms. With
+events, drawing and presenting took and 2 ms to spare, from 10 to 14 ms, and
+14 ms for a program whose trip round its main loop fits in that. With
 vsync on a display that does not refresh at 60 Hz it is 10 ms, as a present
 can then wait for most of one of the display's frames. Programs time
 themselves with `VSYNC`, `WAIT` and `MAINCNT`, so none needs the slower
@@ -254,13 +255,31 @@ frame as on that console, and misses frames when it needs more. See
 [benchmarking.md](benchmarking.md#running-at-a-consoles-speed) for how close
 it comes.
 
-When drawing a frame takes longer than a frame, the window skips drawing up to
-three frames while the program and its sound go on, so that games and their
-music keep time. A frame it does draw shows the scene the program finished:
+When the computer cannot run the program and draw the window in a frame, the
+window leaves drawings out before the program falls behind. A program whose
+trip round its main loop takes up to 14 ms has a trip in every frame, with its
+`MAINCNT`, animation step, sound and input, whatever the drawing takes, and
+the window is drawn in every second to fifth frame: 12 times a second at
+least. A computer that keeps 60 frames a second draws every frame, as
+before.
+
+- A drawing is left out when it would end after the frame's time and make the
+  program's next trip end after its own frame.
+- Where presents wait for the display's vsync, a drawing that ends after a
+  vsync comes back a whole frame later. The frames before such a drawing run
+  one after the other, up to four of them ahead of their time, so that the
+  drawing ends before the next vsync. The program reads its input for those
+  frames up to that much early.
+- The emulator's own screens, a paused or stopped program, a dialog, the
+  editor, the debugger and a subprogram are drawn every frame.
+
+Only when the trip itself takes more than 14 ms, or one drawing in five is
+still too much, does the program slow down or miss frames as described below.
+A frame that is drawn shows the scene the program finished:
 
 - A `VSYNC` that is behind stops the program when another trip round its main
   loop would not fit in the frame. SmileBASIC 4 goes straight on.
-- The drawing waits up to three frames for a program part-way through its loop.
+- The drawing waits up to four frames for a program part-way through its loop.
 - When even that cannot keep up, the program's loop slows down rather than the
   drawing showing half a scene.
 - A frame that ends with the program part-way through its loop, having read
