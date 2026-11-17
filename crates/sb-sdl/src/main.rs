@@ -484,6 +484,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // The pixels that mouse positions are given in: the screen's, or the
     // editor's frame.
     let mut pointer_space = (mode.width, mode.height);
+    // Whether that frame was the editor's, which the desktop places
+    // apart from the screen in a window narrower than 16:9.
+    let mut shows_editor = false;
     let mut menu = MenuBar::default();
     // Whether a program ran when the loop last looked, to see one start.
     let mut was_running = false;
@@ -1032,9 +1035,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         };
         let settings = &machine.rt.settings;
         // A UI at a scale that is not whole can go past the bottom edge;
-        // the program's screen stays on the output.
+        // the program's screen stays on the output. The desktop's goes
+        // below its display too, in a window narrower than 16:9, and so
+        // does the UI that goes with the screen.
         let screen_h = display.h.min(out_h as f32);
-        let (shown, _) = screen_place(&mode, settings, simple_ui, out_w, screen_h);
+        let main_ui_h = match simple_ui {
+            true => display_h,
+            false => window::ui_height(display, display_h, out_h),
+        };
+        let (shown, _) = match simple_ui {
+            true => screen_place(&mode, settings, true, out_w, screen_h),
+            false => {
+                let editor = shows_editor.then_some(pointer_space);
+                window::screen_place(&mode, settings, editor, (out_w, out_h), display)
+            }
+        };
         let main_map = Mapping {
             px: out_w as f32 / win_w.max(1) as f32,
             display,
@@ -1067,7 +1082,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 };
                 (map, windows, layout.ui_size)
             }
-            None => (main_map, main_map, (display_w, display_h)),
+            None => (main_map, main_map, (display_w, main_ui_h)),
         };
         // The window the event being handled came from: the main one, or
         // the editor's, and whether the emulator's windows are open on the
@@ -2986,18 +3001,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if fed && (sent.x, sent.y, sent.display) != (now.x, now.y, now.display) {
             let px = out_w as f32 / win_w.max(1) as f32;
             let (x, y) = if (sent.x, sent.y) != (now.x, now.y) {
-                (
-                    shown.x + (now.x as f32 + 0.5) * shown.w / pointer_space.0 as f32,
-                    shown.y + (now.y as f32 + 0.5) * shown.h / pointer_space.1 as f32,
-                )
+                main_map.screen_to_window(now.x, now.y)
             } else {
                 let scale = display.w / display_w as f32;
                 (
-                    display.x + (now.display.0 as f32 + 0.5) * scale,
-                    display.y + (now.display.1 as f32 + 0.5) * scale,
+                    (display.x + (now.display.0 as f32 + 0.5) * scale) / px,
+                    (display.y + (now.display.1 as f32 + 0.5) * scale) / px,
                 )
             };
-            mouse.warp_mouse_in_window(canvas.window(), x / px, y / px);
+            mouse.warp_mouse_in_window(canvas.window(), x, y);
             (sent.x, sent.y, sent.display) = (now.x, now.y, now.display);
         }
         // The editor leaves its top row for the menu bar.
@@ -3032,10 +3044,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             (Some((_, Asking::Command(_))), None) => dialog = None,
             _ => {}
         }
-        match (&program_dialog, machine.program_dialog()) {
-            (Some(open), Some(shown)) if open.shows(shown) => {}
+        // Centered on the screen, which goes below the desktop's display
+        // in a window narrower than 16:9.
+        match (&mut program_dialog, machine.program_dialog()) {
+            (Some(open), Some(shown)) if open.shows(shown) => open.set_size((display_w, main_ui_h)),
             (_, Some(shown)) => {
-                program_dialog = Some(ProgramView::new(shown, (display_w, display_h)));
+                program_dialog = Some(ProgramView::new(shown, (display_w, main_ui_h)));
             }
             (_, None) => program_dialog = None,
         }
@@ -3062,7 +3076,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         mode = machine.screen_mode();
         let settings = &machine.rt.settings;
         let rect;
-        (rect, filter) = screen_place(&mode, settings, simple_ui, out_w, screen_h);
+        (rect, filter) = match simple_ui {
+            true => screen_place(&mode, settings, true, out_w, screen_h),
+            false => window::screen_place(&mode, settings, None, (out_w, out_h), display),
+        };
         let editing = machine.is_editing() && !machine.is_detached();
         let renderer = machine.rt.settings.renderer;
         if renderer_applied != Some(renderer) {
@@ -3108,6 +3125,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             false => machine.screen_frame(),
         };
         let frame = (fb.width(), fb.height());
+        shows_editor = editing;
+        let rect = match (editing, simple_ui) {
+            (true, false) => {
+                let (settings, out) = (&machine.rt.settings, (out_w, out_h));
+                window::screen_place(&mode, settings, Some(frame), out, display).0
+            }
+            _ => rect,
+        };
         // The frame the GPU path drew, which is not in `fb`.
         let on_gpu = !editing && machine.rt.frame_on_backend();
         // XSCREEN's mode 1 starts from a frame that stays sharp.
@@ -3195,13 +3220,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let mut debug = None;
         if let Some(at) = machine.panel_at() {
             let (rect, frame, display, (ui_w, ui_h)) = editor_place;
+            // To the main window's bottom, below its display too.
+            let bottom = if apart { ui_h } else { main_ui_h };
             let y = rect.y + at as f32 * rect.h / frame.1 as f32 - display.y;
-            let top = ((y * ui_h as f32 / display.h).round() as u32).min(ui_h);
+            let top = ((y * ui_h as f32 / display.h).round() as u32).min(bottom);
             let place = ui::Rect {
                 x: 0,
                 y: top,
                 w: ui_w,
-                h: ui_h - top,
+                h: bottom - top,
             };
             // A stop, though at the same place, shows the panel anew.
             let fresh = machine.paused_at() != shown_stop || !panel_was_shown;
@@ -3294,7 +3321,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // Where the focus has just gone: a yellow line on the edge, one
         // pixel out and two in, then a dark band two pixels wide, fading
         // out together.
-        if let Some(([x, y, w, h], alpha)) = machine.focus_border() {
+        if let Some((rect, alpha)) = machine.focus_border() {
+            let [x, y, w, h] = window::border_rect(rect, (display_w, display_h), main_ui_h);
             let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
             let place = |x: i32, y: i32, w: i32, h: i32| {
                 let at = |v: i32, s: f32| v as f32 * s;
@@ -3395,7 +3423,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         x: at.0.max(0.0) as u32,
                         y: at.1.max(0.0) as u32,
                         w: (at.2 as u32).min(display_w),
-                        h: (at.3 as u32).min(display_h),
+                        h: (at.3 as u32).min(main_ui_h),
                     };
                     Some((outline, frame, at, clip))
                 }
@@ -3404,8 +3432,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         });
         // Each window's UI in its own pixels. On the editor's window, the
         // emulator's windows go on a layer of their own, laid out on the
-        // display as on the main window.
-        let ui_sizes = [(display_w, display_h), editor_place.3];
+        // display as on the main window. The main window's goes below its
+        // display, where the screen goes too.
+        let ui_sizes = [(display_w, main_ui_h), editor_place.3];
         let windows_apart = apart && ui == 1 && modal_shown!();
         if let Some(open) = &mut side {
             open.set_size(ui_sizes[side_on]);
@@ -4012,6 +4041,16 @@ impl Mapping {
         (
             ((x * self.px - shown.x) * w as f32 / shown.w).floor() as i32,
             ((y * self.px - shown.y) * h as f32 / shown.h).floor() as i32,
+        )
+    }
+
+    /// The window coordinates of the middle of the screen's or the
+    /// editor's pixel (x, y), which [`Mapping::to_screen`] maps back.
+    fn screen_to_window(self, x: i32, y: i32) -> (f32, f32) {
+        let (shown, (w, h)) = (self.shown, self.space);
+        (
+            (shown.x + (x as f32 + 0.5) * shown.w / w as f32) / self.px,
+            (shown.y + (y as f32 + 0.5) * shown.h / h as f32) / self.px,
         )
     }
 }

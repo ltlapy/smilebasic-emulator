@@ -35,19 +35,31 @@ impl ProgramView {
             DialogKind::Name { initial, .. } => initial.clone(),
             _ => String::new(),
         };
+        let mut view = ProgramView {
+            dialog: dialog.clone(),
+            lines: Vec::new(),
+            size: (0, 0),
+            focus: 0,
+            name,
+        };
+        view.set_size(size);
+        view.focus = view.labels().len().saturating_sub(1);
+        view
+    }
+
+    /// Centers the window on a display of another size, as the desktop's
+    /// UI is when the window's height changes, keeping what was chosen and
+    /// typed.
+    pub fn set_size(&mut self, size: (u32, u32)) {
+        if size == self.size {
+            return;
+        }
         // Room for the window's padding and a margin around it, and for
         // the lines below the title bar and above the buttons.
         let room = size.0.saturating_sub(8 * PAD).max(CHAR);
         let body = size.1.saturating_sub(2 * LINE + 6 * PAD) / LINE;
-        let mut view = ProgramView {
-            dialog: dialog.clone(),
-            lines: wrap_lines(&dialog.lines, room, body as usize),
-            size,
-            focus: 0,
-            name,
-        };
-        view.focus = view.labels().len().saturating_sub(1);
-        view
+        self.lines = wrap_lines(&self.dialog.lines, room, body as usize);
+        self.size = size;
     }
 
     /// Whether this shows `dialog`, rather than one before it.
@@ -388,6 +400,21 @@ mod tests {
         assert_eq!(v.key(Keycode::Z), None);
         let v = ProgramView::new(&dialog(DialogKind::Buttons(1)), (1280, 720));
         assert!(v.labels().is_empty());
+    }
+
+    /// On the desktop in a window narrower than 16:9 the UI goes below
+    /// the 1280x720 display, and the window centers on all of it.
+    #[test]
+    fn a_new_size_centers_the_window_and_keeps_the_choice() {
+        let kind = DialogKind::Choice(vec!["No", "Yes"]);
+        let mut v = ProgramView::new(&dialog(kind), (1280, 720));
+        v.key(Keycode::Left);
+        let (focus, at) = (v.focus, v.frame());
+        v.set_size((1280, 960));
+        let moved = v.frame();
+        assert_eq!((moved.x, moved.w, moved.h), (at.x, at.w, at.h));
+        assert_eq!(moved.y, at.y + 120);
+        assert_eq!(v.focus, focus);
     }
 
     #[test]

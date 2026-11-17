@@ -1,8 +1,12 @@
 //! The emulator's windows: what size the main one starts at, the sizes
-//! View > Window size gives it, and which one comes to the front for
-//! input that another window's dialog keeps.
+//! View > Window size gives it, which one comes to the front for input
+//! that another window's dialog keeps, and where the desktop puts the
+//! program's screen and the editor in the main one.
 
+use sb_runtime::screen::{Filter, ScreenMode};
+use sb_runtime::settings::Settings;
 use sdl3::event::Event;
+use sdl3::render::FRect;
 
 /// View > Window size: each item's label and the multiple of the
 /// profile's display (1280x720 for SmileBASIC 4) it sets the main
@@ -107,6 +111,117 @@ pub fn start_size((w, h): (u32, u32), usable: Option<(u32, u32)>) -> (u32, u32) 
     match usable {
         Some((uw, uh)) if uw > 0 && uh > 0 => (w.min(uw), h.min(uh)),
         _ => (w, h),
+    }
+}
+
+/// Whether the desktop's 1280x720 display, at `display` in a window
+/// `out_h` pixels high, leaves room below it: in a window narrower than
+/// 16:9, where it is scaled to the window's width at its top. Elsewhere
+/// it fills the window's height, give or take rounding.
+fn room_below(display: FRect, out_h: u32) -> bool {
+    display.y + display.h + 0.5 < out_h as f32
+}
+
+/// The height the desktop places the program's screen in, from the top
+/// of a window `out_h` pixels high whose display is at `display`: the
+/// whole window's. Where the display fills the window's height, the
+/// display's, which differs from the window's only by rounding: that
+/// keeps the frames in such windows as they were when the screen was
+/// confined to the display.
+pub fn screen_height(display: FRect, out_h: u32) -> f32 {
+    match room_below(display, out_h) {
+        true => out_h as f32,
+        false => display.h.min(out_h as f32),
+    }
+}
+
+/// How far down the desktop's UI goes, in its own pixels, in which the
+/// display at `display` is `display_h` high: to the bottom of a window
+/// `out_h` pixels high. More than the display only where it leaves room
+/// below, where the screen, the editor, the debugger's panel, the
+/// notices and the program's DIALOG go too.
+pub fn ui_height(display: FRect, display_h: u32, out_h: u32) -> u32 {
+    if !room_below(display, out_h) || display.h <= 0.0 {
+        return display_h;
+    }
+    let below = (out_h as f32 - display.y) * display_h as f32 / display.h;
+    (below.floor() as u32).max(display_h)
+}
+
+/// Where the desktop shows the screen of `mode` in a window of `out`
+/// pixels whose display is at `display`, and the filter it is scaled
+/// with: centered in the whole window, at the largest size View > Screen
+/// filter allows (see [`crate::screen_place`]). With `editor`, the
+/// editor's frame of that many pixels instead, `mode` being the editor's,
+/// as [`editor_rect`] says; its filter is then [`crate::editor_filter`]'s
+/// to choose.
+pub fn screen_place(
+    mode: &ScreenMode,
+    settings: &Settings,
+    editor: Option<(u32, u32)>,
+    out: (u32, u32),
+    display: FRect,
+) -> (FRect, Filter) {
+    let height = screen_height(display, out.1);
+    let (rect, filter) = crate::screen_place(mode, settings, false, out.0, height);
+    match editor {
+        Some(frame) => {
+            let nearest = settings.screen_filter == Some(Filter::Nearest);
+            (editor_rect(rect, frame, nearest, out, display), filter)
+        }
+        None => (rect, filter),
+    }
+}
+
+/// Where the desktop shows the editor's frame of `frame` pixels, which
+/// goes where the screen of the editor's shape goes, at `screen`, in a
+/// window of `out` pixels whose display is at `display`. `nearest` is
+/// View > Screen filter's Nearest, which keeps to whole factors.
+///
+/// In a window of 16:9 or wider it goes at `screen`. Where the display
+/// leaves room below, Nearest's rule is applied to the frame as well as
+/// to the screen's size, and the larger wins: a whole factor of the
+/// frame where it fits once, at which the editor is sharp (see
+/// [`crate::editor_filter`]), and scaled down to fit where it does not.
+/// The screen's whole factors alone leave the editor small there:
+/// XSCREEN 400,240 fits 640x480 once, and the editor's frame, twice as
+/// fine for 16-pixel characters, shows at half its size. It is centered
+/// in the display, or where taller than that, starts at the window's top,
+/// so that the menu bar covers the row the editor leaves it; on a whole
+/// pixel, where a whole factor stays sharp.
+pub fn editor_rect(
+    screen: FRect,
+    frame: (u32, u32),
+    nearest: bool,
+    out: (u32, u32),
+    display: FRect,
+) -> FRect {
+    if !room_below(display, out.1) {
+        return screen;
+    }
+    let (out_w, out_h) = (out.0 as f32, out.1 as f32);
+    let (fw, fh) = (frame.0.max(1) as f32, frame.1.max(1) as f32);
+    let (mut w, mut h) = (screen.w, screen.h);
+    let fit = (out_w / fw).min(out_h / fh);
+    let scale = if fit >= 1.0 { fit.floor() } else { fit };
+    if nearest && fh * scale > h {
+        (w, h) = (fw * scale, fh * scale);
+    }
+    let y = match h <= display.h {
+        true => display.y + (display.h - h) / 2.0,
+        false => 0.0,
+    };
+    FRect::new(((out_w - w) / 2.0).round(), y.round(), w, h)
+}
+
+/// The rectangle [`ui_height`] makes of the focus border's `rect` on the
+/// display, which is `display` UI pixels large: the whole display, the
+/// main interpreter's, goes down to `ui_h`, where the screen goes too; a
+/// subprogram's screen stays where XSUBSCREEN put it on the display.
+pub fn border_rect(rect: [i32; 4], display: (u32, u32), ui_h: u32) -> [i32; 4] {
+    match rect == [0, 0, display.0 as i32, display.1 as i32] {
+        true => [0, 0, display.0 as i32, ui_h as i32],
+        false => rect,
     }
 }
 
@@ -285,6 +400,277 @@ mod tests {
         // Not quite a multiple, or fullscreen: none.
         assert_eq!(current(sb4, (1280, 721), false), None);
         assert_eq!(current(sb4, (1920, 1080), true), None);
+    }
+
+    /// The desktop's display in a window of `out` pixels.
+    fn display(out: (u32, u32)) -> FRect {
+        crate::display_rect(1280, 720, out.0, out.1)
+    }
+
+    fn with(filter: Option<Filter>) -> Settings {
+        Settings {
+            screen_filter: filter,
+            ..Settings::default()
+        }
+    }
+
+    fn place(
+        w: u32,
+        h: u32,
+        filter: Option<Filter>,
+        out: (u32, u32),
+    ) -> ((f32, f32, f32, f32), Filter) {
+        let mode = ScreenMode::new(w, h);
+        let (r, filter) = screen_place(&mode, &with(filter), None, out, display(out));
+        ((r.x, r.y, r.w, r.h), filter)
+    }
+
+    const NEAREST: Option<Filter> = Some(Filter::Nearest);
+    const BILINEAR: Option<Filter> = Some(Filter::Bilinear);
+
+    #[test]
+    fn the_screen_fills_a_window_narrower_than_16_9() {
+        use Filter::{Bilinear, Nearest};
+        // A 4:3 screen fills a 4:3 window; before, it was shrunk into the
+        // display's 640x360.
+        assert_eq!(
+            place(640, 480, NEAREST, (640, 480)),
+            ((0.0, 0.0, 640.0, 480.0), Nearest)
+        );
+        assert_eq!(
+            place(320, 240, NEAREST, (640, 480)),
+            ((0.0, 0.0, 640.0, 480.0), Nearest)
+        );
+        assert_eq!(
+            place(640, 480, NEAREST, (800, 600)),
+            ((80.0, 60.0, 640.0, 480.0), Nearest)
+        );
+        assert_eq!(
+            place(640, 480, NEAREST, (1024, 768)),
+            ((192.0, 144.0, 640.0, 480.0), Nearest)
+        );
+        assert_eq!(
+            place(320, 240, NEAREST, (1920, 1200)),
+            ((160.0, 0.0, 1600.0, 1200.0), Nearest)
+        );
+        // Nearest's whole factors, centered in the whole window.
+        assert_eq!(
+            place(400, 240, NEAREST, (640, 480)),
+            ((120.0, 120.0, 400.0, 240.0), Nearest)
+        );
+        assert_eq!(
+            place(400, 240, NEAREST, (800, 600)),
+            ((0.0, 60.0, 800.0, 480.0), Nearest)
+        );
+        assert_eq!(
+            place(400, 240, NEAREST, (720, 720)),
+            ((160.0, 240.0, 400.0, 240.0), Nearest)
+        );
+        assert_eq!(
+            place(400, 240, NEAREST, (1920, 1200)),
+            ((160.0, 120.0, 1600.0, 960.0), Nearest)
+        );
+        // Not even once: shrunk to fit, smoothly.
+        assert_eq!(
+            place(1280, 720, NEAREST, (640, 480)),
+            ((0.0, 60.0, 640.0, 360.0), Bilinear)
+        );
+        assert_eq!(
+            place(640, 480, NEAREST, (720, 720)),
+            ((40.0, 120.0, 640.0, 480.0), Nearest)
+        );
+        assert_eq!(
+            place(1280, 720, NEAREST, (720, 720)),
+            ((0.0, 157.5, 720.0, 405.0), Bilinear)
+        );
+        // Bilinear fits, and Program (XSCREEN) does with XSCREEN's filter.
+        assert_eq!(
+            place(400, 240, BILINEAR, (640, 480)),
+            ((0.0, 48.0, 640.0, 384.0), Bilinear)
+        );
+        assert_eq!(
+            place(640, 480, BILINEAR, (1024, 768)),
+            ((0.0, 0.0, 1024.0, 768.0), Bilinear)
+        );
+        let (rect, _) = place(400, 240, None, (720, 720));
+        assert_eq!(rect, (0.0, 144.0, 720.0, 432.0));
+    }
+
+    #[test]
+    fn nothing_moves_in_a_window_of_16_9_or_wider() {
+        let filters = [None, NEAREST, BILINEAR, Some(Filter::SmartNearest)];
+        let modes = [
+            (400, 240),
+            (320, 240),
+            (640, 480),
+            (1280, 720),
+            (1280, 480),
+            (16, 720),
+        ];
+        let mut outs = vec![
+            (2560, 1080),
+            (3440, 1440),
+            (1281, 720),
+            (1366, 768),
+            (1600, 900),
+        ];
+        outs.extend((1..=48).map(|n| (n * 80, n * 45)));
+        outs.extend(
+            (100u32..=2200)
+                .step_by(7)
+                .map(|h| ((h * 16).div_ceil(9), h)),
+        );
+        for out in outs {
+            assert_eq!(ui_height(display(out), 720, out.1), 720, "{out:?}");
+            for filter in filters {
+                for (w, h) in modes {
+                    let mode = ScreenMode::new(w, h);
+                    let settings = with(filter);
+                    // As before: in the display, which fills the height.
+                    let screen_h = display(out).h.min(out.1 as f32);
+                    let before = crate::screen_place(&mode, &settings, false, out.0, screen_h);
+                    let now = screen_place(&mode, &settings, None, out, display(out));
+                    assert_eq!(now, before, "{out:?} {filter:?} {w}x{h}");
+                    let frame = (828, 497);
+                    let editor = screen_place(&mode, &settings, Some(frame), out, display(out));
+                    assert_eq!(editor, before, "{out:?} {filter:?} {w}x{h} editor");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_ui_goes_down_to_the_windows_bottom() {
+        let at = |out: (u32, u32)| ui_height(display(out), 720, out.1);
+        assert_eq!(at((1280, 720)), 720);
+        assert_eq!(at((640, 360)), 720);
+        assert_eq!(at((640, 480)), 960);
+        assert_eq!(at((800, 600)), 960);
+        assert_eq!(at((1024, 768)), 960);
+        assert_eq!(at((720, 720)), 1280);
+        assert_eq!(at((1920, 1200)), 800);
+        assert_eq!(at((2560, 1080)), 720);
+        // A minimized window, or one with no height.
+        assert_eq!(ui_height(display((0, 0)), 720, 0), 720);
+        // The main interpreter's focus border goes down with it; a
+        // subprogram's stays where XSUBSCREEN put it.
+        assert_eq!(
+            border_rect([0, 0, 1280, 720], (1280, 720), 960),
+            [0, 0, 1280, 960]
+        );
+        let sub = [640, 0, 640, 360];
+        assert_eq!(border_rect(sub, (1280, 720), 960), sub);
+    }
+
+    #[test]
+    fn the_editor_takes_the_room_below_the_display() {
+        use sb_runtime::editor::{EditorSize, frame_size};
+        use sb_runtime::font::FontSize;
+        let editor = |frame: (u32, u32), filter: Option<Filter>, out: (u32, u32)| {
+            let mode = ScreenMode::new(400, 240);
+            let (r, _) = screen_place(&mode, &with(filter), Some(frame), out, display(out));
+            (r.x, r.y, r.w, r.h)
+        };
+        // The default editor, Medium with 16-pixel characters, twice as
+        // fine as the 400x240 screen: too large for 640x480 once, so
+        // shrunk to fit, at the top, where the menu bar covers the row it
+        // leaves for it. The screen's 1x would be 400x240.
+        let medium = frame_size((400, 240), FontSize::Large, EditorSize::Medium);
+        assert_eq!(medium, (828, 497));
+        let (x, y, w, h) = editor(medium, NEAREST, (640, 480));
+        assert!(
+            x.abs() < 0.01 && y == 0.0 && (w - 640.0).abs() < 0.01,
+            "{x} {y} {w}"
+        );
+        assert!((h - 384.15).abs() < 0.01, "{h}");
+        // Once where it fits, centered in the display's 576 rows.
+        assert_eq!(
+            editor(medium, NEAREST, (1024, 768)),
+            (98.0, 40.0, 828.0, 497.0)
+        );
+        // Twice in 1920x1200, where the screen's 4x is 1600x960.
+        assert_eq!(
+            editor(medium, NEAREST, (1920, 1200)),
+            (132.0, 43.0, 1656.0, 994.0)
+        );
+        // With 8-pixel characters, Large fits 640x480 twice, sharp.
+        let large = frame_size((400, 240), FontSize::Small, EditorSize::Large);
+        assert_eq!(large, (318, 191));
+        assert_eq!(editor(large, NEAREST, (640, 480)), (2.0, 0.0, 636.0, 382.0));
+        // Where the screen's whole factor is larger, the screen's place.
+        assert_eq!(editor(large, NEAREST, (800, 600)), (0.0, 0.0, 800.0, 480.0));
+        // Bilinear fits the screen's shape to the window.
+        assert_eq!(
+            editor(medium, BILINEAR, (640, 480)),
+            (0.0, 0.0, 640.0, 384.0)
+        );
+        // With the display's whole height, where the screen goes.
+        let short = editor(large, NEAREST, (720, 720));
+        assert_eq!(short, (42.0, 12.0, 636.0, 382.0));
+    }
+
+    #[test]
+    fn a_pointer_hits_the_pixel_under_it() {
+        let outs = [
+            (640, 480),
+            (800, 600),
+            (1024, 768),
+            (720, 720),
+            (1920, 1200),
+            (1280, 720),
+        ];
+        let modes = [(400, 240), (640, 480), (1280, 720), (320, 240)];
+        let frames = [None, Some((828, 497)), Some((318, 191))];
+        for out in outs {
+            for (w, h) in modes {
+                for frame in frames {
+                    for filter in [NEAREST, BILINEAR] {
+                        let mode = ScreenMode::new(w, h);
+                        let (shown, _) =
+                            screen_place(&mode, &with(filter), frame, out, display(out));
+                        // On a Retina display, two pixels to a coordinate.
+                        for px in [1.0, 2.0] {
+                            let map = crate::Mapping {
+                                px,
+                                display: display(out),
+                                display_w: 1280,
+                                shown,
+                                space: frame.unwrap_or((w, h)),
+                            };
+                            let (sw, sh) = map.space;
+                            let corners = [(0, 0), (sw - 1, 0), (0, sh - 1), (sw - 1, sh - 1)];
+                            for (x, y) in corners.into_iter().chain([(sw / 2, sh / 2)]) {
+                                let (wx, wy) = map.screen_to_window(x as i32, y as i32);
+                                let back = map.to_screen(wx, wy);
+                                assert_eq!(back, (x as i32, y as i32), "{out:?} {w}x{h} {frame:?}");
+                            }
+                            // Just past the picture's edges, off it.
+                            let (left, top) = ((shown.x - 1.0) / px, (shown.y - 1.0) / px);
+                            let (x, y) = map.to_screen(left, top);
+                            assert!(x < 0 && y < 0, "{out:?} {w}x{h}");
+                            let right = (shown.x + shown.w + 1.0) / px;
+                            let bottom = (shown.y + shown.h + 1.0) / px;
+                            let (x, y) = map.to_screen(right, bottom);
+                            assert!(x >= sw as i32 && y >= sh as i32, "{out:?} {w}x{h}");
+                        }
+                    }
+                }
+            }
+        }
+        // A 4:3 screen in a 640x480 window: the window's pixel is the
+        // screen's.
+        let mode = ScreenMode::new(640, 480);
+        let (shown, _) = screen_place(&mode, &with(NEAREST), None, (640, 480), display((640, 480)));
+        let map = crate::Mapping {
+            px: 1.0,
+            display: display((640, 480)),
+            display_w: 1280,
+            shown,
+            space: (640, 480),
+        };
+        assert_eq!(map.to_screen(0.5, 0.5), (0, 0));
+        assert_eq!(map.to_screen(320.5, 400.5), (320, 400));
+        assert_eq!(map.to_screen(639.5, 479.5), (639, 479));
     }
 
     #[test]

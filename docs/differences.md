@@ -440,13 +440,32 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   `XSCREEN`. Following `XSCREEN` is one of its choices, Program (XSCREEN). The
   default is Nearest, which scales by whole factors. No `XSCREEN` mode does
   that. In a window too small to show the screen at its own size, as a
-  640x480 one is for `XSCREEN 640,480`, Nearest shrinks the screen to fit
+  640x480 one is for `XSCREEN 1280,720`, Nearest shrinks the screen to fit
   with Bilinear instead.
 - The desktop lays its UI out on a 1280x720 display and scales it to fit the
   window, keeping its aspect ratio, at the window's top. Below 1280x720 it is
   scaled down: on a 640x480 output it shows at half size in the top 640x360,
   with menus too small to read. The Simple UI is laid out for such outputs.
   The main window starts no larger than the display's usable area.
+- The program's screen is not confined to that display. It is centered in
+  the whole window at the largest size View > Screen filter allows, so
+  `XSCREEN 640,480` fills a 640x480 or 1280x960 window, and `XSCREEN 320,240`
+  shows at 5x in 1920x1200. In a window of 16:9 or wider the display fills
+  the window's height, and nothing changes. In a narrower one:
+  - The editor uses the room below the display too. Its frame has
+    SmileBASIC 4's rows at the editor's text size and the start-up screen's
+    shape, twice as fine with 16-pixel characters (828x497 for Medium on a
+    400x240 screen). With Nearest it takes the larger of the screen's whole
+    factors and its frame's: a whole factor of the frame where it fits once,
+    shrunk to fit where it does not. On 640x480 that is 640x384 rather than
+    400x240. It is centered in the display, or where taller, starts at the
+    window's top, under the menu bar.
+  - The debugger's panel, and the help and index beside the editor, go down
+    to the window's bottom, and so do notices and the yellow border that
+    shows the focus going back to the main program. A program's `DIALOG` is
+    centered on the whole window and dims all of it.
+  - The menus, the emulator's windows and dialogs, and a subprogram's screen,
+    which `XSUBSCREEN` places on the 1280x720 display, stay in the display.
 - View > Window size sets the main window to 0.5, 1, 1.5, 2, 2.5 or 3 times
   1280x720 pixels, leaving fullscreen first. The menu bar goes over the
   screen, so the screen gets the whole multiple: `XSCREEN 1280,720` at 2x
