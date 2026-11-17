@@ -32,6 +32,7 @@ mod standby;
 mod text_field;
 mod toast;
 mod ui;
+mod window;
 
 use std::any::Any;
 use std::cell::{Cell, OnceCell, RefCell};
@@ -404,7 +405,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // the Simple UI the output's at a whole scale.
     let profile_display = screen.display;
     let (mut display_w, mut display_h) = profile_display;
-    let mut builder = video.window(TITLE, display_w, display_h);
+    // The offscreen driver of headless runs has a 1024x768 display, which
+    // would change the size that runs are compared at.
+    let usable = (video
+        .get_primary_display()
+        .and_then(|d| d.get_usable_bounds()))
+    .ok()
+    .filter(|_| !headless())
+    .map(|r| (r.width(), r.height()));
+    let (window_w, window_h) = window::start_size(profile_display, usable);
+    let mut builder = video.window(TITLE, window_w, window_h);
     builder.position_centered().resizable().high_pixel_density();
     if simple_ui {
         builder.fullscreen();
@@ -4933,13 +4943,14 @@ impl<'a> SmartFrame<'a> {
 /// is `out_h` high: centered in the display, at XSCREEN's aspect ratio,
 /// and scaled to fit, in every composite mode. The sharp choice in View >
 /// Screen filter, `screen_filter`'s own Nearest, keeps to whole factors,
-/// which SmileBASIC 4 does not do.
+/// which SmileBASIC 4 does not do, where the screen fits once; in a
+/// smaller window it is scaled down to fit, as the other choices are.
 fn screen_rect(mode: &ScreenMode, screen_filter: Option<Filter>, out_w: u32, out_h: f32) -> FRect {
     let height = mode.height as f32;
     let width = height * mode.aspect() as f32;
     let fit = (out_w as f32 / width).min(out_h / height);
     let scale = match screen_filter {
-        Some(Filter::Nearest) => fit.floor().max(1.0),
+        Some(Filter::Nearest) if fit >= 1.0 => fit.floor(),
         _ => fit,
     };
     let (w, h) = (width * scale, height * scale);
@@ -4964,7 +4975,12 @@ fn screen_place(
     }
     let chosen = settings.screen_filter;
     let rect = screen_rect(mode, chosen, out_w, out_h);
-    (rect, chosen.unwrap_or(mode.filter))
+    // Nearest would leave out whole rows and columns of a screen shrunk
+    // to fit a small window.
+    match chosen.unwrap_or(mode.filter) {
+        Filter::Nearest if rect.h < mode.height as f32 => (rect, Filter::Bilinear),
+        filter => (rect, filter),
+    }
 }
 
 /// How the editor's frame is scaled into `rect`: sharp when it fits a
@@ -5102,6 +5118,12 @@ mod tests {
         assert_eq!(box_of(sharp), (140.0, 60.0, 1000.0, 600.0));
         let sharp = screen_rect(&mode(400, 240, None), Some(Filter::Bilinear), 1000, 720.0);
         assert_eq!(box_of(sharp), (0.0, 60.0, 1000.0, 600.0));
+        // A screen larger than the window is scaled down to fit it, as on
+        // a 640x480 output, where the display is 640x360.
+        let large = |w, h| screen_rect(&mode(w, h, None), Some(Filter::Nearest), 640, 360.0);
+        assert_eq!(box_of(large(640, 480)), (80.0, 0.0, 480.0, 360.0));
+        assert_eq!(box_of(large(1280, 720)), (0.0, 0.0, 640.0, 360.0));
+        assert_eq!(box_of(large(400, 240)), (120.0, 60.0, 400.0, 240.0));
     }
 
     #[test]
@@ -5143,6 +5165,22 @@ mod tests {
         for chosen in SimpleUiFilter::ALL {
             assert_eq!(place(&mode, chosen, false), desktop);
         }
+        // On the desktop at 640x480 the display is 640x360, and a screen
+        // shrunk to fit it is scaled smoothly, as Nearest would leave rows
+        // out.
+        let tall = ScreenMode::new(640, 480);
+        let (rect, filter) =
+            screen_place(&tall, &settings(SimpleUiFilter::Auto), false, 640, 360.0);
+        assert_eq!(
+            (box_of(rect), filter),
+            ((80.0, 0.0, 480.0, 360.0), Filter::Bilinear)
+        );
+        let (rect, filter) =
+            screen_place(&mode, &settings(SimpleUiFilter::Auto), false, 640, 360.0);
+        assert_eq!(
+            (box_of(rect), filter),
+            ((120.0, 60.0, 400.0, 240.0), Filter::Nearest)
+        );
         // A 4:3 mode fills the screen, at a whole factor; XSCREEN's
         // largest is half its size.
         let square = ScreenMode::new(320, 240);

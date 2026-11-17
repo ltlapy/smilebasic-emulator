@@ -408,7 +408,14 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
 - View > Screen filter chooses the screen's scaling filter instead of following
   `XSCREEN`. Following `XSCREEN` is one of its choices, Program (XSCREEN). The
   default is Nearest, which scales by whole factors. No `XSCREEN` mode does
-  that.
+  that. In a window too small to show the screen at its own size, as a
+  640x480 one is for `XSCREEN 640,480`, Nearest shrinks the screen to fit
+  with Bilinear instead.
+- The desktop lays its UI out on a 1280x720 display and scales it to fit the
+  window, keeping its aspect ratio, at the window's top. Below 1280x720 it is
+  scaled down: on a 640x480 output it shows at half size in the top 640x360,
+  with menus too small to read. The Simple UI is laid out for such outputs.
+  The main window starts no larger than the display's usable area.
 - With the Simple UI on, the screen fills the display at its aspect ratio, and
   the filter is the pause menu's Screen filter (`simple_ui_filter` in
   `settings.txt`), not View > Screen filter. A 640x480 display seldom holds
