@@ -1476,6 +1476,20 @@ fn format_strings() {
     );
 }
 
+/// VAL skips spaces and tabs before a number, so a number FORMAT$ pads to
+/// a width reads back, and stops at a comma or a line break. Spaces after
+/// a number leave the text not a number.
+#[test]
+fn val_reads_the_first_item() {
+    let source = r#"
+M$=FORMAT$("/PRESET %2D/",5)
+?VAL(MID$(M$,8,2));",";VAL(" 12");",";VAL(CHR$(9)+"-3.5")
+?VAL("7,8");",";VAL("&HFF"+CHR$(10)+"1");",";VAL(" &B101")
+?VAL(" 12 ");",";VAL("12 ");",";VAL("  ");",";VAL(" ,5");",";VAL(" 1 2")
+"#;
+    assert_eq!(output(source), "5,12,-3.5\n7,255,5\n0,0,0,0,0\n");
+}
+
 #[test]
 fn copying() {
     assert_eq!(

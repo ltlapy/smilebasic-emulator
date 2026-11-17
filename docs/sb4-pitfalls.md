@@ -468,8 +468,12 @@ TEST76K, done by hand, and TEST76R, recorded over HDMI, ran on a Switch 2.
 - `VAL` takes underscores in `&H` and `&B` digits as a program does:
   `VAL("&H_FF")` and `VAL("&HFF_")` are 255. `VAL("1_000")` and `VAL("&H_")` are
   0 (TEST56).
-- `VAL(" 12 ")` is 0: spaces make the text not a number. `INPUT` asks again
-  (`?Redo from start`) for the same reason.
+- `VAL(" 12 ")` is 0: spaces after a number make the text not a number.
+  `INPUT` asks again (`?Redo from start`) for the same reason.
+- `VAL` skips spaces and tabs before a number and reads only up to a comma or
+  a line break: `VAL(" 12")` is 12, so a number
+  `FORMAT$("%2D")` pads reads back, and `VAL("7,8")` is 7. (Not yet seen on
+  hardware.)
 - `LOG(0)` and `ASIN(2)` are `Out of range (LOG:1)` and `(ASIN:1)` (TEST62).
 - `ACOS(2)` is `Out of range (ACOS:1)`, as for `LOG` and `ASIN`. `SQR(-1)` is
   `Out of range` with no command name and no argument's number

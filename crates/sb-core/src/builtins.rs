@@ -459,10 +459,20 @@ fn pad_left(mut s: Str, width: usize, fill: char) -> Str {
     s
 }
 
-/// Text that is not a number reads as 0, and so does a number with spaces
-/// around it (checked on hardware: `VAL(" 12 ")` is 0).
+/// VAL reads the text's first item as SmileBASIC 4 does: spaces
+/// and tabs before it are skipped, and it ends at a comma or a line break.
+/// An item that is not a number reads as 0, and so does one with spaces
+/// after it: `VAL(" 12")` is 12, `VAL(" 12 ")` 0.
 fn val(args: &[Value]) -> Result<Value> {
-    Ok(parse_number(&text(&args[0])?).unwrap_or(Value::Int(0)))
+    let s = text(&args[0])?;
+    let start = (s.iter())
+        .position(|&c| c != u16::from(b' ') && c != u16::from(b'\t'))
+        .unwrap_or(s.len());
+    let item = &s[start..];
+    let end = (item.iter())
+        .position(|&c| b",\r\n".map(u16::from).contains(&c))
+        .unwrap_or(item.len());
+    Ok(parse_number(&item[..end]).unwrap_or(Value::Int(0)))
 }
 
 /// Reads a number as VAL and INPUT do: decimal, `&H` hex or `&B` binary,
