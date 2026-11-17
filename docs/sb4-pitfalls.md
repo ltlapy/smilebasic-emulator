@@ -10,10 +10,11 @@ TEST and TTEST numbers name check programs kept outside the repository;
 test as evidence, and says "on a Switch 2" or "on Ryujinx" where the machine
 matters. A real Switch outranks Ryujinx where the text says so.
 
-TEST62 and TEST63 ran on 4.4.9 on a Switch 2. What TEST62 shows had been read in
-SmileBASIC 4 first, and so had most of what TEST63 shows. "By SmileBASIC 4" means expected of SmileBASIC 4. "(Not yet seen on hardware.)" marks what
-was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
-TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
+TEST62 and TEST63 ran on 4.4.9 on a Switch 2. "(Not yet seen on hardware.)"
+marks what is expected of version 4.4.8 and has not run. A fact that names no
+test has not been checked on hardware either, unless it says so.
+TEST71, TEST72, TEST74 and TEST76 ran on 4.4.9 on a Switch 1 and a Switch 2.
+TEST76K, done by hand, and TEST76R, recorded over HDMI, ran on a Switch 2.
 
 ## Contents
 
@@ -128,8 +129,9 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   `COPY("ABCDE",6)` and `COPY("ABCDE",2,5)` the same. The command form names
   none: `COPY A,0,B,6,1` and `COPY A$,0,"ABCDE",2,5` are `(COPY)`. An offset
   equal to the length with a count of 0 is no error: `COPY A,0,B,5,0`
-  (TEST72). With the count left out, the function form fails there:
-  `COPY(B,5)` on five elements and `COPY("ABCDE",5)` are `(COPY:2)` (TEST74).
+  (TEST72). The function form fails there, with the count left out or 0:
+  `COPY(B,5)` on five elements and `COPY("ABCDE",5)` are `(COPY:2)` (TEST74),
+  and so is `COPY(B,5,0)` (TEST76).
   An empty source is the exception: `COPY(B,0)` of an empty array and
   `COPY("",0)` give an empty result, with no error.
 - `COPY` past the destination's end is no error, and grows it. After
@@ -138,7 +140,7 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   (TEST74).
 - `COPY` with a number first is `Type mismatch (COPY:1)` in both forms:
   `COPY Z,Z,B,Z,1` and `Q=COPY(Z,Z,1)`. The command form checks the
-  destination before anything else. (Not yet seen on hardware.)
+  destination before anything else (TEST76).
 - `CHR$(-1)` is no error: it gives `CHR$(&HFFFF)` (TEST69).
 - `CHR$` takes any int and keeps its low 16 bits: `CHR$(65601)` is `"A"`,
   `CHR$(-2)` U+FFFE, `CHR$(&H7FFFFFFF)` U+FFFF, and `CHR$(65536)` and
@@ -157,34 +159,33 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). Most
   calls find this as they run, not as the program compiles, so the lines before
   them run.
-- The functions it compiles in place find
-  it as the program compiles when called with brackets: a line `?ABS(1,2)`
-  stops the program before its first line runs. They are `ABS`, `ACOS`, `ASC`, `ASIN`, `ATAN`, `CEIL`, `CHKCALL`,
-  `CHKLABEL`, `CHKVAR`, `CHR$`, `COS`, `COSH`, `DEFARG`, `DEFARGC`, `DEFOUTC`,
-  `DEG`, `DIM`, `EXP`, `FLOAT`, `FLOOR`, `HEX$`, `INT`, `LAST`, `LEFT$`, `LEN`,
-  `LOG`, `POP`, `POW`, `RAD`, `RIGHT$`, `RND`, `RNDF`, `ROUND`, `SGN`, `SHIFT`,
-  `SIN`, `SINH`, `SQR`, `STR$`, `TAN`, `TANH`, `TYPEOF` and `VAL`. `MIN` and
-  `MAX` are compiled in place with two arguments only; with any other number
-  they are called, and `MIN()` fails as it runs. As commands (`ABS 1,2 OUT A`)
-  all of them check as they run. (Not yet seen on hardware.)
+- The functions SmileBASIC 4 compiles in place find it as the program compiles
+  when called with brackets: a line `?ABS(1,2)` stops the program before its
+  first line runs, also behind `IF 0 THEN`, past a `GOTO` and in a `DEF` that
+  is never called. They are `ABS`, `ACOS`, `ASC`, `ASIN`, `ATAN`, `CEIL`,
+  `CHKCALL`, `CHKLABEL`, `CHKVAR`, `CHR$`, `COS`, `COSH`, `DEFARG`, `DEFARGC`,
+  `DEFOUTC`, `DEG`, `DIM`, `EXP`, `FLOAT`, `FLOOR`, `HEX$`, `INT`, `LAST`,
+  `LEFT$`, `LEN`, `LOG`, `POP`, `POW`, `RAD`, `RIGHT$`, `RND`, `RNDF`,
+  `ROUND`, `SGN`, `SHIFT`, `SIN`, `SINH`, `SQR`, `STR$`, `TAN`, `TANH`,
+  `TYPEOF` and `VAL`. `MIN` and `MAX` are compiled in place with two arguments
+  only; with any other number they are called, and `MIN()` fails as it runs.
+  As commands (`ABS 1,2 OUT A`) all of them check as they run (TEST76).
 - `?VSYNC()` is `Wrong number of OUT arguments (VSYNC)`, and `FREEMEM 1` and
   `?FREEMEM(1)` are `Wrong number of arguments (FREEMEM)`. (TEST62)
 - Whether a call no form takes is `Wrong number of arguments` or
   `Wrong number of OUT arguments` depends on which count the command checks
-  first. Most check the `OUT` count
-  first. A number of `OUT` variables no form takes is
-  `Wrong number of OUT arguments` (`ACLS OUT A`, `LOCATE 0 OUT X,Y,Z`). One
-  that a form takes, with arguments that form does not take, is
-  `Wrong number of arguments` (`COLOR 0,0 OUT C`). Some commands check the
-  argument count first, among them `DATE$`, `DELETE`, `DTREAD`, `MOUSE` and
-  `RANDOMIZE`: `RANDOMIZE 0,0,0 OUT A` is `Wrong number of arguments`.
-  `SPROT`, `SPCOLOR`, `SPHOME`, `SPSCALE` and `SPCOL` check that a sprite
-  number is given before the `OUT` count, so `SPROT OUT A,B` is
-  `Wrong number of arguments`. (Not yet seen on hardware.)
+  first (TEST76). Most check the `OUT` count first. A number of `OUT`
+  variables no form takes is `Wrong number of OUT arguments` (`ACLS OUT A`,
+  `LOCATE 0 OUT X,Y,Z`). One that a form takes, with arguments that form does
+  not take, is `Wrong number of arguments` (`COLOR 0,0 OUT C`). Some commands
+  check the argument count first, among them `DATE$`, `DELETE`, `DTREAD`,
+  `MOUSE` and `RANDOMIZE`: `RANDOMIZE 0,0,0 OUT A` is
+  `Wrong number of arguments`. `SPROT`, `SPCOLOR`, `SPHOME`, `SPSCALE` and
+  `SPCOL` check that a sprite number is given before the `OUT` count, so
+  `SPROT OUT A,B` is `Wrong number of arguments`.
 - `RNDF 0,1 OUT X`, with two arguments, is `Wrong number of OUT arguments` as
-  it runs. `RNDF(0,1)` is
-  `Wrong number of arguments` as the program compiles. (Not yet seen on
-  hardware.)
+  it runs. `RNDF(0,1)` and `RNDF(0,0)` are `Wrong number of arguments` as the
+  program compiles (TEST76).
 - The functions and array commands do the same: a function used as a command
   with other than one `OUT` variable (`ABS Z OUT A,B`, `LEN S$`), or
   `PUSH A,1 OUT X`, is `Wrong number of OUT arguments` when the call runs.
@@ -193,75 +194,72 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   so `Q=COPY(A,0,1,0)` and `Q=RGB(1)` are `Wrong number of arguments`. A
   command used as a function has one `OUT` variable: `Q=PUSH(A,1)` and
   `Q=FILL(A,0)` compile, and are `Wrong number of OUT arguments` when the call
-  runs, and `Q=PUSH(A)` `Wrong number of arguments`. `FIND A,V OUT I` gives the place by element order, as `FIND(A,V)` does. (Not yet seen on hardware.)
+  runs, and `Q=PUSH(A)` `Wrong number of arguments` when it runs.
+  `FIND A,V OUT I` gives the place by element order, as `FIND(A,V)` does
+  (TEST76).
 - A string or array argument of the wrong type is named by its place:
   `LEN(1)` is `Type mismatch (LEN:1)`, `INSTR(0,1,S$)` `(INSTR:2)` and
-  `PUSH 1,1` `(PUSH:1)`, as numbers are. (Not yet seen on hardware.)
+  `PUSH 1,1` `(PUSH:1)`, as numbers are (TEST76).
 - A call to a name defined nowhere compiles, and is a `Syntax error` only when
   it is reached: the name may be a `COMMON DEF` of a slot that `EXEC` runs
   later.
 - `GOTO` and `GOSUB` to a label that is not there are `Undefined label` only
   when they run.
 - `GOTO` and `GOSUB` take a string `"@NAME"` or `"n:@NAME"`, with a slot n of
-  0 to 5. Another string, such as `"L"`
-  or `"6:@L"`, is `Illegal label string` (35), and a number `Type mismatch`.
-  In a `DEF`, `"@NAME"` looks only at the `DEF`'s own labels, and `"n:@NAME"`
-  is always `Undefined label`. (Not yet seen on hardware.)
+  0 to 5. Another string, such as `"L"` or `"6:@L"`, is `Illegal label string`
+  (35), and a number `Type mismatch`. In a `DEF`, `"@NAME"` looks only at the
+  `DEF`'s own labels, and `"n:@NAME"` is always `Undefined label` (TEST76).
 - `GOTO` or `GOSUB` with nothing after it runs the lines before it and stops
   there with `Type mismatch` (TTEST39).
 - Operations on constants are worked out when the program compiles, so `?"A"*-1`
   or `?1/0` stops the program before it runs, even on a line that is never
-  reached.
+  reached. A number plus a string is left to fail as it runs: `A=1+"A"` is
+  `Type mismatch` when its line runs, after the lines before it (TEST76).
 - An unknown `#constant` is `Undefined constant`.
-- A `CONST` or `ENUM` constant exists from where it stands in the source. Used on an earlier line, also in a `DEF`
-  above it, in `DATA` or in another `CONST` (`CONST #A=#B,#B=1`), it is
-  `Undefined constant`. One defined in a `DEF` counts on the lines after it,
-  top level included. The program compiles before it runs, so a `GOTO` past
-  the `CONST` does not matter. (Not yet seen on hardware.)
+- A `CONST` or `ENUM` constant exists from where it stands in the source. Used
+  on an earlier line, also in a `DEF` above it, in `DATA` or in another
+  `CONST` (`CONST #A=#B,#B=1`), it is `Undefined constant`. One defined in a
+  `DEF` counts on the lines after it, top level included. The program compiles
+  before it runs, so a `GOTO` past the `CONST` does not matter (TEST76).
 - SmileBASIC 4 compiles a program a statement at a time, in source order,
-  `DEF` bodies where they stand, by SmileBASIC 4 (4.4.8). The first error
-  in the source is the one reported: `?#ZZ:?(` is `Undefined constant`, and
-  so are `IF #ZZ THEN ?(`, `?#ZZ` on a line before `A=&H100000000`, and
-  `?#ZZ` before `CONST #A=1,#A=2`. (Not yet seen on hardware.)
-- A block that does not close is its
-  own error, on the line its statement starts on, as the program compiles:
-  `FOR without NEXT` (20), `WHILE without WEND` (24), `REPEAT without UNTIL`
-  (22), `LOOP without ENDLOOP` (54), `CASE without ENDCASE` (62) and
+  `DEF` bodies where they stand. The first error in the source is the one
+  reported: `?#ZZ:?(` is `Undefined constant`, and so are `IF #ZZ THEN ?(`,
+  `?#ZZ` on a line before `A=&H100000000`, and `?#ZZ` before `CONST #A=1,#A=2`
+  (TEST76).
+- A block that does not close is its own error, on the line its statement
+  starts on, as the program compiles: `FOR without NEXT` (20),
+  `WHILE without WEND` (24), `REPEAT without UNTIL` (22),
+  `LOOP without ENDLOOP` (54), `CASE without ENDCASE` (62) and
   `THEN without ENDIF` (26). After an `ELSE` it is `ELSE without ENDIF` (27),
   still on the `IF`'s line, and `ELSEIF` keeps 26. A `DEF` with no `END` is
-  `DEF without END` (29) on the `DEF`'s line. Of blocks inside each other,
-  the innermost is named. The statements before the end compile first, so an
-  `Undefined constant` in the block comes before it. (Not yet seen on
-  hardware.)
-- By the same, a `DEF` that starts inside a block, or a `DEF`'s `END` inside
-  one, is that block's error: `FOR I=0 TO 9`, `DEF F` is `FOR without NEXT`
-  on the `FOR`'s line, and so is a `DEF`'s `END` before its `NEXT`.
-  `IF A THEN END` in a `DEF` is `THEN without ENDIF`. A `DEF` inside a `DEF`
-  is `Nested DEF` (32), on the inner one's line. (Not yet seen on hardware.)
-- By the same, a closing keyword with no block of its own to close is an
-  error on its line: `NEXT without FOR` (21), `WEND without WHILE` (25),
-  `ENDLOOP without LOOP` (55), `UNTIL without REPEAT` (23), `ENDIF without
-  IF` (28), `WHEN without CASE` (59), `OTHERWISE without CASE` (60) and
+  `DEF without END` (29) on the `DEF`'s line. Of blocks inside each other, the
+  innermost is named. The statements before the end compile first, so an
+  `Undefined constant` in the block comes before it (TEST76).
+- A `DEF` that starts inside a block, or a `DEF`'s `END` inside one, is that
+  block's error: `FOR I=0 TO 9`, `DEF F` is `FOR without NEXT` on the `FOR`'s
+  line, and so is a `DEF`'s `END` before its `NEXT`. `IF A THEN END` in a
+  `DEF` is `THEN without ENDIF`. A `DEF` inside a `DEF` is `Nested DEF` (32),
+  on the inner one's line (TEST76).
+- A closing keyword with no block of its own to close is an error on its line:
+  `NEXT without FOR` (21), `WEND without WHILE` (25), `ENDLOOP without LOOP`
+  (55), `UNTIL without REPEAT` (23), `ENDIF without IF` (28),
+  `WHEN without CASE` (59), `OTHERWISE without CASE` (60) and
   `ENDCASE without CASE` (61). `NEXT`, `WEND` and `ENDLOOP` look past `IF`s
   and `CASE`s to the innermost loop, which has to be theirs; the others look
   at the innermost block only, so an `UNTIL` inside an `IF` is error 23, and
   so is an `ENDIF` inside a `FOR` error 28. A stray `ELSE` or `ELSEIF` is a
-  `Syntax error`, on the line of the block it stands in. (Not yet seen on
-  hardware.)
-- By the same, a one-line `IF` lasts until its line ends, and so do the
-  blocks it holds: `IF A THEN FOR I=0 TO 9` with the `NEXT` on a later line
-  is `FOR without NEXT`. An `IF` or `ELSE` in it that goes on past the line
-  takes its blocks along: `IF A THEN IF B THEN` ends at an `ENDIF`. (Not yet
-  seen on hardware.)
+  `Syntax error`, on the line of the block it stands in (TEST76).
+- A one-line `IF` lasts until its line ends, and so do the blocks it holds:
+  `IF A THEN FOR I=0 TO 9` with the `NEXT` on a later line is
+  `FOR without NEXT`. An `IF` or `ELSE` in it that goes on past the line takes
+  its blocks along: `IF A THEN IF B THEN` ends at an `ENDIF` (TEST76).
 - `BREAK` and `CONTINUE` outside a loop are a `Syntax error` as the program
-  compiles. (Not yet seen on
-  hardware.)
+  compiles (TEST76).
 - `CASE` takes `WHEN` or `OTHERWISE` next, on its line or a later one:
-  `CASE A:ENDCASE` is a `Syntax error`, on the `ENDCASE`'s line. (Not yet seen on hardware.)
+  `CASE A:ENDCASE` is a `Syntax error`, placed at the `ENDCASE` (TEST76).
 - A call with more than 254 arguments or `OUT` variables, and a `DEF` with
   more than 254 parameters or `OUT`s, is `Too many arguments`, error 48, as
-  the program compiles. (Not yet seen
-  on hardware.)
+  the program compiles. A call with 254 compiles and runs (TEST76).
 - `CONST` or `ENUM` of a built-in constant's name is `Duplicate constant`,
   error 49, as the program compiles: `CONST #ON=#C_YELLOW,#OFF=#C_WHITE` on
   line 38 of slot 0 stops with `Duplicate constant in 0:38` (checked on
@@ -269,19 +267,18 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   `#_FILENAME` count as built in, and so does a constant defined before it in
   the slot's program, inside a `DEF` or not, in any case of letters. Each slot
   keeps its own. `CONST` works out its value before it checks the name, so
-  `CONST #ON=#NONE` is `Undefined constant`; `ENUM` checks the name first. The
-  error is placed at the name. (Not yet seen on hardware.)
-- `ENUM` takes a real only as a whole
-  number: `ENUM #A=1.0` and `ENUM #A=4/2` give ints, and the next name counts
-  on from them. A fraction, as in `1.5` or `#PI`, is `Type mismatch`, error 8.
-  A whole real outside -2147483648 to 2147483647, as `3E9`, is
-  `Out of range`, error 10. The fraction is checked first, so `2147483647.5`
-  is `Type mismatch`. These errors, and `Type mismatch` for a string, are
-  placed at the value's first operand: at `1.5` in `-1.5`, at `1` in
-  `(1)+0.5`. (Not yet seen on hardware.)
+  `CONST #ON=#NONE` is `Undefined constant`, placed at `#NONE`; `ENUM` checks
+  the name first. The error is placed at the name (TEST76).
+- `ENUM` takes a real only as a whole number: `ENUM #A=1.0` and `ENUM #A=4/2`
+  give ints, and the next name counts on from them. A fraction, as in `1.5` or
+  `#PI`, is `Type mismatch`, error 8. A whole real outside -2147483648 to
+  2147483647, as `3E9`, is `Out of range`, error 10. The fraction is checked
+  first, so `2147483647.5` is `Type mismatch`. These errors, and
+  `Type mismatch` for a string, are placed at the value's first operand: at
+  `1.5` in `-1.5`, at `1` in `(1)+0.5` (TEST76).
 - A `CONST` or `ENUM` value that is not worked out as the program compiles,
-  such as `CONST #A=Z`, is `Illegal constant expression`, error 51. In `DATA` it is a `Syntax error`. (Not
-  yet seen on hardware.)
+  such as `CONST #A=Z`, is `Illegal constant expression`, error 51, placed at
+  the `Z` (TEST76). In `DATA` it is a `Syntax error`.
 
 ### Statements, literals and names
 
@@ -290,10 +287,10 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
 - The literal `2147483648` is a real. So is a decimal integer of more than
   10 digits, leading zeros included: `00000000001` is the real 1. A decimal
   literal of more than 99 characters, with an exponent of more than 3 digits,
-  or too large for a real (`1E309`) is a `Syntax error`. (4.4.8); not yet seen on hardware.
+  or too large for a real (`1E309`) is a `Syntax error` (TEST76).
 - `&H` takes up to 8 digits and `&B` up to 32, leading zeros included: more,
   as in `&H100000000` or `&H000000001`, is a `Syntax error` as the program
-  compiles. (Not yet seen on hardware.)
+  compiles (TEST76). `?&H100000000` is that `Syntax error`, not `Overflow`.
 - `CONST` and `DATA` take `HSV` as well as `RGB`.
 - `OPTION STRICT` holds from where it stands in the source to the end of the
   program, in and out of `DEF`s, and may stand in a `DEF` or a block. Nothing
@@ -304,13 +301,12 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   and a `DEF`'s parameters and `OUT`s make variables; `FOR`, `READ`, `INPUT`,
   `LINPUT`, `SWAP`, `INC`, `DEC` and `OUT` targets of a call are uses. An
   `OPTION` with another name is a `Syntax error` where it stands, in a `DEF`
-  too. (4.4.8); not yet seen on hardware.
+  too (TEST76).
 - `OPTION DEFINT` holds from where it stands in the source to the end of the
   program, in and out of `DEF`s, and may stand in a `DEF`. A variable without
   a suffix starts as an int only if it is first seen after it:
   `?TYPEOF(A):OPTION DEFINT:?TYPEOF(A);TYPEOF(B)` prints 2, then 21, and in
-  `DIM X[2]:OPTION DEFINT` X is an array of reals. (4.4.8); not yet seen on
-  hardware.
+  `DIM X[2]:OPTION DEFINT` X is an array of reals (TEST76).
 - Statements need no colon between them where one cannot go on:
   - A `PRINT` item ends where no `;` or `,` follows it: `?"A" B=1` prints A,
     then sets B.
@@ -355,6 +351,12 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   whatever its suffix. Inside the `DEF` it reads as that too.
 - A `DEF` sees a global only if top-level code above the `DEF` names it, as the
   program compiles in one pass. Otherwise the name is the `DEF`'s own.
+- A name a `DEF` uses before its `VAR` follows the same rule (TEST76). With
+  `A=5` or `VAR A=5` at the top level above the `DEF`, `DEF F:?A:VAR A=1:?A`
+  prints 5, the global, then 1: the `VAR` makes a local for the rest of the
+  `DEF`. With no global above, the first use makes `A` the `DEF`'s own, and
+  the `VAR` is `Duplicate variable` as the program compiles, placed at its
+  `A`. At the top level, `?A:VAR A` is `Duplicate variable` too.
 - A `DEF` with an `OUT` may be called as a function, giving the `OUT` value
   (`DEF F A OUT R` as `?F(3)`). A `DEF` that returns a value may be called with
   one `OUT` (`T OUT X`). One with two `OUT`s called as a function is
@@ -371,18 +373,17 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   - `RETURN UNDECLARED` compiles too, under `OPTION STRICT` (SMILEBOY).
 - A function that ends without `RETURN`, or leaves by a bare one, gives no
   value: `TYPEOF` 0 (TEST62).
-- `DEFARG()`, `DEFARGC()`, `DEFOUTC()`,
-  `CHKLABEL()`, `CHKCALL()` and `CHKVAR()` are compiled in place, not called.
-  As the program compiles, another number of arguments is
-  `Wrong number of arguments`, and then the `DEF` ones outside a `DEF` are
-  `Can't use outside DEF`, error 56. `DEFOUT` outside a `DEF` is error 56
-  too, before what follows it is read. `CALLIDX(1)` is called, and is
-  `Wrong number of arguments` when it runs. (Not yet seen on hardware.)
-- By the same, all of them called as commands, as `CHKVAR "A" OUT F` or
-  `DEFARGC OUT N`, run their handlers, which check as they run: two `OUT`s
-  are `Wrong number of OUT arguments`. `DEFARG 0 OUT A` outside a `DEF` is
-  error 56 as it runs, while `DEFARGC` and `DEFOUTC` give 0 there. (Not yet
-  seen on hardware.)
+- `DEFARG()`, `DEFARGC()`, `DEFOUTC()`, `CHKLABEL()`, `CHKCALL()` and
+  `CHKVAR()` are compiled in place, not called. As the program compiles,
+  another number of arguments is `Wrong number of arguments`, and then the
+  `DEF` ones outside a `DEF` are `Can't use outside DEF`, error 56. `DEFOUT`
+  outside a `DEF` is error 56 too, before what follows it is read.
+  `CALLIDX(1)` is called, and is `Wrong number of arguments` when it runs
+  (TEST76).
+- All of them called as commands, as `CHKVAR "A" OUT F` or `DEFARGC OUT N`,
+  run their handlers, which check as they run: two `OUT`s are
+  `Wrong number of OUT arguments`. `DEFARG 0 OUT A` outside a `DEF` is error
+  56 as it runs, while `DEFARGC` and `DEFOUTC` give 0 there (TEST76).
 - A `DEF` with the name of a system function is `Duplicate function` when the
   program compiles, at the `DEF`, as two `DEF`s of one name are:
   `DEF LAST(T)` on line 41 of slot 3 is `Duplicate function in 3:41` (TEST71).
@@ -558,10 +559,13 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
 ### Arrays
 
 - `DIM` with a size of 0 works only for one dimension: `DIM A[0]` is fine, but
-  `DIM A[0,0]` and `DIM A[0,3]` are `Subscript out of range`.
+  `DIM A[0,0]` and `DIM A[0,3]` are `Subscript out of range`. `DIM A[2,0]`
+  names the 0 as its argument 2, as `ARRAY%(2,0)` does (TEST76).
 - An array holds nothing (`TYPEOF` 0) until its `DIM` runs, as when a DEF reads
   it before.
 - `DIM A[,]` compiles, and is `Type mismatch` when it runs.
+- `DIM A[A]` compiles its size before `A` exists. Under `OPTION STRICT` it is
+  `Undefined variable` at the size's `A`; without it, it is no error (TEST76).
 - `DIM` at the start of a statement always declares, never calls the `DIM()`
   function, so `DIM A,Z OUT X` declares `A` and `Z`. When `A` is already
   declared that is `Duplicate variable`, and after new names the `OUT` is a
@@ -586,7 +590,7 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   naming it: `SORT 1,3,A,B` with `B` of 3 elements is `(SORT:4)`. The start must
   be inside the array, so `SORT E` of an empty array is `Out of range`, and so
   is `SORT 4,0,A` of 4 elements. `SORT OUT Q` is `Wrong number of arguments`,
-  `SORT A OUT Q` `Wrong number of OUT arguments`. (Not yet seen on hardware.)
+  `SORT A OUT Q` `Wrong number of OUT arguments` (TEST76).
 - `RESIZE` of a 2D array takes every size, the later ones as they are:
   `RESIZE A,3` on `DIM A[2,3]` is `Wrong number of arguments`, and changing a
   later size `Illegal function call`.
@@ -595,8 +599,7 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   far too large, unless a 0 came before it: `RESIZE A,-1` is `(RESIZE:2)`.
   Exactly 2^30 elements is error 47 naming nothing. A later size other than the
   array's is `Illegal function call` naming it: `RESIZE A,2,4` on `DIM A[2,3]`
-  is `(RESIZE:3)`. (Not yet seen
-  on hardware.)
+  is `(RESIZE:3)` (TEST76).
 - The arrays `GARRAY`, `TARRAY` and `UIGETCMPL` give are the system's own
   memory, and so is any variable they are assigned to. `RESIZE` of one is
   `Can't RESIZE this array`, error 65, naming it, before the number of sizes
@@ -604,13 +607,15 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   is the same error, after the count, the position and the array's type.
   `LOADV` into one keeps its size: it reads only the elements that fit and
   leaves the rest as they were. The other array commands do not look, and an
-  array that `COPY` fills or `LOADV` makes is the program's. (Not yet seen on hardware.)
+  array that `COPY` fills or `LOADV` makes is the program's (TEST76).
 - `ARRAY%`, `ARRAY#` and `ARRAY$` with a 0 among two sizes or more are
   `Subscript out of range` naming the 0: `ARRAY%(2,0)` is `(ARRAY%:2)`.
-  `ARRAY%(0)` is an empty array. (Not yet seen on hardware.)
+  `ARRAY%(0)` is an empty array (TEST76).
 - `MIN` and `MAX` take one argument only as an array: `MIN(1)` is
   `Type mismatch (MIN:1)`. An empty array is `Illegal function call`, a string
-  array `Type mismatch`, neither naming it. (Not yet seen on hardware.)
+  array `Type mismatch`, neither naming it. An array among several arguments,
+  as in `MIN(A,1)`, is `Type mismatch (MIN)`, naming none. Of ints they give
+  an int: `TYPEOF(MIN(1,2))` is 1 (TEST76).
 - `RESIZE A,0,3` on `DIM A[1,3]` leaves `LEN` 0 and `DIM(A,0)` 0, and `SAVEV`
   and `LOADV` bring that back (TEST51).
 - `LOADV` loads array files with a zero in any size and keeps the sizes: `[0,3]`
@@ -622,7 +627,7 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
 - `ARYOP` reads a parameter array shorter than the result over again from its
   start. An empty one is `Array is too small`, error 116, naming it:
   `ARYOP 0,R,E,1` is `(ARYOP:3)`. The wrong number of arguments for the
-  operation is `Wrong number of arguments`. (Not yet seen on hardware.)
+  operation is `Wrong number of arguments` (TEST76).
 - `RINGCOPY A,0,A` on an array left by `RESIZE A,0,3` does nothing and is no
   error (TEST51).
 - `RINGCOPY` looks at things in this order (TEST57):
@@ -655,9 +660,26 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
 
 ### `SPVAR`, `TVAR` and `INC`
 
-- `TVAR` cuts a real key down to an integer: keys 1.5 and 1 are the same.
+- `SPVAR` and `TVAR` cut a real key down to an integer: keys 1.5 and 1 are the
+  same. A number and a string are different keys: 5 is not `"5"` (TEST76).
+- String keys take ASCII a-z as upper case, and nothing else: `"name"` and
+  `"NAME"` are one key, while full-width `ａ` and `Ａ` are two (TEST76).
+- A key of over 1024 characters is never found: written and read back, it
+  reads 0. 1024 characters work (TEST76).
+- Reading a key that is not there makes the variable, holding 0 (`TYPEOF` 1)
+  (TEST76).
+- Number keys and string keys of up to 16 characters take no `FREEMEM`. A new
+  variable with a key of 20 to 23 characters takes 192 bytes, and so does each
+  read of a missing one, as it makes the variable (TEST76).
+- Writing variable 7 stops a running `"V"` animation, and `SPCHK`'s or
+  `TCHK`'s V bit goes off: `SPVAR 0,7,0` and `TVAR 0,7,0` do it, and so does
+  `SPVAR 0,7`, which deletes the variable. The string key `"7"` is another
+  variable, and the animation goes on (TEST76).
 - `SPVAR` and `TVAR` keep an array given to them as the same array, not a copy:
-  what is changed through one shows through the other.
+  what is changed through one shows through the other (TEST76).
+- `ACLS` clears the sprites' variables but keeps every text screen's `TVAR`,
+  the console's included, with any arguments (`ACLS 1,1,1,1` too), against the
+  manual. Both survive `XSCREEN` (TEST76).
 - `INC` adds to a string where it is, as `PUSH` does: `INC T$,C$` on a DEF's
   parameter adds to the caller's string.
 
@@ -713,7 +735,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `RESTORE "PUSH"`, `GOSUB` and DEF calls share one stack, and `RESTORE "POP"`
   takes only a place on top of it: in a subroutine or DEF that kept none since
   it was called, it is `Use RESTORE PUSH before RESTORE POP`, error 119, even
-  with places kept before the call. (Not yet seen on hardware.)
+  with places kept before the call. A subroutine called from the top level,
+  with no place kept anywhere, gets `Stack underflow` instead; in a DEF it is
+  still error 119 (TEST76).
 - `RESTORE "PUSH"` can keep a thousand places, and many more: see the stack
   under `DEF`, `OUT` and `RETURN`. A subroutine that keeps a place must take it
   back before `RETURN`, which is otherwise `Use RESTORE POP before RETURN`.
@@ -733,7 +757,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   does not.
 - `VSYNC` and `WAIT` read only their first argument: `VSYNC 1,2` waits a
   frame. An `OUT` variable is `Wrong number of OUT arguments` as the call
-  runs. (Not yet seen on hardware.)
+  runs (TEST76).
 - `RUN` leaves `VSYNC`'s count where it was, so the first `VSYNC` of a program,
   `VSYNC 5` too, finds its frames gone by: `T=MAINCNT():VSYNC 5:?MAINCNT()-T` as
   a program's first line prints 0 (TEST62, on a Switch 2). A subprogram's first
@@ -742,7 +766,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - Counted with `MAINCNT` from just before a subprogram's `PUSHKEY CHR$(13)`, a
   line typed in DIRECT mode runs 1 frame later, and `CONT` goes on 1 frame
   later (once 0, on a Switch 1). `RUN 3` reaches the program's first line 2
-  frames later on a Switch 2 and 4 on a Switch 1, each of three times (TEST74).
+  frames later on a Switch 2 and 4 on a Switch 1, each of three times
+  (TEST74). TEST76 saw 2 on a Switch 2 and 3 or 4 on a Switch 1, for a
+  program of 5 lines as for one of 2002.
 - `XSCREEN` holds the program until the frame job has taken the new mode,
   without touching `VSYNC`'s count, so a `VSYNC 1` right after it goes straight
   on (TEST60). The program goes on inside that job, past its animation step and
@@ -795,6 +821,10 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   | `V=FL(A)`, with two `VAR` locals | 270.1 |
   | `V=FR(3)`, recursive, four calls | 877.2 |
 
+- Code that `EXEC` runs from inside a DEF runs as fast as code at the top
+  level, within 5%. A `FOR` loop in a DEF costs 7 to 12 ns more an iteration
+  than one at the top level on a Switch 1, and 11 to 12 ns on a Switch 2
+  (TEST76).
 - Single commands, in ns each with the loop around them taken away (TEST67,
   4.4.9; the Switch ran handheld, the Switch 2 docked, `GCLIP` at the whole
   page):
@@ -853,9 +883,12 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - An animation takes 32 keys at most: more, given as values, an array or
   DATA, is `Animation is too long`, error 40, without a number. A DATA count
   below 1 is `Illegal animation data`. A target that is an array, as in
-  `SPANIM 0,A,1,2`, is `Animation type mismatch (SPANIM:2)`, error 66, in
-  `TANIM` and `ANIMDEF` too. `SPANIM` checks its sprite before anything else:
-  one not set is `Sprite not set (SPANIM:1)`, whatever comes after it. (Not yet seen on hardware.)
+  `SPANIM 0,A,1,2`, or a name that is no target, as `"X"`, is
+  `Animation type mismatch (SPANIM:2)`, error 66, in `TANIM` and `ANIMDEF`
+  too. An array among the keys, as in `SPANIM 0,"XY",A,1`, is
+  `Illegal function call` with no number. `SPANIM` checks its sprite before
+  anything else: one not set is `Sprite not set (SPANIM:1)`, whatever comes
+  after it (TEST76).
 - `SPANIM` keys for XY, Z, UV and I outside -32768 to 32767 are
   `Out of range (SPANIM)`, and `TANIM` and `ANIMDEF` go through the same code. R
   has no such limit (TEST60).
@@ -897,6 +930,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   buttons rather than asking for a name, since a name needs two strings, so it
   is `(DIALOG:1)` too. (Not
   yet seen on hardware.)
+- `DIALOG` shows 45 characters of a longer caption, then an ellipsis. The file
+  name form does the same, where the manual gives 39 (TEST76K).
 - `BREPEAT` starts at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16. It
   doesn't touch what controllers type for `INKEY$`.
 - `BREPEAT` repeats a held button at its start frame and then every interval
@@ -964,9 +999,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   Without `ON BREAK GOTO` it stops the running program (TEST67: the step that
   asked for it ended there on both consoles, and the test went on with its
   next part). With one, the program jumps to the label, 20 frames after the
-  press (TEST76 on a Switch 2, 4.4.9). Ctrl+C types nothing for `INKEY$`, and
-  `KEYBOARD` sees Ctrl (usage 224) held but never C's press, only its
-  release. Whether Ctrl+C also ends a subprogram is not known.
+  press (TEST76K). Ctrl+C types nothing for `INKEY$`, and `KEYBOARD` sees Ctrl
+  (usage 224) held but never C's press, only its release. Whether Ctrl+C also
+  ends a subprogram is not known.
 
 ### USB keyboards
 
@@ -1084,6 +1119,14 @@ Expected but not yet seen on hardware:
 - On a keyboard layout where Right Alt is AltGr, Right Alt types the layout's
   character for the keys that have one.
 
+TEST76K on a docked Switch 2 (4.4.9) with a USB mouse:
+
+- `MOUSE OUT X,Y,W` starts at 0,0 with W 0. X and Y stay on the screen: the
+  mouse moved past the edges of a 640x360 screen ended at 0,359 and 639,5.
+- W is the wheel's total, 120 a notch, up positive: a notch up read 120, and
+  three down from there 0, -120 and -240.
+- `MBUTTON` gives 1 for the left button, 2 for the right and 4 for the middle.
+
 ### `PUSHKEY` and the key buffers
 
 - `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`). Codes from
@@ -1108,8 +1151,8 @@ Expected but not yet seen on hardware:
   keyboard plugged in or not (TEST71, TEST71K).
 - `PUSHKEY` of a string of 64 characters is `String is too long (PUSHKEY:1)`; 63
   goes (TEST60).
-- `PUSHKEY &H10FFF` goes and `&H11001` is `Out of range` (TEST62). It names the code: `PUSHKEY 70000` is
-  `Out of range (PUSHKEY:1)`. (Not yet seen on hardware.)
+- `PUSHKEY &H10FFF` goes and `&H11001` is `Out of range` (TEST62). It names
+  the code: `PUSHKEY 70000` is `Out of range (PUSHKEY:1)` (TEST76).
 - `INKEY$` after `PUSHKEY &H10009` (HOME) gives one character of code 2, and
   after `PUSHKEY &H10000` (up) code `&H1E` (TEST62).
 - Keys pass through two buffers of 128, each losing its oldest when full. Typed
@@ -1251,15 +1294,17 @@ Expected but not yet seen on hardware:
 - `TCPIANO` without Toy-Con set up is `Illegal control style`. It names the
   controller, as `(TCPIANO:1)`, and so do the other nine Toy-Con commands,
   `TCHOUSE` to `TCVEHICLE`. All but `TCVISOR` check this before the `OUT`
-  count: `TCHOUSE 1 OUT F` is error 107, `TCVISOR 1 OUT F` error 53. (Not yet seen on hardware.)
-- `XCTRLSTYLE` takes two arguments, or
-  four or five, or six or seven for Toy-Con on two controllers, where the first
-  must be 2 (`Out of range (XCTRLSTYLE:1)`) and the style 100
-  (`XCTRLSTYLE:2`). Toy-Con types are 0 to 10, each named after its argument,
-  and a pair that does not go together is `Illegal Toy-Con type`, error 110.
-  The IR flag with a style other than 1 is
-  `Illegal control style for using IR Camera (XCTRLSTYLE:2)`, error 109.
-  (Not yet seen on hardware.)
+  count: `TCHOUSE 1 OUT F` is error 107, `TCVISOR 1 OUT F` error 53 (TEST76).
+- `XCTRLSTYLE` takes two arguments, or four or five, or six or seven for
+  Toy-Con on two controllers, where the first must be 2
+  (`Out of range (XCTRLSTYLE:1)`) and the style 100 (`XCTRLSTYLE:2`). Toy-Con
+  types are 0 to 10, each named after its argument, and a pair that does not
+  go together is `Illegal Toy-Con type`, error 110: `XCTRLSTYLE 1,100,0,0` is
+  `(XCTRLSTYLE:4)`. For two controllers, the first takes no type 3, 4 or 7 to
+  10, against the manual: `XCTRLSTYLE 2,100,10,10,6,5` is
+  `Illegal Toy-Con type (XCTRLSTYLE:4)`. The IR flag with a style other than 1
+  is `Illegal control style for using IR Camera (XCTRLSTYLE:2)`, error 109:
+  `XCTRLSTYLE 1,0,0,1` (TEST76K).
 - `IRSTATE` starts at 0.
 - `IRREAD` in mode 1 is `Illegal IR Camera mode` (TEST71).
 - `IRREAD`'s array has 48 rows of 8 after clustering mode, as after moment
@@ -1297,20 +1342,18 @@ Expected but not yet seen on hardware:
   keeps their `THOME`, `TROT`, `TSCALE`, `TOFS` and `TCOLOR`.
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663 for
   400x240.
-- `XSCREEN` checks each argument's range
-  first and names it: width 128 to 1280 (`XSCREEN:1`), height 128 to 720
-  (`:2`), sample 1 to 10 (`:3`), mode 0 to 2 (`:4`). A width or height that 4
-  does not divide is `Use multiples of 4`, error 69, after that, as
-  `(XSCREEN:1)` or `(XSCREEN:2)`. A width or height that the sample takes past
-  1280 or 720 is `Out of range (XSCREEN:3)`, and `(XSCREEN:4)` when all five
-  arguments are given. (Not yet seen on hardware.)
+- `XSCREEN` checks each argument's range first and names it: width 128 to 1280
+  (`XSCREEN:1`), height 128 to 720 (`:2`), sample 1 to 10 (`:3`), mode 0 to 2
+  (`:4`). A width or height that 4 does not divide is `Use multiples of 4`,
+  error 69, after that, as `(XSCREEN:1)` or `(XSCREEN:2)`. A width or height
+  that the sample takes past 1280 or 720 is `Out of range (XSCREEN:3)`, and
+  `(XSCREEN:4)` when all five arguments are given (TEST76).
 - `TSCREEN` clears the screen. Without a character size it uses the font type.
-- A width or height given to `TSCREEN`
-  is 1 to 32768: 0 is `Out of range`, though the manual says 0 fills the
-  screen, as leaving both out does. A font type other than 8 to 64 in steps of
-  8 is `Illegal font type`, error 58, named as `(TSCREEN:1)` or
-  `(TSCREEN:2)`, and checked after the character size, width and height.
-  (Not yet seen on hardware.)
+- A width or height given to `TSCREEN` is 1 to 32768: 0 is `Out of range`,
+  though the manual says 0 fills the screen, as leaving both out does. A font
+  type other than 8 to 64 in steps of 8 is `Illegal font type`, error 58,
+  named as `(TSCREEN:1)` or `(TSCREEN:2)`, and checked after the character
+  size, width and height (TEST76).
 - `TSCREEN` also stops the screen's animations and undoes `THOME`, `TROT`,
   `TSCALE`, `TCOLOR` and `TBLEND`. `TOFS` goes back to 0,0 but keeps its depth.
   `TLAYER`, `TPAGE` and `TVAR` stay (TEST47), and so does `TFUNC` (TEST48).
@@ -1410,29 +1453,28 @@ Expected but not yet seen on hardware:
 - `SPSET` drops the sprite's `SPFUNC`, also on a sprite that was set already.
 - `SPSET` with an image takes attributes 0 to 31 in every form, as `SPDEF`
   does: `SPSET 0,0,0,16,16,32` is `Out of range (SPSET:6)`, and
-  `SPSET(0,0,16,16,32)` `(SPSET:5)`. (Not yet seen on hardware.)
+  `SPSET(0,0,16,16,32)` `(SPSET:5)` (TEST76).
 - `SPSET()` checks its template number, width, height and attributes before it
   looks for a free sprite, so a wrong one is an error even when no sprite in
   the range is free: `Q=SPSET(0,0,0,0,-1,16,1,0)` with sprite 0 in use is
-  `Out of range (SPSET:5)`, not -1. (Not yet seen on hardware.)
+  `Out of range (SPSET:5)`, not -1 (TEST76).
 - `SPDEF` checks what it is given: U and
   V 0 or more, width and height 0 to 2048, home point -32768 to 32767 and
   attributes 0 to 31, each named after its argument. Copying from another
   template (nine arguments) takes U and V up to 2048 too, and the image must
   end within 2048. An array whose length 7 does not divide is
-  `Illegal array size (SPDEF:1)`, error 117. (Not yet seen on hardware.)
+  `Illegal array size (SPDEF:1)`, error 117 (TEST76).
 - `SPDEF` from an array or DATA sets templates up to 8191 and leaves the rest
   out without an error. It checks each template's width, height, home point and
   attributes as `SPDEF` with numbers does, but with no number: the first one out
   of range stops it as `Out of range (SPDEF)`, with the templates before it
   set. A DATA count over 8192 is `Out of range` too, while a negative one sets
-  nothing. (Not yet seen on
-  hardware.)
+  nothing (TEST76).
 - `SPLINK` of a sprite to itself is
   `Illegal function call (SPLINK:2)`, and to a sprite linked below it
   `Can't link to decendent sprite (SPLINK:2)`, error 113, spelled so.
   `SPOFS`, `SPCOL`, `SPCOLOR`, `SPHOME`, `SPROT` and `SPSCALE` check the
-  sprite's number before anything else. (Not yet seen on hardware.)
+  sprite's number before anything else (TEST76).
 - `SPHIDE id,flag` shows the sprite on a flag of 0 and hides it on any other
   value, 2 and -1 among them. `SPHIDE id` with no flag hides it
   (TEST71).
@@ -1452,7 +1494,7 @@ Expected but not yet seen on hardware:
   either.
 - `SPCOL` without a rectangle starts it at minus the home point.
 - `SPCOL` takes 1, 2, 3, 5, 6 or 7 arguments. 4 or 8 are
-  `Wrong number of arguments`, error 52: `SPCOL 0,0,0,16`. (Not yet seen on hardware.)
+  `Wrong number of arguments`, error 52: `SPCOL 0,0,0,16` (TEST76).
 - `SPHITSP` with a reversed range searches it from the lower number.
 - `SPHITSP` of a sprite that is not set is -1, and `SPHITSP(id,other)` with
   `other` not set is 0; neither is an error.
@@ -1470,7 +1512,7 @@ Expected but not yet seen on hardware:
   `"SPSET"`, is `Function must be user defined (SPFUNC:2)`, error 114. Any
   other name must be a label: `"NOPE"` and `"@"` are `Illegal label string`,
   error 35, without a number, and a label the program does not have is
-  `Undefined label (SPFUNC:2)`. (Not yet seen on hardware.)
+  `Undefined label (SPFUNC:2)` (TEST76).
 
 ### `SPCHR`
 
@@ -1716,10 +1758,9 @@ Expected but not yet seen on hardware:
 - `LFILTER` copies a raster array when it is called: writing to the array later
   changes nothing on the screen until the next `LFILTER` (TEST60).
 - `LFILTER layer,0,n` is `Out of range`.
-- A type that does not go with the
-  number of arguments is `Out of range (LFILTER:2)`, as in `LFILTER 0,0,1`.
-  The mosaic and blur size is 0 to 1280 (`LFILTER:3`). (Not yet seen on
-  hardware.)
+- A type that does not go with the number of arguments is
+  `Out of range (LFILTER:2)`, as in `LFILTER 0,0,1`. The mosaic and blur size
+  is 0 to 1280 (`LFILTER:3`) (TEST76).
 - `LFILTER`'s raster deformation (types 3 and 4) needs the repeat flag:
   `LFILTER 1,3,A,#TRUE` with a real `A[240,4]` or `A[240,2]` works, while
   without the flag it is `Out of range` for the type whatever the array.
@@ -1851,6 +1892,8 @@ Expected but not yet seen on hardware:
   a later one alike, and the program goes on meanwhile (TEST71).
 - `RECSTART` right before such a `BGMPLAY` waits with it: the song sounds within
   50 samples of the recording's start.
+- A `BGMPLAY` and a `BEEP` run in the same frame sound together, within 3 ms
+  of each other over HDMI (TEST76R).
 
 ### MML
 
@@ -1919,27 +1962,29 @@ Expected but not yet seen on hardware:
   `:1[C]2:2D` passes (TEST74). A `:` naming the channel it is in changes no
   channel, so `[:0C]` passes. A channel past 15 fails at its number: `:16C`
   gives 1 (TEST74).
-- `BGMPLAY` and `BGMSET` stop with
-  `Illegal MML`, error 81, only for faults with no error of their own. The
+- `BGMPLAY` and `BGMSET` stop with `Illegal MML`, error 81, only for faults
+  with no error of their own. The
   MML errors 82 to 106 name the rest: `V200C` is `MML:Volume out of range`
   (94), `C200` and `C5` are `MML:Length out of range` (93), `{AB}C` is
   `MML:Undefined macro` (87), `C]` is `MML:RepeatEnd without repeat` (84),
   `[C` and `[C:1D]2` are `MML:Repeat without repeatEnd` (85), and `C:1D:0E`
   is `MML:Track already defined` (83). A value out of range in `@E` is
   `MML:Envelope out of range` (101), and in `@MP`, `@MA` or `@ML`
-  `MML:Modulation out of range` (102). (Not yet seen on hardware.)
+  `MML:Modulation out of range` (102). Each of these names the command's first
+  argument, `(BGMPLAY:1)`, whichever argument holds the MML. MML of over
+  1,048,576 characters is `MML:Too long` (82), with no number (TEST76).
 - A macro's body is checked as it is defined, before it is used, if ever: a
   macro it uses must be defined already, so `{X={Y}}` is `MML:Undefined macro`
   (87) without Y, and no macro can use itself. A definition inside it, as in
   `{X={Y=C}}`, is `MML:Illegal macro name` (88). Defining a macro again,
   `{X=C}{X=D}`, is `MML:Macro already defined` (86), and a name of over 256
-  characters `MML:Macro name is too long` (89). (Not yet seen on hardware.)
+  characters `MML:Macro name is too long` (89) (TEST76).
 - `L`, `Q`, `K`, `(` and `)` take no MML variable, as `O` takes none:
   `L$0` is `MML:Can't use variable` (90), placed just after the letter. `V`,
   `P` and `T` take one. `(` and `)` check the volume they come to, which starts
   at 127 in each channel, not their step: `V100(50` and `(` with no `V` before
   it are `MML:Volume out of range` (94), while `V10(-10` passes. After `V$1`
-  the steps are not checked, but after `V$0` a `)` is out of range. (Not yet seen on hardware.)
+  the steps are not checked, but after `V$0` a `)` is out of range (TEST76).
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so
@@ -2074,7 +2119,8 @@ Expected but not yet seen on hardware:
 - `WAVSET` checks its reference pitch before it reads the waveform:
   `WAVSET 224,0,0,0,0,"A",128` is `Out of range (WAVSET:7)`, not the bad
   waveform's error. A waveform it cannot read is
-  `Illegal function call (WAVSET:6)`, as `WAVSET 224,0,0,0,0,"Z"` is. (Not yet seen on hardware.)
+  `Illegal function call (WAVSET:6)`, as `WAVSET 224,0,0,0,0,"Z"` is
+  (TEST76).
 - `WAVSETA` with an empty array is `Illegal function call` (TEST51, TEST52).
 - `WAVSETA`'s arguments after the array can be left off the end, but one left
   out in between is `Type mismatch` with its number, in both forms and ahead of
@@ -2206,16 +2252,24 @@ Expected but not yet seen on hardware:
 
 - `TALK` reads は as "wa" when 、 comes right after it, as for a particle;
   before 。 or anywhere else it is "ha".
-- At the standard `<P128>`, `TALK` speaks at one pitch, 100 Hz. It does not
-  fall through a phrase, at 、 or 。, or on は before 、.
-- `<P…>` lowers the voice as its number rises: `<P256>` is below `<P128>`.
+- Without a `<P…>` tag, `TALK` speaks at one pitch, 100 Hz. It does not fall
+  through a phrase, at 、 or 。, or on は before 、.
+- With a `<P…>` tag, `<P128>` included, `TALK` speaks at about 20100/P Hz:
+  158 Hz at `<P128>`, 314 at `<P64>` and 39.4 at `<P512>`. The pitch falls
+  through the phrase, `<P128>` from about 184 Hz to 113. The tag leaves the
+  length as it was (TEST76R).
 - A vowel takes 90 ms at the standard speed, so あいうえお lasts 460 ms. 20
-  vowels keep `TALKCHK` set for about 121 frames.
+  vowels keep `TALKCHK` set for about 121 frames. One mora, as `"<V32>a"`,
+  `"<V32>$a"` or `"<V32>あ"`, keeps it set for one or two frames (TEST76).
+- `SNDSTOP` and `TALKSTOP` cut `TALK` about a frame (15 ms) sooner than
+  `SNDSTOP` cuts `BEEP` or `PCMSTREAM`. `TALKCHK()` reads 0 at once
+  (TEST76R).
 - A `$` marks phoneme letters only as the first character of the text, before
   any control string: `"$<S128>koqnichiwa"` speaks. Anywhere else, `$` and
   Latin letters say nothing, so `"<V16>$a"` is silent.
-- Sung notes and `TALK` pitches have a whole period at 16 kHz, so a sung A4 is
-  444.4 Hz, not 440.
+- Sung notes and `TALK` pitches have a whole period at 16 kHz. A sung note's
+  period is cut down to whole samples: A4 is 444.4 Hz, not 440, C5 533.3 Hz
+  and F4 355.6 Hz (TEST76R).
 - A new `TALK` cuts off what is being said (TEST71).
 - `TALK` takes `$ca`, `$xa`, `$rya` and `$cha` with no error (TEST71).
 - A sung note (`*A,C2`) is the voice alone: the channel's instrument stays
@@ -2246,23 +2300,37 @@ Expected but not yet seen on hardware:
   `EFCWET 0,127,0,0`, with a hall set by `EFCSET #EFCREFHALL,...` and with
   `EFCEN` off again. It records only what `BEEP` and BGM keep, not the copy
   they send.
+- `BGMWET` sets the send of the song a track plays, from then until the next
+  `EFCWET`, which sets every track's, or the track's next `BGMPLAY`, which
+  goes back to `EFCWET`'s send. So a `BGMWET` before its `BGMPLAY` changes
+  nothing (TEST76R).
+- `EFCSET #EFCOFF` turns the effector off, so `EFCEN()` reads 0, and keeps the
+  reverb set before: a later `EFCEN 1` plays that preset (TEST76R).
 - `SNDMVOL` starts at 88, not 127, and the output is linear in it, so
   `SNDMVOL 127` plays 1.43 times as loud as the start.
 - `SNDSTOP` and `RUN` put `SNDMVOL` back at 88.
-- `SNDSTOP` holds the program until the next frame: right after `VSYNC` it takes
-  one frame.
-- A subprogram's `SNDMVOL` does nothing.
+- The main program's `SNDMVOL` scales the subprogram's sound as its own
+  (TEST76).
+- `SNDSTOP` in either program stops the sound of both: a subprogram's
+  `SNDSTOP` stops the main program's song (TEST76).
+- `SNDSTOP` holds the program until the next frame when the program has
+  synced in this frame: right after `VSYNC` it takes one frame, and so does a
+  second `SNDSTOP`. After a busy loop past the frame it goes straight on
+  (TEST76).
+- A subprogram's `SNDMVOL` checks its arguments and then does nothing:
+  `SNDMVOL 32` there leaves 88, and `SNDMVOL 200` is
+  `Out of range (SNDMVOL:1)` (TEST76).
 - `RECDATA` positions go round the buffer too while `RECSTART` without a time
   records round it (-1 is the last sample, `RECLEN()` the first). With a time,
-  -1 is no error (TEST32). A position
-  outside such a recording reads 0 on both sides. (Not yet seen on hardware.)
+  -1 is no error (TEST32). A position outside such a recording reads 0 on
+  both sides (TEST76).
 - `RECSTART` leaves the older recordings in the buffer. Recording round it,
   `RECSAVE` from -1000, from past what this recording has reached, or of 1000
   samples from 500 before its end gives those older samples where this
   recording has none (TEST71).
 - `RECSAVE` of a number is `Type mismatch (RECSAVE:1)`: `RECSAVE Z,Z,Z`. So is
   `RECSAVE` into a string array or one of three dimensions, after the count
-  and the position are read. (Not yet seen on hardware.)
+  and the position are read (TEST76).
 - `RECSTART` does not record `PCMSTREAM`: streams played at full volume
   recorded 0, while the person heard them (TEST74).
 - A subprogram's `RECSTART` records nothing of its own, and its `RECSAVE` gives
@@ -2276,11 +2344,13 @@ Expected but not yet seen on hardware:
   `SNDMSBAL` sets it, the main program's does nothing, and `SNDMSBAL()` reads
   it in either program.
 - `SNDMSBAL` starts at 63, though the manual calls 64 even. Each `SUBRUN` puts
-  the balance back halfway between 0 and 127, which reads 63, and so does the
-  main program's `SNDSTOP`. `RUN` leaves it alone.
-- `SNDMSBAL`'s time is in seconds. The balance moves to the new value in a
-  straight line, a step each frame, and `SNDMSBAL()` reads where it has got
-  to, rounded down.
+  the balance back halfway between 0 and 127, which reads 63, and so does
+  `SNDSTOP` in either program (TEST76). `RUN` leaves it alone.
+- `SNDMSBAL`'s and `SNDMVOL`'s time is in seconds. The value moves to the new
+  one in a straight line, a step each frame, and `SNDMSBAL()` and `SNDMVOL()`
+  read where it has got to, rounded down. The time gone grows by 1/60 a
+  second each frame in single precision, so a move from 0 to 127 over a
+  second reads 126 at its 60th frame and 127 at its 61st (TEST76).
 - `SNDMSBAL`'s balance b scales the main program's sound by 2b/127 and the
   subprogram's by 2(127-b)/127, so halfway each plays as loud as the main
   program alone. A main program's `RECSTART` hears both,
@@ -2292,24 +2362,29 @@ Expected but not yet seen on hardware:
 - `SNDMSBAL()` and `PCMPOS()` work as functions.
 - At the start's `SNDMVOL`, a full-scale `PCMSTREAM` at full `PCMVOL` plays at
   0.35 of full scale.
-- `PCMVOL` set before `PCMSTREAM` does not hold: after
-  `PCMVOL 0,4096:PCMVOL 1,4096`, `PCMVOL OUT` read 32767 and 32767 27 frames
-  into the stream. Before any stream it read 0 and 0, and `PCMPOS()` 0
-  (TEST74, on a Switch 2 started afresh).
-- `PCMPOS` seems to move in blocks: 27 frames into a looping stream of 4800
-  samples at 48000 Hz it read 3313 or 673, either one on either console, and
-  for 800 samples at 8000 Hz 353 (TEST74).
-- `PCMSTREAM` plays the low 16 bits of an integer as a
-  signed sample: 65535 plays as -1, so a program may store samples as 0 to
-  65535. It cuts a real to a whole number and holds it within -32768 to 32767.
-  (Not yet seen on hardware.)
+- `PCMSTREAM` sets both `PCMVOL`s to 32767, so a `PCMVOL` set before it does
+  not hold: after `PCMVOL 0,4096:PCMVOL 1,4096`, `PCMVOL OUT` read 32767 and
+  32767 27 frames into the stream. Before any stream it read 0 and 0, and
+  `PCMPOS()` 0 (TEST74, on a Switch 2 started afresh). With no stream, and
+  during one, `PCMVOL OUT` reads back what was set (TEST76).
+- `PCMPOS()` gives how far the stream has been fed to the sound engine, not
+  the sample that plays. It reads 0 right after `PCMSTREAM` and 3073 a frame
+  later, then jumps: by 2160 at 48000 Hz, 2080 or 2081 at 32000 and 8000 Hz
+  and 2095 at 22050 Hz, modulo the stream's length. The jumps come every
+  (jump / rate) seconds, 2 to 3 frames apart at 48000 Hz and 14 to 16 at
+  8000 Hz (TEST76; TEST74 saw the same). That fits an engine that takes the
+  stream in blocks of 5 ms and, when fewer than 1024 samples are left ahead,
+  feeds it to 3072 ahead, `PCMPOS()` being the fed position plus 1.
+- `PCMSTREAM` plays the low 16 bits of an integer as a signed sample: 65535
+  plays as -1, so a program may store samples as 0 to 65535. It cuts a real to
+  a whole number and holds it within -32768 to 32767 (TEST76R).
 - A 2D array plays its first row on the left and its second on the right.
   Further rows do not play. An array of strings or of three dimensions is a
   `Type mismatch`, and an empty one an `Illegal function call`. Two arrays have
   one dimension each and the same length, or the second is an
-  `Illegal function call`. (Not yet seen on hardware.)
+  `Illegal function call` (TEST76).
 - `PCMSTREAM` with a number alone, such as `PCMSTREAM 22050`, sets the rate of
-  the stream there is and leaves its arrays, position and volume. (Not yet seen on hardware.)
+  the stream there is and leaves its arrays, position and volume (TEST76).
 - A stream keeps the length its arrays had at `PCMSTREAM`. After `RESIZE` makes
   one shorter, the stream reads the memory past the array's end. (Not yet seen
   on hardware.)
@@ -2335,20 +2410,21 @@ Expected but not yet seen on hardware:
 - `BQPARAM` looks at the number of its arguments before their values: type 5
   with no gain is `Wrong number of arguments (BQPARAM:2)`. A Q of 0 is
   `Illegal function call (BQPARAM:5)`. (TEST62)
-- SmileBASIC 4 (4.4.8) names more of these arguments: a rate of 0
-  is `(BQPARAM:3)`, a type out of 0 to 7 `Out of range (BQPARAM:2)`, fewer than
-  13 coefficients `Illegal function call (BQPARAM:1)` and `(BIQUAD:3)`, and a
-  window type out of 0 to 3 `Out of range (FFTWFN:2)`. `FFTWFN` looks at the
-  length before the window type, and `BIQUAD` at the channels before the
-  coefficients. (Not yet seen on hardware.)
+- More of these arguments are named: a rate of 0 is `(BQPARAM:3)`, a type out
+  of 0 to 7 `Out of range (BQPARAM:2)`, fewer than 13 coefficients
+  `Illegal function call (BQPARAM:1)` and `(BIQUAD:3)`, and a window type out
+  of 0 to 3 `Out of range (FFTWFN:2)`. `FFTWFN` looks at the length before the
+  window type, and `BIQUAD` at the channels before the coefficients (TEST76).
 - `FFTWFN`'s window and the coefficients of `BQPARAM` and `BIQUAD` must be real
   arrays: an int array is `Type mismatch`, `(FFTWFN:1)`, `(BQPARAM:1)` and
-  `(BIQUAD:3)`. `FFT`'s window too, `(FFT:5)`. `BIQUAD`'s sounds may be ints. (Not yet seen on hardware.)
+  `(BIQUAD:3)`. `BIQUAD`'s sounds may be ints. (Not yet seen on hardware.)
+- `FFT` takes an int array as its window with no error. A window of zeros gave
+  zero outputs (TEST76). It reads the array's bytes as
+  reals, the second half of them past the array's end.
 - `FFT` and `IFFT` take the length from the third array, the input's real part.
   Not a power of two is `Illegal function call` naming nothing; a later array of
   another length is named, as `(FFT:2)`. The first array's length is not looked
-  at. (Not yet seen on
-  hardware.)
+  at (TEST76).
 
 ## DIRECT mode
 
@@ -2374,23 +2450,23 @@ Expected but not yet seen on hardware:
   fails, `G` is 0. A line that does not compile declares nothing.
 - `CONST`, `ENUM`, `RETURN`, `BREAK`, `CONTINUE`, `DEFOUT`, `DATA`, `READ`,
   `RESTORE`, `OPTION` and `STOP` typed in DIRECT mode are
-  `Can't use from direct mode`, error 43. The error comes as the line compiles, so nothing on the line
-  runs, and the message names no place. SmileBASIC 4 refuses the statement
-  before it reads what follows the keyword, so `RESTORE @X`, `BREAK 1`,
-  `DATA A` and `STOP 1,2` are error 43 too. A statement before it on the
-  line still gives its own error first: `?#B:RETURN` is
-  `Undefined constant`. `OPTION` and `STOP` are names, so `STOP=1` assigns
-  a variable; `CONST` and `ENUM` are keywords. (Not yet seen on hardware.)
+  `Can't use from direct mode`, error 43. The error comes as the line
+  compiles, so nothing on the line runs, and the message names no place.
+  SmileBASIC 4 refuses the statement before it reads what follows the keyword,
+  so `RESTORE @X`, `BREAK 1`, `DATA A` and `STOP 1,2` are error 43 too. A
+  statement before it on the line still gives its own error first:
+  `?#B:RETURN` is `Undefined constant`. `OPTION` and `STOP` are names, so
+  `STOP=1` assigns a variable; `CONST` and `ENUM` are keywords (TEST76).
+- `DEF` and `COMMON DEF` typed in DIRECT mode are error 43 too, for the whole
+  line: `DEF F:VAR Q=5:END:F:?"A"` prints nothing (TEST76).
 - A call to a name defined nowhere, such as `NOSUCH 1` or `?NOSUCH(1)`, is
-  a `Syntax error` as a DIRECT mode line compiles, after its arguments: `?"A":NOSUCH` prints nothing. In a
-  program it is a `Syntax error` only when the call runs. (Not yet seen on
-  hardware.)
-- `#_LINE` is 0 in DIRECT mode. (Not
-  yet seen on hardware.)
-- `DEF`, labels, `VAR` and `DIM` compile in DIRECT mode. Inside a `DEF`
-  typed there, `VAR`, `DIM` and new variables make globals, not the
-  `DEF`'s own; its parameters stay its
-  own. (Not yet seen on hardware.)
+  a `Syntax error` as a DIRECT mode line compiles, after its arguments:
+  `?"A":NOSUCH` prints nothing. In a program it is a `Syntax error` only when
+  the call runs (TEST76).
+- DIRECT mode calls a `COMMON DEF` of the program run last: after `RUN 3` of a
+  slot holding `COMMON DEF G`, a typed `G` runs it. A plain `DEF G` there is a
+  `Syntax error` (TEST76).
+- `#_LINE` is 0 in DIRECT mode (TEST76).
 - `CLEAR` in a program is a `Syntax error` when it runs. `PROJECT` in a program
   is `Can't use in program`, error 44, when it runs: after `?"A"` it prints A,
   then `Can't use in program in 3:1(PROJECT)` (TEST71).
@@ -2403,11 +2479,15 @@ Expected but not yet seen on hardware:
   `?"BEFORE CONT":CONT`, nothing on the line runs, `ENVSTAT` stays as it was,
   and a stopped program can still go on with `CONT` alone (TEST74).
 - `RUN` in DIRECT mode takes one number literal, decimal, `&H` or `&B`. A slot
-  of 6 or more is `Out of range`, and a variable, a `:`, `1.5` or `-1` is
-  `Illegal function call`.
+  of 6 or more is `Out of range`, and a variable, a `:` or `1.5` is
+  `Illegal function call`. `RUN -3` runs slot 0, and a compile error there
+  reaches `ENVSTAT`, which a typed line's errors do not (TEST76).
 - `LIST` in DIRECT mode takes number literals too. `LIST 1:` opens slot 1 in
-  the editor, a real is `Type mismatch`, and a line of 1000000 or more is
-  `Out of range`.
+  the editor, and a line of 1000000 or more is `Out of range`. A real, as in
+  `LIST 1.5`, is a `Syntax error`, and anything but a line number after the
+  `:`, as in `LIST 1:A`, `Type mismatch` (TEST76).
+- `SUBRUN` with nothing after it is a `Syntax error`, and `SUBRUN A$`
+  `Illegal function call` (TEST76).
 - `ENVINPUT$` lists a line typed again as a new line and leaves the older copy
   where it was. The line typed just before, typed again, is not added (TEST71).
 - `FILES` prints a long list a screen at a time, in DIRECT mode and in programs
@@ -2434,6 +2514,8 @@ Expected but not yet seen on hardware:
   `RETURN without GOSUB`. It leaves DEF calls behind too: after + in a DEF
   called from a DEF, a loop of `GOSUB`s from the label reaches the full depth
   (TEST71).
+- The jump leaves an `SPFUNC` callback that `CALL SPRITE` runs, and a later
+  `CALL SPRITE` works as before (TEST76K).
 - `ON BREAK GOTO` inside a DEF may name a label outside it. When the DEF has a
   label of the same name too, the jump goes to the one outside (TEST71).
 - Breaking off a line typed in DIRECT mode says `User break on 0:1`. A forced
@@ -2503,12 +2585,22 @@ Expected but not yet seen on hardware:
 - `EXEC` of a slot with code still to run, such as `EXEC 0` in a DEF of slot 1
   that slot 0 called, is `Can't use the specified slot`.
 - `EXEC` of the slot running starts it again (`EXEC 0` in slot 0).
+- `EXEC` of a slot is `Duplicate function`, error 19, when a `DEF` there,
+  `COMMON` or not, has the name of another slot's `COMMON DEF`, or a
+  `COMMON DEF` there the name of any `DEF` in another slot. The error names no
+  argument and is placed at the slot's `DEF`; nothing of the slot runs. The
+  same slot compiled again replaces its own: `COMMON DEF FA3` put into slot 3
+  twice gives no error, and the second one answers (TEST76). Two plain `DEF`s
+  of one name in two slots have not been tried.
 - Slots that `EXEC` ran are gone after the next `RUN`.
 - `PRGEDIT slot,n` past the last line goes to the last line, and
   `PRGEDIT slot,-1` past it, where `PRGGET$` is empty.
 - `PRGSEEK 1` from the last line goes past it and gives 0.
 - `PRGDEL` at the end of a slot deletes back towards its start.
 - `PRGSET` on an empty line in the middle replaces it.
+- `PRGINS` that would take a slot past 1,048,576 characters inserts nothing,
+  with no error: 1100 lines of 1000 characters into an empty slot leave 1047
+  of them (TEST76).
 - SmileBASIC Debugger's model of `PRGEDIT`, `PRGSEEK`, `PRGDEL` and `PRGSET`
   agrees with these four bullets.
 - `PRGNAME$()` and `PRGSIZE()` in DIRECT mode mean slot 0, whichever slot
@@ -2532,54 +2624,58 @@ Expected but not yet seen on hardware:
 - File names may start with `@`, as the backups' do: `LOADV "DAT:@BACKUP.DAT"`
   reads one, and `SAVE "@X"` saves (after the usual question).
 - `@` may come anywhere in a file name: `A@`, `A@B` and a lone `@` are names.
-  A `.` may come anywhere but first, so `@.X` is a name too. (Not yet seen on hardware.)
+  A `.` may come anywhere but first, so `@.X` is a name too (TEST76).
 - Only a `:` at the fourth character marks a type, and only after `TXT`,
   `DAT`, `GRP`, `JPG` or `PNG`. `CHKFILE("TXT:A:B")` and `CHKFILE("AB:C")` are
   `Illegal format (CHKFILE:1)`, error 71. `LOAD "PNG:X",1` is
-  `File type mismatch (LOAD)`, as `LOAD "DAT:X",1` is. (Not yet seen on hardware.)
-- `CHKFILE`, `LOAD`, `SAVE`, `LOADV`, `SAVEV`, `LOADG`, `SAVEG`, `DELETE`,
-  `RENAME` and `FILES` raise errors for a name they cannot take, before any
+  `File type mismatch (LOAD)`, as `LOAD "DAT:X",1` is (TEST76).
+- `CHKFILE`, `LOAD`, `SAVE`, `LOADV`, `SAVEV`, `LOADG`, `SAVEG`, `DELETE` and
+  `RENAME` raise errors for a name they cannot take, before any
   question, naming the argument as in `(CHKFILE:1)`: `Illegal format`,
   error 71, for a character a name cannot have (`A*`), a second `/`
   (`A/B/C`) or no file's name (`TXT:`, `NAME/`, `""`), and
   `File name is too long`, error 73, for a project's or a file's name of over
-  32 characters. `EXEC` raises the same errors without the number. `FILES`
-  takes a name alone as a project's (`FILES "TXT:NAME"`), so a project and a
-  file together are error 71 there, and so is `FILES ""`. (Not yet seen on hardware.)
+  32 characters. `EXEC` raises the same errors without the number. (Not yet seen
+  on hardware.)
+- `FILES` takes a name alone as a project's (`FILES "TXT:NAME"`), so a project
+  and a file together are error 71 there, and so is `FILES ""`. Its name
+  errors name no argument: `FILES "TXT:A/B"` and `FILES ""` are
+  `Illegal format (FILES)` (TEST76).
 - `FILES` with one argument that is neither a string nor an array is
   `Type mismatch (FILES:1)` whatever the `OUT` count: `FILES Z`, `Q=FILES(Z)`
-  and `FILES Z OUT Q0`.
-  (Not yet seen on hardware.)
+  and `FILES Z OUT Q0` (TEST76).
 - `SAVEG` takes GRP and JPG files, and a name without a type is a GRP file's;
   `SAVEV` takes TXT, DAT and GRP files and needs the type. Any other type, or
   none for `SAVEV`, is `File type mismatch`, error 77, with no number
   (`(SAVEG)`), before any question: `SAVEG "TXT:X",0`, `SAVEG "PNG:X",0` and
   `SAVEV "X",S$`. The name's errors 71 and 73 come first, and 75 and 74 for
   its project after. `EXEC` of a type other than TXT is error 77 before the
-  name's other checks: `EXEC "DAT:",1` is 77, not 71. (Not yet seen on hardware.)
-- `SAVEV` stores a DAT or GRP file's array compressed, or as it is when
-  compressed it is still over 16 MiB. Over 16 MiB both ways is
-  `Array is too large`, error 47, with no number, after the question: an array
-  of over 4194297 random integers, or a 2048 by 2048 GRP of random pixels. An
-  array as large that compresses well saves. (Not yet seen on hardware.)
+  name's other checks: `EXEC "DAT:",1` is 77, not 71 (TEST76).
+- `SAVEV` stores a DAT or GRP file's array as it is when its values take
+  16 MiB or less, and compressed otherwise. Over 16 MiB both ways, the
+  compressed body counted with its header, is `Array is too large`, error 47,
+  with no number, after the question. So 4,194,304 ints always save, as does
+  a 2048 by 2048 GRP: 4,194,298 random ints, which do not compress, saved
+  (TEST76K). An array of more random ints is error 47 (not yet
+  seen on hardware), while one as large that compresses well saves.
 - `SAVEG` checks its page, rectangle and quality before the file's name, so
   `SAVEG "A*",0,0,0,0,1` is `Out of range (SAVEG:5)`, not error 71. It takes
   the quality, 1 to 100, for a GRP file too and ignores it there:
   `SAVEG "GRP:X",0,50` saves. A rectangle past the page's right edge is
   `(SAVEG:4)` and past its bottom `(SAVEG:5)`, one argument before the size.
-  Two or three numbers after the page are `Wrong number of arguments`. (Not yet seen on hardware.)
+  Two or three numbers after the page are `Wrong number of arguments`
+  (TEST76).
 - `DELETE` of a file in a `#` system project is
   `Can't SAVE to system project (DELETE:1)`, error 75, ahead of the 74 for a
   name with a project: `DELETE "TXT:#SYS/A"`, and `DELETE "A"` while a `#`
   project is the current one. `RENAME` is the same for each name in turn,
   `(RENAME:1)` or `(RENAME:2)`. While a `#` project is the current one,
   `SAVE "X"`, `SAVEV "TXT:X",S$` and `SAVEG "X",0` are error 75 as well,
-  without a number. (Not
-  yet seen on hardware.)
+  without a number (TEST76).
 - `DIALOG(name,caption,most)` cuts its first name to `most` characters, then
   checks it as the file commands do: `DIALOG("A@B","X")` opens, while
   `DIALOG("P/A","X")` and `DIALOG("A B","X")` are
-  `Illegal file name (DIALOG:1)`, error 37. (Not yet seen on hardware.)
+  `Illegal file name (DIALOG:1)`, error 37 (TEST76).
 - File names may start with `#`, as the first character only:
   `SAVEV "TXT:#NAME",S$` saves, and `LOAD "#NAME"` loads. A `#` anywhere
   else, or on its own, is refused. With a `/` after it, the `#` part is a project
@@ -2587,8 +2683,8 @@ Expected but not yet seen on hardware:
   not yet seen there.
 - `CON`, `PRN`, `NUL`, `AUX`, `COM1` to `COM4` and `LPT1` to `LPT4` cannot
   name a file, or a project in a path. `CHKFILE("TXT:CON")`, `SAVE "NUL/A"`
-  and `FILES "TXT:LPT1"` are `Illegal format`, naming the argument as in
-  `(CHKFILE:1)`, before any question. Only the whole name counts: `COM5` to
+  and `FILES "TXT:LPT1"` are `Illegal format` before any question, naming the
+  argument as in `(CHKFILE:1)`, except in `FILES`. Only the whole name counts: `COM5` to
   `COM9`, `LPT5` to `LPT9`, `CON.A`, `#CON` and `@CON` are names like any
   other.
 - File names may end in a dot: `SAVEV "TXT:Q51.",S$` saves, and
@@ -2608,7 +2704,9 @@ Expected but not yet seen on hardware:
   project are `Can't access other project in this mode`, error 74, for the
   program's own project and for the workspace's `/NAME` too, and change no
   file: `SAVEV "TXT:/NAME",S$` is `(SAVEV)`, `RENAME "TXT:/NAME","NEW"`
-  `(RENAME:1)` and `DELETE "TXT:/NAME"` `(DELETE:1)`. Typed in DIRECT mode,
+  `(RENAME:1)` and `DELETE "TXT:/NAME"` `(DELETE:1)`. `SAVEV` is error 74 for
+  a name no file has too, as `SAVEV "TXT:/#T76",S$` (TEST76K). Typed in
+  DIRECT mode,
   `SAVEV "TXT:OWN/NAME",S$`, and `SAVEV "TXT:/NAME",S$` in the workspace, ask
   as usual and save in the current project, with `RESULT` 1 (TEST69).
 - `LOADG "PNG:NAME",0` in a main program is error 74, `(LOADG)`.
@@ -2708,8 +2806,7 @@ Expected but not yet seen on hardware:
   or more OUT variables, `LOADV "DAT:X" OUT A,B`, is `Wrong number of OUT
   arguments`, error 53, and with no OUT variable and one argument error 52. A
   `TXT:` name with one argument and no OUT variable, `LOADV "TXT:X"`, or with
-  two, is 53. (Not yet seen
-  on hardware.)
+  two, is 53 (TEST76).
 - `LOADV` of a `JPG:` or `PNG:` name, as a function and as a command, and of
   a name without a type in either form, is `File type mismatch (LOADV)`, error
   77, with no number (TEST71; the `PNG:` function form in TEST72).
@@ -2742,6 +2839,10 @@ Expected but not yet seen on hardware:
   TEST67). Three `SAVEV`s of one TXT file kept the copy each replaced in
   `@BACKUP.TXT`, and No on the question gave `RESULT` -1 and left the file
   alone (TEST67).
+- `LOAD` and `EXEC` over a slot with unsaved edits ask first, starting on Yes,
+  the right button: "There is an unsaved program in slot 0, and it will be
+  overwritten and deleted when it is loaded. Are you sure?" `EXEC` answered
+  Back stops with `Load failed`, naming no argument, at the `EXEC` (TEST76K).
 - An Enter held for about 2 seconds on a USB keyboard to answer `SAVEV`'s
   questions does not reach the program: `KEYBOARD(40)` was 0 when `SAVEV`
   returned, and `INKEY$` stayed empty for the next 4 seconds (TEST74).
@@ -2767,8 +2868,7 @@ Expected but not yet seen on hardware:
 - `METAEDIT`, `METASAVE` and `METALOAD` share one buffer. `METASAVE` answered
   No writes nothing, and `METALOAD` with no argument reads the stored
   metadata again, so after `METAEDIT` and a cancelled `METASAVE` it drops the
-  edits. (Not yet seen on
-  hardware.)
+  edits (TEST76K).
 - `METASAVE` while a `#` system project is the current one is
   `Can't SAVE to system project (METASAVE)`, error 75, with no argument's
   number, before its question. (Not yet seen on hardware.)
@@ -2856,7 +2956,8 @@ TTEST36.
 - Each caller gets the one answer in its own form. A `DIALOG` with OK or a
   choice, behind a `DIALOG()` that waits for buttons, gets `RESULT` 1 for any
   button and 0 on a timeout. A `DIALOG()` that waits for buttons, behind a
-  choice of two, returns -1 for the left one.
+  choice of two, returns -1 for the left one, and 0 for the right one with
+  `RESULT` 1 (TEST76K).
 - `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives the old
   answer until then: `ENVFOCUS 0` took one to three frames (it varied from run
   to run), `ENVFOCUS 1` one. An `ENVFOCUS` while the focus is moving is lost
@@ -2909,8 +3010,9 @@ TTEST36.
   run as S 0, N 0, A -1, C -1 and L 70, the A and L of TEST69's last error.
 - `ENVSTAT OUT S,N,A,SL,C,L` after the main program's `Divide by zero` gives N
   7, A -1, SL 0, C the statement's character from the start of the program
-  counting from 0, and L its line. After a `STOP`, N is 0 and A, SL and C are
-  -1, but L keeps the line of the error before.
+  counting from 0, and L its line.
+- After a `STOP` or a break by the + button, `ENVSTAT OUT S,N,A,SL,C,L` gives
+  S 1, N 0, A 0, SL -1, C -1 and L 0 (TEST76K).
 - `ENVSTAT 0` in a subprogram turns a stopped program's status 1 or 2 to 0, and
   `CONT` can no longer go on with it.
 - `ENVSTAT OUT` as TTEST39 saw it:
@@ -2919,9 +3021,8 @@ TTEST36.
   - A `GOTO` with nothing after it runs the lines before it and stops with
     `Type mismatch` (N 8) at its statement.
   - TTEST39 saw status 1, N 0, A, SL and C -1 after an error typed in direct
-    mode. Those are the fields a `STOP` leaves, so the program had most
-    likely stopped there: TEST69 and TEST70 show that a direct-mode error
-    keeps the fields as they were.
+    mode. The program had most likely stopped there: TEST69 and TEST70 show
+    that a direct-mode error keeps the fields as they were.
   - While the editor shows, status 4 comes with N, A, SL, C and L all 0, and
     `ENVLOCATE` gives 0,0.
 - A is the argument that the error message names, counted from 0: 1 after
@@ -2942,8 +3043,8 @@ TTEST36.
   clean program sets it to 0 (TEST70, on a Switch and a Switch 2).
 - A `Syntax error` typed in DIRECT mode leaves the status as it was, as a
   program's compile error does: from 0 it stayed 0, with an empty line typed
-  after it. After a `STOP` it stays 1, with N 0 and A, SL and C -1, and
-  `CONT` then goes on and leaves 0 (TEST71).
+  after it. After a `STOP` it stays 1, and `CONT` then goes on and leaves 0
+  (TEST71).
 - `?1/0` typed in DIRECT mode is a compile error too, as operations on
   constants are worked out as the line compiles: it prints `Divide by zero`
   and leaves the status. From 0 the status stayed 0 through `?1/0`, an empty
@@ -2955,9 +3056,20 @@ TTEST36.
   line 2, C is the `=`'s character, one past the `A` (TEST72). So is a
   `Divide by zero` of constants there, with status 0: C is 1 for `A=1/0` and
   5 for `B=2:A=1/0`. `?7/0` gives the statement's start, 0, and so does a
-  division found as the program runs: 4 for `Z=0:A=1/Z` (TEST74). An
-  `Undefined constant` in an assignment's value is placed at the constant
-  itself: C is 2 for `A=#NONE` and 6 for `B=2:A=#NONE`.
+  division found as the program runs: 4 for `Z=0:A=1/Z` (TEST74).
+- Other compile errors are placed this way (TEST76):
+  - An unknown `#constant` and a number literal that does not lex, at the
+    token before them: `?#ZZ` and `IF #ZZ THEN` at the `?` or `IF`, `A=#NONE`
+    at the `=`, so C is 1 for `A=#NONE` and 5 for `B=2:A=#NONE`. In a `CONST`
+    or `ENUM` value they are placed at themselves, and `?&H` with no digit at
+    the `&H`.
+  - A function compiled in place given the wrong number of arguments, at the
+    statement's start, also in an assignment: `Q=ABS(Z,Z)` at the `Q`. The
+    run-time `Type mismatch` of `A=1+"A"` goes there too.
+  - `Undefined variable`, `Duplicate variable` and a variable in a `CONST`
+    value, at the name.
+  - A `CASE` with no `WHEN`, at what stands in its place: `CASE 1:ENDCASE` at
+    the `ENDCASE`.
 - `ENVLOCATE OUT X,Y`, which the manual leaves out, gives the right edge and top
   of the main console's cursor cell on the display. With the 400x240 screen 1200
   pixels wide in its middle, the cursor at column C of row R is at 40+24*(C+1),
@@ -3053,6 +3165,8 @@ TTEST36.
   100048 free, `X$=POP("ABC"+"X"*100027+"XYZ")` gives `Z` and leaves 100048, no
   error, where `SHIFT` of it, which needs a copy, is `Out of memory (SHIFT)`.
   Stored in `S$` the same constant takes 200256 bytes.
+- `LOADV "DAT:Q",A%` of 2048 ints into `DIM A%[0]` with about 2 KB free by
+  `FREEMEM` loaded them all, with no error (TEST76K).
 - `A%=LOADV("DAT:Q")` makes the new array beside the old: 10 MB of file with
   4216464 free is `Out of memory (LOADV)` (TEST57).
 - `LOADV "DAT:Q",A%` fills the array, gives no error and leaves `FREEMEM` as it
@@ -3096,7 +3210,9 @@ TTEST36.
 - `SYSPARAM("TVMODE")` is 1 on a docked Switch 2 and 0 on a Switch 1 in
   handheld mode (TEST67). It follows the dock both ways while a program runs:
   on a Switch 2 taken out of the dock mid-program it went from 1 to 0
-  (TEST70), and back to 1 when put back (TEST71).
+  (TEST70), and back to 1 when put back (TEST71). Put in the dock, a Switch 2
+  read 1 within a frame, and `MAINCNT` went on with no gap of over 2 frames
+  (TEST76K).
 - `SYSPARAM`'s `LANG` is `ja` on a Switch set to Japanese. `SYSBEEP` starts at
   1, `KEYREPEAT` at 20 and 3, and `TOOL1` to `TOOL3` at `#TOOL/SBSMILE.PRG`,
   `#TOOL/GAHAKU.PRG` and nothing.
@@ -3139,9 +3255,9 @@ TTEST36.
 - `KEY` ignores a string over 256 characters; `PUSHKEY` from 64 is
   `String is too long`.
 - `XSUBSCREEN` and the undocumented `UISTATE` are there for the main program
-  too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0. The main program's `XSUBSCREEN` looks at none of its
-  arguments, so `XSUBSCREEN 0,0,2000,0` is no error there. (Not yet seen on
-  hardware.)
+  too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0. The main program's
+  `XSUBSCREEN` looks at none of its arguments, so `XSUBSCREEN 0,0,2000,0` is
+  no error there (TEST76).
 - `UISTATE(2)` read 648 in DIRECT mode after TEST63's earlier parts had run, and
   0, 1, 3, 4, 5 read 0. (TEST63)
 - `UISTATE(5)` is 0, and `UISTATE(6)` `Out of range (UISTATE:1)`. (TEST62)
@@ -3168,9 +3284,9 @@ TTEST36.
 - Ctrl+S asks for a name on the on-screen keyboard, titled "Slot 0: Write file",
   with the name the slot was saved as filled in.
 - Ctrl+S while a `#` system project is the current one asks for no name. It
-  shows an error, "Failed to save the file." with the project's name, with OK
-  alone, and saves nothing.
-  (Not yet seen on hardware.)
+  plays a sound and shows an error titled "Error - Loading Files", with the
+  lines "Failed to save the file." and "Project Name: #SYS" and OK alone, and
+  saves nothing (TEST76K).
 - Ctrl+L opens a list of the project's files, with a way up to the projects.
 - A list of SmileBASIC's words starting with what is typed shows from the first
   letter while typing in the editor. The program's own names are not in it.
