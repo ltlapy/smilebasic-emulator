@@ -502,6 +502,9 @@ pub struct Sprites {
     /// Whether SPLINK has been used, as most programs never do and looking
     /// for a sprite's children goes through them all.
     pub linked: bool,
+    /// Sprites SPLINK has made parents since SPCLR last cleared them, the
+    /// only ones that can have children, one bit each.
+    parents: [u64; SPRITES / 64],
     pub defs: Vec<SpriteDef>,
     /// What SPDEF without arguments restores.
     default_defs: Vec<SpriteDef>,
@@ -627,6 +630,7 @@ impl Sprites {
         let mut s = Sprites {
             list: vec![Sprite::unused(); SPRITES],
             linked: false,
+            parents: [0; SPRITES / 64],
             defs: defs.clone(),
             default_defs: defs,
             new_page: DEFAULT_PAGE,
@@ -703,7 +707,9 @@ impl Sprites {
     /// on hardware for the position).
     // Z also becomes absolute.
     pub fn clear(&mut self, id: usize) {
-        if self.linked {
+        let (word, bit) = (id / 64, 1 << (id % 64));
+        if self.parents[word] & bit != 0 {
+            self.parents[word] &= !bit;
             for child in self.children(id).collect::<Vec<_>>() {
                 self.unlink(child);
             }
@@ -735,6 +741,14 @@ impl Sprites {
 
     fn no_collision(&mut self, id: usize) {
         self.may_collide[id / 64] &= !(1 << (id % 64));
+    }
+
+    /// SPLINK: `child` follows `parent` as `flags` say.
+    pub fn link(&mut self, child: usize, parent: usize, flags: i32) {
+        self.linked = true;
+        self.parents[parent / 64] |= 1 << (parent % 64);
+        let s = self.sprite_mut(child);
+        (s.parent, s.link_flags) = (Some(parent), flags);
     }
 
     /// Takes a sprite off its parent, keeping where it shows.
@@ -1328,10 +1342,10 @@ mod tests {
                 }
                 8 if id > 0 && s.list[id].used => {
                     // A parent moves a sprite with no change to the sprite.
-                    s.linked = true;
                     let parent = next(id as u32) as usize;
                     if s.list[parent].used {
-                        s.sprite_mut(id).parent = Some(parent);
+                        let flags = s.list[id].link_flags;
+                        s.link(id, parent, flags);
                     }
                 }
                 9 => {

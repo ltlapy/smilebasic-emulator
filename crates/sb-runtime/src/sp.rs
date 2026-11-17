@@ -862,9 +862,7 @@ impl Runtime {
                     let e = Error::with_detail(ErrorKind::CantLinkToDescendant, "link loop");
                     return Err(e.of_arg(1));
                 }
-                self.sprites.linked = true;
-                let s = self.sprites.sprite_mut(child);
-                (s.parent, s.link_flags) = (Some(parent), flags);
+                self.sprites.link(child, parent, flags);
                 Ok(())
             }
             (Command::Splink, Want::Value, 1 | 2) => {
