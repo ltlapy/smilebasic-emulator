@@ -1036,7 +1036,9 @@ mod tests {
         // drivers that build one cycle of 128 samples give it.
         let waves = Rc::new(RefCell::new(Waves::default()));
         waves.borrow_mut().user[0] = Some(Rc::new(wave::Wave {
-            samples: (0..128).map(|i| if i < 64 { 0.5 } else { -0.5 }).collect(),
+            samples: (0..128)
+                .map(|i| if i < 64 { 16384 } else { -16384 })
+                .collect(),
             rate: Some(56_000.0),
             looped: (0, 128),
             beep_loop: false,

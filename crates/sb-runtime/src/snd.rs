@@ -17,7 +17,7 @@ use crate::sound::mml::{self, Song};
 use crate::sound::pcm::{FULL, Source};
 use crate::sound::reverb::Settings;
 use crate::sound::seq::Kind;
-use crate::sound::wave::{BEEP_TICKS_A_SECOND, Envelope, Wave, beep_ticks, eight_bit};
+use crate::sound::wave::{BEEP_TICKS_A_SECOND, Envelope, SIXTEEN_BIT, Wave, beep_ticks, eight_bit};
 use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, TRACKS, frames};
 
 /// The preset songs that end rather than loop, and their lengths in
@@ -238,8 +238,14 @@ fn wave_arg(
     }
 }
 
-/// The numbers in a one-dimensional array.
-fn samples(v: &Value) -> Result<Vec<f64>> {
+/// The numbers `at` in a one-dimensional array, each through `cut`. Only
+/// those are read, so a waveform from a part of a huge array does not
+/// copy all of it first.
+fn samples<T>(
+    v: &Value,
+    at: std::ops::RangeInclusive<usize>,
+    cut: impl Fn(f64) -> T,
+) -> Result<Vec<T>> {
     checking(v, || {
         let a = v.clone().into_array()?;
         let a = a.borrow();
@@ -249,7 +255,7 @@ fn samples(v: &Value) -> Result<Vec<f64>> {
                 "1D array",
             ));
         }
-        (0..a.len()).map(|i| a.get(i).to_real()).collect()
+        at.map(|i| a.get(i).to_real().map(&cut)).collect()
     })
 }
 
@@ -558,8 +564,7 @@ impl Runtime {
                 if args.len() < 10 {
                     // Each value is cut to an integer towards zero and then
                     // to its low 8 bits, so 256 is 0 and -1 is 255.
-                    let all = samples(&args[5])?;
-                    let bytes: Vec<u8> = all[start..=end].iter().map(|&x| x as i32 as u8).collect();
+                    let bytes = samples(&args[5], start..=end, |x| x as i32 as u8)?;
                     // The pass is the next power of two, at most 1M samples.
                     let pass = bytes.len().next_power_of_two().min(1 << 20);
                     let wave = eight_bit(&bytes, pass, base_note, envelope);
@@ -576,11 +581,7 @@ impl Runtime {
                 }
                 // Values are cut to 16 bits, reals towards zero first and
                 // held to 32 bits.
-                let all = samples(&args[5])?;
-                let samples: Vec<f32> = all[offset..=offset + end]
-                    .iter()
-                    .map(|&x| f32::from(x as i32 as i16) / 32768.0)
-                    .collect();
+                let samples = samples(&args[5], offset..=offset + end, |x| x as i32 as i16)?;
                 let looped = (start, end + 1);
                 // The flag repeats BEEP's note for ever, if it has one.
                 let beep_ticks = Some(beep_ticks(end + 1, rate as u32));
@@ -588,6 +589,7 @@ impl Runtime {
                     n,
                     Wave {
                         samples,
+                        unit: SIXTEEN_BIT,
                         base_note,
                         rate: Some(f64::from(rate)),
                         cycle: 0.0,
@@ -925,5 +927,25 @@ mod tests {
         // More than 512/2 samples in one of two groups.
         let long = format!("[{}][00]", "00".repeat(257));
         assert_eq!(wave_groups(&long), None);
+    }
+
+    #[test]
+    fn wavseta_reads_its_part_of_the_array_cut_to_size() {
+        let mut a = sb_core::value::Array::new(ElemType::Real, vec![6]);
+        for (i, x) in [1.0, 70000.5, -1.9, 255.9, 256.0, -40000.0]
+            .into_iter()
+            .enumerate()
+        {
+            a.set(i, Value::Real(x)).unwrap();
+        }
+        let v = Value::Array(std::rc::Rc::new(std::cell::RefCell::new(a)));
+        let sixteen = samples(&v, 1..=4, |x| x as i32 as i16).unwrap();
+        assert_eq!(sixteen, [4464, -1, 255, 256]);
+        let eight = samples(&v, 2..=5, |x| x as i32 as u8).unwrap();
+        assert_eq!(eight, [255, 255, 0, 192]);
+        let strings = sb_core::value::Array::new(ElemType::Str, vec![2]);
+        let s = Value::Array(std::rc::Rc::new(std::cell::RefCell::new(strings)));
+        let e = samples(&s, 0..=1, |x| x as i32 as i16).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::TypeMismatch);
     }
 }

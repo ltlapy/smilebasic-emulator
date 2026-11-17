@@ -14,8 +14,14 @@ use super::sampler;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Wave {
     /// The instrument's wave memory: this definition's samples, up to the
-    /// end of its loop, then what earlier ones left past that.
-    pub samples: Vec<f32>,
+    /// end of its loop, then what earlier ones left past that, each in
+    /// `unit`s. 8-bit waveforms are kept as 16-bit ones, exactly, so a
+    /// sample takes two bytes: WAVSETA can make one as long as an array.
+    pub samples: Vec<i16>,
+    /// What a sample of 1 plays as: [`SIXTEEN_BIT`] for all waveforms
+    /// but the noise, so that one written over another's memory keeps the
+    /// rest of it as it sounded.
+    pub unit: f32,
     /// The note the waveform plays at as it is.
     pub base_note: i32,
     /// Samples a second for a sample; `None` for a repeating wave, which
@@ -69,8 +75,15 @@ impl From<Envelope> for Adshr {
     }
 }
 
-/// An 8-bit sample's unit, full scale as a 16-bit sample's.
-const EIGHT_BIT: f32 = 1.0 / 128.0;
+/// A 16-bit sample's unit, a power of two, so that each sample times it
+/// is exact.
+pub const SIXTEEN_BIT: f32 = 1.0 / 32768.0;
+
+/// An 8-bit sample `b`, offset by 128, as a 16-bit sample: full scale as
+/// a 16-bit sample's.
+fn from_eight_bit(b: u8) -> i16 {
+    (i16::from(b) - 128) << 8
+}
 
 /// Samples a second 8-bit waveforms play at their reference pitch.
 pub const EIGHT_BIT_RATE: f64 = 28160.0;
@@ -97,11 +110,12 @@ pub fn eight_bit(bytes: &[u8], pass: usize, base_note: i32, envelope: Envelope) 
     // SmileBASIC 4 counts in 32 bits, which overflow past 8M samples; 64
     // bits keep those in the array.
     let step = (bytes.len() as i64 * 256) / pass as i64;
-    let samples: Vec<f32> = (0..pass as i64)
-        .map(|i| (f32::from(bytes[((i * step) >> 8) as usize]) - 128.0) * EIGHT_BIT)
+    let samples: Vec<i16> = (0..pass as i64)
+        .map(|i| from_eight_bit(bytes[((i * step) >> 8) as usize]))
         .collect();
     Wave {
         samples,
+        unit: SIXTEEN_BIT,
         base_note,
         rate: Some(EIGHT_BIT_RATE),
         cycle: 0.0,
@@ -124,8 +138,9 @@ pub fn pulse(program: i32) -> Wave {
     let high = PULSES[(program - 216) as usize];
     Wave {
         samples: (0..8)
-            .map(|i| if i < high { 127.0 } else { -128.0 } * EIGHT_BIT)
+            .map(|i| from_eight_bit(if i < high { 255 } else { 0 }))
             .collect(),
+        unit: SIXTEEN_BIT,
         base_note: 69,
         rate: None,
         cycle: 8.0,
@@ -147,11 +162,13 @@ pub fn noise() -> Wave {
             x ^= x << 13;
             x ^= x >> 17;
             x ^= x << 5;
-            if x & 0x8000 != 0 { 1.0 } else { 0.0 }
+            i16::from(x & 0x8000 != 0)
         })
         .collect();
     Wave {
         samples,
+        // Full scale, which a 16-bit sample cannot reach.
+        unit: 1.0,
         base_note: 69,
         // The whole sound repeats too rarely to hear as a pitch.
         rate: Some(f64::from(RATE)),
@@ -173,15 +190,15 @@ pub fn unset(bank: &Bank) -> Option<Wave> {
     let region = bank.region(224, 57)?;
     let info = bank.waves.get(usize::from(region.wave))?;
     let mut reader = Reader::default();
-    let samples: Vec<f32> = (0..info.len)
+    let samples: Vec<i16> = (0..info.len)
         .map_while(|_| reader.next(info, &bank.data))
-        .map(|s| f32::from(s) / 32768.0)
         .collect();
     let end = samples.len();
     let e = region.envelope;
     let v = i32::from;
     Some(Wave {
         samples,
+        unit: SIXTEEN_BIT,
         base_note: i32::from(region.original_key),
         rate: Some(f64::from(info.rate)),
         cycle: 0.0,
@@ -245,6 +262,7 @@ impl Waves {
         if let Some(old) = &self.user[n]
             && old.samples.len() > wave.samples.len()
         {
+            debug_assert_eq!(old.unit, wave.unit);
             wave.samples
                 .extend_from_slice(&old.samples[wave.samples.len()..]);
         }
@@ -431,8 +449,15 @@ impl Voice {
     /// The waveform at the position, read through the instruments' filter
     /// ([`sampler::interpolate`]).
     #[cfg(test)]
-    fn sample(&self, samples: &[f32]) -> f32 {
-        sample(samples, self.pos, self.looped, self.loops, self.wrapped)
+    fn sample(&self, samples: &[i16], unit: f32) -> f32 {
+        sample(
+            samples,
+            unit,
+            self.pos,
+            self.looped,
+            self.loops,
+            self.wrapped,
+        )
     }
 
     /// Steps the envelope and the LFOs, and aims the levels and pitch at
@@ -467,7 +492,7 @@ impl Voice {
     /// [`Voice::render_by_sample`], in the same order.
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         let wave = self.wave.clone();
-        let samples = &wave.samples;
+        let (samples, unit) = (&wave.samples, wave.unit);
         if samples.is_empty() {
             self.done = true;
             return;
@@ -495,7 +520,7 @@ impl Voice {
                         return;
                     }
                 }
-                let s = sample(samples, pos, self.looped, loops, wrapped);
+                let s = sample(samples, unit, pos, self.looped, loops, wrapped);
                 *l += s * levels[0];
                 *r += s * levels[1];
                 pos += step;
@@ -541,7 +566,7 @@ impl Voice {
                     return;
                 }
             }
-            let s = self.sample(samples);
+            let s = self.sample(samples, wave.unit);
             *l += s * self.levels[0];
             *r += s * self.levels[1];
             self.pos += self.step;
@@ -562,10 +587,11 @@ impl Voice {
 /// The waveform at `pos`, read through the instruments' filter
 /// ([`sampler::interpolate`]): the sample before and the two after, round
 /// the loop when it `loops`, which after `wrapped` also gives the sample
-/// before its start.
+/// before its start. Each sample times `unit` is exact.
 #[inline(always)]
 fn sample(
-    samples: &[f32],
+    samples: &[i16],
+    unit: f32,
     pos: f64,
     (start, end): (usize, usize),
     loops: bool,
@@ -582,19 +608,19 @@ fn sample(
                 } else {
                     j
                 };
-                samples.get(j).copied().filter(|_| j < end).unwrap_or(0.0)
+                samples.get(j).copied().filter(|_| j < end).unwrap_or(0)
             };
             let before = if i == start && wrapped {
                 at(end - 1)
             } else if i == 0 {
-                0.0
+                0
             } else {
                 at(i - 1)
             };
             [before, at(i), at(i + 1), at(i + 2)]
         }
     };
-    sampler::interpolate(&h, frac)
+    sampler::interpolate(&h.map(|s| f32::from(s) * unit), frac)
 }
 
 /// A full-scale waveform at V127 in the middle records at an eighth of
@@ -625,7 +651,9 @@ pub(crate) mod tests {
                 _ => (len, len),
             };
             let wave = Rc::new(Wave {
-                samples: (0..len).map(|_| next(2001) as f32 / 1000.0 - 1.0).collect(),
+                samples: (0..len)
+                    .map(|_| (next(65536) as i32 - 32768) as i16)
+                    .collect(),
                 rate: (next(2) == 0).then(|| f64::from(8000 + next(40000))),
                 cycle: f64::from(1 + next(64)),
                 looped,
@@ -710,17 +738,17 @@ pub(crate) mod tests {
 
     #[test]
     fn notes_follow_a_waveform_set_again() {
-        let wave = |level: f32| {
+        let wave = |level: i16| {
             Rc::new(Wave {
                 samples: vec![level; 16],
                 ..pulse(219)
             })
         };
-        let mut v = Voice::new(wave(0.5), None, 69, 0, false);
+        let mut v = Voice::new(wave(16384), None, 69, 0, false);
         let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
         v.render(&mut l, &mut r);
         assert!(l[959] > 0.02);
-        v.follow(&wave(-0.5));
+        v.follow(&wave(-16384));
         let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
         v.render(&mut l, &mut r);
         assert!(l[0] < -0.02);
@@ -729,7 +757,7 @@ pub(crate) mod tests {
     #[test]
     fn notes_keep_their_length_when_a_shorter_waveform_is_written() {
         let mut waves = Waves::default();
-        let square = |n: usize, level: f32| Wave {
+        let square = |n: usize, level: i16| Wave {
             samples: (0..n)
                 .map(|i| if i < n / 2 { level } else { -level })
                 .collect(),
@@ -737,14 +765,14 @@ pub(crate) mod tests {
             looped: (0, n),
             ..pulse(219)
         };
-        waves.define(0, square(512, 0.5));
+        waves.define(0, square(512, 16384));
         let mut v = Voice::new(waves.get(224).unwrap(), None, 69, 0, true);
-        waves.define(0, square(32, 0.25));
+        waves.define(0, square(32, 8192));
         let w = waves.get(224).unwrap();
         // The memory keeps the old square past the new 32 samples, and
         // new notes play 32 of it.
         assert_eq!((w.samples.len(), w.looped), (512, (0, 32)));
-        assert_eq!((w.samples[31], w.samples[300]), (-0.25, -0.5));
+        assert_eq!((w.samples[31], w.samples[300]), (-8192, -16384));
         // The note that sounded goes on over all 512 at its old rate.
         let steady = v.step;
         v.follow(&w);
@@ -887,7 +915,10 @@ pub(crate) mod tests {
     fn what_an_unset_waveform_plays_comes_from_the_archives_224() {
         let bank = sine_bank();
         let w = unset(&bank).unwrap();
-        assert_eq!(w.samples, [0.0, 0.5, 0.0, -0.5]);
+        assert_eq!(
+            (&w.samples[..], w.unit),
+            (&[0, 16384, 0, -16384][..], SIXTEEN_BIT)
+        );
         assert_eq!(w.base_note, 57);
         assert_eq!(w.rate, Some(28160.0));
         assert_eq!(w.looped, (0, 4));
@@ -912,12 +943,12 @@ pub(crate) mod tests {
         ));
         waves.define(16, pulse(219));
         assert_eq!(*waves.get(240).unwrap(), pulse(219));
-        assert_eq!(waves.get(250).unwrap().samples, [0.0, 0.5, 0.0, -0.5]);
+        assert_eq!(waves.get(250).unwrap().samples, [0, 16384, 0, -16384]);
         // WAVSET of a number does not reach a note of the sine.
         let mut v = Voice::new(waves.get(250).unwrap(), None, 57, 0, true);
         waves.define(26, pulse(219));
         waves.follow(250, &mut v);
-        assert_eq!(v.wave.samples, [0.0, 0.5, 0.0, -0.5]);
+        assert_eq!(v.wave.samples, [0, 16384, 0, -16384]);
     }
 
     #[test]
@@ -946,7 +977,7 @@ pub(crate) mod tests {
         // 513/1024, so the pass never reaches the last sample.
         let bytes: Vec<u8> = (0..513).map(|i| (i % 256) as u8).collect();
         let w = eight_bit(&bytes, 1024, 69, Envelope::ORGAN);
-        let at = |i: usize| (w.samples[i] / EIGHT_BIT + 128.0) as u8;
+        let at = |i: usize| ((w.samples[i] >> 8) + 128) as u8;
         assert_eq!((at(1), at(2), at(1023)), (0, 1, (511 % 256) as u8));
     }
 
@@ -955,8 +986,8 @@ pub(crate) mod tests {
     /// 19.
     #[test]
     fn waveforms_are_read_through_a_filter() {
-        let samples: Vec<f32> = (0..8000)
-            .map(|i| (i as f32 * std::f32::consts::TAU / 8.0).sin() * 0.5)
+        let samples: Vec<i16> = (0..8000)
+            .map(|i| ((i as f32 * std::f32::consts::TAU / 8.0).sin() * 16384.0) as i16)
             .collect();
         let wave = Wave {
             samples,
