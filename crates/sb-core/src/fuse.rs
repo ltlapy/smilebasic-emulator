@@ -860,8 +860,12 @@ impl Chain {
         Var::global(self.temps + k)
     }
 
-    /// `n` free hidden places in a row.
+    /// `n` free hidden places in a row: none for more than there are, as
+    /// for `MAX` of nine arguments.
     fn alloc_run(&mut self, n: usize) -> Option<Var> {
+        if n > TEMPS {
+            return None;
+        }
         let run = (1u16 << n) - 1;
         let k = (0..=TEMPS - n).find(|k| self.used & (run << k) == 0)?;
         self.used |= run << k;

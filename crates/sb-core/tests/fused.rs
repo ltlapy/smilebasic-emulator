@@ -212,6 +212,8 @@ const PROGRAMS: &[&str] = &[
     "X=2:WHILE X*X<100:X=X*X+1:WEND:?X:REPEAT:X=X-7:UNTIL X*2<0:?X",
     "X=2:?(X+1)*(X+2);(X*3) MOD 4;-X*2;NOT X+1;!X*3",
     "X=0.5:Y=SQR(X*4)+SIN(X-0.5)*2:?Y:Z=MAX(X+1,X*3,2)-MIN(X,X/2):?Z",
+    // More arguments than a chain has hidden places.
+    "X=2:Y=MAX(X,9,8,7,6,5,4,3,1)+1:?Y:Z=MIN(X,9,8,7,6,5,4,3,1,0,X,2,3,4,5,6,7,8)-1:?Z",
     "A%=2147483647:B%=A%+1-1:?B%;TYPEOF(B%):C=-2147483648:D=C-1+1:?D;TYPEOF(D)",
     "A=65536:B=A*A+1:?B:C=46341*46341-1:?C:D=-(A*A):?D",
     "A=7:B=0:C=0\n?1:C=(A+1)/B+1:?2",
