@@ -997,6 +997,20 @@ fn a_pcm_stream_outlives_its_array() {
     );
 }
 
+/// EFCSET turns the effector on with its reverb, and #EFCOFF turns it off.
+#[test]
+fn efcset_turns_the_effector_on_and_off() {
+    let mut rt = runtime();
+    assert_eq!(
+        run_on(
+            &mut rt,
+            "EFCSET 2:?EFCEN();:EFCSET 0:?EFCEN();:EFCEN 1:?EFCEN()"
+        )
+        .unwrap(),
+        "101"
+    );
+}
+
 #[test]
 fn effector_balance_and_talk_are_accepted() {
     let mut rt = runtime();

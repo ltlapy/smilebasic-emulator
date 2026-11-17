@@ -334,7 +334,7 @@ impl Balance {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Effector {
     pub(crate) on: bool,
-    /// EFCSET's reverb, none for #EFCOFF.
+    /// EFCSET's reverb, which #EFCOFF leaves as it is.
     pub(crate) settings: Option<reverb::Settings>,
     /// BEEP, BGM, TALK and PCM's wetness, all 127 to begin with.
     pub(crate) wet: [i32; 4],
@@ -344,7 +344,9 @@ impl Default for Effector {
     fn default() -> Self {
         Effector {
             on: false,
-            settings: None,
+            // UNVERIFIED: that the effector starts with #EFCROOM, as
+            // SNDSTOP leaves it.
+            settings: reverb::Settings::preset(1),
             wet: [127; 4],
         }
     }
@@ -697,16 +699,27 @@ impl Sound {
         self.effector.set(Effector { on, ..e });
     }
 
-    /// SNDSTOP: the effector goes off and every send back to 127.
+    /// SNDSTOP: the effector goes off with #EFCROOM set, and every send
+    /// back to 127.
     pub(crate) fn reset_effector(&mut self) {
+        self.set_reverb(reverb::Settings::preset(1));
         self.set_effector_on(false);
         self.set_sends([127; 4]);
     }
 
-    /// EFCSET: the effector's reverb, or none.
+    /// EFCSET: the effector's reverb, which also turns the effector on.
+    /// #EFCOFF turns it off and keeps the reverb set before, which a later
+    /// EFCEN 1 plays.
     pub(crate) fn set_reverb(&mut self, settings: Option<reverb::Settings>) {
         let e = self.effector.get();
-        self.effector.set(Effector { settings, ..e });
+        self.effector.set(match settings {
+            Some(_) => Effector {
+                on: true,
+                settings,
+                ..e
+            },
+            None => Effector { on: false, ..e },
+        });
     }
 
     /// Mixes one frame of samples.
