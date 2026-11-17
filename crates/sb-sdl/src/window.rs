@@ -1,7 +1,61 @@
-//! The emulator's windows: what size the main one starts at, and which
-//! one comes to the front for input that another window's dialog keeps.
+//! The emulator's windows: what size the main one starts at, the sizes
+//! View > Window size gives it, and which one comes to the front for
+//! input that another window's dialog keeps.
 
 use sdl3::event::Event;
+
+/// View > Window size: each item's label and the multiple of the
+/// profile's display (1280x720 for SmileBASIC 4) it sets the main
+/// window's pixels to, in halves. A line here is an item there.
+pub const SCALES: [(&str, u32); 6] = [
+    ("0.5x", 1),
+    ("1x", 2),
+    ("1.5x", 3),
+    ("2x", 4),
+    ("2.5x", 5),
+    ("3x", 6),
+];
+
+/// The main window's size in pixels at `halves` halves of `display`.
+pub fn scaled(display: (u32, u32), halves: u32) -> (u32, u32) {
+    (display.0 * halves / 2, display.1 * halves / 2)
+}
+
+/// The size in the system's window coordinates that holds `pixels`, at
+/// `density` pixels to a coordinate: 2 on a Mac's Retina display, the
+/// desktop's scale on Wayland, 1 on Windows and X11, whose coordinates are
+/// pixels.
+pub fn coordinates((w, h): (u32, u32), density: f32) -> (u32, u32) {
+    let density = if density > 0.0 { density } else { 1.0 };
+    let at = |n: u32| ((n as f32 / density).round() as u32).max(1);
+    (at(w), at(h))
+}
+
+/// The items of [`SCALES`] whose size fits a display's usable area
+/// `usable` with the window's `borders` (top, left, bottom, right) around
+/// it, as bits from the first item up. The others are disabled rather
+/// than shrunk, as a shrunk size is not the multiple asked for.
+pub fn fitting(
+    display: (u32, u32),
+    density: f32,
+    (top, left, bottom, right): (u32, u32, u32, u32),
+    (uw, uh): (u32, u32),
+) -> u32 {
+    let fits = |&(_, halves): &(&str, u32)| {
+        let (w, h) = coordinates(scaled(display, halves), density);
+        w + left + right <= uw && h + top + bottom <= uh
+    };
+    (SCALES.iter().enumerate())
+        .filter(|(_, scale)| fits(scale))
+        .fold(0, |bits, (i, _)| bits | 1 << i)
+}
+
+/// The item of [`SCALES`] the main window is at, which is checked: its
+/// pixels are that multiple exactly, and it is not fullscreen.
+pub fn current(display: (u32, u32), pixels: (u32, u32), fullscreen: bool) -> Option<usize> {
+    let at = |&(_, halves): &(&str, u32)| scaled(display, halves) == pixels;
+    SCALES.iter().position(at).filter(|_| !fullscreen)
+}
 
 /// One of the emulator's windows: the main one, or the editor's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,6 +229,62 @@ mod tests {
         for event in left_alone {
             assert_eq!(blocked_by(&event, Some(Which::Main), Which::Editor), None);
         }
+    }
+
+    #[test]
+    fn window_sizes_are_multiples_of_the_display() {
+        let sb4 = (1280, 720);
+        let sizes: Vec<_> = SCALES.iter().map(|&(_, h)| scaled(sb4, h)).collect();
+        assert_eq!(
+            sizes,
+            [
+                (640, 360),
+                (1280, 720),
+                (1920, 1080),
+                (2560, 1440),
+                (3200, 1800),
+                (3840, 2160)
+            ]
+        );
+        // Each label names its multiple.
+        for (label, halves) in SCALES {
+            let n: f32 = label.trim_end_matches('x').parse().unwrap();
+            assert_eq!(n * 2.0, halves as f32, "{label}");
+        }
+        // In window coordinates: a Retina display's are half the pixels.
+        assert_eq!(coordinates((1280, 720), 1.0), (1280, 720));
+        assert_eq!(coordinates((1280, 720), 2.0), (640, 360));
+        assert_eq!(coordinates((1920, 1080), 1.5), (1280, 720));
+        assert_eq!(coordinates((1280, 720), 0.0), (1280, 720));
+    }
+
+    #[test]
+    fn sizes_past_the_display_are_left_out() {
+        let sb4 = (1280, 720);
+        let none = (0, 0, 0, 0);
+        // 1920x1080 with a 40-pixel panel: up to 1.5x, as 1080 lines with a
+        // title bar do not fit in 1040.
+        assert_eq!(fitting(sb4, 1.0, none, (1920, 1040)), 0b11);
+        assert_eq!(fitting(sb4, 1.0, none, (1920, 1080)), 0b111);
+        assert_eq!(fitting(sb4, 1.0, (30, 1, 1, 1), (1920, 1080)), 0b11);
+        // 4K: all of them, but 3x has no room for a title bar.
+        assert_eq!(fitting(sb4, 1.0, none, (3840, 2160)), 0b11_1111);
+        assert_eq!(fitting(sb4, 1.0, (30, 0, 0, 0), (3840, 2160)), 0b01_1111);
+        // A Retina display of 1440x900 points holds 2x, 2560x1440 pixels.
+        assert_eq!(fitting(sb4, 2.0, (28, 0, 0, 0), (1440, 875)), 0b1111);
+        // A 640x480 handheld holds only half size.
+        assert_eq!(fitting(sb4, 1.0, none, (640, 480)), 0b1);
+    }
+
+    #[test]
+    fn the_size_the_window_is_at_is_checked() {
+        let sb4 = (1280, 720);
+        assert_eq!(current(sb4, (1280, 720), false), Some(1));
+        assert_eq!(current(sb4, (1920, 1080), false), Some(2));
+        assert_eq!(current(sb4, (640, 360), false), Some(0));
+        // Not quite a multiple, or fullscreen: none.
+        assert_eq!(current(sb4, (1280, 721), false), None);
+        assert_eq!(current(sb4, (1920, 1080), true), None);
     }
 
     #[test]

@@ -416,6 +416,16 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   scaled down: on a 640x480 output it shows at half size in the top 640x360,
   with menus too small to read. The Simple UI is laid out for such outputs.
   The main window starts no larger than the display's usable area.
+- View > Window size sets the main window to 0.5, 1, 1.5, 2, 2.5 or 3 times
+  1280x720 pixels, leaving fullscreen first. The menu bar goes over the
+  screen, so the screen gets the whole multiple: `XSCREEN 1280,720` at 2x
+  fills 2560x1440. A size that does not fit the display's usable area, with
+  the window's title bar where the system reports it (X11 and Windows), is
+  disabled rather than shrunk. The item the window is at, to the pixel, is
+  checked; on a display scaled by a fraction some sizes cannot be reached
+  exactly. With the editor in its own window, only the main window changes.
+  The window keeps its size out of fullscreen when the emulator quits
+  (`window_size` in `settings.txt`) and starts at it next time.
 - With the Simple UI on, the screen fills the display at its aspect ratio, and
   the filter is the pause menu's Screen filter (`simple_ui_filter` in
   `settings.txt`), not View > Screen filter. A 640x480 display seldom holds

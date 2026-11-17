@@ -13,6 +13,7 @@ use sb_runtime::screen::Filter;
 use crate::ui::{
     BACKGROUND, BORDER, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, outline, text_width,
 };
+use crate::window::SCALES;
 
 const ROW_HEIGHT: u32 = 24;
 
@@ -68,6 +69,8 @@ pub enum Action {
     ScreenFilter(Option<Filter>),
     /// The main window covers its display, or not (Ctrl+Shift+F11).
     ToggleFullscreen,
+    /// The main window's size: an item of [`SCALES`].
+    WindowSize(usize),
     /// The debugger's commands, for a stopped program.
     Continue,
     StepInto,
@@ -107,6 +110,10 @@ pub struct Context {
     pub sub: bool,
     /// The main window covers its display.
     pub fullscreen: bool,
+    /// The item of View > Window size the main window is at.
+    pub window_size: Option<usize>,
+    /// The items of View > Window size that fit the display, as bits.
+    pub window_fits: u32,
 }
 
 impl Action {
@@ -117,6 +124,8 @@ impl Action {
         match self {
             // The window's own state, as the system may change it too.
             Action::ToggleFullscreen => check(context.fullscreen),
+            Action::WindowSize(i) if context.window_size == Some(i) => "(*)",
+            Action::WindowSize(_) => "( )",
             Action::ToggleUpperCase => check(settings.upper_case_letters),
             Action::ToggleEditorWindow => check(settings.editor_window),
             Action::ToggleTidyOnEnd => check(settings.tidy_on_end),
@@ -205,6 +214,7 @@ impl Action {
             Action::Projects | Action::SaveSlot | Action::LoadSlot | Action::Run => {
                 !context.running
             }
+            Action::WindowSize(i) => context.window_fits >> i & 1 != 0,
             _ => true,
         }
     }
@@ -269,6 +279,17 @@ const COLORS: &[Item] = &[
     LINE,
     item("Edit colors...", Action::EditColors),
 ];
+
+/// View > Window size, an item for each of [`SCALES`].
+const WINDOW_SIZES: [Item; SCALES.len()] = {
+    let mut items = [LINE; SCALES.len()];
+    let mut i = 0;
+    while i < items.len() {
+        items[i] = item(SCALES[i].0, Action::WindowSize(i));
+        i += 1;
+    }
+    items
+};
 
 const MENUS: &[Menu] = &[
     Menu {
@@ -358,6 +379,7 @@ const MENUS: &[Menu] = &[
                 ],
             ),
             LINE,
+            sub("Window size", &WINDOW_SIZES),
             keyed("Fullscreen", "Ctrl+Shift+F11", Action::ToggleFullscreen),
         ],
     },
@@ -544,10 +566,17 @@ impl MenuBar {
                     .is_some_and(|(_, y)| y >= 0 && y < ROW_HEIGHT as i32)
     }
 
-    /// Opens menu `index` of the bar, for the bench.
-    pub fn open_menu(&mut self, index: usize) {
-        self.open = Some(index.min(MENUS.len() - 1));
-        self.sub = None;
+    /// Opens menu `index` of the bar, for the bench, and its submenu
+    /// `sub` if it has one of that label.
+    pub fn open_menu(&mut self, index: usize, sub: &str) {
+        let index = index.min(MENUS.len() - 1);
+        self.open = Some(index);
+        self.sub = MENUS[index].items.iter().position(|i| i.label == sub);
+    }
+
+    /// A menu shows its items, which need the window's state.
+    pub fn is_open(&self) -> bool {
+        self.open.is_some()
     }
 
     /// The submenu items, with the open menu and parent item.
@@ -769,6 +798,8 @@ mod tests {
         detached: false,
         sub: false,
         fullscreen: false,
+        window_size: None,
+        window_fits: 0,
     };
     const RUNNING: Context = Context {
         running: true,
@@ -955,6 +986,42 @@ mod tests {
         };
         assert_eq!(Action::ToggleFullscreen.mark(&settings, IDLE), "[ ]");
         assert_eq!(Action::ToggleFullscreen.mark(&settings, full), "[x]");
+    }
+
+    #[test]
+    fn window_sizes_are_a_submenu_of_the_table() {
+        let view = menu("View");
+        let parent = (MENUS[view].items.iter())
+            .position(|i| i.label == "Window size")
+            .unwrap();
+        let Entry::Sub(items) = MENUS[view].items[parent].entry else {
+            panic!("a submenu");
+        };
+        let labels: Vec<_> = items.iter().map(|i| i.label).collect();
+        assert_eq!(labels, ["0.5x", "1x", "1.5x", "2x", "2.5x", "3x"]);
+        // Up to 1.5x fit; the window is at 1x.
+        let context = Context {
+            window_size: Some(1),
+            window_fits: 0b111,
+            ..IDLE
+        };
+        let mut bar = MenuBar::default();
+        bar.open_menu(view, "Window size");
+        assert_eq!(bar.sub, Some(parent));
+        assert_eq!(
+            bar.click(at(sub_rect(view, parent, 2)), context),
+            Click::Chosen(Action::WindowSize(2))
+        );
+        bar.open_menu(view, "Window size");
+        assert_eq!(
+            bar.click(at(sub_rect(view, parent, 3)), context),
+            Click::Consumed,
+            "2x does not fit"
+        );
+        let settings = Settings::default();
+        assert_eq!(Action::WindowSize(1).mark(&settings, context), "(*)");
+        assert_eq!(Action::WindowSize(0).mark(&settings, context), "( )");
+        assert_eq!(Action::WindowSize(1).mark(&settings, IDLE), "( )");
     }
 
     #[test]

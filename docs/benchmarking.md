@@ -694,7 +694,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `editor` | Opens the editor |
 | `apart` | Has the editor in its own window |
 | `panel` | Shows the debugger's panel |
-| `menu`, `file-menu`, `view-menu`, `help`, `about`, `colors`, `settings`, `toast` | Once the rest is set up, shows the menu bar (as F8 does), the bar with its File or View menu open, the help beside the editor, the About dialog, the editor colors window, the settings window at its Editor page, or a notice |
+| `menu`, `file-menu`, `view-menu`, `help`, `about`, `colors`, `settings`, `toast` | Once the rest is set up, shows the menu bar (as F8 does), the bar with its File menu open or its View menu at Window size, the help beside the editor, the About dialog, the editor colors window, the settings window at its Editor page, or a notice |
 | `cpu-smart` | Scales `XSCREEN`'s mode 1 on the CPU, the fallback for a renderer that cannot make the texture the GPU route needs |
 | `scale=N` | Lays the editor's own window out at UI scale N instead of the desktop's |
 | `slow=MS` | From when the timing begins, makes each present of the main window that waits for vsync take MS milliseconds more, as a compositor that throttles a covered window does (SDL's Wayland backend waits up to 50 ms) |
@@ -713,6 +713,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `resize:W:H` | Sets the window's size |
 | `editor-resize:W:H` | Sets the editor's own window's size |
 | `fullscreen`, `windowed` | Changes the window's mode |
+| `window-size:N` | Chooses item N of View > Window size, from 0 for 0.5x |
 | `auto`, `cpu` | Changes the renderer setting |
 | `tool` | Starts the F9 tool as a subprogram |
 | `substop` | Ends the subprogram |

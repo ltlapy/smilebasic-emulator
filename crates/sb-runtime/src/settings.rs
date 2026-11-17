@@ -187,6 +187,10 @@ pub struct Settings {
     /// The main window covers its display, as View > Fullscreen sets it
     /// on the desktop. The Simple UI is fullscreen whatever this says.
     pub fullscreen: bool,
+    /// The main window's size out of fullscreen when the emulator last
+    /// quit, in the system's window coordinates, which View > Window size
+    /// sets; `None` for the profile's display.
+    pub window_size: Option<[u32; 2]>,
     /// Who draws the screens.
     pub renderer: Renderer,
     /// Keys also press the first controller's buttons.
@@ -292,6 +296,7 @@ impl Default for Settings {
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
             fullscreen: false,
+            window_size: None,
             renderer: Renderer::DEFAULT,
             keyboard_buttons: true,
             swap_ab_xy: false,
@@ -355,6 +360,7 @@ impl Settings {
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
             fullscreen: false,
+            window_size: None,
             renderer: Renderer::Auto,
             keyboard_buttons: true,
             swap_ab_xy: false,
@@ -481,6 +487,13 @@ fn parse_place(value: &str) -> Option<[i32; 4]> {
     (parts.next().is_none() && place[2] > 0 && place[3] > 0).then_some(place)
 }
 
+/// A window's width and height, as `1280,720`, each above 0.
+fn parse_size(value: &str) -> Option<[u32; 2]> {
+    let (w, h) = value.split_once(',')?;
+    let size = [w.trim().parse().ok()?, h.trim().parse().ok()?];
+    (size[0] > 0 && size[1] > 0).then_some(size)
+}
+
 fn parse_bool(value: &str) -> Option<bool> {
     match value {
         "true" => Some(true),
@@ -589,6 +602,10 @@ impl Settings {
                     if let Some(place) = parse_place(value) {
                         s.editor_window_place = Some(place);
                     }
+                    continue;
+                }
+                "window_size" => {
+                    s.window_size = parse_size(value);
                     continue;
                 }
                 "sound_font" => {
@@ -715,6 +732,7 @@ impl Settings {
              file_hint_shown={}\n\
              screen_filter={filter}\n\
              fullscreen={}\n\
+             window_size={}\n\
              {renderer}\
              keyboard_buttons={}\n\
              swap_ab_xy={}\n\
@@ -766,6 +784,7 @@ impl Settings {
             choice_name(&BUNDLED_SET, &self.bundled_glyphs16),
             self.file_hint_shown,
             self.fullscreen,
+            (self.window_size).map_or(String::new(), |[w, h]| format!("{w},{h}")),
             self.keyboard_buttons,
             self.swap_ab_xy,
             self.smilebasic_instruments,
@@ -827,6 +846,7 @@ mod tests {
             file_hint_shown: true,
             screen_filter: None,
             fullscreen: true,
+            window_size: Some([2560, 1440]),
             renderer: Renderer::DEFAULT.other(),
             keyboard_buttons: false,
             smilebasic_instruments: false,
@@ -859,6 +879,19 @@ mod tests {
             Settings::from_text(&Settings::default().to_text()),
             Settings::default()
         );
+    }
+
+    #[test]
+    fn the_main_window_keeps_its_size_and_fullscreen() {
+        let s = Settings::from_text("window_size=1920,1080\nfullscreen=true\n");
+        assert_eq!(s.window_size, Some([1920, 1080]));
+        assert!(s.fullscreen);
+        for bad in ["0,720", "1280", "1280,x", "-1,720", ""] {
+            let s = Settings::from_text(&format!("window_size={bad}\n"));
+            assert_eq!(s.window_size, None, "{bad}");
+        }
+        let text = Settings::default().to_text();
+        assert!(text.contains("window_size=\n") && text.contains("fullscreen=false\n"));
     }
 
     #[test]

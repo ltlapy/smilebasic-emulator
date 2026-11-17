@@ -95,7 +95,7 @@ use sdl3::sys::render::{
     SDL_SetRenderDrawBlendMode, SDL_SetTextureBlendMode,
 };
 use sdl3::sys::surface::SDL_ScaleMode;
-use sdl3::video::{FullscreenType, Window, WindowBuilder, WindowContext};
+use sdl3::video::{FullscreenType, Window, WindowBuilder, WindowContext, WindowPos};
 use settings_window::SettingsWindow;
 use shortcuts::ShortcutsWindow;
 use simple_ui::{GameList, MenuSettings, PauseMenu, Welcome, Welcomed};
@@ -416,7 +416,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         .and_then(|d| d.get_usable_bounds());
     let usable = usable.ok().filter(|_| !headless());
     let usable = usable.map(|r| (r.width(), r.height()));
-    let (window_w, window_h) = window::start_size(profile_display, usable);
+    // As large as when the emulator last quit, as View > Window size left it.
+    let wanted = (machine.rt.settings.window_size).map_or(profile_display, |[w, h]| (w, h));
+    let (window_w, window_h) = window::start_size(wanted, usable);
     let mut builder = video.window(TITLE, window_w, window_h);
     builder.position_centered().resizable().high_pixel_density();
     if simple_ui || machine.rt.settings.fullscreen {
@@ -789,6 +791,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     machine.rt.settings.renderer = Renderer::Cpu;
                     None
                 }
+                _ if what.starts_with("window-size:") => {
+                    let i = what[12..].parse().unwrap_or(1);
+                    if let Some(&(_, halves)) = window::SCALES.get(i) {
+                        let settings = &mut machine.rt.settings;
+                        set_window_scale(canvas.window_mut(), settings, profile_display, halves);
+                    }
+                    None
+                }
                 _ if what.starts_with("refuse:") => {
                     refusals = what[7..].parse().unwrap_or(0);
                     None
@@ -908,10 +918,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 color_window = Some(ColorWindow::new(size));
             }
             if b.opens("file-menu") {
-                menu.open_menu(0);
+                menu.open_menu(0, "");
             }
             if b.opens("view-menu") {
-                menu.open_menu(2);
+                menu.open_menu(2, "Window size");
             }
             if b.opens("settings") {
                 let mut window = SettingsWindow::new(size);
@@ -2298,7 +2308,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     clicks,
                     ..
                 } => match if ui_window && !simple_ui {
-                    menu.click(to_display(x, y), menu_context(machine, canvas.window()))
+                    let open = menu.is_open().then_some(profile_display);
+                    menu.click(
+                        to_display(x, y),
+                        menu_context(machine, canvas.window(), open),
+                    )
                 } else {
                     Click::Ignored
                 } {
@@ -2401,6 +2415,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                     Click::Chosen(Action::ToggleFullscreen) => {
                         toggle_fullscreen(canvas.window_mut(), &mut machine.rt.settings);
+                    }
+                    Click::Chosen(Action::WindowSize(i)) => {
+                        let (main, settings) = (canvas.window_mut(), &mut machine.rt.settings);
+                        set_window_scale(main, settings, profile_display, window::SCALES[i].1);
                     }
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Ignored
@@ -3379,7 +3397,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         ui::set_font(machine.rt.settings.ui_font);
         ui::set_bundled_glyphs(machine.rt.settings.bundled_glyphs16);
         let cursor_on = (blink / 25).is_multiple_of(2);
-        let context = menu_context(machine, canvas.window());
+        let open = menu.is_open().then_some(profile_display);
+        let context = menu_context(machine, canvas.window(), open);
         let settings = &machine.rt.settings;
         let editor_creator = editor_gfx
             .get()
@@ -3597,9 +3616,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         machine.rt.settings.editor_window_place = Some(place);
     }
     // The desktop starts fullscreen next time if it is now, whoever made
-    // it so.
+    // it so, and the window as large as it is now, unless fullscreen or
+    // maximized, which keep the size it had before.
     if !simple_ui {
-        machine.rt.settings.fullscreen = main_window.fullscreen_state() != FullscreenType::Off;
+        let fullscreen = main_window.fullscreen_state() != FullscreenType::Off;
+        machine.rt.settings.fullscreen = fullscreen;
+        if !fullscreen && !main_window.is_maximized() {
+            let (w, h) = main_window.size();
+            machine.rt.settings.window_size = Some([w, h]);
+        }
     }
     // A bench run leaves the settings as they were, as it does above, so
     // that runs in one data directory start alike.
@@ -4219,15 +4244,57 @@ fn choose_extra_font(window: &Window, send: std::sync::mpsc::Sender<PathBuf>, to
     }
 }
 
-/// What the menu bar's items depend on.
-fn menu_context(machine: &Machine, main: &Window) -> Context {
+/// What the menu bar's items need of the emulator and the main window.
+/// `display`, the profile's, is given while a menu is open: View > Window
+/// size then asks the system for the window's display.
+fn menu_context(machine: &Machine, main: &Window, display: Option<(u32, u32)>) -> Context {
+    let fullscreen = main.fullscreen_state() != FullscreenType::Off;
+    let (window_size, window_fits) = match display {
+        Some(display) => {
+            let current = window::current(display, main.size_in_pixels(), fullscreen);
+            let usable = main.get_display().and_then(|d| d.get_usable_bounds());
+            let usable = usable.map_or((0, 0), |r| (r.width(), r.height()));
+            // Known on X11 and Windows; elsewhere the size alone is checked.
+            let (top, left, bottom, right) = main.border_size().unwrap_or_default();
+            let borders = (top.into(), left.into(), bottom.into(), right.into());
+            let fits = window::fitting(display, main.pixel_density(), borders, usable);
+            (current, fits)
+        }
+        None => (None, 0),
+    };
     Context {
         running: machine.is_running(),
         editing: machine.is_editing(),
         paused: machine.paused_at().is_some() && !machine.is_running(),
         detached: machine.is_detached(),
         sub: machine.sub_running(),
-        fullscreen: main.fullscreen_state() != FullscreenType::Off,
+        fullscreen,
+        window_size,
+        window_fits,
+    }
+}
+
+/// Sets the main window to `halves` halves of the profile's `display` in
+/// pixels, as View > Window size does: out of fullscreen first, and back
+/// on the display if the larger window would go past its edge. The menu
+/// bar goes over the screen, so the screen gets the whole multiple.
+fn set_window_scale(main: &mut Window, settings: &mut Settings, display: (u32, u32), halves: u32) {
+    if main.fullscreen_state() != FullscreenType::Off {
+        let _ = main.set_fullscreen(false);
+        settings.fullscreen = false;
+    }
+    if main.is_maximized() {
+        main.restore();
+    }
+    let (w, h) = window::coordinates(window::scaled(display, halves), main.pixel_density());
+    let _ = main.set_size(w, h);
+    let (x, y) = main.position();
+    let room = main.get_display().and_then(|d| d.get_usable_bounds());
+    if let Ok(room) = room
+        && (x + w as i32 > room.x() + room.width() as i32
+            || y + h as i32 > room.y() + room.height() as i32)
+    {
+        main.set_position(WindowPos::Centered, WindowPos::Centered);
     }
 }
 
