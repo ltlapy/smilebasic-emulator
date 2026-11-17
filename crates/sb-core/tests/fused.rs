@@ -802,6 +802,22 @@ fn chains_take_statements_of_several_operators() {
     );
 }
 
+/// A long run of pushes, as an array literal of image data makes, takes
+/// time in proportion to its length to fuse. Looking for a chain from
+/// each of its addresses to its end took time squared in it: 45 seconds
+/// for these 60000 numbers in a test build, against well under one.
+#[test]
+fn long_array_literals_fuse_quickly() {
+    let numbers: Vec<String> = (0..60_000).map(|i| (i % 1000).to_string()).collect();
+    let source = format!("DIM A%[60000]=[{}]\n?A%[59999]+A%[1]", numbers.join(","));
+    let start = std::time::Instant::now();
+    let program = compiled(&source, true);
+    let took = start.elapsed();
+    assert!(!program.fast.is_empty());
+    assert!(took.as_secs() < 10, "fusing took {took:?}");
+    assert_eq!(run(&source, 1_000_000, true).1, "1000\n");
+}
+
 /// Loops of the kinds the `jit` feature compiles, and what makes native
 /// code leave a statement to the interpreter: an integer that overflows, a
 /// string written over, an error, a real FOR, a NaN.

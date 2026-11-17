@@ -1026,6 +1026,12 @@ impl Calls {
 /// The longest chain a chain may be, in instructions: [`Fast::len`].
 const MAX_CHAIN: usize = 200;
 
+/// The most values a chain's stack holds. Expressions need few; a deeper
+/// stack is most likely a run of pushes such as an array literal's,
+/// which no chain takes, and looking for one from each of its addresses
+/// would cost that many steps each.
+const MAX_CHAIN_STACK: usize = 32;
+
 /// The chains for the code from `code[0]` at `pc`, each a statement longer
 /// than the one before. `temps` is the first of its hidden places. `whole`
 /// is all of the code, which the bodies of DEFs it calls are in.
@@ -1064,6 +1070,9 @@ impl Chain {
         match *op {
             Op::Nop => {}
             Op::Int(_) | Op::Real(_) | Op::Load(_) => {
+                if self.stack.len() >= MAX_CHAIN_STACK {
+                    return None;
+                }
                 let v = c.source(Some(op))?;
                 self.stack.push(v);
             }
@@ -1270,7 +1279,12 @@ fn chain(
         Some(true)
     };
     let mut end = code.len();
-    for (at, op) in code.iter().enumerate() {
+    // No candidate is longer than MAX_CHAIN, so there is nothing to find
+    // past it. Without this limit, a run of pushes with no store or jump
+    // between, such as an array literal of thousands of numbers, was
+    // walked to its end from each of its addresses: time squared in its
+    // length, two seconds for 16000 numbers.
+    for (at, op) in code.iter().enumerate().take(MAX_CHAIN + 1) {
         match ch.expression(op, c) {
             Worked::Done => continue,
             Worked::Failed => return None,
