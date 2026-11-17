@@ -63,7 +63,8 @@ Without the imported archive:
 - A song started while nothing plays sounds two frames after `BGMPLAY`. On
   SmileBASIC 4 it sounds 1276 samples after, about half a frame sooner. With
   two frames, the song's MML variables change on the same frames as on
-  SmileBASIC 4, which rhythm games follow.
+  SmileBASIC 4, which rhythm games follow. A `BEEP` in the same frame sounds
+  two frames before the song in the emulator, and with it on SmileBASIC 4.
 - `WAVSET` with `[..]` groups leaves silent the part of the 512 samples that the
   last group does not fill. SmileBASIC 4 leaves whatever its stack held.
 - A few preset effects play at a slightly different pitch and end a frame or
@@ -95,15 +96,25 @@ Without the imported archive:
   to 400 and 400 to 600 ms it records 136, 95 and 51, where SmileBASIC 4 gives
   144, 101 and 56. The emulator's envelopes share one table, so other sounds
   may fall faster too.
-- `PCMPOS()` gives the sample the stream has reached. SmileBASIC 4's moves in
-  blocks: 27 frames into a looping stream of 4800 samples at 48000 Hz it reads
-  3313 or 673, where the emulator gives 2400.
 - A `PCMSTREAM` whose array `RESIZE` has made shorter plays silence for the
   samples that are gone, and so does the right side of a 2D array with one
   row. SmileBASIC 4 reads the memory past the array there.
 - `TALK` speaks with a voice of the emulator's own, a Klatt formant synthesizer
   (klattsch-core) reading the kana or phoneme letters, so it says the same words
-  in another voice.
+  in another voice. `SNDSTOP` and `TALKSTOP` cut it within a few milliseconds
+  of when `SNDSTOP` cuts `BEEP`, where SmileBASIC 4 cuts `TALK` about a frame
+  sooner.
+- Notes far above their waveform's rate, such as `O8A` of an 8000 Hz `WAVSETA`
+  sine, leave images 10 to 22 dB louder than on SmileBASIC 4, whose
+  resampling filters them more.
+- Some instruments' notes differ in shape: `@118` at `L16` rings for about a
+  second where SmileBASIC 4's falls 15 dB in 200 ms, and a phrase of `L8`
+  notes dips between notes where SmileBASIC 4's does not. A new `BGMPLAY` on a
+  track cuts the last note's release, which goes on under the new song on
+  SmileBASIC 4.
+- The drum kits `@131` to `@133` play other kick drums than SmileBASIC 4's,
+  and hi-hats in every kit come out about 1 dB quieter.
+- `BEEP 152` records at 0.76 of SmileBASIC 4's level, with the same shape.
 - Sung notes in MML (`*WA,C4`) sing with that voice at the note's pitch, one
   voice to a channel, instead of the channel's instrument.
 
@@ -263,6 +274,13 @@ window comes back.
   request would not fit: emptying a string or an array, or leaving a DEF, does
   not raise `FREEMEM` on SmileBASIC 4, even after `VSYNC` or `WAIT`. A program
   would have to watch `FREEMEM` to see the difference.
+- `SPVAR` and `TVAR` keys of over 1024 characters store nothing. SmileBASIC 4
+  adds a variable each time one is written, which only takes memory, as none
+  can be found again.
+- All the sprites' and text screens' variables together come to 2,097,152 at
+  most, and one more is `Out of memory`. SmileBASIC 4 takes them from a pool
+  of that many small blocks, which short strings share, so it can run out
+  sooner.
 - `GSAVE` and `GLOAD` with a rectangle of more pixels than SmileBASIC 4's memory
   could hold give `Out of range`, not `Out of memory`.
 
@@ -441,7 +459,10 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
 - Ctrl+C's break acts as the key goes down. On SmileBASIC 4 the jump to
   `ON BREAK GOTO`'s label was seen 20 frames after the press.
 - `RUN` reaches the program's first line two frames after the Enter, as on a
-  Switch 2, at every speed setting. A Switch 1 takes four for a short program.
+  Switch 2, or four with Speed set to Switch 1. A Switch 1 takes three or
+  four.
+- A `COMMON DEF` of the program run last cannot be called from DIRECT mode:
+  it is a `Syntax error` there, as a plain `DEF` is. SmileBASIC 4 runs it.
 - Run on a project in the project manager returns to the manager when the
   program ends or is stopped. After an error the screen stays, with the
   emulator's own line `=== Press A Button or Enter to return.===` below it,
@@ -490,6 +511,9 @@ For a subprogram's screen, see `FADE` under
 - `FFT` and `IFFT` refuse a first array shorter than the others with
   `Illegal function call` naming it. SmileBASIC 4 does not look at its length
   and writes all the results into it.
+- `FFT` with an int array as its window takes each two ints as the bits of
+  one real, and 0 for the half that would lie past the array's end, where
+  SmileBASIC 4 reads the memory there.
 - Two sound errors never come: `Sound request too much` (79), which SmileBASIC 4
   raises when `BEEP` or a `BGM` command finds its sound thread's request queue
   full, and `Out of sound memory` (80), which it raises when its 8 MiB sound
@@ -516,8 +540,7 @@ For a subprogram's screen, see `FADE` under
 - A file command's question starts on the button that goes ahead, as
   SmileBASIC 4's save question starts on OK. Replacing a file asks once, with
   a line saying so, where SmileBASIC 4 asks twice, whether to save and then
-  whether to overwrite. A question that would lose
-  unsaved edits starts on Cancel.
+  whether to overwrite.
 - `SAVE` and `SAVEV "TXT:..."` write plain UTF-8 text, and `SAVEG` and
   `SAVEV "GRP:..."` write PNG images, so the files open on a computer.
 - `DAT` files hold SmileBASIC 4's array without its container. The emulator
