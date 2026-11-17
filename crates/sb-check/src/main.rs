@@ -93,6 +93,12 @@ const USAGE: &str = "usage:
                           break, and DIRECT mode runs PRG0. Held 60
                           frames, it stops the program at F+60, past
                           ON BREAK, and its release does nothing
+        F ctrlc N         Left Ctrl and C held for N frames. While a
+                          program or a DIRECT mode line runs, it is a
+                          break as the + button's, at the press: the
+                          program jumps to its ON BREAK GOTO label or
+                          stops; C types nothing and KEYBOARD sees only
+                          its release
         F shot NAME       the screen saved as DIR/NAME.png
         F console         the console's text printed
         F end             the run stops
@@ -727,6 +733,8 @@ enum Action {
     Hold(Hold, u32),
     /// The + button held for some frames.
     Plus(u32),
+    /// Ctrl+C held for some frames.
+    CtrlC(u32),
     Shot(String),
     Console,
     End,
@@ -810,6 +818,7 @@ fn parse_script(text: &str) -> Result<Vec<(u32, Action)>, AnyError> {
                 frames.parse().map_err(|_| bad())?,
             ),
             ("plus", [frames]) => Action::Plus(frames.parse().map_err(|_| bad())?),
+            ("ctrlc", [frames]) => Action::CtrlC(frames.parse().map_err(|_| bad())?),
             ("shot", [name]) => Action::Shot((*name).to_owned()),
             ("console", []) => Action::Console,
             ("end", []) => Action::End,
@@ -876,6 +885,10 @@ struct Player {
 /// frames a second.
 const FORCED_STOP_FRAMES: u32 = 60;
 
+/// USB usage IDs of the keys `ctrlc` holds.
+const KEY_LEFT_CTRL: u8 = 0xE0;
+const KEY_C: u8 = 0x06;
+
 impl Player {
     fn new(steps: Vec<(u32, Action)>) -> Player {
         Player {
@@ -899,6 +912,14 @@ impl Player {
                 Action::Hold(hold, n) => self.held.push((hold, frame + n)),
                 // A new press starts the second again, as in the frontend.
                 Action::Plus(n) => self.plus = Some((frame + FORCED_STOP_FRAMES, frame + n)),
+                // As the frontend does: a break while something runs.
+                Action::CtrlC(n) => {
+                    self.held.push((Hold::Usb(KEY_LEFT_CTRL), frame + n));
+                    self.held.push((Hold::Usb(KEY_C), frame + n));
+                    if m.is_running() {
+                        m.keyboard_break();
+                    }
+                }
                 Action::Shot(shot) => {
                     let file = dir.join(format!("{shot}.png"));
                     save_screen(m, &file)?;

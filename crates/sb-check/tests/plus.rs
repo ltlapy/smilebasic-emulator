@@ -1,5 +1,5 @@
-//! The + button in a `--play` script, `F plus N`, run on small projects
-//! in a temporary folder.
+//! The + button and Ctrl+C in a `--play` script, `F plus N` and
+//! `F ctrlc N`, run on small projects in a temporary folder.
 
 use std::process::Command;
 
@@ -88,4 +88,33 @@ fn a_one_second_hold_stops_past_on_break() {
     // It stops at frame 70, one second into the hold.
     let (_, out) = play("hold-60", LOOP_WITH_BREAK, "10 plus 60\n", 300);
     assert!(out.starts_with("ended at frame 71\n"), "{out}");
+}
+
+#[test]
+fn ctrl_c_jumps_to_on_break_at_the_press() {
+    let (status, out) = play("ctrlc", LOOP_WITH_BREAK, "10 ctrlc 30\n", 100);
+    assert_eq!(status, 0);
+    assert!(out.starts_with("ended at frame 11\n"), "{out}");
+    assert_eq!(after_start(&out), ["BROKE", "OK"]);
+}
+
+#[test]
+fn ctrl_c_without_on_break_is_a_user_break() {
+    let program = "PRINT \"START\"\n@L\nVSYNC\nGOTO @L\n";
+    let (status, out) = play("ctrlc-stop", program, "10 ctrlc 5\n", 100);
+    assert_eq!(status, 0);
+    // It stops at the press, before frame 10 runs.
+    assert!(out.starts_with("ended at frame 11\n"), "{out}");
+    assert_eq!(after_start(&out), ["User break on 0:4", "OK"]);
+}
+
+#[test]
+fn ctrl_c_types_nothing_and_hides_cs_press() {
+    // Ctrl and C held for 80 frames: long enough for a key to repeat.
+    let program = "PRINT \"START\"\nON BREAK GOTO @B\n@L\nVSYNC\nGOTO @L\n@B\n\
+                   FOR I=1 TO 100\nK$=INKEY$()\nIF K$!=\"\" THEN PRINT \"KEY\";ASC(K$)\n\
+                   IF KEYBOARD(6,2) THEN PRINT \"PRESS\"\n\
+                   IF KEYBOARD(6,3) THEN PRINT \"RELEASE\"\nVSYNC\nNEXT\n";
+    let (_, out) = play("ctrlc-keys", program, "10 ctrlc 80\n", 200);
+    assert_eq!(after_start(&out), ["RELEASE", "OK"]);
 }
