@@ -631,6 +631,17 @@ follows the clock. `--slower N` divides that clock and its limits by N, to see
 how a machine N times slower would go. It has no window, so no upload, scaling
 or present is included.
 
+With `--window`, the report counts the frames in which the program missed
+part of its trip round its main loop: those that ran out of time part-way
+through it, those that held the program at its `VSYNC` to catch up, and the
+`VSYNC`s that waited for the next frame where SmileBASIC 4 would go straight
+on. A program that counts its trips as frames goes wrong after such frames.
+`--keep-frames` runs with `Machine::keep_frames`, which spends no frame while
+a trip that started at a `VSYNC` is under way, so that the program runs slower
+instead; `FRAMES` and the script's frame numbers then count frames, not calls.
+A script's `button` or `usb` line with 0 frames presses and releases between
+two frames, as a tap shorter than the frontend's frame.
+
 ## The GPU path
 
 `crates/sb-sdl/src/gpu.rs` and [renderer.md](renderer.md) describe the path
