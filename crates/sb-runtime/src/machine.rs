@@ -1265,6 +1265,12 @@ impl Machine {
         }
         // A line typed in direct mode cannot go on.
         if program {
+            // A STOP or a break leaves ENVSTAT no error, argument 0, slot
+            // and place -1 and line 0 (checked on hardware). UNVERIFIED:
+            // that TRACE does too; the debugger's own stops do not.
+            if how != Halt::Debug {
+                self.rt.env_error = [0, 0, -1, -1, 0];
+            }
             vm.pass_here();
             vm.leave_input();
             self.halt(vm, Stopped::Paused, line);

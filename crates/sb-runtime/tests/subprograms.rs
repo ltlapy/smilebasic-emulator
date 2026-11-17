@@ -354,6 +354,9 @@ fn envstat_keeps_the_argument_through_clean_runs() {
     told(&[], "0   0   0   -1  0");
     told(&["?\"A\"\n"], "0   0   0   -1  0");
     told(&["\n\nX=0:?1/X\n", "?\"A\"\n"], "0   0   -1  -1  3");
+    // A STOP puts argument 0 and line 0 in their place (checked on
+    // hardware).
+    told(&["\n\nX=0:?1/X\n", "?\"A\"\nSTOP\n"], "1   0   0   -1  0");
 }
 
 #[test]
