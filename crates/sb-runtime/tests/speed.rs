@@ -241,9 +241,9 @@ fn millisec_follows_the_consoles_clock() {
     );
 }
 
-/// EXEC of a file costs a base and the characters it compiles, code more
-/// than comments and strings: on a Switch 2 about 0.4 ms, and 2.3 ms and
-/// 0.9 ms for 10000 characters (TEST69, a file EXEC has read before).
+/// EXEC of a file costs reading it and compiling it, code more than
+/// comments and strings: on a Switch 2 about 0.4 ms, and 2.3 ms and 1.0
+/// ms for 10000 characters (TEST69, TEST76, a file EXEC has read before).
 #[test]
 fn exec_costs_the_source_it_compiles() {
     let dir = std::env::temp_dir().join(format!("sb-speed-exec-{}", std::process::id()));
@@ -265,12 +265,12 @@ fn exec_costs_the_source_it_compiles() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!((350.0..450.0).contains(&base), "{base} us");
     assert!((2_200.0..2_500.0).contains(&code), "{code} us");
-    assert!((800.0..1_000.0).contains(&comment), "{comment} us");
+    assert!((900.0..1_150.0).contains(&comment), "{comment} us");
 }
 
-/// EXEC of the program already in a slot pays the base and 28% of what
-/// its characters cost from a file: TEST73's EXEC 1 of HGLIB.PRG after
-/// LOAD took 4.4 ms on a Switch 2 with its set-up.
+/// EXEC of the program already in a slot only compiles it: TEST76's EXEC
+/// 3 of 16000 characters of code after LOAD took 2.6 ms on a Switch 2,
+/// and EXEC of the file 4.1 ms.
 #[test]
 fn exec_of_a_slot_costs_less_than_of_a_file() {
     let rt = Runtime::for_tests(Font::blank());
@@ -281,7 +281,7 @@ fn exec_of_a_slot_costs_less_than_of_a_file() {
         &[(0, "PERFBEGIN 0:EXEC 1\n"), (1, &slot1)],
     );
     let us: f64 = line.trim().parse().unwrap_or_else(|_| panic!("{line:?}"));
-    assert!((950.0..1_150.0).contains(&us), "{us} us");
+    assert!((1_500.0..1_850.0).contains(&us), "{us} us");
 }
 
 /// GPUTCHR of user-defined characters costs by drawing mode: one of 16
@@ -389,14 +389,13 @@ fn printing_that_scrolls_costs_more() {
     );
 }
 
-/// A FOR's test costs more inside a DEF than at the top level, as TPERF's
-/// VINT and VREAL, loops in DEFs, take longer than their pieces timed
-/// alone at the top level (TEST71, TEST74).
+/// A statement costs a little more inside a DEF than at the top level: a
+/// FOR's pass 7 to 12 ns on both consoles (TEST76).
 #[test]
 fn a_for_in_a_def_costs_more() {
     let top = "PERFBEGIN 0:FOR I=1 TO 10000:NEXT:?PERFEND(0)\n";
     let def = "DEF L:VAR I:FOR I=1 TO 10000:NEXT:END\nPERFBEGIN 0:L:?PERFEND(0)\n";
-    for (speed, more) in [(Speed::Switch1, 420.0), (Speed::Switch2, 120.0)] {
+    for (speed, more) in [(Speed::Switch1, 100.0), (Speed::Switch2, 110.0)] {
         let (top, def) = (passes(speed, top), passes(speed, def));
         let extra = def - top;
         assert!(
@@ -406,25 +405,28 @@ fn a_for_in_a_def_costs_more() {
     }
 }
 
-/// CHR$ of the code the last CHR$ made costs only its call, and of a new
-/// code more: TEST71 to TEST74 time U$=CHR$(C) at 165 to 185 ns on a
-/// Switch 1, where TPERF's VSTR and HGLIB's conversions, which make a
-/// new code each time, need more.
+/// CHR$ of one of the codes the last four CHR$ made costs only its call,
+/// and of another code more: TEST76 times CHR$ of one to four codes in
+/// turn at 163 to 177 ns on a Switch 1, where TPERF's VSTR, which makes 16
+/// codes in turn, and HGLIB's conversions need more.
 #[test]
 fn chr_of_a_new_code_costs_more() {
     let chr = |mask: u32| {
         format!("PERFBEGIN 0:FOR I=1 TO 1000:U$=CHR$(65+(I AND {mask})):NEXT:?PERFEND(0)\n")
     };
-    let (same, new) = (
+    let (same, four, new) = (
         passes(Speed::Switch1, &chr(0)),
-        passes(Speed::Switch1, &chr(1)),
+        passes(Speed::Switch1, &chr(3)),
+        passes(Speed::Switch1, &chr(15)),
     );
+    // But the first four, which are new.
+    assert!((four - same).abs() < 3.0, "{same} us, {four} us");
     assert!(new > same + 300.0, "{same} us, {new} us");
 }
 
 /// LEN costs what reading a variable does, as ABS does, and SIN of a
-/// number past a quarter of pi more than of a small one: TEST72's SIN of
-/// 1000000.5 took 198 ns on a Switch 1, of 0.5 106 ns.
+/// number past a quarter of pi more than of a small one: TEST76's SIN of
+/// 1 to 1000000.5 took 152 to 197 ns on a Switch 1, of 0.5 110 ns.
 #[test]
 fn cheap_builtins_cost_no_call() {
     let time = |body: &str| {
@@ -439,7 +441,7 @@ fn cheap_builtins_cost_no_call() {
     assert_eq!(time("A=LEN(S$)"), time("A=ABS(X)"));
     let (small, large) = (time("S#=SIN(R#)"), time("S#=SIN(B#)"));
     assert!(
-        (800.0..1100.0).contains(&(large - small)),
+        (600.0..800.0).contains(&(large - small)),
         "{small} us, {large} us"
     );
 }
@@ -476,20 +478,24 @@ fn gload_of_palette_indices_costs_more() {
     assert!(colors < indices * 0.75, "{colors} us, {indices} us");
 }
 
-/// SPROT right after SPROT of the same sprite costs less, as TEST74's ten
-/// in a row take 285 ns each on a Switch 1, where TEST70's sprite loop
-/// needs more between other commands.
+/// SPROT among commands for a few sprites costs less, as TEST76's of one,
+/// two or ten sprites in turn take 285 ns each on a Switch 1, where
+/// TEST70's sprite loop over a hundred sprites needs more.
 #[test]
 fn sprot_in_a_row_costs_less() {
-    let rot = |other: u32| {
+    let rot = |other: &str| {
         format!(
-            "SPSET 0,0:SPSET 1,0:PERFBEGIN 0\n\
+            "FOR J=0 TO 99:SPSET J,0:NEXT:PERFBEGIN 0\n\
              FOR I=1 TO 1000:SPROT 0,I:SPROT {other},I:NEXT:?PERFEND(0)\n"
         )
     };
-    let (row, turn) = (
-        passes(Speed::Switch1, &rot(0)),
-        passes(Speed::Switch1, &rot(1)),
+    let (row, two, many) = (
+        passes(Speed::Switch1, &rot("0")),
+        passes(Speed::Switch1, &rot("1")),
+        passes(Speed::Switch1, &rot("I MOD 100")),
     );
-    assert!(row + 400.0 < turn, "{row} us, {turn} us");
+    // But the first, while the SPSETs of a hundred sprites are among the
+    // last commands.
+    assert!((two - row).abs() < 3.0, "{row} us, {two} us");
+    assert!(row + 400.0 < many, "{row} us, {many} us");
 }

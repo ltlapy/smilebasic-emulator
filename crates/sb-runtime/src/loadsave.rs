@@ -320,6 +320,7 @@ impl Runtime {
                     return Ok(vec![Value::Int(0)]);
                 }
                 let outcome = self.load_value(&spec);
+                self.charge_loadv(&spec, &outcome);
                 // The new value has to fit beside what it will replace.
                 if let Ok(value) = &outcome {
                     let bytes = match value {
@@ -360,6 +361,7 @@ impl Runtime {
                         Ok(_) => Err(StorageError::BadKind("TXT".to_string())),
                         Err(e) => Err(e),
                     };
+                self.charge_loadv_array(&spec, outcome.as_ref().ok().map(Array::len));
                 // The array stays where it is unless it has to grow, which
                 // needs a new block beside the old, as RESIZE does. One of
                 // the system's never grows: SmileBASIC 4 reads only the

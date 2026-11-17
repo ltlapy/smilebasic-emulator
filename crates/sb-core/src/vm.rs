@@ -47,6 +47,9 @@ pub struct Work {
     pub executed: u64,
     pub statements: u64,
     pub def_calls: u64,
+    /// The values those calls set up: parameters, OUT variables, other
+    /// variables and a result. Fused steps leave them out.
+    pub def_values: u64,
     pub builtin_calls: u64,
     /// The arguments given to builtin calls.
     pub builtin_args: u64,
@@ -63,12 +66,13 @@ pub struct Work {
     pub joins: u64,
     /// Tests of whether a FOR goes round again: each pass and the end.
     pub for_tests: u64,
-    /// Of those, the tests run inside a DEF.
-    pub def_for_tests: u64,
+    /// Statements run inside a DEF of the running slot, which cost
+    /// SmileBASIC 4 more than at the top level or in code EXEC ran.
+    pub def_statements: u64,
     /// `IF` and `ELSEIF` conditions that are an array element
     /// ([`crate::bytecode::Op::TestIfFalse`]).
     pub element_tests: u64,
-    /// Calls of `CHR$` of a code other than the last call's, counted
+    /// Calls of `CHR$` of a code other than the last four calls', counted
     /// only for a host that hears of the work.
     pub chr_calls: u64,
     /// The calls of each builtin of [`COSTLY`], counted only for a host
@@ -85,24 +89,31 @@ pub struct Work {
     pub str_compares: u64,
 }
 
-/// Builtins that cost SmileBASIC 4 more than a call, timed alone by
-/// TEST71 on both consoles. [`Work::costly_calls`] counts their calls in
-/// this order.
-pub const COSTLY: [&str; 6] = ["STR$", "FORMAT$", "VAL", "INSTR", "HEX$", "MID$"];
+/// Builtins that cost SmileBASIC 4 more than a call, each timed alone on
+/// both consoles. [`Work::costly_calls`] counts their calls in this
+/// order, and `FREEMEM`'s, which is no call.
+pub const COSTLY: [&str; 15] = [
+    "STR$", "FORMAT$", "VAL", "INSTR", "HEX$", "MID$", "SUBST$", "BIN$", "CLASSIFY", "SORT",
+    "INSERT", "REMOVE", "UNSHIFT", "SHIFT", "FREEMEM",
+];
 
 /// Builtins that cost SmileBASIC 4 about what reading a variable does,
 /// or a little more, each timed alone by TEST71, TEST72 and TEST74 on
-/// both consoles. [`Work::cheap_calls`] counts their calls in this order.
-/// The first three cost more for a number past a quarter of pi either way
-/// (TEST72's `SIN` of 1000000.5). UNVERIFIED: `TAN` as `SIN`, and where
-/// between 0.5 and 1000000.5 that cost starts.
-pub const CHEAP: [&str; 4] = ["SIN", "COS", "TAN", "SQR"];
+/// both consoles, and the rest less than a call with their arguments.
+/// [`Work::cheap_calls`] counts their calls in this order. The first
+/// three cost more for a number past a quarter of pi either way (TEST72's
+/// `SIN` of 1000000.5). UNVERIFIED: `TAN` as `SIN`.
+pub const CHEAP: [&str; 10] = [
+    "SIN", "COS", "TAN", "SQR", "POW", "EXP", "LOG", "ASIN", "LEFT$", "RIGHT$",
+];
 
 /// Builtins that cost SmileBASIC 4 no more than reading a variable, so
 /// that it seems to run them without a call (TEST69 to TEST71, both
 /// consoles), and LEN (TEST71, TEST74). MIN and MAX of two count among
 /// them too. UNVERIFIED: that MAX of two costs what MIN of two does.
-const FREE: [&str; 5] = ["ASC", "INT", "FLOOR", "ABS", "LEN"];
+const FREE: [&str; 9] = [
+    "ASC", "INT", "FLOOR", "ABS", "LEN", "ROUND", "CEIL", "SGN", "TYPEOF",
+];
 
 /// How the work of a builtin's call is counted.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -120,7 +131,9 @@ enum Charge {
 fn charges() -> &'static [Charge] {
     static TABLE: std::sync::OnceLock<Vec<Charge>> = std::sync::OnceLock::new();
     fn set(table: &mut Vec<Charge>, name: &str, charge: Charge) {
-        if let Some(id) = builtins::lookup(name, Form::Function) {
+        let found = builtins::lookup(name, Form::Function);
+        let found = found.or(builtins::lookup(name, Form::Command));
+        if let Some(id) = found {
             let i = usize::from(id);
             if table.len() <= i {
                 table.resize(i + 1, Charge::Call);
@@ -432,6 +445,7 @@ pub struct Vm {
     /// statements, as that takes the fused steps away.
     statements: u64,
     def_calls: u64,
+    def_values: u64,
     builtin_calls: u64,
     builtin_args: u64,
     elements: u64,
@@ -441,12 +455,12 @@ pub struct Vm {
     lookups: u64,
     joins: u64,
     for_tests: u64,
-    def_for_tests: u64,
+    def_statements: u64,
     element_tests: u64,
     chr_calls: u64,
-    /// The code of the last `CHR$` counted, as a run that reports its
-    /// work sees it.
-    last_chr: Option<i32>,
+    /// The codes of the last four `CHR$` counted, as a run that reports
+    /// its work sees them, -1 for none.
+    last_chr: [i32; 4],
     costly_calls: [u64; COSTLY.len()],
     cheap_calls: [u64; CHEAP.len()],
     trig_reductions: u64,
@@ -723,6 +737,7 @@ impl Vm {
             executed: 0,
             statements: 0,
             def_calls: 0,
+            def_values: 0,
             builtin_calls: 0,
             builtin_args: 0,
             elements: 0,
@@ -732,10 +747,10 @@ impl Vm {
             lookups: 0,
             joins: 0,
             for_tests: 0,
-            def_for_tests: 0,
+            def_statements: 0,
             element_tests: 0,
             chr_calls: 0,
-            last_chr: None,
+            last_chr: [-1; 4],
             costly_calls: [0; COSTLY.len()],
             cheap_calls: [0; CHEAP.len()],
             trig_reductions: 0,
@@ -1231,6 +1246,7 @@ impl Vm {
             executed: self.executed,
             statements: self.statements,
             def_calls: self.def_calls,
+            def_values: self.def_values,
             builtin_calls: self.builtin_calls,
             builtin_args: self.builtin_args,
             elements: self.elements,
@@ -1240,7 +1256,7 @@ impl Vm {
             lookups: self.lookups,
             joins: self.joins,
             for_tests: self.for_tests,
-            def_for_tests: self.def_for_tests,
+            def_statements: self.def_statements,
             element_tests: self.element_tests,
             chr_calls: self.chr_calls,
             costly_calls: self.costly_calls,
@@ -1548,6 +1564,7 @@ impl Vm {
             self.executed += 1;
             if !FUSED && program.starts.get(pc) == Some(&true) {
                 self.statements += 1;
+                self.def_statements += u64::from(self.own_frame().is_some());
             }
             let outcome = self.step(&program, host);
             // Calls into other slots change the running program.
@@ -3402,6 +3419,7 @@ impl Vm {
                 self.stack.push(Value::Int(found.into()));
             }
             Op::FreeMem { both } => {
+                self.costly_calls[COSTLY.len() - 1] += 1;
                 let free = Value::Int(self.free_memory(host));
                 // The largest free block is all of it (checked on
                 // hardware).
@@ -3470,8 +3488,6 @@ impl Vm {
             }
             Op::ForTest => {
                 self.for_tests += 1;
-                // A NEXT in a DEF costs SmileBASIC 4 more (TPERF, TEST70, TEST71).
-                self.def_for_tests += u64::from(!self.frames.is_empty());
                 self.for_test()?;
             }
             Op::Print { screen } => {
@@ -3765,15 +3781,17 @@ impl Vm {
             None | Some(Charge::Call) => true,
             Some(Charge::Free) => false,
             Some(Charge::FreeWithTwo) => argc != 2,
-            // A CHR$ of the code the last one made costs only its
-            // call (TEST71 to TEST74 time U$=CHR$(C) so).
-            // UNVERIFIED: that SmileBASIC 4 keeps the last string
-            // CHR$ made, as HGCNV$ and TPERF's VSTR, which make a
-            // new code each time, need CHR$'s cost.
+            // A CHR$ of one of the codes the last four made costs only
+            // its call, as CHR$ of two to four codes in turn does.
+            // UNVERIFIED: that SmileBASIC 4 keeps the last few strings
+            // CHR$ made, as HGCNV$ and TPERF's VSTR, which make many
+            // codes in turn, need CHR$'s cost.
             Some(Charge::Chr) => {
                 let code = self.stack.last().and_then(|v| v.to_int().ok());
-                if code.is_none() || std::mem::replace(&mut self.last_chr, code) != code {
+                if code.is_none_or(|c| !self.last_chr.contains(&c)) {
                     self.chr_calls += 1;
+                    self.last_chr.rotate_right(1);
+                    self.last_chr[0] = code.unwrap_or(-1);
                 }
                 true
             }
@@ -3979,6 +3997,7 @@ impl Vm {
         cost: usize,
     ) {
         self.def_calls += 1;
+        self.def_values += (info.locals.len() + usize::from(info.is_function)) as u64;
         let at = self.stack.len() - argc;
         let stack_to = self.frames.last().map_or(0, |f| f.stack_to) + cost;
         let base = self.locals.len();

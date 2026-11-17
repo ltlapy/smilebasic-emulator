@@ -11,19 +11,21 @@
 //! `PERFEND` and `MILLISEC` measure the same time.
 //!
 //! The costs come from TPERF's scenes and the loops of TEST65, TEST67,
-//! TEST69 to TEST74, timed on both consoles running
+//! TEST69 to TEST76, timed on both consoles running
 //! SmileBASIC 4.4.9, and from TEST68 on a Switch 2 (docs/benchmarking.md).
 //! TEST70 finds a Switch 2 as fast in the hand as docked.
 //!
 //! A `GFILL` or `GCOPY` whose left edge is not on a 16-pixel boundary
 //! costs more on each row, by its width and the edge's column, and less
 //! on a 4-pixel one (TEST69 to TEST72, most on a Switch 1). A misaligned
-//! or blended `GFILL` at a place not among the last 64 such places costs
-//! more again. Changing sprites in turn costs more once there are more of
-//! them than 64, so the meter remembers the last 64 sprites changed. The
-//! first read of each file costs more than the next ones. UNVERIFIED:
-//! that these are the console's memory and storage at work, and where
-//! between 64 and 1000 sprites the sprites' cost starts.
+//! or blended `GFILL`, or a `GLINE`, at a place not among the last 64
+//! such places costs more again. Changing sprites in turn costs more once
+//! there are more of them than 64, so the meter remembers the last 64
+//! sprites changed, and some sprite commands cost less while the last 64
+//! are for a few sprites. The first read of each file costs more than the
+//! next ones. UNVERIFIED: that these are the console's memory and storage
+//! at work, and where between 64 and 1000 sprites the sprites' cost
+//! starts.
 //! Drawing sprites, layers and text screens happens in the frame job, which
 //! TPERF and TEST67 show costs a program nothing, so only the commands are
 //! charged.
@@ -35,6 +37,8 @@ use std::cell::Cell;
 use sb_core::value::Value;
 use sb_core::vm::{CHEAP, COSTLY, Work};
 
+use crate::graphics::PAGES;
+use crate::page::Page;
 use crate::runtime::{Command, Runtime};
 use crate::sprites::SPRITES;
 use crate::text::USER_CHARS;
@@ -90,6 +94,11 @@ pub const FRAME_PS: u64 = 1_000_000_000_000 / 60;
 /// that a slice full of costly commands cannot run far past its end.
 const SLICE: u64 = 20_000;
 
+/// The most sprites that the last 64 sprite commands can be for while
+/// some of those commands cost less: for 10 sprites in turn they do, for
+/// 100 they do not. UNVERIFIED: where between.
+const FEW_SPRITES: u32 = 12;
+
 /// What work costs on one console, in picoseconds.
 #[derive(Debug)]
 pub(crate) struct Costs {
@@ -99,12 +108,17 @@ pub(crate) struct Costs {
     /// Taken off each test of a FOR: a NEXT is many of our instructions
     /// but one step of SmileBASIC 4's.
     for_credit: u64,
-    /// On top of that, each test of a FOR inside a DEF: TPERF's VINT and
-    /// VREAL, and TEST70's and TEST71's loops in DEFs, cost more than
-    /// their pieces timed at the top level (TEST71, TEST74) give.
-    /// UNVERIFIED: what in a DEF's loop costs.
-    def_for: u64,
+    /// On top, each statement run inside a DEF of the running slot: a
+    /// FOR, a WHILE and `A=A+1` cost a little more a pass in a DEF than
+    /// at the top level, where code that EXEC runs from a DEF costs what
+    /// it does at the top level. UNVERIFIED: that it is each statement.
+    def_statement: u64,
+    /// A DEF call, and each value it sets up: parameters, OUT variables,
+    /// other variables and a result. An empty DEF costs much less than
+    /// TPERF's VDEF's calls, and TEST69's HGIMEUPDATE, with four VARs,
+    /// more. UNVERIFIED: that each of these costs alike.
     def_call: u64,
+    def_value: u64,
     /// Each builtin call and each argument it is given. ON's jump counts
     /// as a call with none.
     builtin: u64,
@@ -132,10 +146,14 @@ pub(crate) struct Costs {
     /// no more than a call.
     chr: u64,
     /// Each builtin of [`COSTLY`] on top of its call, in that order.
+    /// `SORT` as of 16 elements and `FREEMEM` as with the memory a small
+    /// program leaves: UNVERIFIED how they grow.
     costly: [u64; COSTLY.len()],
     /// Each builtin of [`CHEAP`], which costs no call, and on top for
     /// `SIN`, `COS` and `TAN` of a number past a quarter of pi either way
-    /// (TEST71, TEST72, TEST74).
+    /// (TEST71, TEST72, TEST74). UNVERIFIED: the console's cost grows
+    /// with the number, from about 1 to 1000000 by half again on a Switch
+    /// 1; this is what angles up to a turn cost.
     cheap: [u64; CHEAP.len()],
     trig_reduce: u64,
     /// Each character of the string a join makes.
@@ -145,9 +163,10 @@ pub(crate) struct Costs {
     str_compare: u64,
     /// `MAINCNT` and `MILLISEC`.
     clock: u64,
-    /// Host functions, such as `BUTTON` and `SPCHK`, and `RND`.
+    /// Host functions, such as `BUTTON` and `SPCHK`, `RND` and `RNDF`.
     query: u64,
     rnd: u64,
+    rndf: u64,
     /// Host commands not timed, and those that set one thing, as
     /// `SPROT`, `SPCOLOR` and `LOCATE` do.
     setter: u64,
@@ -156,18 +175,37 @@ pub(crate) struct Costs {
     /// `LOCATE` with a screen, which TEST72 times.
     locate: u64,
     locate_screen: u64,
-    /// `COLOR` of a text color alone, and `TOFS`, which TEST74 times.
+    /// `COLOR` of a text color alone, and of a screen and a color, and
+    /// `TOFS`.
     color: u64,
+    color_screen: u64,
     tofs: u64,
-    /// `SPROT`, `SPCOLOR`, `SPHOME` and `SPLINK` right after the same
-    /// command for the same sprite, as TEST74 times them ten in a row.
-    /// Otherwise each costs `setter`, as TEST70's sprite loop and TPERF's
-    /// sprite scenes need, where other commands come between.
-    /// UNVERIFIED: what makes the command cheaper there.
+    /// `SPROT`, `SPCOLOR`, `SPHOME`, `SPLINK`, `SPHIDE`, `SPUNLINK`,
+    /// `SPSTOP`, `SPCOL` of a sprite alone and `SPCOLVEC` among sprite
+    /// commands for a few sprites ([`FEW_SPRITES`]), whatever the order.
+    /// Among commands for more each costs `setter`, as TPERF's sprite
+    /// scenes and TEST70's sprite loop over a hundred sprites and more
+    /// need.
     sprot: u64,
     spcolor: u64,
     sphome: u64,
     splink: u64,
+    sphide: u64,
+    spunlink: u64,
+    spstop: u64,
+    spcol: u64,
+    spcolvec: u64,
+    /// `TROT`, `TSCALE`, `THOME` and `TCOLOR` as commands, `TCOPY` of 4x4
+    /// cells (UNVERIFIED: by the cells), `LCLIP` with a rectangle, and
+    /// `TOUCH` and `DTREAD` with `OUT`.
+    trot: u64,
+    tscale: u64,
+    thome: u64,
+    tcolor: u64,
+    tcopy: u64,
+    lclip: u64,
+    touch: u64,
+    dtread: u64,
     spshow: u64,
     spvar: u64,
     spchr: u64,
@@ -191,7 +229,10 @@ pub(crate) struct Costs {
     /// and 4096 sprites, in use or not, with straight lines between.
     spclr: u64,
     spclr_range: [u64; 6],
+    /// `SPHITSP` and the like, and `SPHITSP` of two sprites, which looks
+    /// at no others.
     sphitsp: u64,
+    sphitsp_pair: u64,
     /// `SPANIM`, and of a sprite among the last 64 changed (TEST74's
     /// three on a sprite just set, against TPERF's over 3000 sprites).
     spanim: u64,
@@ -220,17 +261,39 @@ pub(crate) struct Costs {
     /// page.
     fill_px: u64,
     copy_px: u64,
-    /// A pixel of a `GCOPY` that leaves out the transparent ones.
+    /// A pixel of a `GCOPY` that leaves out the transparent ones. Where
+    /// `key_pattern` is set, such a copy pays by its source's pattern
+    /// rather than by where it draws: each opaque pixel, each row with
+    /// both kinds, and each change from one kind to the other along a
+    /// row, at one rate where the run it ends is as long as the run
+    /// before it (stripes, a checkerboard) and at another elsewhere.
+    /// UNVERIFIED: the console's sprite images cost a little more than
+    /// that gives, a pattern of lines a little less.
     copy_key_px: u64,
+    key_pattern: bool,
+    key_ink_px: u64,
+    key_mixed_row: u64,
+    key_regular: u64,
+    key_irregular: u64,
     alpha_px: u64,
     copy_alpha_px: u64,
-    /// `GTRI`: the call, each row and each pixel.
+    /// `GTRI`: the call, each row and each pixel, more for one whose left
+    /// side is not one upright edge. UNVERIFIED: the console's cost also
+    /// goes by which way the left side leans.
     tri: u64,
     tri_row: u64,
     tri_px: u64,
-    /// `GLINE` and `GBOX`, and `GCIRCLE`'s outline, before their pixels.
+    tri_sloped_px: u64,
+    /// `GLINE` before its pixels, each pixel along its longer side and
+    /// each row it goes down, and each pixel of a horizontal one. A steep
+    /// line pays on top for each pixel past four in a column.
+    /// UNVERIFIED: that it is the console's memory cache, of four rows.
+    /// `GCIRCLE`'s outline before its pixels.
     line: u64,
     line_px: u64,
+    line_row: u64,
+    line_steep: u64,
+    line_flat_px: u64,
     circle: u64,
     circle_px: u64,
     load_px: u64,
@@ -251,6 +314,11 @@ pub(crate) struct Costs {
     /// blend charge SmileBASIC 4's own characters so too.
     user_row: [u64; 5],
     user_char_px: [u64; 5],
+    /// A row and a pixel of SmileBASIC 4's own characters in modes 2 to
+    /// 4, letters and spaces alike, from those of 16 pixels, and in mode 3
+    /// of 8 pixels too. UNVERIFIED: modes 2 and 4 of 8 pixels.
+    own_blend_row: [u64; 3],
+    own_blend_px: [u64; 3],
     /// A pixel of a `GCOPY` with a color code, by drawing mode, in place
     /// of the rates above (TEST73).
     copy_color_px: [u64; 5],
@@ -277,30 +345,44 @@ pub(crate) struct Costs {
     /// from the call before, cost as much again as TPERF's.
     cold_row: u64,
     cold_alpha_px: u64,
+    /// The same for each row a `GLINE` goes down: TPERF's lines at random
+    /// places cost more than lines drawn again at one place. UNVERIFIED:
+    /// that it is the same cache.
+    cold_line_row: u64,
     /// A sprite command for a sprite not among the last 64 changed.
     /// TEST70 finds SPOFS of 1, 10 and 64 sprites in turn costs the
     /// same, TEST69 SPOFS over 1000 sprites in order more.
     far_sprite: u64,
     /// `LFILTER` and `LMATRIX`.
     layer: u64,
-    /// `EXEC`: the call, the file's reading included, and each character
-    /// it compiles, those of code apart from those of strings and
-    /// comments.
+    /// Compiling for `EXEC`, of a file or of a slot: the call, each token
+    /// of code (a name, a number, a string or a sign) and each character
+    /// of strings and comments. Code of short names compiles faster a
+    /// character than code of long ones.
     exec: u64,
-    compile_char: u64,
+    compile_token: u64,
     compile_text_char: u64,
-    /// The share of those characters' cost, in percent, that an `EXEC` of
-    /// the program already in a slot pays. TEST73's `EXEC 1` after
-    /// `LOAD` of HGLIB.PRG costs no more than TEST69's `EXEC` of a copy
-    /// a third its size. UNVERIFIED: whether `LOAD` pays the rest.
-    exec_slot_pct: u64,
-    /// On top: the first `EXEC` of a file since the program started, and
-    /// the first read by `EXEC` or `LOADG` of each file since the
-    /// emulator started, and each of its bytes. TEST69 to TEST71: the
-    /// console reads a file faster once it has read it.
+    /// Reading a file for `LOAD`, `LOADV` or `EXEC`: the call and each
+    /// byte. `EXEC` of a file reads and compiles it, `LOAD` only reads
+    /// it, `EXEC` of a slot only compiles it.
+    read: u64,
+    read_byte: u64,
+    /// `LOADV`, on top of reading: each character of a TXT file's string,
+    /// and each element of a GRP or DAT file's array, as the GRP file's
+    /// `LOADG` costs before it. UNVERIFIED: DAT as GRP.
+    loadv_char: u64,
+    loadv_element: u64,
+    /// On top: the first read of each file since the emulator started,
+    /// by any of those or `LOADG`, and each of its bytes, and with it the
+    /// first `EXEC` of a file since the program started. The console
+    /// reads a file faster once it has read it.
     first_exec: u64,
     first_file: u64,
     first_byte: u64,
+    /// Starting a program with RUN: a Switch 1 takes two frames longer
+    /// than a Switch 2, for a program of 5 lines or of 2002. UNVERIFIED:
+    /// that SUBRUN does too.
+    run: u64,
 }
 
 // From TPERF and TEST65 on a Switch 2 and a Switch 1, from TEST67 and
@@ -311,8 +393,9 @@ const SWITCH2: Costs = Costs {
     instruction: 9_700,
     statement: 6_500,
     for_credit: 78_900,
-    def_for: 12_000,
-    def_call: 153_100,
+    def_statement: 5_500,
+    def_call: 72_000,
+    def_value: 19_400,
     builtin: 26_400,
     builtin_arg: 11_500,
     element: 17_400,
@@ -329,11 +412,18 @@ const SWITCH2: Costs = Costs {
     // characters. HGCNV$ and HGREV$ within 7%, and VSTR as before.
     join: 85_000,
     chr: 125_000,
-    // TEST71's STR$, FORMAT$, VAL, INSTR, HEX$ and MID$, each alone.
-    costly: [210_900, 136_700, 89_300, 83_400, 45_900, 67_200],
+    // TEST71's STR$, FORMAT$, VAL, INSTR, HEX$ and MID$, each alone, and
+    // the rest of COSTLY's each alone.
+    costly: [
+        210_900, 136_700, 89_300, 83_400, 45_900, 67_200, 93_500, 125_500, 6_500, 313_000, 95_000,
+        95_000, 83_200, 83_200, 85_300_000,
+    ],
     // TEST71's, TEST72's and TEST74's SIN, COS and SQR alone, and TEST72's
-    // SIN of 1000000.5. UNVERIFIED: TAN as SIN.
-    cheap: [5_300, 6_800, 5_300, 16_000],
+    // SIN of 1000000.5, and the rest of CHEAP's each alone. UNVERIFIED:
+    // TAN as SIN.
+    cheap: [
+        5_300, 6_800, 5_300, 16_000, 0, 9_000, 22_400, 26_000, 38_700, 38_700,
+    ],
     trig_reduce: 39_600,
     join_char: 447,
     // What a join cost before TEST71: TEST69's HGIMEUPDATE, which tests
@@ -341,17 +431,32 @@ const SWITCH2: Costs = Costs {
     // more than a comparison of numbers.
     str_compare: 121_000,
     clock: 5_000,
-    query: 51_700,
+    query: 48_500,
     rnd: 21_000,
+    rndf: 21_000,
     setter: 108_800,
     locate: 23_600,
     locate_screen: 35_700,
     color: 20_700,
+    color_screen: 28_100,
     tofs: 54_400,
-    sprot: 71_200,
-    spcolor: 70_000,
-    sphome: 87_200,
-    splink: 90_400,
+    sprot: 75_000,
+    spcolor: 73_900,
+    sphome: 89_400,
+    splink: 92_200,
+    sphide: 58_200,
+    spunlink: 58_100,
+    spstop: 57_100,
+    spcol: 35_000,
+    spcolvec: 55_500,
+    trot: 29_000,
+    tscale: 45_000,
+    thome: 42_600,
+    tcolor: 26_000,
+    tcopy: 360_000,
+    lclip: 69_500,
+    touch: 114_400,
+    dtread: 114_600,
     spshow: 57_700,
     spvar: 44_300,
     spchr: 87_300,
@@ -380,6 +485,7 @@ const SWITCH2: Costs = Costs {
         222_217_000,
     ],
     sphitsp: 612_300,
+    sphitsp_pair: 48_700,
     spanim: 540_000,
     spanim_near: 168_700,
     // TEST71's PRINT of one character, and TEST69's PRINT of 1000
@@ -407,15 +513,26 @@ const SWITCH2: Costs = Costs {
     clip: [6_700, 47_000],
     fill_px: 458,
     copy_px: 1_120,
-    // TPERF's GCOPY of 48x48 at random places.
+    // TPERF's GCOPY of 48x48 at random places. A Switch 2's costs as
+    // much for any pattern.
     copy_key_px: 1_350,
+    key_pattern: false,
+    key_ink_px: 0,
+    key_mixed_row: 0,
+    key_regular: 0,
+    key_irregular: 0,
     alpha_px: 8_900,
     copy_alpha_px: 9_290,
-    tri: 180_000,
-    tri_row: 14_000,
-    tri_px: 480,
-    line: 250_000,
-    line_px: 5_300,
+    tri: 166_700,
+    tri_row: 15_600,
+    tri_px: 426,
+    tri_sloped_px: 895,
+    // Lines 20x10 to 300x300 every way. Steep ones cost no more.
+    line: 76_000,
+    line_px: 4_580,
+    line_row: 2_830,
+    line_steep: 0,
+    line_flat_px: 1_515,
     circle: 227_000,
     circle_px: 2_100,
     load_px: 780,
@@ -442,9 +559,11 @@ const SWITCH2: Costs = Costs {
     // syllables give.
     user_row: [45_000, 28_000, 51_800, 13_200, 25_100],
     user_char_px: [6_830, 1_620, 15_540, 21_330, 16_850],
+    own_blend_row: [51_800, 52_800, 25_100],
+    own_blend_px: [15_540, 14_500, 16_930],
     // TEST73's GCOPY with a color of 11x11, 12x16 and 16x16 pixels in
-    // modes 1 to 3. UNVERIFIED: mode 0 as mode 1, mode 4 as mode 2.
-    copy_color_px: [6_600, 6_600, 15_860, 20_010, 15_860],
+    // modes 1 to 3, and of a box of 11x11 and 16x16 in modes 0 and 4.
+    copy_color_px: [5_900, 6_600, 15_860, 20_010, 15_860],
     // TEST67's GPAINT of 128x128 and 512x512 and TEST69's of 4x4 and
     // 16x16, all within 7%.
     paint: 33_500_000,
@@ -463,35 +582,38 @@ const SWITCH2: Costs = Costs {
     // TEST71's GFILL and blended GFILL at random places.
     cold_row: 10_100,
     cold_alpha_px: 100,
+    cold_line_row: 3_800,
     // TEST69's SPOFS over 1000 sprites needs none.
     far_sprite: 0,
     layer: 8_000_000,
-    // TEST69's EXEC of a 3-line file (0.24 and 0.52 ms) and of two of
-    // 15343 characters, one of code (3.7 ms) and one of DATA strings
-    // (1.8 ms), and TEST68's and TEST69's of HGLIB.PRG with its set-up
-    // code: the costs that fit all five with the least relative error.
-    // HGLIB's rows and the second and third EXEC of each file come
-    // within 9%, but the 3-line file's, which differ by half on the
-    // console. UNVERIFIED: what else in a file costs, as HGLIB lies 16%
-    // above the line through the other three. The first EXEC of a file,
-    // 2.3 ms for the 3-line one, is not charged apart.
-    exec: 379_000_000,
-    compile_char: 231_800,
-    compile_text_char: 90_600,
-    exec_slot_pct: 28,
+    // EXEC of slots of 600 to 16000 characters of code after LOAD, and of
+    // HGLIB.PRG with its set-up code; TEST69's of a file of DATA strings.
+    exec: 65_000_000,
+    compile_token: 208_200,
+    compile_text_char: 28_000,
+    // LOAD of files of 600 to 73914 bytes, and EXEC of files as LOAD and
+    // EXEC of the slot together.
+    read: 305_000_000,
+    read_byte: 74_700,
+    // LOADV of programs of 2648 to 101357 bytes, and of a 512x352 GRP.
+    loadv_char: 55_000,
+    loadv_element: 65_000,
     // TEST69's to TEST71's first EXEC and LOADG of each file, TEST70's
-    // and TEST71's of 725652 bytes of noise as the emulator saves it.
+    // and TEST71's of 725652 bytes of noise as the emulator saves it,
+    // and the first LOADV and EXEC of files of 48 to 101357 bytes.
     first_exec: 1_200_000_000,
-    first_file: 300_000_000,
+    first_file: 350_000_000,
     first_byte: 9_250,
+    run: 0,
 };
 
 const SWITCH1: Costs = Costs {
     instruction: 28_000,
     statement: 6_000,
     for_credit: 245_600,
-    def_for: 42_000,
-    def_call: 534_900,
+    def_statement: 5_000,
+    def_call: 166_000,
+    def_value: 106_400,
     builtin: 28_300,
     builtin_arg: 55_000,
     element: 54_300,
@@ -504,23 +626,58 @@ const SWITCH1: Costs = Costs {
     // As for the Switch 2.
     join: 124_000,
     chr: 380_000,
-    costly: [526_500, 291_700, 204_900, 197_600, 69_400, 123_300],
-    cheap: [14_000, 39_000, 14_000, 0],
-    trig_reduce: 94_800,
+    costly: [
+        526_500,
+        291_700,
+        204_900,
+        197_600,
+        69_400,
+        123_300,
+        136_000,
+        276_000,
+        31_700,
+        715_000,
+        195_500,
+        195_500,
+        178_000,
+        178_000,
+        164_500_000,
+    ],
+    cheap: [
+        14_000, 39_000, 14_000, 0, 0, 54_000, 78_000, 130_000, 64_000, 62_500,
+    ],
+    // SIN of 1 to 1000000.5 costs 42 to 87 ns more than of 0.5.
+    trig_reduce: 70_000,
     join_char: 910,
     str_compare: 212_000,
     clock: 5_000,
-    query: 131_200,
+    query: 121_000,
     rnd: 48_200,
+    // TEST71's RNDF() and TEST76's Q#=RNDF(), 117 and 159 ns, between.
+    rndf: 72_000,
     setter: 392_900,
     locate: 48_500,
     locate_screen: 126_900,
     color: 32_900,
+    color_screen: 79_100,
     tofs: 136_800,
-    sprot: 141_500,
-    spcolor: 195_500,
-    sphome: 239_200,
-    splink: 212_300,
+    sprot: 166_600,
+    spcolor: 215_200,
+    sphome: 254_600,
+    splink: 230_400,
+    sphide: 157_700,
+    spunlink: 161_900,
+    spstop: 150_800,
+    spcol: 76_400,
+    spcolvec: 149_800,
+    trot: 56_600,
+    tscale: 121_700,
+    thome: 130_600,
+    tcolor: 57_300,
+    tcopy: 880_000,
+    lclip: 195_000,
+    touch: 317_700,
+    dtread: 330_900,
     spshow: 160_200,
     spvar: 86_200,
     spchr: 194_000,
@@ -549,6 +706,7 @@ const SWITCH1: Costs = Costs {
         1_499_745_000,
     ],
     sphitsp: 1_373_700,
+    sphitsp_pair: 111_000,
     spanim: 840_000,
     spanim_near: 615_000,
     print: 158_000,
@@ -568,14 +726,28 @@ const SWITCH1: Costs = Costs {
     clip: [23_000, 153_000],
     fill_px: 955,
     copy_px: 2_100,
-    copy_key_px: 2_100,
+    // GCOPY of 48x48 boxes of stripes, a checkerboard and sprite images
+    // at x 16, which TPERF's of a pattern of lines at random places fits.
+    // It pays nothing for where it draws.
+    copy_key_px: 2_977,
+    key_pattern: true,
+    key_ink_px: 282,
+    key_mixed_row: 20_700,
+    key_regular: 965,
+    key_irregular: 20_000,
     alpha_px: 17_500,
     copy_alpha_px: 22_400,
-    tri: 0,
-    tri_row: 96_000,
-    tri_px: 980,
-    line: 500_000,
-    line_px: 10_500,
+    // Triangles 40x36 of each shape, thin ones, and TEST71's of 8 rows.
+    tri: 260_000,
+    tri_row: 49_100,
+    tri_px: 3_040,
+    tri_sloped_px: 3_950,
+    // Lines 20x10 to 300x300 every way.
+    line: 325_000,
+    line_px: 10_210,
+    line_row: 1_770,
+    line_steep: 18_000,
+    line_flat_px: 2_320,
     circle: 500_000,
     circle_px: 5_000,
     load_px: 1_860,
@@ -590,44 +762,61 @@ const SWITCH1: Costs = Costs {
     // As for the Switch 2.
     user_row: [140_700, 133_800, 198_800, 36_600, 35_900],
     user_char_px: [19_600, 3_340, 33_060, 54_360, 45_710],
-    copy_color_px: [19_000, 19_000, 35_740, 51_800, 35_740],
+    own_blend_row: [198_800, 230_700, 35_900],
+    own_blend_px: [33_060, 29_500, 40_100],
+    copy_color_px: [13_400, 19_000, 35_740, 51_800, 32_500],
     paint: 93_500_000,
     paint_px: 16_110,
     // As for the Switch 2: 168 ns a row of 32 pixels at an odd column,
-    // as at x 17, 61 ns on a 4-pixel boundary, TEST72's at x 18, 22 and
-    // 26 97, 193 and 62 ns, and TEST74's at x 3 and 19 109 ns and at x
-    // 14, 30 and 46 48 ns. UNVERIFIED: that the other odd columns cost
-    // what x 17 does. TEST74's at x 35, column 3 too, costs 146 ns.
-    // TEST69's blended GFILL pays 18% of it, and its GCOPY at 10 places,
-    // TEST70's at 64 and TPERF's at random ones 65%, where TEST71's at
-    // x 17 pays 138%.
+    // as at x 17, 61 ns on a 4-pixel boundary. At 32 pixels each column
+    // off a 4-pixel boundary costs what GFILL 32 at the four places of
+    // that column from x 0 to 63 cost on average, and column 3 TEST74's
+    // at x 3, 19 and 35 too: the odd columns move by up to a sixth from
+    // one run to the next. TEST69's blended GFILL pays 18% of it, and
+    // its GCOPY at 10 places and TEST70's at 64 65%, where TEST71's at x
+    // 17 pays 138%.
     place: by_column(
         [6_800, 0, 168_000, 235_000, 182_000],
         [1_500, 0, 61_500, 235_000, 182_000],
         &[
-            (2, 97_500),
-            (3, 109_000),
-            (6, 193_000),
-            (10, 62_500),
-            (14, 48_300),
+            (1, 165_400),
+            (2, 98_700),
+            (3, 123_900),
+            (5, 175_900),
+            (6, 171_500),
+            (7, 136_700),
+            (9, 148_700),
+            (10, 60_700),
+            (11, 154_800),
+            (13, 160_300),
+            (14, 47_800),
+            (15, 139_100),
         ],
     ),
     place_alpha_pct: 18,
     place_copy_pct: 65,
     cold_row: 38_500,
     cold_alpha_px: 3_290,
+    cold_line_row: 5_700,
     // TEST69's SPOFS over 1000 sprites in order, and SPSET and SPCLR.
     far_sprite: 150_000,
     layer: 5_000_000,
-    // As for the Switch 2, from TEST69's files (1.0 and 1.8 ms, 10.3 ms
-    // and 5.5 ms) and its EXEC of HGLIB.PRG.
-    exec: 1_401_000_000,
-    compile_char: 564_700,
-    compile_text_char: 220_400,
-    exec_slot_pct: 28,
+    // As for the Switch 2, but HGLIB.PRG, which this console held in
+    // another version.
+    exec: 110_000_000,
+    compile_token: 594_000,
+    compile_text_char: 80_000,
+    read: 1_300_000_000,
+    read_byte: 190_000,
+    loadv_char: 180_000,
+    loadv_element: 247_000,
     first_exec: 2_150_000_000,
-    first_file: 800_000_000,
+    first_file: 1_000_000_000,
     first_byte: 30_500,
+    // Three or four frames from RUN to a program's first line, where a
+    // Switch 2 and the emulator take two.
+    // Whole frames, so that the program starts as a frame does.
+    run: FRAME_PS * 2,
 };
 
 /// The row costs of [`Costs::place`] for each column of a left edge in its
@@ -669,6 +858,13 @@ pub struct Meter {
     /// The last sprites changed, each in the place its number's low six
     /// bits give.
     sprites_seen: [Cell<i16>; 64],
+    /// The sprites of the last 64 sprite commands, in turn, and where the
+    /// next goes; how many of those each sprite has, and how many sprites
+    /// they are.
+    recent_sprites: [Cell<i16>; 64],
+    next_sprite: Cell<usize>,
+    sprite_uses: Box<[Cell<u8>]>,
+    sprites_in_use: Cell<u32>,
     /// The last places misaligned or blended drawing drew at, in turn,
     /// and where the next goes.
     places_seen: [Cell<u64>; 64],
@@ -677,8 +873,11 @@ pub struct Meter {
     /// has run an `EXEC` of a file.
     files_read: std::collections::HashSet<String>,
     exec_run: bool,
-    /// The last host command and its first argument.
-    last: Cell<Option<(Command, i64)>>,
+    /// Whether the code to run was typed in DIRECT mode, as the runtime
+    /// last said, and whether the program that has done nothing yet has
+    /// paid for its start.
+    direct: bool,
+    started: bool,
 }
 
 impl Meter {
@@ -695,11 +894,16 @@ impl Meter {
             frame_end: FRAME_PS,
             busy_until: 0,
             sprites_seen: std::array::from_fn(|_| Cell::new(-1)),
+            recent_sprites: std::array::from_fn(|_| Cell::new(-1)),
+            next_sprite: Cell::new(0),
+            sprite_uses: (0..SPRITES).map(|_| Cell::new(0)).collect(),
+            sprites_in_use: Cell::new(0),
             places_seen: std::array::from_fn(|_| Cell::new(u64::MAX)),
             next_place: Cell::new(0),
             files_read: std::collections::HashSet::new(),
             exec_run: false,
-            last: Cell::new(None),
+            direct: false,
+            started: false,
         })
     }
 
@@ -711,6 +915,7 @@ impl Meter {
         let cost = n(work.executed, b.executed) * c.instruction
             + n(work.statements, b.statements) * c.statement
             + n(work.def_calls, b.def_calls) * c.def_call
+            + n(work.def_values, b.def_values) * c.def_value
             + n(work.builtin_calls, b.builtin_calls) * c.builtin
             + n(work.builtin_args, b.builtin_args) * c.builtin_arg
             + n(work.elements, b.elements) * c.element
@@ -723,7 +928,7 @@ impl Meter {
             + n(work.chr_calls, b.chr_calls) * c.chr
             + n(work.join_chars, b.join_chars) * c.join_char
             + n(work.str_compares, b.str_compares) * c.str_compare
-            + n(work.def_for_tests, b.def_for_tests) * c.def_for
+            + n(work.def_statements, b.def_statements) * c.def_statement
             + n(work.trig_reductions, b.trig_reductions) * c.trig_reduce;
         let costly: u64 = (work.costly_calls.iter().zip(&b.costly_calls))
             .zip(&c.costly)
@@ -750,11 +955,17 @@ impl Meter {
     /// Starts frame `frame`'s time for a VM that has done `work`. A program
     /// still busy from the frame before starts late.
     pub fn begin_frame(&mut self, frame: u64, work: Work) {
-        // A program that has done nothing has just started.
+        let start = frame.saturating_mul(FRAME_PS);
+        // A program that has done nothing has just started. One that RUN
+        // started is busy starting for a while.
         if work.executed == 0 {
             self.exec_run = false;
+            if !self.direct && !std::mem::replace(&mut self.started, true) {
+                self.busy_until = self.busy_until.max(start + self.costs.run);
+            }
+        } else {
+            self.started = false;
         }
-        let start = frame.saturating_mul(FRAME_PS);
         self.start = start.max(self.busy_until);
         self.frame_end = start + FRAME_PS;
         self.base_work = work;
@@ -785,6 +996,7 @@ impl Meter {
 
     pub(crate) fn heard(&mut self, work: Work) {
         self.work = work;
+        self.started &= work.executed == 0;
     }
 
     pub(crate) fn charge(&mut self, cost: u64) {
@@ -802,30 +1014,49 @@ impl Meter {
         self.host += cells * c.print_scroll_cell;
     }
 
-    /// Charges an `EXEC` that compiles `source`, read from a file or
-    /// already in its slot (`from_file`).
-    pub(crate) fn charge_compile(&mut self, source: &str, from_file: bool) {
-        let (code, text) = source_chars(source);
+    /// Charges an `EXEC` that compiles `source`, read from a file, which
+    /// [`Meter::charge_read`] charges, or already in its slot.
+    pub(crate) fn charge_compile(&mut self, source: &str, _from_file: bool) {
+        let (tokens, text) = source_tokens(source);
         let c = self.costs;
-        let chars = code * c.compile_char + text * c.compile_text_char;
-        let pct = if from_file { 100 } else { c.exec_slot_pct };
-        self.host += c.exec + chars * pct / 100;
+        self.host += c.exec + tokens * c.compile_token + text * c.compile_text_char;
     }
 
     /// Charges reading `bytes` from file `name`, as `EXEC` (`exec`) or
-    /// `LOADG` does.
+    /// `LOADG` does. `LOADG`'s own costs hold its reading.
     pub(crate) fn charge_read(&mut self, name: &str, bytes: u64, exec: bool) {
         let c = self.costs;
-        if exec && !std::mem::replace(&mut self.exec_run, true) {
+        let first_exec = exec && !std::mem::replace(&mut self.exec_run, true);
+        let kind = if exec { "TXT" } else { "GRP" };
+        if exec {
+            self.host += c.read + bytes * c.read_byte;
+        }
+        if self.first_read(name, kind, bytes) && first_exec {
             self.host += c.first_exec;
         }
-        let kind = if exec { 'X' } else { 'G' };
-        if self
-            .files_read
-            .insert(format!("{kind}{}", name.to_ascii_uppercase()))
-        {
-            self.host += c.first_file + bytes * c.first_byte;
+    }
+
+    /// Charges reading `bytes` from file `name`, of `kind` unless the name
+    /// says, as `LOAD` and `LOADV` do, and `more` on top.
+    pub(crate) fn charge_file(&mut self, name: &str, kind: &str, bytes: u64, more: u64) {
+        let c = self.costs;
+        self.host += c.read + bytes * c.read_byte + more;
+        self.first_read(name, kind, bytes);
+    }
+
+    /// Charges the first read of file `name` of `bytes`, of `kind` unless
+    /// the name says, since the meter started, and whether it was.
+    fn first_read(&mut self, name: &str, kind: &str, bytes: u64) -> bool {
+        let name = name.to_ascii_uppercase();
+        let key = match name.split_once(':') {
+            Some(_) => name,
+            None => format!("{kind}:{name}"),
+        };
+        let first = self.files_read.insert(key);
+        if first {
+            self.host += self.costs.first_file + bytes * self.costs.first_byte;
         }
+        first
     }
 
     /// Charges a `LOADG` that decoded an image of `pixels` from a file of
@@ -843,6 +1074,24 @@ impl Meter {
             return false;
         };
         id >= 0 && self.sprites_seen[id as usize & 63].replace(id) != id
+    }
+
+    /// Whether the last 64 sprite commands, with this one for sprite
+    /// `id`, are for no more than [`FEW_SPRITES`] sprites.
+    fn few_sprites(&self, id: i64) -> bool {
+        let Some(id) = i16::try_from(id).ok().filter(|&id| (id as usize) < SPRITES) else {
+            return false;
+        };
+        let (uses, count) = (&self.sprite_uses, &self.sprites_in_use);
+        let at = self.next_sprite.replace((self.next_sprite.get() + 1) % 64);
+        let old = self.recent_sprites[at].replace(id);
+        if let Ok(old) = usize::try_from(old) {
+            uses[old].set(uses[old].get() - 1);
+            count.set(count.get() - u32::from(uses[old].get() == 0));
+        }
+        count.set(count.get() + u32::from(uses[id as usize].get() == 0));
+        uses[id as usize].set(uses[id as usize].get() + 1);
+        count.get() <= FEW_SPRITES
     }
 
     /// Whether drawing `w` by `rows` pixels at `x`, `y` is at one of the
@@ -898,10 +1147,13 @@ impl Meter {
     }
 }
 
-/// The characters of `source` that are code, and those in strings and
+/// The tokens of `source`'s code: each name or number, each string and
+/// each other sign but spaces; and the characters in strings and
 /// comments, which cost less to compile.
-fn source_chars(source: &str) -> (u64, u64) {
-    let (mut code, mut text) = (0u64, 0u64);
+fn source_tokens(source: &str) -> (u64, u64) {
+    let word =
+        |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '#' | '$' | '%' | '.' | '&');
+    let (mut tokens, mut text) = (0u64, 0u64);
     for line in source.split('\n') {
         let mut quoted = false;
         let mut prev = ' ';
@@ -911,18 +1163,18 @@ fn source_chars(source: &str) -> (u64, u64) {
                 quoted = c != '"';
             } else if c == '"' {
                 text += 1;
+                tokens += 1;
                 quoted = true;
             } else if c == '\'' || is_rem(line, i, prev) {
                 text += line[i..].chars().count() as u64;
                 break;
-            } else {
-                code += 1;
+            } else if c != ' ' && !(word(c) && word(prev)) {
+                tokens += 1;
             }
             prev = c;
         }
-        code += 1;
     }
-    (code.saturating_sub(1), text)
+    (tokens, text)
 }
 
 /// Whether `REM` starts a comment at byte `i` of `line`, after `prev`.
@@ -951,6 +1203,42 @@ pub(crate) fn scrolling(cursor: (u32, u32), (w, h): (u32, u32), text: &[u16]) ->
     }
     let scrolls = (u64::from(cursor.1) + lines).saturating_sub(u64::from(h.saturating_sub(1)));
     (scrolls, scrolls * u64::from(w) * u64::from(h))
+}
+
+/// What a `GCOPY` that leaves out transparent pixels meets in its source:
+/// opaque pixels, rows with both kinds, and changes from one kind to the
+/// other along a row, `regular` where the run that ends is as long as the
+/// run before it in the row.
+#[derive(Default)]
+struct Pattern {
+    ink: u64,
+    mixed: u64,
+    regular: u64,
+    irregular: u64,
+}
+
+/// The [`Pattern`] of `w` by `h` pixels of `page` from `(x, y)`.
+fn key_pattern(page: &Page, (x, y): (i64, i64), (w, h): (u64, u64)) -> Pattern {
+    let mut p = Pattern::default();
+    for row in 0..h as i64 {
+        let (mut last, mut run, mut before, mut first, mut ink) = (None, 0u64, 0u64, true, 0u64);
+        for col in 0..w as i64 {
+            let opaque = page.pixel((x + col) as i32, (y + row) as i32) >> 24 != 0;
+            ink += u64::from(opaque);
+            if last.is_some_and(|l| l != opaque) {
+                match first || run != before {
+                    true => p.irregular += 1,
+                    false => p.regular += 1,
+                }
+                (first, before, run) = (false, run, 0);
+            }
+            run += 1;
+            last = Some(opaque);
+        }
+        p.ink += ink;
+        p.mixed += u64::from(ink > 0 && ink < w);
+    }
+    p
 }
 
 /// The point `at` of `span` along a straight line from `a` to `b`.
@@ -1009,31 +1297,44 @@ impl Runtime {
             _ => false,
         };
         let far = sprite && meter.far_sprite(int(args, 0));
-        let key = Some((command, int(args, 0)));
-        let again = meter.last.replace(key) == key;
         let other = match far {
             true => c.far_sprite,
             false => 0,
         };
+        // A sprite command among others for a few sprites.
+        let near = sprite && meter.few_sprites(int(args, 0)) && !value;
         let px = |n: u64, rate: u64| c.grp + n * rate;
         let rect = |(w, h): (u64, u64), rate: u64| c.grp + h * c.row + w * h * rate;
         other
             + match command {
                 Maincnt | Millisec => c.clock,
-                Rnd | Rndf if value => c.rnd,
+                Rnd if value => c.rnd,
+                Rndf if value => c.rndf,
                 Spofs if args.len() == 1 => c.spofs_out,
                 Spofs => c.spofs,
                 Spscale => c.spscale,
                 Locate if args.len() == 2 => c.locate,
                 Locate if args.len() == 3 => c.locate_screen,
                 Spshow => c.spshow,
-                Sprot if again => c.sprot,
-                Spcolor if again => c.spcolor,
-                Sphome if again => c.sphome,
-                Splink if again => c.splink,
-                // COLOR with a background color costs what it did.
-                // UNVERIFIED: TEST74 times only a text color.
+                Sprot if near => c.sprot,
+                Spcolor if near => c.spcolor,
+                Sphome if near => c.sphome,
+                Splink if near => c.splink,
+                Sphide if near => c.sphide,
+                Spunlink if near => c.spunlink,
+                Spstop if near => c.spstop,
+                Spcol if near && args.len() == 1 => c.spcol,
+                Spcolvec if near => c.spcolvec,
+                Trot if !value => c.trot,
+                Tscale if !value => c.tscale,
+                Thome if !value => c.thome,
+                Tcolor if !value => c.tcolor,
+                Tcopy => c.tcopy,
+                Lclip if args.len() >= 5 => c.lclip,
+                Touch if !value => c.touch,
+                Dtread if !value => c.dtread,
                 Color if args.len() == 1 => c.color,
+                Color if args.len() == 2 => c.color_screen,
                 Tofs => c.tofs,
                 Spvar => c.spvar,
                 Spchr => c.spchr,
@@ -1083,6 +1384,7 @@ impl Runtime {
                     let (c0, c1) = (c.spclr_range[i], c.spclr_range[i + 1]);
                     c0 + (c1 - c0) * (n - n0) / (n1 - n0)
                 }
+                Sphitsp if args.len() == 2 => c.sphitsp_pair,
                 Sphitsp | Sphitrc | Sphitinfo => c.sphitsp,
                 Spanim if !far => c.spanim_near,
                 Spanim | Tanim => c.spanim,
@@ -1120,7 +1422,21 @@ impl Runtime {
                 Gline => {
                     let dx = (int(args, 2) - int(args, 0)).unsigned_abs();
                     let dy = (int(args, 3) - int(args, 1)).unsigned_abs();
-                    c.line + (dx.max(dy) + 1) * c.line_px
+                    let steep = (dy + 1).saturating_sub(4 * (dx + 1));
+                    let (x, y) = (int(args, 0), int(args, 1));
+                    let cold = match meter.place_seen(x, y, dx, dy) {
+                        true => 0,
+                        false => (dy + 1) * c.cold_line_row,
+                    };
+                    cold + match dy {
+                        0 => c.line + (dx + 1) * c.line_flat_px,
+                        _ => {
+                            c.line
+                                + (dx.max(dy) + 1) * c.line_px
+                                + dy * c.line_row
+                                + steep * c.line_steep
+                        }
+                    }
                 }
                 Gcircle => {
                     let r = int(args, 2).unsigned_abs();
@@ -1134,10 +1450,14 @@ impl Runtime {
                     let [x0, y0, x1, y1, x2, y2] = std::array::from_fn(|i| int(args, i));
                     let n = ((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)).unsigned_abs() / 2;
                     let (_, rows) = size(0, y0.min(y1).min(y2), 0, y0.max(y1).max(y2));
-                    let rate = if blends(args, 7) {
-                        c.alpha_px
-                    } else {
-                        c.tri_px
+                    // Two corners on the leftmost column make the left
+                    // side one upright edge.
+                    let left = x0.min(x1).min(x2);
+                    let upright = [x0, x1, x2].iter().filter(|&&x| x == left).count() > 1;
+                    let rate = match (blends(args, 7), upright) {
+                        (true, _) => c.alpha_px,
+                        (false, true) => c.tri_px,
+                        (false, false) => c.tri_sloped_px,
                     };
                     c.tri + rows * c.tri_row + n.min(page) * rate
                 }
@@ -1155,6 +1475,22 @@ impl Runtime {
                         _ => c.copy_px,
                     };
                     let (w, h) = (w.min(clip_w), h.min(clip_h));
+                    if c.key_pattern && mode == 1 && args.len() < 9 {
+                        let src = match at {
+                            1 => int(args, 0).clamp(0, PAGES as i64 - 1) as usize,
+                            _ => self.grp.target,
+                        };
+                        let sx = int(args, at).min(int(args, at + 2));
+                        let sy = int(args, at + 1).min(int(args, at + 3));
+                        let p = key_pattern(self.grp.page(src), (sx, sy), (w, h));
+                        return c.copy
+                            + h * c.row
+                            + w * h * rate
+                            + p.ink * c.key_ink_px
+                            + p.mixed * c.key_mixed_row
+                            + p.regular * c.key_regular
+                            + p.irregular * c.key_irregular;
+                    }
                     let x = int(args, at + 4).max(clip.x0.into());
                     let y = int(args, at + 5).max(clip.y0.into());
                     let placed = meter.placed((x, y), w, h, c.place_copy_pct, None);
@@ -1202,12 +1538,17 @@ impl Runtime {
                         _ => int(args, at).clamp(0, 4) as usize,
                     };
                     // In the modes that blend, SmileBASIC 4's own
-                    // characters cost what user-defined ones do.
-                    // UNVERIFIED: but for the spaces in TEST73's lines.
-                    let user = if mode >= 2 { chars } else { user };
+                    // characters cost by rows and pixels as user-defined
+                    // ones do, at their own rate.
                     let px_each = size * size * scale;
+                    let own = match mode {
+                        2.. => {
+                            size * c.own_blend_row[mode - 2] + px_each * c.own_blend_px[mode - 2]
+                        }
+                        _ => px_each * rate,
+                    };
                     c.grp
-                        + (chars - user) * px_each * rate
+                        + (chars - user) * own
                         + user * (size * c.user_row[mode] + px_each * c.user_char_px[mode])
                 }
                 // The pixels it fills are charged as it fills them
@@ -1228,6 +1569,55 @@ impl Runtime {
     pub(crate) fn set_speed(&mut self, speed: Speed) {
         if self.meter.as_ref().map_or(Speed::Unlimited, |m| m.speed) != speed {
             self.meter = Meter::new(speed);
+        }
+        if let Some(meter) = &mut self.meter {
+            meter.direct = self.direct;
+        }
+    }
+
+    /// Charges a `LOAD` (`what`) of `spec` into `slot`, if it `loaded`.
+    /// `EXEC` charges its own reading.
+    pub(crate) fn charge_load(&mut self, what: &str, spec: &str, slot: usize, loaded: bool) {
+        if let Some(meter) = self.meter.as_mut().filter(|_| loaded && what == "LOAD") {
+            meter.charge_file(spec, "TXT", self.slots[slot].len() as u64, 0);
+        }
+    }
+
+    /// Charges a `LOADV` of `spec` that gave `value`.
+    pub(crate) fn charge_loadv<E>(&mut self, spec: &str, value: &std::result::Result<Value, E>) {
+        match value {
+            Ok(Value::Str(s)) => {
+                if let Some(meter) = &mut self.meter {
+                    let s = s.borrow();
+                    let bytes = s
+                        .iter()
+                        .map(|&u| 1 + u64::from(u >= 0x80) + u64::from(u >= 0x800));
+                    let more = s.len() as u64 * meter.costs.loadv_char;
+                    meter.charge_file(spec, "TXT", bytes.sum(), more);
+                }
+            }
+            Ok(Value::Array(a)) => self.charge_loadv_array(spec, Some(a.borrow().len())),
+            _ => {}
+        }
+    }
+
+    /// Charges a `LOADV` of `spec` into an array that it gave `elements`.
+    pub(crate) fn charge_loadv_array(&mut self, spec: &str, elements: Option<usize>) {
+        let (Some(meter), Some(elements)) = (&mut self.meter, elements) else {
+            return;
+        };
+        let c = meter.costs;
+        let (n, more) = (elements as u64, elements as u64 * c.loadv_element);
+        match spec
+            .get(..4)
+            .is_some_and(|k| k.eq_ignore_ascii_case("GRP:"))
+        {
+            // The image is decoded as LOADG decodes it.
+            true => {
+                meter.host += c.loadg + n * c.loadg_px + more;
+                meter.first_read(spec, "GRP", 0);
+            }
+            false => meter.charge_file(spec, "DAT", n * 4, more),
         }
     }
 }

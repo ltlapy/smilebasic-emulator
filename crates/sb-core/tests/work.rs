@@ -40,9 +40,10 @@ fn a_reported_run_counts_its_work() {
     // A%[I] written four times and read once, and M[1,2] written.
     assert_eq!(work.elements, 6);
     assert_eq!(work.extra_indices, 1);
-    // FOR tests I five times: 0 to 3 and the end, none in a DEF.
+    // FOR tests I five times: 0 to 3 and the end. F runs its RETURN four
+    // times, each call setting up a parameter and a result.
     assert_eq!(work.for_tests, 5);
-    assert_eq!(work.def_for_tests, 0);
+    assert_eq!((work.def_statements, work.def_values), (4, 8));
     assert_eq!(work.joins, 2);
     assert_eq!(work.lookups, 1);
     assert!(work.statements > 10);
@@ -84,8 +85,8 @@ fn ifs_of_array_elements_count_apart() {
 }
 
 /// ASC and LEN are not counted as builtin calls, and CHR$ is counted on
-/// its own too, when the work is reported, but not when it makes the code
-/// the last one made.
+/// its own too, when the work is reported, but not when it makes a code
+/// one of the last four made.
 #[test]
 fn asc_and_chr_count_apart() {
     let source = "C=65:S$=CHR$(C)+CHR$(C+1)+CHR$(C+1):?ASC(S$);LEN(S$)\n";
@@ -97,8 +98,8 @@ fn asc_and_chr_count_apart() {
 }
 
 /// SIN, COS, TAN and SQR are counted apart and as no call, and SIN, COS
-/// and TAN of a number past a quarter of pi apart again. A FOR's tests in
-/// a DEF are counted apart.
+/// and TAN of a number past a quarter of pi apart again. Statements in a
+/// DEF are counted apart: the FOR and its NEXT three times.
 #[test]
 fn cheap_builtins_and_fors_in_defs_count_apart() {
     let source = "DEF F\n FOR I=1 TO 2:NEXT\nEND\n\
@@ -110,7 +111,7 @@ fn cheap_builtins_and_fors_in_defs_count_apart() {
     assert_eq!(work.cheap_calls[i("SIN")], 2);
     assert_eq!(work.cheap_calls[i("SQR")], 1);
     assert_eq!(work.trig_reductions, 2);
-    assert_eq!((work.for_tests, work.def_for_tests), (3, 3));
+    assert_eq!((work.for_tests, work.def_statements), (3, 4));
 }
 
 /// FILL counts the elements it writes, from its start to its count or

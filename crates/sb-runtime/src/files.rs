@@ -414,6 +414,7 @@ impl Runtime {
         }
         let outcome = self.load(spec, slot);
         let loaded = self.finish(what, outcome).is_some();
+        self.charge_load(what, spec, slot, loaded);
         (!self.failure_open()).then_some(loaded)
     }
 

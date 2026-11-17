@@ -607,7 +607,7 @@ fn vsync_after_falling_behind() {
 
 /// A line typed in DIRECT mode runs in the frame its Enter is
 /// taken in, and so does CONT's program; RUN's program starts in the
-/// frame after the line's, at a console's speed too.
+/// frame after the line's, and two frames later at a Switch 1's speed.
 #[test]
 fn typed_lines_run_and_cont_start_frames() {
     // The frames from the Enter until the console shows `tag`.
@@ -629,7 +629,8 @@ fn typed_lines_run_and_cont_start_frames() {
         m.set_slot(0, "?\"P\":STOP\n?\"Q\"\n".to_string());
         // Typed letters come out in lower case.
         assert_eq!(frames(&mut m, "?\"D\"", "d"), 1, "{speed:?}");
-        assert_eq!(frames(&mut m, "RUN", "P"), 2, "{speed:?}");
+        let run = if speed == Speed::Switch1 { 4 } else { 2 };
+        assert_eq!(frames(&mut m, "RUN", "P"), run, "{speed:?}");
         assert_eq!(frames(&mut m, "CONT", "Q"), 1, "{speed:?}");
     }
 }
