@@ -185,6 +185,12 @@ struct LinesEdit<'a> {
     units: &'a mut Option<usize>,
 }
 
+impl NewLines {
+    fn units(&self) -> usize {
+        self.text.encode_utf16().count()
+    }
+}
+
 impl LinesEdit<'_> {
     fn len(&self) -> usize {
         self.starts.len()
@@ -353,6 +359,14 @@ impl Runtime {
         *(self.prg_lines.units).get_or_insert_with(|| text.encode_utf16().count())
     }
 
+    /// Whether a slot still holds all its text with `adds` more UTF-16
+    /// units, `takes` fewer.
+    fn fits(&mut self, slot: usize, adds: usize, takes: usize) -> bool {
+        let units = self.units(slot);
+        let chars = self.source(slot).chars(units);
+        chars.saturating_sub(takes) + adds <= SLOT_CHARS as usize
+    }
+
     pub(crate) fn prg_command(
         &mut self,
         command: Command,
@@ -432,6 +446,13 @@ impl Runtime {
             (Command::Prgset, Want::Outs(0), [text]) => {
                 let new = new_lines(text)?;
                 let edit = self.editing()?;
+                // UNVERIFIED: that PRGSET does nothing too when the slot
+                // would be over its size, as PRGINS does.
+                let source = self.source(edit.slot);
+                let old = source.line(edit.line.min(source.len() - 1));
+                if !self.fits(edit.slot, new.units(), old.map_or(0, |l| l.len())) {
+                    return Ok(vec![]);
+                }
                 self.change_lines(edit, |lines, line, shifts| {
                     let n = new.count;
                     let past = *line >= lines.len();
@@ -469,6 +490,11 @@ impl Runtime {
                     }
                 };
                 let edit = self.editing()?;
+                // Lines that would take the slot over its size are not
+                // inserted, with no error.
+                if !self.fits(edit.slot, new.units(), 0) {
+                    return Ok(vec![]);
+                }
                 self.change_lines(edit, |lines, line, shifts| {
                     // Past the last line, it is the last line that lines
                     // go before or after, and the place stays past the end.

@@ -216,11 +216,13 @@ const MAX_SAVED: usize = 0x100_0000;
 
 /// SmileBASIC 4 stores a DAT or GRP file's PCBN body compressed, or as it
 /// is when compressed is still too large; too large both ways is Array is
-/// too large, after the questions. Ours writes the
-/// body as it is, so this only checks, and compresses only what is too
-/// large as it is.
-fn check_saved_size(raw: usize, body: impl FnOnce() -> Vec<u8>) -> Result<()> {
-    if raw > MAX_SAVED && miniz_oxide::deflate::compress_to_vec_zlib(&body(), 6).len() > MAX_SAVED {
+/// too large, after the questions. As it is, only the values count, not
+/// the body's header. Ours writes the body as it is, so this only checks,
+/// and compresses only what is too large as it is.
+fn check_saved_size(values: usize, body: impl FnOnce() -> Vec<u8>) -> Result<()> {
+    if values > MAX_SAVED
+        && miniz_oxide::deflate::compress_to_vec_zlib(&body(), 6).len() > MAX_SAVED
+    {
         return Err(ErrorKind::ArrayTooLarge.into());
     }
     Ok(())
@@ -427,11 +429,14 @@ impl Runtime {
                     return Ok(vec![]);
                 }
                 match (file.as_ref().map(|f| f.kind), value) {
-                    (Ok(FileKind::Dat), _) => check_saved_size(bytes.len(), || bytes.clone())?,
+                    (Ok(FileKind::Dat), _) => {
+                        let values = bytes.len().saturating_sub(sbfile::DATA_HEADER);
+                        check_saved_size(values, || bytes.clone())?;
+                    }
                     // SmileBASIC 4 saves the image as 32-bit integers.
                     (Ok(FileKind::Grp), Value::Array(a)) => {
-                        let raw = sbfile::DATA_HEADER + a.borrow().len() * 4;
-                        check_saved_size(raw, || {
+                        let values = a.borrow().len() * 4;
+                        check_saved_size(values, || {
                             let mut data = array_data(&a.borrow());
                             if let DataValues::Real(v) = &data.values {
                                 let ints = v.iter().map(|&x| real_to_int(x).unwrap_or(0));

@@ -60,6 +60,17 @@ fn prg_state(m: &mut Machine, ops: &str) -> (String, String) {
     (tail(m, 2)[0].clone(), m.slot(3).to_string())
 }
 
+/// PRGINS that would take a slot past its 1,048,576 characters inserts
+/// nothing, with no error.
+#[test]
+fn prgins_past_the_slots_size_is_skipped() {
+    let mut m = machine();
+    let (got, _) = prg_state(&mut m, "FOR I=1 TO 1100:PRGINS \"X\"*1000:NEXT");
+    assert_eq!(got, "1048 1048048 1048");
+    run(&mut m, &["?PRGSIZE(3,2)"]);
+    assert_eq!(tail(&m, 2), ["528", "OK"]);
+}
+
 #[test]
 fn lines_as_on_hardware() {
     let mut m = machine();

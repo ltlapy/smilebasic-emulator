@@ -770,11 +770,8 @@ fn file_names_follow_sb4s_parser() {
             "rename \"a@b\",\"b:c\"",
             "Illegal format (RENAME:2) (\"B:C\")",
         ),
-        (
-            "files \"txt:a/b\"",
-            "Illegal format (FILES:1) (\"TXT:A/B\")",
-        ),
-        ("files \"\"", "Illegal format (FILES:1) (\"\")"),
+        ("files \"txt:a/b\"", "Illegal format (FILES) (\"TXT:A/B\")"),
+        ("files \"\"", "Illegal format (FILES) (\"\")"),
         ("load \"png:x\"", "File type mismatch (LOAD) (PNG file)"),
     ] {
         assert_eq!(direct_error(&mut m, line), message, "{line}");
@@ -1224,6 +1221,11 @@ fn exec_refuses_project_names_and_loadg_takes_them() {
         tail(&m, 2),
         ["Can't access other project in this mode in 0:1", "OK"]
     );
+    // A name no file has does not get past the project part.
+    m.set_slot(0, "SAVEV \"TXT:/#T\",\"X\"".to_string());
+    enter(&mut m, "run");
+    let (said, number, _) = program_error(&mut m);
+    assert_eq!(number, 74, "{said}");
 
     let names = [
         ("GAME/PIC", "FF112233"),
@@ -2146,9 +2148,9 @@ fn run_to_dialog_now(m: &mut Machine) -> sb_runtime::dialog::ProgramDialog {
     panic!("no dialog: {:?}", rows(m));
 }
 
-/// SmileBASIC 4: SAVEV of an array whose DAT or GRP body is
-/// over 16 MiB both as it is and compressed is Array is too large, with
-/// no number.
+/// SAVEV of an array whose DAT or GRP body is over 16 MiB both as it is
+/// and compressed is Array is too large, with no number. As it is, the
+/// values count without the body's header.
 #[test]
 fn savev_refuses_what_does_not_fit_in_16_mib() {
     let dir = TempDir::new("savev-large");
@@ -2162,12 +2164,13 @@ fn savev_refuses_what_does_not_fit_in_16_mib() {
     assert!(said.starts_with("Array is too large in 0:2"), "{said}");
     enter(&mut m, "cls:?CHKFILE(\"DAT:BIG\")");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
-    // A GRP file of the largest image takes 32-bit pixels and the header.
+    // 16 MiB of values fit: 4194304 ints, here a GRP file of the largest
+    // image, which takes 32-bit pixels.
     let fill = "DIM R%[65536],G%[2048,2048]:FOR I=0 TO 65535:R%[I]=RND(65536)<<16 OR RND(65536):NEXT:FOR K=0 TO 63:COPY G%,K*65536,R%:NEXT";
     m.set_slot(0, format!("{fill}\nSAVEV \"GRP:BIG\",G%"));
     enter(&mut m, "run");
-    let (said, number, _) = program_error(&mut m);
-    assert_eq!(number, 47, "{said}");
+    enter(&mut m, "cls:?CHKFILE(\"GRP:BIG\")");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
     // What compresses below it saves.
     enter(
         &mut m,
@@ -2315,10 +2318,7 @@ fn reserved_names_are_illegal_format() {
             "rename \"a\",\"aux\"",
             "Illegal format (RENAME:2) (\"AUX\")",
         ),
-        (
-            "files \"txt:prn\"",
-            "Illegal format (FILES:1) (\"TXT:PRN\")",
-        ),
+        ("files \"txt:prn\"", "Illegal format (FILES) (\"TXT:PRN\")"),
     ] {
         assert_eq!(direct_error(&mut m, line), message, "{line}");
     }

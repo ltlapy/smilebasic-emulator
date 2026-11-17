@@ -436,7 +436,10 @@ impl Runtime {
     /// any other project.
     pub(crate) fn refuse_save_project(&self, spec: &str) -> Result<()> {
         self.refuse_system_project(spec)?;
-        match has_project(spec) {
+        // A project part counts before the name is checked: a main
+        // program's `SAVEV "TXT:/#A"` is refused this way too.
+        let project = storage::split_name(spec).is_some_and(|parts| parts.project.is_some());
+        match project {
             true if !self.direct && self.env_type == 0 => {
                 Err(ErrorKind::CantAccessOtherProject.into())
             }
@@ -795,10 +798,12 @@ pub(crate) fn check_file_name(spec: &str, arg: usize) -> Result<()> {
 
 /// FILES' `[TYPE:][PROJECT][/]`, refused as [`check_file_name`] refuses
 /// a file's name, also when empty, or when it names a file in a project.
-/// `//` lists the projects.
+/// `//` lists the projects. Unlike other commands' names, FILES' are
+/// refused naming no argument.
+// UNVERIFIED: for FILES() as for the command.
 fn check_listing_name(spec: &str) -> Result<()> {
     match storage::listing_name_error(spec) {
-        Some(error) if spec != "//" => Err(name_error(error, spec).of_arg(0)),
+        Some(error) if spec != "//" => Err(name_error(error, spec)),
         _ => Ok(()),
     }
 }
