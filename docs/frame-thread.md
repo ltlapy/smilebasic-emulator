@@ -21,6 +21,7 @@ let (polled, kept) = standby.hold(parts, || drain(&mut events));
 
 While the call runs, the standby thread watches the frames' clock. If a frame
 falls due a whole frame late, as the main loop's own catch-up would count it,
+and the call has taken 4 ms, which draining the events does not otherwise,
 the standby thread runs it: `Machine::frame` under the `FrameGuard`, with the
 time limit the loop's frames have, and gives its samples to the sound device.
 It goes on at 60 frames a second until the call returns. Then `hold` takes the machine back,

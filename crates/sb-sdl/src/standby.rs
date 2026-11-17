@@ -2,7 +2,8 @@
 //! in a call to the system, as `SDL_PumpEvents` is for seconds while a window
 //! is dragged on GNOME. The machine stays the main thread's; the loop lends it
 //! for such a call with [`Standby::hold`], and the standby thread runs a frame
-//! only once one is a whole frame late. See `docs/frame-thread.md`.
+//! only once one is a whole frame late and the call has taken [`HELD_UP`].
+//! See `docs/frame-thread.md`.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -15,6 +16,12 @@ use crate::FrameGuard;
 use crate::audio::Sink;
 use crate::pacing::Clock;
 use crate::toast::Toasts;
+
+/// A call that has taken this long holds the loop up. A shorter one, as
+/// draining the events nearly always is, leaves the loop's frames to the
+/// loop, also while it runs a frame behind: the loop then chooses between
+/// the frame and its drawing, which this thread cannot.
+pub const HELD_UP: Duration = Duration::from_millis(4);
 
 /// What the loop lends for a call.
 pub struct Lend<'a> {
@@ -51,6 +58,8 @@ struct Job {
     clock: Clock,
     run_time: Duration,
     kept: Kept,
+    /// When the call began.
+    since: Instant,
 }
 
 // SAFETY: the pointers come from `&mut` borrows that `Standby::hold` keeps for
@@ -120,6 +129,7 @@ impl Standby {
                 clock: *lend.clock,
                 run_time: lend.run_time,
                 kept: Kept::default(),
+                since: Instant::now(),
             });
             slot.back = false;
         }
@@ -186,7 +196,7 @@ fn serve(shared: &Shared, sink: &Sink) {
             return;
         }
         let due = match &slot.job {
-            Some(job) if !slot.back => job.clock.due(),
+            Some(job) if !slot.back => job.clock.due().max(job.since + HELD_UP),
             _ => {
                 slot = shared.changed.wait(slot).unwrap_or_else(|e| e.into_inner());
                 continue;
@@ -273,6 +283,29 @@ mod tests {
         let before = count(&mut m);
         for _ in 0..20 {
             let (kept, _) = hold_for(&standby, &mut m, Duration::from_millis(1));
+            assert_eq!(kept, Kept::default());
+        }
+        assert_eq!(count(&mut m), before);
+    }
+
+    #[test]
+    fn a_short_call_runs_no_frame_for_a_loop_that_is_behind() {
+        let standby = Standby::start(Sink::to(None));
+        let mut m = machine("WHILE 1:VSYNC:WEND");
+        let before = count(&mut m);
+        let (mut guard, mut toasts) = (FrameGuard::default(), Toasts::default());
+        for _ in 0..20 {
+            // Two frames behind, as a loop whose drawing came back late.
+            let mut clock = Clock::new(Instant::now() - 2 * FRAME);
+            let lend = Lend {
+                machine: &mut m,
+                guard: &mut guard,
+                toasts: &mut toasts,
+                clock: &mut clock,
+                frames: true,
+                run_time: crate::pacing::LEAST_RUN_TIME,
+            };
+            let ((), kept) = standby.hold(lend, || std::thread::sleep(HELD_UP / 8));
             assert_eq!(kept, Kept::default());
         }
         assert_eq!(count(&mut m), before);
