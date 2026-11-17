@@ -1,7 +1,9 @@
 //! What programs read from controllers, the mouse and the keyboard: SDL's
 //! gamepads and keys turned into the runtime's input state each frame.
 
-use sb_runtime::input::{KeyText, KeysRead, Mouse, PADS, State, alt_key_code, types_when_blocked};
+use sb_runtime::input::{
+    KeyText, KeysRead, Mouse, PADS, State, Tap, alt_key_code, types_when_blocked,
+};
 use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
 use sdl3::keyboard::{KeyboardState, Mod, Scancode};
@@ -456,6 +458,66 @@ fn swap_case(c: char) -> char {
 /// it starts to type keys for a program, past any drift.
 const CARRIED_STICK: f64 = 0.3;
 
+/// The bench's keys come from this keyboard, which is none, so that they
+/// stay out of [`Controls::taps`] as they stay out of what is held.
+pub const BENCH_KEYBOARD: u32 = u32::MAX;
+
+/// What an event presses or releases for the program, for
+/// [`sb_runtime::input::Input::tap`]: a key, and the button it presses as
+/// a controller's; or a controller's button.
+pub type Taps = [Option<(Tap, bool)>; 2];
+
+/// ZL and ZR's triggers, and their bits in BUTTON's value.
+const TRIGGERS: [(Axis, u32); 2] = [(Axis::TriggerLeft, 10), (Axis::TriggerRight, 11)];
+
+/// What a controller's event presses or releases, as controller `pad`, 0
+/// to 3: a button as [`face`] made it, or a trigger past its threshold
+/// one way or the other, by `triggers`, which this keeps.
+fn pad_tap(event: &Event, pad: usize, triggers: &mut [bool; 2]) -> Option<(Tap, bool)> {
+    let (bits, down) = match *event {
+        Event::GamepadButtonDown { button, .. } => (button_bit(button), true),
+        Event::GamepadButtonUp { button, .. } => (button_bit(button), false),
+        Event::GamepadAxisMotion { axis, value, .. } => {
+            let i = TRIGGERS.iter().position(|&(a, _)| a == axis)?;
+            let down = value > TRIGGER;
+            if std::mem::replace(&mut triggers[i], down) == down {
+                return None;
+            }
+            (1 << TRIGGERS[i].1, down)
+        }
+        _ => return None,
+    };
+    // Select, Start and the like have no bit.
+    (bits != 0).then_some((Tap::Buttons(pad, bits), down))
+}
+
+/// What a key's event presses or releases: the key, by its USB usage ID,
+/// and with `buttons`, when the keyboard is a controller too, the button
+/// of controller 1 it presses. A key's repeat and the bench's keys press
+/// nothing.
+fn key_taps(event: &Event, buttons: Option<&KeyButtons>) -> Taps {
+    let (key, down) = match *event {
+        Event::KeyDown {
+            scancode: Some(key),
+            repeat: false,
+            which,
+            ..
+        } if which != BENCH_KEYBOARD => (key, true),
+        Event::KeyUp {
+            scancode: Some(key),
+            which,
+            ..
+        } if which != BENCH_KEYBOARD => (key, false),
+        _ => return [None; 2],
+    };
+    let usage = u8::try_from(key as i32).ok().filter(|&usage| usage != 0);
+    let bits = buttons.map_or(0, |b| b.buttons(|k| k == key));
+    [
+        usage.map(|usage| (Tap::Key(usage), down)),
+        (bits != 0).then_some((Tap::Buttons(0, bits), down)),
+    ]
+}
+
 /// Keeps from the program what was pressed for one of the emulator's own
 /// screens, such as the A that chose Run in Projects: a button or stick held
 /// when the screen goes reads as let go until it really is, so that it
@@ -466,6 +528,8 @@ pub struct Carried {
     sticks: [[bool; 2]; PADS],
     /// A screen had the controls at the end of the last frame.
     screen: bool,
+    /// The program saw nothing pressed in the last frame.
+    blanked: bool,
 }
 
 impl Carried {
@@ -475,6 +539,7 @@ impl Carried {
     /// it came in that frame, whichever order the events came in.
     pub fn program_sees(&mut self, mut state: State, screen: bool) -> State {
         let was_screen = std::mem::replace(&mut self.screen, screen);
+        self.blanked = screen || was_screen;
         for (i, pad) in state.pads.iter_mut().enumerate() {
             let tilted = pad
                 .sticks
@@ -497,6 +562,14 @@ impl Carried {
         }
         if screen { State::default() } else { state }
     }
+
+    /// Whether [`Carried::program_sees`] left out every button and stick
+    /// in its last frame, as a screen had the controls in it or the frame
+    /// before: so that a press or release in that frame is none of the
+    /// program's either.
+    pub fn blanked(&self) -> bool {
+        self.blanked
+    }
 }
 
 /// How far a trigger goes before it counts as ZL or ZR pressed.
@@ -516,6 +589,9 @@ pub struct Controls {
     /// Buttons held on the first controller, as SDL places them, for the
     /// bench.
     pub bench: u32,
+    /// Each controller's triggers held past their threshold, as their
+    /// events last said, for [`Controls::taps`].
+    triggers: [[bool; 2]; PADS],
 }
 
 fn stick(pad: &Gamepad, x: Axis, y: Axis) -> (f64, f64) {
@@ -538,6 +614,7 @@ impl Controls {
             carried: Carried::default(),
             swap: false,
             bench: 0,
+            triggers: Default::default(),
         })
     }
 
@@ -560,8 +637,34 @@ impl Controls {
             }
             Event::GamepadRemoved { which, .. } => {
                 self.pads.retain(|p| p.id().is_ok_and(|id| id != which));
+                // The others may have moved up.
+                self.triggers = Default::default();
             }
             _ => {}
+        }
+    }
+
+    /// The presses and releases of `event` for the program, which
+    /// [`sb_runtime::input::Input::tap`] keeps for the next frame in case
+    /// what is held then misses them. Goes after [`Controls::event`], for
+    /// events the system gave. `keys_press_buttons`: the keyboard presses
+    /// controller 1's buttons too.
+    pub fn taps(&mut self, event: &Event, keys_press_buttons: bool) -> Taps {
+        let (Event::GamepadButtonDown { which, .. }
+        | Event::GamepadButtonUp { which, .. }
+        | Event::GamepadAxisMotion { which, .. }) = *event
+        else {
+            return key_taps(event, keys_press_buttons.then_some(&self.key_buttons));
+        };
+        // No controller has the id 0: the bench's buttons come so, and
+        // are controller 1's.
+        let pad = match which == 0.into() {
+            true => Some(0),
+            false => (self.pads.iter()).position(|p| p.id().is_ok_and(|id| id == which)),
+        };
+        match pad {
+            Some(pad) => [pad_tap(event, pad, &mut self.triggers[pad]), None],
+            None => [None; 2],
         }
     }
 
@@ -579,7 +682,7 @@ impl Controls {
             p.connected = true;
             p.gamepad = true;
             p.buttons = held_buttons(|button| pad.button(button), self.swap);
-            for (axis, id) in [(Axis::TriggerLeft, 10), (Axis::TriggerRight, 11)] {
+            for (axis, id) in TRIGGERS {
                 if pad.axis(axis) > TRIGGER {
                     p.buttons |= 1 << id;
                 }
@@ -797,6 +900,138 @@ mod tests {
         carried.program_sees(tilted(0.0), false);
         let again = carried.program_sees(tilted(-1.0), false);
         assert_eq!(again.pads[0].sticks[0], (0.0, -1.0));
+    }
+
+    fn pad_event(button: Button, down: bool) -> Event {
+        let (timestamp, which) = (0, 7.into());
+        match down {
+            true => Event::GamepadButtonDown {
+                timestamp,
+                which,
+                button,
+            },
+            false => Event::GamepadButtonUp {
+                timestamp,
+                which,
+                button,
+            },
+        }
+    }
+
+    #[test]
+    fn a_button_taps_its_bit_as_the_swap_makes_it() {
+        let mut triggers = [false; 2];
+        // The right button is A; swapped, the bottom one is.
+        for (swap, pressed) in [(false, Button::East), (true, Button::South)] {
+            for down in [true, false] {
+                let mut event = pad_event(pressed, down);
+                swap_event(&mut event, swap);
+                let tap = pad_tap(&event, 2, &mut triggers);
+                assert_eq!(tap, Some((Tap::Buttons(2, A_BUTTON), down)), "swap {swap}");
+            }
+        }
+        // Select, Start and Home have no bit: the frontend has them.
+        for button in [Button::Back, Button::Start, Button::Guide] {
+            assert_eq!(pad_tap(&pad_event(button, true), 0, &mut triggers), None);
+        }
+    }
+
+    #[test]
+    fn a_trigger_taps_once_each_way_past_its_threshold() {
+        let mut triggers = [false; 2];
+        let mut tap = |axis, value| {
+            let event = Event::GamepadAxisMotion {
+                timestamp: 0,
+                which: 7.into(),
+                axis,
+                value,
+            };
+            pad_tap(&event, 1, &mut triggers)
+        };
+        let zr = Tap::Buttons(1, 1 << 11);
+        assert_eq!(tap(Axis::TriggerRight, TRIGGER), None, "at the threshold");
+        assert_eq!(tap(Axis::TriggerRight, TRIGGER + 1), Some((zr, true)));
+        assert_eq!(tap(Axis::TriggerRight, i16::MAX), None, "still down");
+        assert_eq!(
+            tap(Axis::TriggerLeft, i16::MAX).map(|t| t.0),
+            Some(Tap::Buttons(1, 1 << 10))
+        );
+        assert_eq!(tap(Axis::TriggerRight, 0), Some((zr, false)));
+        assert_eq!(tap(Axis::TriggerRight, 0), None);
+        assert_eq!(tap(Axis::LeftX, i16::MAX), None, "a stick taps nothing");
+    }
+
+    fn key_event(key: Scancode, down: bool, repeat: bool, which: u32) -> Event {
+        let (timestamp, window_id, keycode, keymod, raw) = (0, 1, None, Mod::NOMOD, 0);
+        let scancode = Some(key);
+        match down {
+            true => Event::KeyDown {
+                timestamp,
+                window_id,
+                keycode,
+                scancode,
+                keymod,
+                repeat,
+                which,
+                raw,
+            },
+            false => Event::KeyUp {
+                timestamp,
+                window_id,
+                keycode,
+                scancode,
+                keymod,
+                repeat,
+                which,
+                raw,
+            },
+        }
+    }
+
+    #[test]
+    fn a_key_taps_itself_and_its_button_unless_it_repeats() {
+        let keys = KeyButtons::default();
+        let z = Tap::Key(Scancode::Z as i32 as u8);
+        let a = Tap::Buttons(0, A_BUTTON);
+        for down in [true, false] {
+            let event = key_event(Scancode::Z, down, false, 3);
+            assert_eq!(
+                key_taps(&event, Some(&keys)),
+                [Some((z, down)), Some((a, down))]
+            );
+            // Without the keyboard as a controller, the key alone.
+            assert_eq!(key_taps(&event, None), [Some((z, down)), None]);
+        }
+        // The system's repeat of a held key, and the bench's keys, press
+        // nothing.
+        let repeat = key_event(Scancode::Z, true, true, 3);
+        assert_eq!(key_taps(&repeat, Some(&keys)), [None, None]);
+        let bench = key_event(Scancode::Z, true, false, BENCH_KEYBOARD);
+        assert_eq!(key_taps(&bench, Some(&keys)), [None, None]);
+        // A key with no button, and one the program reads for itself.
+        let enter = key_event(Scancode::Return, true, false, 3);
+        assert_eq!(
+            key_taps(&enter, Some(&keys)),
+            [Some((Tap::Key(0x28), true)), None]
+        );
+        let mut reserved = KeyButtons::default();
+        reserved.update(read("B=BUTTON(0):K=KEYBOARD(29,2)"));
+        let event = key_event(Scancode::Z, true, false, 3);
+        assert_eq!(key_taps(&event, Some(&reserved)), [Some((z, true)), None]);
+    }
+
+    #[test]
+    fn the_frame_a_screen_closes_in_takes_no_taps_either() {
+        let mut carried = Carried::default();
+        carried.program_sees(holding(0), false);
+        assert!(!carried.blanked());
+        carried.program_sees(holding(A_BUTTON), true);
+        assert!(carried.blanked());
+        // The B that closed it came in the frame after.
+        carried.program_sees(holding(0), false);
+        assert!(carried.blanked());
+        carried.program_sees(holding(0), false);
+        assert!(!carried.blanked());
     }
 
     fn read(source: &str) -> KeysRead {

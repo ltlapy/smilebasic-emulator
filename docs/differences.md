@@ -203,6 +203,12 @@ apart from the macro hang below.
   does in every mode. The emulator leaves out the assignments for DIRECT mode
   and the editor alone (X for the editor or to run) and the key settings of
   SmileBASIC 4's options.
+- Short presses: a button, trigger or key pressed and released between two of
+  the emulator's frames, as on a computer that cannot keep 60 frames a
+  second, reads as held for one frame, and one released and pressed again
+  between them as released for one frame. The emulator reads what is held
+  once a frame, and would otherwise miss them; SmileBASIC 4 reads the
+  controllers every 1/60 s, more often than a person can press and release.
 - A held button or stick, when one of the emulator's own screens closes, reads
   as released until it is. The A that chose Run in the project manager is one such
   press. It types nothing and `BUTTON` does not show it, in the program or in

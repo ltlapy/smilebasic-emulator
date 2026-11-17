@@ -825,7 +825,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         scancode: Some(Scancode::A),
                         keymod,
                         repeat: false,
-                        which: 0,
+                        which: controls::BENCH_KEYBOARD,
                         raw: 0,
                     })
                 }
@@ -1149,6 +1149,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // change an event before made.
                 controls.swap = machine.rt.settings.swap_ab_xy;
                 controls.event(&mut event);
+                // A press and its release can both come between two
+                // frames, which what is held then would miss. One of the
+                // emulator's screens takes them back below.
+                let keys = machine.rt.settings.keyboard_buttons;
+                for (tap, down) in controls.taps(&event, keys).into_iter().flatten() {
+                    machine.rt.input.tap(tap, down);
+                }
                 match event {
                     Event::GamepadButtonDown {
                         button: Button::Back,
@@ -2873,6 +2880,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             Default::default()
         };
         machine.rt.input.live = controls.carried.program_sees(held, screen);
+        // What a screen had the controls for, or closed with, is none of
+        // the program's.
+        if controls.carried.blanked() {
+            machine.rt.input.drop_taps();
+        }
         if let Some(usage) = bench_usb.take() {
             machine.rt.input.live.set_key(usage, true);
         }
