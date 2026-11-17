@@ -871,7 +871,8 @@ fn pcm_streams_from_arrays() {
     frames(&mut rt, 1);
     // 16000 of 32767, at 0.35 of full scale for a full sample.
     assert!(peak(&mut rt) > 0.16);
-    assert_eq!(run_on(&mut rt, "PCMPOS OUT P:?P").unwrap(), "800");
+    // PCMPOS is where the feed has got to, 3073 samples ahead.
+    assert_eq!(run_on(&mut rt, "PCMPOS OUT P:?P").unwrap(), "3073");
     run_on(&mut rt, "PCMSTOP:PCMPOS 10").unwrap();
     frames(&mut rt, 1);
     assert_eq!(peak(&mut rt), 0.0);
@@ -934,6 +935,8 @@ fn pcm_samples_are_16_bits() {
     ] {
         let fill = format!("DIM {array}[480]:FILL {array},{sample}:PCMSTREAM {array}");
         run_on(&mut rt, &fill).unwrap();
+        // The first frame is silent until the first block is fed.
+        frames(&mut rt, 1);
         rt.sound.take_samples();
         frames(&mut rt, 1);
         let samples = rt.sound.take_samples();
@@ -962,21 +965,27 @@ fn a_pcm_stream_outlives_its_array() {
     rt.sound.take_samples();
     frames(&mut rt, 2);
     assert_eq!(peak(&mut rt), 0.0);
-    assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "160");
+    // 3073 samples fed, round the 480.
+    assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "193");
     // The left row is still there, the right one is not.
     run_on(
         &mut rt,
         "DIM T%[2,480]:FILL T%,16000:PCMSTREAM T%:RESIZE T%,1,480",
     )
     .unwrap();
+    frames(&mut rt, 1);
     rt.sound.take_samples();
     frames(&mut rt, 1);
     let samples = rt.sound.take_samples();
     assert!(samples.chunks(2).all(|s| s[0] > 0.16 && s[1] == 0.0));
-    // A rate alone changes the rate and nothing else.
+    // A rate alone changes the rate and nothing else: the feed starts
+    // again from 0, takes 3073 samples and needs no more in a frame at
+    // half the rate.
     run_on(&mut rt, "PCMPOS 0:PCMSTREAM 24000").unwrap();
     frames(&mut rt, 1);
-    assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "400");
+    assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "193");
+    frames(&mut rt, 2);
+    assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "193");
     // An array grown since goes round at its old length.
     assert_eq!(
         run_on(

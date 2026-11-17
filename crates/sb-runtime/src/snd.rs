@@ -662,7 +662,7 @@ impl Runtime {
                 let (source, rate) = match args {
                     // A rate alone is the new rate of the stream there is.
                     [rate] if !is_array(rate) => {
-                        self.sound.pcm.rate = f64::from(frequency(Some(rate))?);
+                        self.sound.pcm.set_rate(f64::from(frequency(Some(rate))?));
                         return Ok(vec![]);
                     }
                     [_] | [_, _] if !args.get(1).is_some_and(is_array) => {
@@ -699,10 +699,7 @@ impl Runtime {
             }
             (Command::Pcmpos, Want::Outs(0), 1) => {
                 let at = in_range("position", &args[0], 0..=i32::MAX)?;
-                let pcm = &mut self.sound.pcm;
-                pcm.pos = f64::from(at);
-                let i = pcm.index();
-                pcm.pos = i as f64;
+                self.sound.pcm.restart(at as usize);
                 Ok(vec![])
             }
             (Command::Pcmpos, Want::Outs(1) | Want::Value, 0) => {
