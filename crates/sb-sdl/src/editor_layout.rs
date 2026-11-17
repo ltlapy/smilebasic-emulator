@@ -1,13 +1,16 @@
-//! How the editor's own window is laid out. The editor's frame and the
-//! emulator's UI over it (the menu bar, the debugger's panel, the help
-//! and the index) each have pixels that are a whole number of the
-//! window's, so the dot fonts stay sharp, and a larger window shows more
-//! rows and columns instead of larger pixels.
+//! How the editor is laid out, in its own window and in the main one.
+//! The editor's frame fills the window from its top left corner, each of
+//! its pixels a whole number of the window's, so the dot fonts stay
+//! sharp, and a larger window shows more rows and columns instead of
+//! larger pixels. Both windows take the zoom from [`zoom`] and the frame
+//! from [`area`].
 //!
-//! The UI's scale follows the desktop's scaling setting, rounded to a
-//! whole number. The editor's characters are drawn at the whole-number
-//! zoom nearest the size F2 chose, as that size looks on a display of
-//! SmileBASIC 4's height at that scale.
+//! In its own window, the emulator's UI over the editor (the menu bar,
+//! the debugger's panel, the help and the index) has pixels that are a
+//! whole number of the window's too. The UI's scale follows the
+//! desktop's scaling setting, rounded to a whole number. In the main
+//! window the UI is scaled with SmileBASIC 4's display, which fills the
+//! window's width or height.
 
 use sb_runtime::editor::{Area, EditorSize, frame_size};
 use sb_runtime::font::FontSize;
@@ -19,6 +22,43 @@ pub const MIN_UI: (u32, u32) = (800, 450);
 
 /// The largest UI scale taken from the desktop.
 const MAX_SCALE: u32 = 8;
+
+/// The fewest columns the editor is laid out with while a larger zoom
+/// would leave fewer: about what SmileBASIC 4's Large size shows across
+/// its screen.
+pub const MIN_COLUMNS: u32 = 40;
+
+/// The zoom of the editor's frame, window pixels to a pixel of it, in a
+/// window `width` pixels across in which SmileBASIC 4's display is
+/// `display_h` pixels high, for the editor's `font` at F2's `size`.
+///
+/// It is the whole number nearest to the one at which F2's size shows
+/// SmileBASIC 4's rows in the display's height, at least 1. Where that
+/// leaves fewer than [`MIN_COLUMNS`] columns, it is the largest smaller
+/// zoom that does not, or 1.
+pub fn zoom(width: u32, display_h: f32, (font, size): (FontSize, EditorSize)) -> u32 {
+    // SmileBASIC 4's frame is as high at any shape.
+    let rows = frame_size((16, 9), font, size).1.max(1);
+    let nearest = (display_h / rows as f32).round().max(1.0) as u32;
+    let cell = font as u32;
+    (1..=nearest)
+        .rev()
+        .find(|&zoom| width / (cell * zoom) >= MIN_COLUMNS)
+        .unwrap_or(1)
+}
+
+/// The editor's frame at `zoom` in a window of `pixels`, under a menu
+/// bar `bar` window pixels high: as many pixels as cover the window,
+/// past its right and bottom edges by less than one, and the ones the
+/// bar covers.
+pub fn area(pixels: (u32, u32), zoom: u32, bar: u32) -> Area {
+    let (w, h) = (pixels.0.max(1), pixels.1.max(1));
+    let zoom = zoom.max(1);
+    Area {
+        size: (w.div_ceil(zoom), h.div_ceil(zoom)),
+        top: bar.div_ceil(zoom),
+    }
+}
 
 /// The UI scale for a window with SDL's display scale: the desktop's
 /// scaling setting times the window's pixel density, rounded to the
@@ -63,7 +103,7 @@ impl Layout {
     pub fn new(
         pixels: (u32, u32),
         scale: u32,
-        (font, size): (FontSize, EditorSize),
+        look: (FontSize, EditorSize),
         display: (u32, u32),
         bar: u32,
     ) -> Layout {
@@ -74,14 +114,9 @@ impl Layout {
         let ui = scale.clamp(1, MAX_SCALE);
         let ui = ui.min(fits(w, MIN_UI.0)).min(fits(h, MIN_UI.1));
         let ui_size = ((w / ui).max(1), (h / ui).max(1));
-        // The zoom at which F2's size shows about SmileBASIC 4's rows on
-        // a display of its height.
-        let rows = frame_size(display, font, size).1.max(1);
-        let zoom = ((display.1 * ui) as f32 / rows as f32).round().max(1.0) as u32;
-        let area = Area {
-            size: (w.div_ceil(zoom), h.div_ceil(zoom)),
-            top: (bar * ui).div_ceil(zoom),
-        };
+        // SmileBASIC 4's display at the UI's scale.
+        let zoom = zoom(w, (display.1 * ui) as f32, look);
+        let area = area((w, h), zoom, bar * ui);
         Layout {
             ui,
             ui_size,
@@ -174,6 +209,18 @@ mod tests {
         assert_eq!(zooms(FontSize::Small), [4, 3, 2, 1]);
         // The 16-pixel font cannot be drawn smaller than its pixels.
         assert_eq!(zooms(FontSize::Large), [2, 1, 1, 1]);
+    }
+
+    #[test]
+    fn a_zoom_leaving_fewer_than_40_columns_is_lowered() {
+        // 1920x1080 at 150%, a UI scale of 2: Large's nearest zoom, 4,
+        // would show 30 columns.
+        let wide = layout((1920, 1080), 2, LARGE);
+        assert_eq!((wide.zoom, wide.area.size.0 / 16), (3, 40));
+        // As narrow as the window gets, 1x.
+        let narrow = layout((800, 450), 1, LARGE);
+        assert_eq!(narrow.zoom, 1);
+        assert_eq!(zoom(0, 720.0, LARGE), 1);
     }
 
     #[test]

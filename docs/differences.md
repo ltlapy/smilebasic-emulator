@@ -475,18 +475,30 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   - The emulator's windows and dialogs, and a subprogram's screen, which
     `XSUBSCREEN` places on the 1280x720 display, stay in the display. The
     menus go down to the window's bottom.
-- The editor in the main window keeps SmileBASIC 4's frame, its rows at the
-  editor's text size and the start-up screen's shape scaled to where the
-  screen goes, only in a window of 16:9 or wider and at least 1280x720. In a
-  narrower or smaller window it is laid out as in a window of its own (see
-  [Editor in a separate window](#editor-in-a-separate-window)): it fills the
-  window under the menu bar, each of its pixels a whole number of the
-  window's, with as many columns and rows as fit. The zoom is the whole number
-  nearest to the one at which F2's size shows SmileBASIC 4's rows in the
-  display's height, at least 1, made smaller where it would leave fewer than
-  40 columns. The 16-pixel font at Medium is 1x on 640x480 (40 columns, 30
-  rows), 800x600, 1024x768 and 720x720, and 2x on 1920x1200; the 8-pixel font
-  at Large is 2x on 640x480. Nothing is blurred and no margin is left.
+- SmileBASIC 4's editor shows a fixed frame: F2's size sets its rows (21,
+  28 or 43 lines of code), and the frame, at the screen's 16:9, is scaled to
+  the 1280x720 output. With the 16-pixel font at Medium that is about 51
+  columns and 28 lines at 1.45x. The main window's editor is laid out as in
+  a window of its own instead (see
+  [Editor in a separate window](#editor-in-a-separate-window)), in a window
+  of any size and shape: it fills the window under the menu bar, each of its
+  pixels a whole number of the window's, with as many columns and rows as
+  fit. Nothing is blurred and no margin is left.
+  - The zoom is the whole number nearest to the one at which F2's size shows
+    SmileBASIC 4's rows in the display's height, at least 1, made smaller
+    where it would leave fewer than 40 columns. On a 16:9 window the
+    display is the window's height.
+  - The 16-pixel font at Medium is 1x on 1280x720 (80 columns, 43 rows with
+    the ruler and the status line), 640x480, 1024x768 and 720x720, 2x on
+    1920x1080 (60 by 32) and 1920x1200, 3x on 2560x1440 and 4x on 3840x2160.
+    The 8-pixel font at Large is 4x on 1280x720 and 2x on 640x480.
+  - The 16-pixel font is never drawn below 1x, so F2's smaller sizes can
+    look the same: on 1280x720, Medium, Small and Tiny all show it at 1x, and
+    only Large (2x) differs. The 8-pixel font gives four sizes there (4x, 3x,
+    2x and 1x). On 2560x1440 and 3840x2160 each size differs with either
+    font.
+  - The Simple UI keeps SmileBASIC 4's frame, scaled to where the screen
+    goes.
 - View > Window size sets the main window to 0.5, 1, 1.5, 2, 2.5 or 3 times
   1280x720 pixels, leaving fullscreen first. The menu bar goes over the
   screen, so the screen gets the whole multiple: `XSCREEN 1280,720` at 2x
@@ -525,9 +537,11 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   - Pixel art and Smooth (bilinear) always use that filter.
   - Sharp is nearest at the fitted size, so pixels differ in width.
   - Program follows `XSCREEN`'s composite mode, as SmileBASIC 4 does.
-- `XSCREEN`'s mode 1 applies to the program's screen. The editor's frame scales
-  by Nearest at a whole factor, and otherwise with SDL's pixel art filter, or
-  Bilinear when the screen's filter is Bilinear.
+- `XSCREEN`'s mode 1 applies to the program's screen. The editor's frame is
+  drawn at a whole factor with Nearest, whatever the screen's filter. In the
+  Simple UI, which scales SmileBASIC 4's frame to the screen's place, it is
+  Nearest at a whole factor, and otherwise SDL's pixel art filter, or
+  Bilinear where the screen is scaled with Bilinear.
 - The emulator's own UI (menu bar, dialogs, notices, the debugger's panel)
   scales by Nearest at a whole factor, with SDL's pixel art filter when drawn
   larger, and with Bilinear when drawn smaller. Where SDL's pixel art filter is
@@ -823,8 +837,10 @@ SmileBASIC 4 the editor replaces the screen and no program runs while it shows.
   character size, where SmileBASIC 4 shows the same lines at any size. The
   editor draws each of its pixels as a whole number of window pixels, so dot
   fonts stay sharp. F2 and Ctrl+B pick the whole-number zoom nearest to each
-  character size on a 720-pixel-high display. With the 16-pixel font at 100%
-  scaling, Medium, Small and Tiny all draw it at its own size.
+  character size on a 720-pixel-high display at the desktop's scale, lowered
+  where it would leave fewer than 40 columns, as in the main window. With the
+  16-pixel font at 100% scaling, Medium, Small and Tiny all draw it at its own
+  size.
 - The menu bar, the debugger's panel, the help and the index follow the
   desktop's scaling setting, rounded to a whole number: 150% draws them at
   twice their size. They follow a change at once, as when you move the window

@@ -487,7 +487,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut pointer_space = (mode.width, mode.height);
     // Where the editor's frame was drawn, if that frame was the
     // editor's laid out for the main window's room (see
-    // `window::editor_fill`), where the pointer maps through it.
+    // `window::editor_fill`), where the pointer maps through it: always
+    // but in the Simple UI.
     let mut filled_editor: Option<FRect> = None;
     let mut menu = MenuBar::default();
     // Whether a program ran when the loop last looked, to see one start.
@@ -3195,10 +3196,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             false => window::screen_place(&mode, settings, (out_w, out_h), display),
         };
         let editing = machine.is_editing() && !machine.is_detached();
-        // The main window's editor laid out for the room it has, where it
-        // does not keep SmileBASIC 4's frame, under the menu bar as the
-        // window shows it.
-        let fill = (!simple_ui && window::editor_fills(display, display_w, out_h)).then(|| {
+        // The main window's editor laid out for the room it has, under the
+        // menu bar as the window shows it. The Simple UI keeps SmileBASIC
+        // 4's frame, scaled to where the screen goes.
+        let fill = (!simple_ui).then(|| {
             let scale = window::menu_scale(display, display_w, (out_w, out_h));
             let bar = (MenuBar::HEIGHT as f32 * scale).ceil() as u32;
             let look = (settings.editor_font, settings.editor_size);
@@ -3252,7 +3253,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         };
         let frame = (fb.width(), fb.height());
         // The editor's frame, of the fill's area, fills the window at its
-        // zoom, or goes where the screen does.
+        // zoom, or in the Simple UI goes where the screen does.
         let rect = match (editing, fill) {
             (true, Some(fill)) => fill.rect(),
             _ => rect,
@@ -3265,7 +3266,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // The editor's frame can be finer than the screen it is shown in.
         let kind = if editing {
             pointer_space = frame;
-            (frame, editor_filter(rect, frame, filter))
+            let scaled = match fill {
+                Some(_) => Filter::Nearest,
+                None => editor_filter(rect, frame, filter),
+            };
+            (frame, scaled)
         } else {
             pointer_space = (mode.width, mode.height);
             (frame, if smart_frame { Filter::Nearest } else { filter })
@@ -5456,9 +5461,9 @@ fn screen_place(
     }
 }
 
-/// How the editor's frame is scaled into `rect`: sharp when it fits a
-/// whole number of times, and otherwise with the pixel art filter, unless
-/// the screen is filtered smoothly.
+/// How the Simple UI's editor frame, SmileBASIC 4's, is scaled into
+/// `rect`: sharp when it fits a whole number of times, and otherwise with
+/// the pixel art filter, unless the screen is filtered smoothly.
 fn editor_filter(rect: FRect, (_, h): (u32, u32), filter: Filter) -> Filter {
     let scale = rect.h / h as f32;
     if (scale - scale.round()).abs() < 0.001 {

@@ -3,7 +3,8 @@
 //! that another window's dialog keeps, and where the desktop puts the
 //! program's screen and the editor in the main one.
 
-use sb_runtime::editor::{Area, EditorSize, frame_size};
+use crate::editor_layout;
+use sb_runtime::editor::{Area, EditorSize};
 use sb_runtime::font::FontSize;
 use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
@@ -276,8 +277,7 @@ pub fn ui_height(display: FRect, display_h: u32, out_h: u32) -> u32 {
 /// Where the desktop shows the screen of `mode` in a window of `out`
 /// pixels whose display is at `display`, and the filter it is scaled
 /// with: centered in the whole window, at the largest size View > Screen
-/// filter allows (see [`crate::screen_place`]). The editor goes there
-/// too where it has SmileBASIC 4's frame (see [`editor_fills`]).
+/// filter allows (see [`crate::screen_place`]).
 pub fn screen_place(
     mode: &ScreenMode,
     settings: &Settings,
@@ -331,24 +331,9 @@ pub fn menu_scale(display: FRect, display_w: u32, out: (u32, u32)) -> f32 {
     }
 }
 
-/// The fewest columns the main window's editor is laid out with while a
-/// larger zoom would leave fewer: about what SmileBASIC 4's Large size
-/// shows across its screen.
-pub const MIN_COLUMNS: u32 = 40;
-
-/// Whether the main window's editor is laid out for the room it has, as
-/// [`editor_fill`] says, rather than at SmileBASIC 4's frame scaled to
-/// the screen's place: in a window narrower than 16:9, where the display
-/// at `display` leaves room below it, and in one smaller than the
-/// display, whose `display_w` pixels are then shown narrower. A window
-/// of 16:9 or wider at least the display's size keeps the frame.
-pub fn editor_fills(display: FRect, display_w: u32, out_h: u32) -> bool {
-    room_below(display, out_h) || display.w + 0.5 < display_w as f32
-}
-
-/// The main window's editor laid out for the room it has, as in the
-/// editor's own window: its frame, the area, fills the window from its
-/// top left corner, and each of its pixels is `zoom` pixels of the
+/// The main window's editor, laid out as in the editor's own window (see
+/// [`crate::editor_layout`]): its frame, the area, fills the window from
+/// its top left corner, and each of its pixels is `zoom` pixels of the
 /// window square, a whole number, so the dot fonts stay sharp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fill {
@@ -367,32 +352,17 @@ impl Fill {
 
 /// The main window's editor in a window of `out` pixels whose display is
 /// at `display`, for the editor's `font` at F2's `size`, under a menu bar
-/// `bar` pixels of the window high.
-///
-/// The zoom follows the editor's own window (see [`crate::editor_layout`]):
-/// the whole number nearest to the one at which F2's size shows
-/// SmileBASIC 4's rows in the display's height, at least 1. Where that
-/// leaves fewer than [`MIN_COLUMNS`] columns, the largest smaller zoom
-/// that does not, or 1. The frame then takes as many columns and rows as
-/// the window holds at that zoom, the menu bar's rows included.
+/// `bar` pixels of the window high. The display's height sets the zoom,
+/// as the desktop's scale does in the editor's own window: the UI is
+/// scaled with the display here.
 pub fn editor_fill(
     display: FRect,
     out: (u32, u32),
-    (font, size): (FontSize, EditorSize),
+    look: (FontSize, EditorSize),
     bar: u32,
 ) -> Fill {
-    let (w, h) = (out.0.max(1), out.1.max(1));
-    let rows = frame_size((16, 9), font, size).1.max(1);
-    let nearest = (display.h / rows as f32).round().max(1.0) as u32;
-    let cell = font as u32;
-    let zoom = (1..=nearest)
-        .rev()
-        .find(|&zoom| w / (cell * zoom) >= MIN_COLUMNS)
-        .unwrap_or(1);
-    let area = Area {
-        size: (w.div_ceil(zoom), h.div_ceil(zoom)),
-        top: bar.div_ceil(zoom),
-    };
+    let zoom = editor_layout::zoom(out.0.max(1), display.h, look);
+    let area = editor_layout::area(out, zoom, bar);
     Fill { zoom, area }
 }
 
@@ -704,10 +674,6 @@ mod tests {
         );
         for out in outs {
             assert_eq!(ui_height(display(out), 720, out.1), 720, "{out:?}");
-            // The editor keeps SmileBASIC 4's frame where the window is at
-            // least the display's size.
-            let large = out.0 >= 1280 && out.1 >= 720;
-            assert_eq!(editor_fills(display(out), 1280, out.1), !large, "{out:?}");
             for filter in filters {
                 for (w, h) in modes {
                     let mode = ScreenMode::new(w, h);
@@ -788,6 +754,147 @@ mod tests {
         assert!(zoom == 1 && w >= 1 && h >= 1);
     }
 
+    /// The main window's editor as the frontend lays it out, under the
+    /// menu bar at the height the window shows it.
+    fn laid_out(out: (u32, u32), look: (FontSize, EditorSize)) -> Fill {
+        let scale = menu_scale(display(out), 1280, out);
+        let bar = (24.0 * scale).ceil() as u32;
+        editor_fill(display(out), out, look, bar)
+    }
+
+    /// F2's sizes from Large to Tiny: each one's zoom, and its columns and
+    /// rows, the ruler and the status line included, under the menu bar.
+    fn sizes(out: (u32, u32), font: FontSize) -> [(u32, u32, u32); 4] {
+        use EditorSize::{Large, Medium, Small, Tiny};
+        [Large, Medium, Small, Tiny].map(|size| {
+            let Fill { zoom, area } = laid_out(out, (font, size));
+            let cell = font as u32;
+            let rows = (area.size.1 - area.top) / cell;
+            (zoom, area.size.0 / cell, rows)
+        })
+    }
+
+    #[test]
+    fn a_16_9_window_lays_the_editor_out_too() {
+        use EditorSize::{Large, Medium};
+        use FontSize::{Large as F16, Small as F8};
+        // 1280x720 with the default look: 1x, the whole window, the bar's
+        // 24 pixels over its top.
+        let fill = laid_out((1280, 720), (F16, Medium));
+        assert_eq!(
+            (fill.zoom, fill.area.size, fill.area.top),
+            (1, (1280, 720), 24)
+        );
+        assert_eq!(fill.rect(), FRect::new(0.0, 0.0, 1280.0, 720.0));
+        // 1920x1080: 2x, under a bar of 36 pixels.
+        let fill = laid_out((1920, 1080), (F16, Medium));
+        assert_eq!(
+            (fill.zoom, fill.area.size, fill.area.top),
+            (2, (960, 540), 18)
+        );
+        let fill = laid_out((2560, 1440), (F8, Large));
+        assert_eq!(
+            (fill.zoom, fill.area.size, fill.area.top),
+            (8, (320, 180), 6)
+        );
+        // Wider than 16:9: the frame covers the whole window, beside the
+        // display too.
+        let fill = laid_out((2560, 1080), (F16, Medium));
+        assert_eq!(
+            (fill.zoom, fill.area.size, fill.area.top),
+            (2, (1280, 540), 18)
+        );
+    }
+
+    #[test]
+    fn each_size_takes_a_whole_zoom_on_common_windows() {
+        use FontSize::{Large as F16, Small as F8};
+        // (zoom, columns, rows) for Large, Medium, Small and Tiny. The
+        // 16-pixel font is never drawn below 1x, so smaller sizes show the
+        // same where 1x is already nearest: three of four on 1280x720.
+        let table = [
+            ((640, 480), F16, [(1, 40, 28); 4]),
+            ((1024, 768), F16, [(1, 64, 46); 4]),
+            (
+                (1280, 720),
+                F16,
+                [(2, 40, 21), (1, 80, 43), (1, 80, 43), (1, 80, 43)],
+            ),
+            (
+                (1920, 1080),
+                F16,
+                [(3, 40, 21), (2, 60, 32), (1, 120, 65), (1, 120, 65)],
+            ),
+            (
+                (2560, 1440),
+                F16,
+                [(4, 40, 21), (3, 53, 29), (2, 80, 43), (1, 160, 87)],
+            ),
+            (
+                (3840, 2160),
+                F16,
+                [(6, 40, 21), (4, 60, 32), (3, 80, 43), (2, 120, 65)],
+            ),
+            (
+                (640, 480),
+                F8,
+                [(2, 40, 28), (1, 80, 57), (1, 80, 57), (1, 80, 57)],
+            ),
+            (
+                (1024, 768),
+                F8,
+                [(3, 42, 31), (2, 64, 46), (2, 64, 46), (1, 128, 93)],
+            ),
+            (
+                (1280, 720),
+                F8,
+                [(4, 40, 21), (3, 53, 29), (2, 80, 43), (1, 160, 87)],
+            ),
+            (
+                (1920, 1080),
+                F8,
+                [(6, 40, 21), (4, 60, 32), (3, 80, 43), (2, 120, 65)],
+            ),
+            (
+                (2560, 1440),
+                F8,
+                [(8, 40, 21), (6, 53, 29), (4, 80, 43), (3, 106, 58)],
+            ),
+            (
+                (3840, 2160),
+                F8,
+                [(11, 43, 23), (9, 53, 29), (6, 80, 43), (4, 120, 65)],
+            ),
+        ];
+        for (out, font, expected) in table {
+            assert_eq!(sizes(out, font), expected, "{out:?} {font:?}");
+        }
+        // On a desktop scaled by 125%, 1600x900 pixels.
+        let scaled = sizes((1600, 900), F16);
+        assert_eq!(scaled.map(|(zoom, ..)| zoom), [2, 2, 1, 1]);
+    }
+
+    #[test]
+    fn the_main_window_lays_the_editor_out_as_its_own_window_does() {
+        use EditorSize::{Large, Medium, Small, Tiny};
+        // A window of a whole multiple of 1280x720 at that UI scale in
+        // the editor's own window: the same zoom and frame.
+        for (out, ui) in [((1280, 720), 1), ((2560, 1440), 2), ((3840, 2160), 3)] {
+            for font in [FontSize::Large, FontSize::Small] {
+                for size in [Large, Medium, Small, Tiny] {
+                    let look = (font, size);
+                    let own = crate::editor_layout::Layout::new(out, ui, look, (1280, 720), 24);
+                    let main = laid_out(out, look);
+                    assert_eq!(
+                        (main.zoom, main.area),
+                        (own.zoom, own.area),
+                        "{out:?} {look:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn menus_go_apart_at_1x_below_the_displays_size() {
         let place = |out: (u32, u32)| menu_place(display(out), 1280, out);
@@ -817,21 +924,35 @@ mod tests {
 
     #[test]
     fn a_click_lands_on_the_editors_pixel_under_it() {
-        use EditorSize::{Large, Medium};
-        let looks = [(FontSize::Large, Medium), (FontSize::Small, Large)];
+        use EditorSize::{Large, Medium, Small, Tiny};
+        use FontSize::{Large as F16, Small as F8};
+        let looks = [
+            (F16, Large),
+            (F16, Medium),
+            (F16, Tiny),
+            (F8, Large),
+            (F8, Small),
+        ];
+        let mut zooms = Vec::new();
         for out in [
             (640, 480),
             (800, 600),
             (1024, 768),
             (720, 720),
             (1920, 1200),
+            (1280, 720),
+            (1366, 768),
+            (1920, 1080),
+            (2560, 1440),
+            (2560, 1080),
         ] {
             for look in looks {
-                let fill = editor_fill(display(out), out, look, 24);
-                // A window coordinate of one or two pixels.
-                for px in [1u32, 2] {
+                let fill = laid_out(out, look);
+                zooms.push(fill.zoom);
+                // A window coordinate of one, one and a half or two pixels.
+                for px in [1.0, 1.5, 2.0] {
                     let map = crate::Mapping {
-                        px: px as f32,
+                        px,
                         display: display(out),
                         display_w: 1280,
                         shown: fill.rect(),
@@ -840,16 +961,19 @@ mod tests {
                     };
                     // Every pixel of the window, across and down, is the
                     // frame's pixel drawn there.
-                    for x in (0..out.0).step_by(px as usize) {
-                        let at = map.to_screen((x / px) as f32 + 0.25, 0.25);
-                        assert_eq!(at.0, (x / fill.zoom) as i32, "{out:?} {look:?} {x}");
+                    for x in 0..out.0 {
+                        let at = map.to_screen((x as f32 + 0.5) / px, 0.25);
+                        assert_eq!(at.0, (x / fill.zoom) as i32, "{out:?} {look:?} {px} {x}");
                     }
-                    for y in (0..out.1).step_by(px as usize) {
-                        let at = map.to_screen(0.25, (y / px) as f32 + 0.25);
-                        assert_eq!(at.1, (y / fill.zoom) as i32, "{out:?} {look:?} {y}");
+                    for y in 0..out.1 {
+                        let at = map.to_screen(0.25, (y as f32 + 0.5) / px);
+                        assert_eq!(at.1, (y / fill.zoom) as i32, "{out:?} {look:?} {px} {y}");
                     }
                 }
             }
+        }
+        for zoom in 1..=3 {
+            assert!(zooms.contains(&zoom), "{zoom}");
         }
     }
 

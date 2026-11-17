@@ -425,8 +425,10 @@ default scale mode:
   `smart_scale` does the same on the CPU, the reference for tests and the
   fallback if the target cannot be made (`SB_UI_BENCH`'s `cpu-smart` forces it).
 - Mode 2 is `SDL_SCALEMODE_NEAREST`.
-- The editor's frame uses `SDL_SCALEMODE_PIXELART`. The Rust bindings lack a
-  per-texture call for it, hence `SDL_SetDefaultTextureScaleMode`.
+- The editor's frame is drawn at a whole factor with `SDL_SCALEMODE_NEAREST`.
+  Only the Simple UI scales it by other factors, SmileBASIC 4's frame to the
+  screen's place, and uses `SDL_SCALEMODE_PIXELART` there. The Rust bindings
+  lack a per-texture call for it, hence `SDL_SetDefaultTextureScaleMode`.
 - A subprogram's screen is `SDL_SCALEMODE_LINEAR` in every mode: SmileBASIC 4
   draws it as it does a screen in mode 0 (TEST56 shows mode 1), fitted to
   XSUBSCREEN's rectangle (`SubScreen::quad`) with BACKCOLOR in the bars.
