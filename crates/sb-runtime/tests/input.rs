@@ -83,6 +83,11 @@ fn control_style_errors_name_the_argument() {
         ("XCTRLSTYLE 2,100,0,0,0,-1", ErrorKind::OutOfRange, 5),
         ("XCTRLSTYLE 2,100,0,0,0,0", ErrorKind::IllegalToyConType, 5),
         ("XCTRLSTYLE 2,100,1,0,0,0", ErrorKind::IllegalToyConType, 2),
+        (
+            "XCTRLSTYLE 2,100,10,10,6,5",
+            ErrorKind::IllegalToyConType,
+            3,
+        ),
         ("XCTRLSTYLE 1,100,0,0", ErrorKind::IllegalToyConType, 3),
         ("XCTRLSTYLE 1,100,3,4", ErrorKind::IllegalToyConType, 3),
         ("XCTRLSTYLE 1,100,6,6", ErrorKind::IllegalToyConType, 3),
@@ -252,7 +257,7 @@ fn mouse_and_touch() {
             "MOUSE OUT X,Y,W:?X;Y;W;:MOUSE 1 OUT X,Y:?X;Y;MBUTTON();MBUTTON(0,2)"
         )
         .unwrap(),
-        "1020-2304010"
+        "1020-240304010"
     );
     assert_eq!(
         run(&frames, "TOUCH OUT T,X,Y:?T;X;Y;:TOUCH 1 OUT T,X,Y:?T").unwrap(),
@@ -500,7 +505,7 @@ fn hardware_the_emulator_lacks() {
     assert_eq!(err("TCROBOT 1 OUT F"), ErrorKind::IllegalControlStyle);
     assert_eq!(err("TCVISOR 1 OUT F"), ErrorKind::WrongNumberOfOutArguments);
     assert_eq!(
-        err("XCTRLSTYLE 2,100,10,10,6,5:TCROBOT 2 OUT F"),
+        err("XCTRLSTYLE 2,100,6,5,10,10:TCROBOT 1 OUT F"),
         ErrorKind::WrongNumberOfOutArguments
     );
     assert_eq!(
@@ -512,7 +517,7 @@ fn hardware_the_emulator_lacks() {
         ErrorKind::IllegalControlStyle
     );
     assert_eq!(
-        ok("XCTRLSTYLE 2,100,10,10,6,5:TCCAR 1 OUT F,A,W:TCROBOT 2 OUT R,L:?F;R;DIM(L,0)"),
+        ok("XCTRLSTYLE 2,100,6,5,10,10:TCCAR 2 OUT F,A,W:TCROBOT 1 OUT R,L:?F;R;DIM(L,0)"),
         "004"
     );
     assert_eq!(

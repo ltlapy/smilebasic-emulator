@@ -256,7 +256,7 @@ pub struct Mouse {
     pub display: (i32, i32),
     /// Whether the pointer is over the screen.
     pub on_screen: bool,
-    /// The wheel's total movement, up positive.
+    /// The wheel's total movement in notches, up positive.
     pub wheel: i32,
     /// Left, right, middle, button 4 and button 5, as MBUTTON's bits.
     pub buttons: u32,
@@ -781,9 +781,9 @@ fn xctrlstyle_args(args: &[Value]) -> Result<(i32, i32, Vec<i32>)> {
         if t == [0; 4] {
             return bad_toycon(5);
         }
-        // UNVERIFIED: SmileBASIC 4 seems to refuse 3, 4 and 7 to 10 for
-        // the first controller here; the manual allows them, as here.
-        if alone(t[0]) && t[1] != t[0] {
+        // Types 3, 4 and 7 to 10 are refused for the first controller
+        // here, though the manual allows them, named by its second type.
+        if alone(t[0]) {
             return bad_toycon(3);
         }
         if !alone(t[0]) && !leads(t[0]) {
@@ -1024,7 +1024,8 @@ impl Runtime {
                 let lcd = opt_in_range("flag", args.first(), 0..=1, 0)? == 1;
                 let m = &input.now.mouse;
                 let (x, y) = if lcd { m.display } else { (m.x, m.y) };
-                let values = [x, y, m.wheel];
+                // MOUSE counts 120 a notch.
+                let values = [x, y, m.wheel.wrapping_mul(120)];
                 put_ints(out, &values[..want.count()])
             }
             (Command::Mouse, Want::Outs(0), 2..=3) => {
