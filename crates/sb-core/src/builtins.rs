@@ -402,6 +402,11 @@ fn extreme(args: &[Value], want: std::cmp::Ordering) -> Result<Value> {
             &elements[..]
         }
         [v] => return Err(mismatch(v)),
+        // An array among several numbers is Type mismatch naming no
+        // argument (checked on hardware: `MIN(A,1)`, `MIN(A,Z)`).
+        _ if args.iter().any(|v| matches!(v, Value::Array(_))) => {
+            return Err(ErrorKind::TypeMismatch.into());
+        }
         _ => args,
     };
     let mut best = &values[0];

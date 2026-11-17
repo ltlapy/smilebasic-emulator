@@ -1418,9 +1418,13 @@ impl Vm {
             .collect::<Result<Vec<_>>>()?;
         // Only a one-dimensional array may be empty: DIM R#[0,0] is
         // Subscript out of range (checked on hardware).
-        // One zero among other sizes is, too.
-        if dims.len() > 1 && dims.contains(&0) {
-            return Err(ErrorKind::SubscriptOutOfRange.into());
+        // One zero among other sizes is, too, naming that size: `DIM
+        // A[2,0]` is argument 2, as ARRAY% is (checked on hardware).
+        // UNVERIFIED: that with several zeros the first is named.
+        if dims.len() > 1
+            && let Some(at) = dims.iter().position(|&d| d == 0)
+        {
+            return Err(Error::from(ErrorKind::SubscriptOutOfRange).of_arg(at));
         }
         let len = dims.iter().fold(1usize, |all, &d| all.saturating_mul(d));
         if let Err(e) = memory::request(memory::array_bytes(elem, len)) {
@@ -2973,9 +2977,13 @@ impl Vm {
             "POP" => {
                 // GOSUBs, DEF calls and kept places share one stack, and
                 // only a kept place on top can come off it.
+                // With nothing kept, a GOSUB under way is not in the way:
+                // POP in a GOSUB at the top level is Stack underflow, in a
+                // DEF Use RESTORE "PUSH" (checked on hardware). UNVERIFIED:
+                // why the two differ.
                 let (calls, gosubs) = match self.data_kept.last() {
                     Some(k) => (k.calls, k.gosubs),
-                    None => (0, 0),
+                    None => (0, usize::MAX),
                 };
                 if self.frames.len() > calls || self.gosubs.len() > gosubs {
                     return Err(ErrorKind::UseRestorePush.into());

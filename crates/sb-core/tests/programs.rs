@@ -279,8 +279,15 @@ fn restore_push_and_pop() {
 #[test]
 fn restore_pop_takes_only_a_place_kept_since_the_call() {
     let push = ErrorKind::UseRestorePush;
+    // With nothing kept, a GOSUB at the top level leaves the stack empty
+    // to POP, and a DEF does not (checked on hardware).
+    assert_eq!(
+        error("GOSUB @S:END\n@S:RESTORE \"POP\":RETURN").0,
+        ErrorKind::StackUnderflow
+    );
     for source in [
-        "GOSUB @S:END\n@S:RESTORE \"POP\":RETURN",
+        "F\nDEF F\nGOTO @M\n@S:RESTORE \"POP\":RETURN\n@M:GOSUB @S\nEND",
+        "F\nDEF F\nRESTORE \"POP\"\nEND",
         "RESTORE \"PUSH\":GOSUB @S:END\n@S:RESTORE \"POP\":RETURN",
         "RESTORE \"PUSH\":F:END\nDEF F:RESTORE \"POP\":END",
         "F\nDEF F\nGOTO @M\n@S:RESTORE \"POP\":RETURN\n@M:RESTORE \"PUSH\":GOSUB @S\nEND",
@@ -1566,12 +1573,12 @@ fn copy_errors() {
     wrong("DIM A[5],B[5]:COPY A,0,B,6,1", None);
     wrong("A$=\"12345\":COPY A$,0,\"ABCDE\",2,5", None);
     assert_eq!(output("DIM A[5],B[5]:COPY A,0,B,5,0:?LEN(A)"), "5\n");
-    // An offset at the end with no count is past it too; with a
-    // count of 0 it copies nothing.
+    // An offset at the end is past it too, with a count of 0 as well
+    // (checked on hardware for the array).
     wrong("DIM B[5]:A=COPY(B,5)", Some(1));
     wrong("A$=COPY(\"ABCDE\",5)", Some(1));
-    assert_eq!(output("DIM B[5]:A=COPY(B,5,0):?LEN(A)"), "0\n");
-    assert_eq!(output("A$=COPY(\"ABCDE\",5,0):?\"[\";A$;\"]\""), "[]\n");
+    wrong("DIM B[5]:A=COPY(B,5,0)", Some(1));
+    wrong("A$=COPY(\"ABCDE\",5,0)", Some(1));
     // Offset 0 of an empty source is no error.
     assert_eq!(output("DIM B[0]:A=COPY(B,0):?LEN(A)"), "0\n");
     assert_eq!(output("A$=COPY(\"\",0):?\"[\";A$;\"]\""), "[]\n");
@@ -1719,6 +1726,14 @@ fn initialized_arrays_keep_their_sizes() {
     // Only one-dimensional arrays may be empty.
     assert_eq!(error("DIM R#[0,0]").0, ErrorKind::SubscriptOutOfRange);
     assert_eq!(output("DIM A[0]:?LEN(A)"), "0\n");
+    // The zero size is named (checked on hardware).
+    let e = run("DIM A[2,0]").unwrap_err();
+    assert_eq!((e.kind, e.arg), (ErrorKind::SubscriptOutOfRange, Some(1)));
+    // An array among MIN's numbers names no argument.
+    for src in ["DIM A[4]:Z=1:Q=MIN(A,Z)", "DIM A[4]:?MAX(1,A)"] {
+        let e = run(src).unwrap_err();
+        assert_eq!((e.kind, e.arg), (ErrorKind::TypeMismatch, None), "{src}");
+    }
 }
 
 #[test]
