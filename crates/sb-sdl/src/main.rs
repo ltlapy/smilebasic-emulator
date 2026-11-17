@@ -3139,9 +3139,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             key_hint.buttons_read(keys, controls.gamepads());
         }
         key_hint.tick();
-        if machine.rt.settings.skip_frames {
-            slow_hint.dismiss();
-        }
+        slow_hint.follow(&machine.rt.settings);
         let was_shown = slow_hint.visible();
         slow_hint.tick(key_hint.visible());
         if let (false, true, Some(b)) = (was_shown, slow_hint.visible(), &mut bench) {

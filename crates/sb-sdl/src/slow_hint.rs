@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
+use sb_runtime::settings::Settings;
 
 use crate::ui::{BACKGROUND, BORDER, CHAR, DISABLED, PAD, Rect, TEXT, draw_text, fill, outline};
 
@@ -179,6 +180,14 @@ impl SlowHint {
     /// Takes the notice away, as when frames are skipped now.
     pub fn dismiss(&mut self) {
         (self.pending, self.frames_left) = (false, 0);
+    }
+
+    /// Takes the notice away at once when the settings no longer want it:
+    /// frames are skipped now, or the notice is turned off.
+    pub fn follow(&mut self, settings: &Settings) {
+        if settings.skip_frames || !settings.slow_hint {
+            self.dismiss();
+        }
     }
 
     pub fn visible(&self) -> bool {
@@ -398,6 +407,34 @@ mod tests {
         for _ in 0..SHOW_FRAMES {
             hint.tick(false);
         }
+        assert!(!hint.visible());
+    }
+
+    /// Either setting takes a notice away at once, shown or due.
+    #[test]
+    fn the_settings_take_it_away() {
+        let mut s = Settings::default();
+        let shown = || SlowHint {
+            frames_left: SHOW_FRAMES,
+            ..SlowHint::default()
+        };
+        let mut hint = shown();
+        hint.follow(&s);
+        assert!(hint.visible(), "wanted by default");
+        s.slow_hint = false;
+        hint.follow(&s);
+        assert!(!hint.visible());
+        let mut hint = SlowHint {
+            pending: true,
+            ..SlowHint::default()
+        };
+        hint.follow(&s);
+        hint.tick(false);
+        assert!(!hint.visible(), "nor shown later");
+        s.slow_hint = true;
+        s.skip_frames = true;
+        let mut hint = shown();
+        hint.follow(&s);
         assert!(!hint.visible());
     }
 

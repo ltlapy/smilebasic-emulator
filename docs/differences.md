@@ -297,8 +297,9 @@ for it, and its music slows down and breaks up.
 - When a program gets fewer than about 54 frames a second for 2 seconds
   because of this, past its first 3 seconds, a notice says where the setting
   is. It shows once per program a session, not while the program is paused
-  or in a dialog, and never with the setting on. `slow_hint=false` in
-  `settings.txt` turns it off.
+  or in a dialog, and never with the setting on. File > Settings > General >
+  "Tell me when a program runs slower than real time" turns it off
+  (`slow_hint=false` in `settings.txt`).
 
 When the system holds the window up, as GNOME does while you drag or resize it,
 another thread runs the program and its sound, and the window shows nothing new

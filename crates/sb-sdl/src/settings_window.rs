@@ -186,6 +186,14 @@ const PAGES: &[Page] = &[
                 |s| s.skip_frames,
                 |s| s.skip_frames ^= true,
             ),
+            check(
+                "Tell me when a program runs slower than real time",
+                "When a program runs slower than real time for a few seconds, a notice \
+                 in the bottom right corner points to the setting above. It shows once \
+                 per program a session. On by default.",
+                |s| s.slow_hint,
+                |s| s.slow_hint ^= true,
+            ),
             Row {
                 label: "Language reported to programs",
                 about: "The value SYSPARAM(\"LANG\") returns: \"en-US\" as in the \
@@ -897,6 +905,26 @@ mod tests {
         assert_eq!(s.file_confirm, FileConfirm::Silent);
         assert_eq!(w.chosen, 1);
         assert_eq!(w.click((0, 0), &mut s), Outcome::Close);
+    }
+
+    /// The notice for a slow program has its check under the frame setting.
+    #[test]
+    fn the_slow_notice_is_under_frame_skipping() {
+        let mut s = Settings::default();
+        let mut w = SettingsWindow::new((1280, 720));
+        let rows = PAGES[0].rows;
+        let skip = rows
+            .iter()
+            .position(|r| r.label.starts_with("Skip frames"))
+            .unwrap();
+        assert!(rows[skip + 1].label.starts_with("Tell me when"));
+        for _ in 0..=skip {
+            w.key(Keycode::Down, &mut s);
+        }
+        w.key(Keycode::Space, &mut s);
+        assert!(!s.slow_hint && !s.skip_frames);
+        w.click(centre(w.row_rect(skip + 1)), &mut s);
+        assert!(s.slow_hint);
     }
 
     #[test]
