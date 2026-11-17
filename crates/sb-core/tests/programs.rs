@@ -3043,3 +3043,14 @@ fn compile_errors_are_placed_as_on_hardware() {
     // CASE with no WHEN, at what came instead.
     assert_eq!(error_at("CASE 1:ENDCASE"), (ErrorKind::SyntaxError, 1, 8));
 }
+
+/// A number and a string are not worked out as the program compiles:
+/// `A=1+"A"` is a Type mismatch as it runs (checked on hardware).
+#[test]
+fn mixed_types_fail_as_they_run() {
+    assert_eq!(
+        error_at("?\"RAN\":A=1+\"A\""),
+        (ErrorKind::TypeMismatch, 1, 8)
+    );
+    assert_eq!(output("IF 0 THEN A=1+\"A\"\n?1"), "1\n");
+}

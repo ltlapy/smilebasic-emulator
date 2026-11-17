@@ -2045,6 +2045,10 @@ impl Compiler<'_> {
                 // Too large to work out for what is free now: it is the
                 // program's to run into, if it ever gets there.
                 Some(Err(e)) if e.kind == ErrorKind::MemoryCheck => None,
+                // Values of different types are not worked out: `A=1+"A"`
+                // is a Type mismatch as it runs (checked on hardware).
+                // UNVERIFIED: for operators other than `+`.
+                Some(Err(e)) if e.kind == ErrorKind::TypeMismatch => None,
                 Some(Err(e)) => {
                     if !logical {
                         *check = Err(e);
