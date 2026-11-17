@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use sb_profiles::Profile;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::Font;
-use sb_runtime::input::State;
-use sb_runtime::machine::{Machine, StopReason, SubScreen};
+use sb_runtime::input::{State, Tap};
+use sb_runtime::machine::{Machine, Missed, StopReason, SubScreen};
 use sb_runtime::runtime::keys;
 use sb_runtime::screen::ScreenMode;
 use sb_runtime::sound::synth::Instruments;
@@ -62,6 +62,12 @@ const USAGE: &str = "usage:
                        with --fixed, as the work then follows the clock
         --slower N     with --window, the clock and limits divided by N,
                        to stand for a machine N times slower than this
+        --keep-frames  spend no frame while the program is part-way
+                       through a trip round its main loop (a trip that
+                       started at a VSYNC or WAIT and is short), so that
+                       each trip gets one frame however slow the computer;
+                       with this or --window, the frames the program
+                       missed part of its trip in are counted, by why
         --wav FILE     write the sound to FILE, as for --play
       With SB_BENCH_SOUND in the environment, it also prints a checksum
       of the sound mixed, to the bit, for comparing builds.
@@ -81,10 +87,13 @@ const USAGE: &str = "usage:
         F type TEXT       the rest of the line typed
         F button NAMES N  buttons held for N frames, NAMES such as A or
                           A+UP: A B X Y UP DOWN LEFT RIGHT L R ZL ZR
-                          LSTICK RSTICK
+                          LSTICK RSTICK; N 0 presses and releases them
+                          between two frames, as a tap shorter than the
+                          frontend's frame
         F stick X Y N     the left stick tilted (-1 to 1) for N frames
         F usb ID N        the keyboard key with USB usage ID (such as
-                          0x28 for Enter) held for N frames, for KEYBOARD
+                          0x28 for Enter) held for N frames, for KEYBOARD;
+                          N 0 as for button
         F touch X Y N     the screen touched at X,Y for N frames; the
                           pointer stays there afterwards
         F plus N          the + button (F5) held for N frames. Released
@@ -229,13 +238,15 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
         let log = take_option(&mut args, "--log")?.map(PathBuf::from);
         let wav = take_option(&mut args, "--wav")?.map(PathBuf::from);
         let take_slower = take_option(&mut args, "--slower")?;
-        let window = match args.iter().position(|a| a == "--window") {
+        let mut flag = |name: &str| match args.iter().position(|a| a == name) {
             Some(at) => {
                 args.remove(at);
                 true
             }
             None => false,
         };
+        let window = flag("--window");
+        let keep_frames = flag("--keep-frames");
         if fixed && window {
             return Err(USAGE.into());
         }
@@ -253,6 +264,7 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
                     wav,
                     fixed,
                     window: window.then_some(speed),
+                    keep_frames,
                 };
                 match fixed {
                     true => bench_fixed(&options, Path::new(project), program),
@@ -444,6 +456,8 @@ struct BenchOptions<'a> {
     /// Whether frames run as the window runs them, on a machine this
     /// many times slower.
     window: Option<f64>,
+    /// [`Machine::keep_frames`].
+    keep_frames: bool,
 }
 
 /// One frame's row in a `--bench --log` file.
@@ -495,6 +509,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
     if fixed {
         m.rt.fix_time_and_chance();
     }
+    m.keep_frames = options.keep_frames;
     m.rt.storage
         .set_project(name)
         .map_err(|e| format!("{name}: {e}"))?;
@@ -558,7 +573,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
                     catch_up_time
                 });
             }
-            let (before, vsyncs) = (m.executed(), m.vsyncs());
+            let (before, vsyncs, count) = (m.executed(), m.vsyncs(), m.rt.main_count());
             let t = Instant::now();
             m.frame();
             let ran = t.elapsed();
@@ -582,7 +597,10 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
                 end: started.elapsed(),
             });
             run.push(ran);
-            played += 1;
+            // A call that went on with a kept frame is no new frame.
+            if !options.keep_frames || m.rt.main_count() != count {
+                played += 1;
+            }
             let due = window && Instant::now() >= clock + frame_time;
             if !due || skipped == WINDOW_MOST_SKIPPED || played == frames || !m.is_running() {
                 break;
@@ -683,6 +701,19 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
     println!("slowest frames: {}", slowest.join(", "));
     report("run ", &mut run);
     report("draw", &mut draw);
+    if window || options.keep_frames {
+        let Missed {
+            cut,
+            held,
+            deferred,
+        } = m.missed;
+        println!(
+            "missed: {cut} frames out of time mid-trip, {held} held at VSYNC, \
+             {deferred} VSYNCs deferred; MAINCNT {}, VSYNCs {}",
+            m.rt.main_count(),
+            m.vsyncs()
+        );
+    }
     if m.is_running() {
         println!("still running");
     }
@@ -909,6 +940,16 @@ impl Player {
             match action {
                 Action::Key(code) => m.rt.key_press(code),
                 Action::Type(text) => m.type_text(&text),
+                // Down and up again before the frame, which only the
+                // frontend's events see.
+                Action::Hold(Hold::Buttons(bits), 0) => {
+                    m.rt.input.tap(Tap::Buttons(0, bits), true);
+                    m.rt.input.tap(Tap::Buttons(0, bits), false);
+                }
+                Action::Hold(Hold::Usb(usage), 0) => {
+                    m.rt.input.tap(Tap::Key(usage), true);
+                    m.rt.input.tap(Tap::Key(usage), false);
+                }
                 Action::Hold(hold, n) => self.held.push((hold, frame + n)),
                 // A new press starts the second again, as in the frontend.
                 Action::Plus(n) => self.plus = Some((frame + FORCED_STOP_FRAMES, frame + n)),
