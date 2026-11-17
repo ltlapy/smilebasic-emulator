@@ -502,6 +502,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut panel_layers: [Layer; 2] = Default::default();
     let mut bar_layers: [Layer; 2] = Default::default();
     let mut overlay_layers: [Layer; 2] = Default::default();
+    // The main window's open menus and context menu, where they go apart
+    // from its display at 1x (see `window::menu_place`).
+    let mut menu_layer = Layer::default();
     // The emulator's windows on the editor's window, at the display's size.
     let mut windows_layer = Layer::default();
     let mut editor_texture: Option<(Texture, TextureKind)> = None;
@@ -677,6 +680,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let layers = panel_layers.iter_mut().chain(&mut bar_layers);
             layers.chain(&mut overlay_layers).for_each(Layer::forget);
             windows_layer.forget();
+            menu_layer.forget();
             (texture_holds, editor_holds) = (None, None);
             machine.rt.touch();
             machine.touch_sub();
@@ -1051,12 +1055,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             (false, Some(rect)) => (rect, filter),
             (false, None) => window::screen_place(&mode, settings, (out_w, out_h), display),
         };
+        // The main window's menus at 1x where its display is scaled below.
+        let menus_apart = match simple_ui {
+            true => None,
+            false => window::menu_place(display, display_w, (out_w, out_h)),
+        };
         let main_map = Mapping {
             px: out_w as f32 / win_w.max(1) as f32,
             display,
             display_w,
             shown,
             space: pointer_space,
+            menu: menus_apart.map(|place| place.at),
         };
         let ui_scale = bench.as_ref().and_then(|b| b.ui_scale);
         // The editor's window has the UI in pixels of its own, and the
@@ -1074,6 +1084,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     display_w: layout.ui_size.0,
                     shown: from_corner(layout.frame_pixels()),
                     space: editor_space,
+                    menu: None,
                 };
                 let display = (display_w, display_h);
                 let windows = Mapping {
@@ -1085,6 +1096,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             None => (main_map, main_map, (display_w, main_ui_h)),
         };
+        // The room the menus open in on the window with the keys, and
+        // that of the context menus on the main window's editor.
+        let main_menus = menus_apart.map_or((display_w, main_ui_h), |place| place.size);
+        menu.space = Some(if ui_editor { editor_ui } else { main_menus });
+        let popup_room = [main_menus, editor_ui];
         // The window the event being handled came from: the main one, or
         // the editor's, and whether the emulator's windows are open on the
         // editor's.
@@ -1098,6 +1114,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // Mouse positions come in window coordinates; the display is in
         // pixels...
         let to_display = |x: f32, y: f32| map().to_display(x, y);
+        // ...and the menus', which are the display's unless they go apart.
+        let to_menu = |x: f32, y: f32| map().to_menu(x, y);
         // ...and so are the screen's or the editor's, which fill their
         // rectangle.
         let to_screen = |x: f32, y: f32| map().to_screen(x, y);
@@ -1237,6 +1255,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 let layers = panel_layers.iter_mut().chain(&mut bar_layers);
                 layers.chain(&mut overlay_layers).for_each(Layer::forget);
                 windows_layer.forget();
+                menu_layer.forget();
                 // A target comes back empty, and the frames are drawn again.
                 machine.touch_sub();
             }
@@ -1736,6 +1755,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             } else {
                 editor_window
             };
+            // An open menu too tall for the window scrolls.
+            if let Event::MouseWheel {
+                y,
+                mouse_x,
+                mouse_y,
+                ..
+            } = event
+                && ui_window
+                && menu.wheel(to_menu(mouse_x, mouse_y), y.round() as i32)
+            {
+                continue;
+            }
             if let (Some(open), true) = (&mut side, side_window) {
                 match event {
                     Event::MouseWheel {
@@ -1767,12 +1798,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             if let (Some(open), true) = (&mut debug_menu, editor_window) {
                 match event {
-                    Event::MouseMotion { x, y, .. } => open.hover(to_display(x, y)),
+                    Event::MouseMotion { x, y, .. } => open.hover(to_menu(x, y)),
                     Event::MouseButtonDown {
                         mouse_btn, x, y, ..
                     } => {
                         let chosen = (mouse_btn == MouseButton::Left)
-                            .then(|| open.click(to_display(x, y)))
+                            .then(|| open.click(to_menu(x, y)))
                             .flatten();
                         debug_menu = None;
                         if let Some(choice) = chosen {
@@ -2280,7 +2311,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     x, y, mousestate, ..
                 } => {
                     if ui_window {
-                        menu.mouse_move(Some(to_display(x, y)));
+                        menu.mouse_move(Some(to_menu(x, y)));
                     }
                     if editor_window {
                         debug_panel.motion(to_display(x, y), mousestate.left());
@@ -2326,7 +2357,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                         editor_menu(machine)
                     };
-                    debug_menu = Some(Popup::new(at, items, editor_ui));
+                    // In the menus' pixels, which may be apart from the
+                    // display's.
+                    let room = popup_room[usize::from(apart)];
+                    debug_menu = Some(Popup::new(to_menu(x, y), items, room));
                 }
                 Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
@@ -2336,10 +2370,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } => match if ui_window && !simple_ui {
                     let open = menu.is_open().then_some(profile_display);
-                    menu.click(
-                        to_display(x, y),
-                        menu_context(machine, canvas.window(), open),
-                    )
+                    menu.click(to_menu(x, y), menu_context(machine, canvas.window(), open))
                 } else {
                     Click::Ignored
                 } {
@@ -3128,7 +3159,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // does not keep SmileBASIC 4's frame, under the menu bar as the
         // window shows it.
         let fill = (!simple_ui && window::editor_fills(display, display_w, out_h)).then(|| {
-            let bar = (MenuBar::HEIGHT as f32 * display.w / display_w as f32).ceil() as u32;
+            let scale = window::menu_scale(display, display_w, (out_w, out_h));
+            let bar = (MenuBar::HEIGHT as f32 * scale).ceil() as u32;
             let look = (settings.editor_font, settings.editor_size);
             window::editor_fill(display, (out_w, out_h), look, bar)
         });
@@ -3529,10 +3561,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 continue;
             };
             let size = ui_sizes[i];
+            // The main window's menus at 1x, apart from its display.
+            let menus_apart = menus_apart.filter(|_| i == 0);
             if bar_shown[i] {
                 let bar = if i == ui { &menu } else { &closed_bar };
+                let width = menus_apart.map_or(size.0, |place| place.size.0);
                 drawing!(
-                    bar_layers[i].update(creator, (size.0, MenuBar::HEIGHT), |fb| {
+                    bar_layers[i].update(creator, (width, MenuBar::HEIGHT), |fb| {
                         bar.draw_bar(fb, font)
                     })
                 );
@@ -3542,11 +3577,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // over it.
             let dim = i == ui && dims || i == 0 && program_dialog.is_some();
             let panel = debug.as_ref().filter(|_| i == ed).map(|(place, ..)| *place);
+            // The bar's height on this UI, which is more than its own where
+            // it goes apart at 1x from a display scaled below.
+            let bar_h = match menus_apart {
+                Some(_) => (MenuBar::HEIGHT as f32 * display_w as f32 / display.w).ceil() as u32,
+                None => MenuBar::HEIGHT,
+            };
             let bar = ui::Rect {
                 x: 0,
                 y: 0,
                 w: size.0,
-                h: MenuBar::HEIGHT,
+                h: bar_h,
             };
             let inside = Cell::new(false);
             // The UI in the window's pixels, and the emulator's windows,
@@ -3605,7 +3646,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         None => {}
                     }
                 }
-                if let (true, Some(open)) = (i == ed && under, &debug_menu) {
+                if let (true, None, Some(open)) = (i == ed && under, menus_apart, &debug_menu) {
                     open.draw(fb, font);
                 }
                 if i == 0 && key_hint.visible() {
@@ -3622,7 +3663,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 if i == ui {
                     match &dialog {
                         Some((open, _)) if over => open.draw(fb, font),
-                        None if bar_shown[i] && under => {
+                        None if bar_shown[i] && under && menus_apart.is_none() => {
                             menu.draw_lists(fb, font, settings, context)
                         }
                         _ => {}
@@ -3659,12 +3700,38 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if !windows_apart {
             windows_layer.release();
         }
+        // The main window's open menus and context menu, apart at 1x.
+        let lists = ui == 0 && bar_shown[0] && dialog.is_none() && menu.is_open();
+        let popup = (debug_menu.as_ref()).filter(|_| ed == 0);
+        match menus_apart {
+            Some(place) if lists || popup.is_some() => {
+                drawing!(menu_layer.update(texture_creator, place.size, |fb| {
+                    if lists {
+                        menu.draw_lists(fb, font, settings, context);
+                    }
+                    if let Some(open) = popup {
+                        open.draw(fb, font);
+                    }
+                }));
+            }
+            _ => menu_layer.release(),
+        }
         if let (0, Some((place, ..)), false) = (ed, &debug, panel_inside[0]) {
             drawing!(panel_layers[0].copy(&mut canvas, (place.x, place.y), display, display_w));
         }
         drawing!(overlay_layers[0].copy(&mut canvas, (0, 0), display, display_w));
-        if bar_shown[0] {
-            drawing!(bar_layers[0].copy(&mut canvas, (0, 0), display, display_w));
+        match (bar_shown[0], menus_apart) {
+            (true, Some(place)) => {
+                let at = place.rect();
+                drawing!(bar_layers[0].copy(&mut canvas, (0, 0), at, place.size.0));
+            }
+            (true, None) => {
+                drawing!(bar_layers[0].copy(&mut canvas, (0, 0), display, display_w));
+            }
+            (false, _) => {}
+        }
+        if let Some(place) = menus_apart {
+            drawing!(menu_layer.copy(&mut canvas, (0, 0), place.rect(), place.size.0));
         }
         lap!(Overlays);
         if let Some(b) = &mut bench {
@@ -4083,9 +4150,25 @@ struct Mapping {
     display_w: u32,
     shown: FRect,
     space: (u32, u32),
+    /// The menus' top left corner in the window's pixels, where they go
+    /// apart at 1x (see [`window::menu_place`]); `None` where they are on
+    /// the display.
+    menu: Option<(f32, f32)>,
 }
 
 impl Mapping {
+    /// The menu bar's pixel under a window position: the display's, or
+    /// the 1x one of menus apart.
+    fn to_menu(self, x: f32, y: f32) -> (i32, i32) {
+        match self.menu {
+            Some((mx, my)) => (
+                (x * self.px - mx).floor() as i32,
+                (y * self.px - my).floor() as i32,
+            ),
+            None => self.to_display(x, y),
+        }
+    }
+
     fn to_display(self, x: f32, y: f32) -> (i32, i32) {
         let scale = self.display.w / self.display_w as f32;
         (

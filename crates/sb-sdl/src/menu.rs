@@ -1,5 +1,7 @@
-//! The emulator's menu bar, drawn over the screen at display resolution.
-//! It stays hidden until the mouse reaches the top edge or F8 shows it,
+//! The emulator's menu bar, drawn over the screen at display resolution,
+//! or at 1x where the display is scaled below (see
+//! [`crate::window::menu_place`]). Its menus open within the room it is
+//! given. It stays hidden until the mouse reaches the top edge or F8 shows it,
 //! so it takes no keys away from programs; while one runs, only F8 shows
 //! it, as the top of the screen is the program's.
 
@@ -512,28 +514,69 @@ fn list_width(items: &[Item]) -> u32 {
     labels + if keys > 0 { keys + 4 * PAD } else { 0 } + 3 * PAD
 }
 
-fn item_rect(menu: usize, item: usize) -> Rect {
-    let items = MENUS[menu].items;
-    Rect {
-        x: title_rect(menu).x,
-        y: ROW_HEIGHT + item_top(items, item),
-        w: list_width(items),
-        h: item_height(&items[item]),
+/// The items of a submenu item.
+fn sub_items(item: &Item) -> &'static [Item] {
+    match item.entry {
+        Entry::Sub(items) => items,
+        Entry::Do(_) | Entry::Line => &[],
     }
 }
 
-/// An item of the submenu that item `parent` of `menu` opens.
-fn sub_rect(menu: usize, parent: usize, item: usize) -> Rect {
-    let p = item_rect(menu, parent);
-    let Entry::Sub(items) = MENUS[menu].items[parent].entry else {
-        unreachable!("only submenu items have submenus")
+/// Where a submenu `w` x `h` pixels large opens beside its parent item
+/// at `p`, in `room` pixels under a bar: to the right of the parent's
+/// list, or to its left where the right has no room, or against the
+/// room's right edge where neither side has; level with the parent, or
+/// higher where it would go past the bottom, but not over the bar.
+fn sub_origin(p: Rect, (w, h): (u32, u32), (room_w, room_h): (u32, u32)) -> (u32, u32) {
+    let x = if p.x + p.w + w <= room_w {
+        p.x + p.w
+    } else if p.x >= w {
+        p.x - w
+    } else {
+        room_w.saturating_sub(w)
     };
-    Rect {
-        x: p.x + p.w,
-        y: p.y + item_top(items, item),
-        w: list_width(items),
-        h: item_height(&items[item]),
+    (x, p.y.min(room_h.saturating_sub(h)).max(ROW_HEIGHT))
+}
+
+/// The first item of a list of `items` that can be shown at the top for
+/// the rest to reach the bottom of `room_h` pixels, under the bar: 0
+/// where the whole list fits.
+fn last_first(items: &[Item], room_h: u32) -> usize {
+    let total = item_top(items, items.len());
+    let fits = |first: &usize| ROW_HEIGHT + total - item_top(items, *first) <= room_h;
+    (0..items.len())
+        .find(fits)
+        .unwrap_or(items.len().saturating_sub(1))
+}
+
+/// Draws a small triangle pointing up or down in the right margin of an
+/// item at `r`, where a list too tall for the window goes on.
+fn draw_more(fb: &mut Framebuffer, r: Rect, up: bool) {
+    let (x, y) = (r.x + r.w - PAD, r.y + r.h / 2 - 2);
+    for row in 0..4 {
+        let half = if up { row } else { 3 - row };
+        let line = Rect {
+            x: x + 3 - half,
+            y: y + row,
+            w: 2 * half + 1,
+            h: 1,
+        };
+        fill(fb, line, TEXT);
     }
+}
+
+/// Fits the text at the bar's right into `room` pixels: whole, or with
+/// its start cut and "..." in its place, keeping the end, which says
+/// whether a program runs and which slot is edited. Nothing where fewer
+/// than 4 of its characters fit.
+fn fit_status(status: &str, room: u32) -> Option<String> {
+    if text_width(status) < room {
+        return Some(status.to_string());
+    }
+    let chars: Vec<char> = status.chars().collect();
+    (1..chars.len().saturating_sub(3))
+        .map(|cut| format!("...{}", chars[cut..].iter().collect::<String>()))
+        .find(|text| text_width(text) < room)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -553,9 +596,99 @@ pub struct MenuBar {
     /// What the emulator is doing, on the bar's right: the project, the
     /// slot, a running or paused program.
     pub status: String,
+    /// The room the bar's menus have, in its pixels, from the bar's top
+    /// left corner: they open within it. `None` for no limit.
+    pub space: Option<(u32, u32)>,
+    /// The first item the open menu shows, where it is too tall for its
+    /// room and has been scrolled with the wheel.
+    first: usize,
 }
 
 impl MenuBar {
+    /// The room the menus open in.
+    fn room(&self) -> (u32, u32) {
+        self.space.unwrap_or((u32::MAX / 4, u32::MAX / 4))
+    }
+
+    /// The first item `menu` shows, which may be past the top where it
+    /// does not fit.
+    fn first(&self, menu: usize) -> usize {
+        match self.open {
+            Some(open) if open == menu => {
+                self.first.min(last_first(MENUS[menu].items, self.room().1))
+            }
+            _ => 0,
+        }
+    }
+
+    /// Whether item `item` of `menu` shows in its list: not above the
+    /// first item shown, and not past the room's bottom, unless it is the
+    /// first.
+    fn item_shown(&self, menu: usize, item: usize) -> bool {
+        let first = self.first(menu);
+        let r = self.item_rect(menu, item);
+        item >= first && (item == first || r.y + r.h <= self.room().1)
+    }
+
+    /// Where item `item` of `menu`'s list is: under the menu's title,
+    /// moved left where the list would go past the room's right edge, and
+    /// up by the items scrolled past. Those have no height.
+    fn item_rect(&self, menu: usize, item: usize) -> Rect {
+        let items = MENUS[menu].items;
+        let w = list_width(items);
+        let first = self.first(menu);
+        let top = ROW_HEIGHT + item_top(items, item.max(first)) - item_top(items, first);
+        Rect {
+            x: title_rect(menu).x.min(self.room().0.saturating_sub(w)),
+            y: top,
+            w,
+            h: if item < first {
+                0
+            } else {
+                item_height(&items[item])
+            },
+        }
+    }
+
+    /// An item of the submenu that item `parent` of `menu` opens, as
+    /// [`sub_origin`] places it.
+    fn sub_rect(&self, menu: usize, parent: usize, item: usize) -> Rect {
+        let items = sub_items(&MENUS[menu].items[parent]);
+        let size = (list_width(items), item_top(items, items.len()));
+        let (x, y) = sub_origin(self.item_rect(menu, parent), size, self.room());
+        Rect {
+            x,
+            y: y + item_top(items, item),
+            w: size.0,
+            h: item_height(&items[item]),
+        }
+    }
+
+    /// Scrolls the open menu's list by `notches` of the wheel, up for
+    /// more than 0, if `at` is over it and it is too tall for its room.
+    /// True if the wheel was over the list, which then takes it.
+    pub fn wheel(&mut self, at: (i32, i32), notches: i32) -> bool {
+        let Some(menu) = self.open else {
+            return false;
+        };
+        let column = self.item_rect(menu, 0);
+        let over = Rect {
+            y: ROW_HEIGHT,
+            h: self.room().1.saturating_sub(ROW_HEIGHT),
+            ..column
+        };
+        if !over.contains(at) {
+            return false;
+        }
+        let most = last_first(MENUS[menu].items, self.room().1) as i64;
+        let first = (self.first(menu) as i64 - i64::from(notches)).clamp(0, most) as usize;
+        if first != self.first(menu) {
+            self.first = first;
+            self.sub = None;
+        }
+        true
+    }
+
     pub fn visible(&self) -> bool {
         self.pinned
             || self.shown
@@ -571,7 +704,14 @@ impl MenuBar {
     pub fn open_menu(&mut self, index: usize, sub: &str) {
         let index = index.min(MENUS.len() - 1);
         self.open = Some(index);
+        self.first = 0;
         self.sub = MENUS[index].items.iter().position(|i| i.label == sub);
+        // Scrolled to the submenu's item where the list is too tall.
+        if let Some(parent) = self.sub {
+            while !self.item_shown(index, parent) && self.first < parent {
+                self.first += 1;
+            }
+        }
     }
 
     /// A menu shows its items, which need the window's state.
@@ -595,7 +735,17 @@ impl MenuBar {
         let (Some(menu), Some(at)) = (self.open, position) else {
             return;
         };
-        if let Some(i) = (0..MENUS[menu].items.len()).find(|&i| item_rect(menu, i).contains(at)) {
+        // An open submenu can lie over its parent's list in a narrow
+        // window, and keeps the pointer then.
+        if let Some((menu, parent, items)) = self.submenu()
+            && (0..items.len()).any(|i| self.sub_rect(menu, parent, i).contains(at))
+        {
+            return;
+        }
+        let shown = |i: &usize| self.item_shown(menu, *i);
+        if let Some(i) =
+            (0..MENUS[menu].items.len()).find(|i| shown(i) && self.item_rect(menu, *i).contains(at))
+        {
             self.sub = matches!(MENUS[menu].items[i].entry, Entry::Sub(_)).then_some(i);
         }
     }
@@ -603,6 +753,7 @@ impl MenuBar {
     fn close(&mut self) {
         self.open = None;
         self.sub = None;
+        self.first = 0;
     }
 
     /// Forgets the pointer and closes the open menu, as when the bar's
@@ -624,20 +775,21 @@ impl MenuBar {
     pub fn click(&mut self, at: (i32, i32), context: Context) -> Click {
         if let Some((menu, parent, items)) = self.submenu() {
             for (i, item) in items.iter().enumerate() {
-                if let Entry::Do(action) = item.entry
-                    && sub_rect(menu, parent, i).contains(at)
-                {
-                    if !action.enabled(context) {
-                        return Click::Consumed;
-                    }
-                    self.close();
-                    return Click::Chosen(action);
+                if !self.sub_rect(menu, parent, i).contains(at) {
+                    continue;
                 }
+                return match item.entry {
+                    Entry::Do(action) if action.enabled(context) => {
+                        self.close();
+                        Click::Chosen(action)
+                    }
+                    _ => Click::Consumed,
+                };
             }
         }
         if let Some(menu) = self.open {
             for (i, item) in MENUS[menu].items.iter().enumerate() {
-                if !item_rect(menu, i).contains(at) {
+                if !self.item_shown(menu, i) || !self.item_rect(menu, i).contains(at) {
                     continue;
                 }
                 return match item.entry {
@@ -703,9 +855,10 @@ impl MenuBar {
             draw_text(fb, font, r.x + PAD, r.y + 4, menu.title, TEXT);
         }
         let last = title_rect(MENUS.len() - 1);
-        let x = fb.width().saturating_sub(text_width(&self.status) + PAD);
-        if x > last.x + last.w + PAD {
-            draw_text(fb, font, x, 4, &self.status, TEXT);
+        let room = fb.width().saturating_sub(last.x + last.w + 2 * PAD);
+        if let Some(status) = fit_status(&self.status, room) {
+            let x = fb.width() - text_width(&status) - PAD;
+            draw_text(fb, font, x, 4, &status, TEXT);
         }
     }
 
@@ -719,16 +872,31 @@ impl MenuBar {
     ) {
         let Some(open) = self.open else { return };
         let items = MENUS[open].items;
-        let rects: Vec<Rect> = (0..items.len()).map(|i| item_rect(open, i)).collect();
-        self.draw_list(fb, font, settings, context, items, &rects, self.sub);
+        let shown: Vec<usize> = (0..items.len())
+            .filter(|&i| self.item_shown(open, i))
+            .collect();
+        let rects: Vec<Rect> = (0..items.len()).map(|i| self.item_rect(open, i)).collect();
+        self.draw_list(fb, font, settings, context, items, &rects, &shown, self.sub);
+        // Where the list is cut, a mark says it goes on.
+        if let (Some(&top), Some(&bottom)) = (shown.first(), shown.last()) {
+            if top > 0 {
+                draw_more(fb, rects[top], true);
+            }
+            if bottom + 1 < items.len() {
+                draw_more(fb, rects[bottom], false);
+            }
+        }
         if let Some((menu, parent, sub)) = self.submenu() {
-            let rects: Vec<Rect> = (0..sub.len()).map(|i| sub_rect(menu, parent, i)).collect();
-            self.draw_list(fb, font, settings, context, sub, &rects, None);
+            let rects: Vec<Rect> = (0..sub.len())
+                .map(|i| self.sub_rect(menu, parent, i))
+                .collect();
+            let all: Vec<usize> = (0..sub.len()).collect();
+            self.draw_list(fb, font, settings, context, sub, &rects, &all, None);
         }
     }
 
-    /// Draws a dropdown list with a border; `selected` stays highlighted
-    /// while its submenu is open.
+    /// Draws the `shown` items of a dropdown list with a border around
+    /// them; `selected` stays highlighted while its submenu is open.
     #[allow(clippy::too_many_arguments)]
     fn draw_list(
         &self,
@@ -738,10 +906,12 @@ impl MenuBar {
         context: Context,
         items: &[Item],
         rects: &[Rect],
+        shown: &[usize],
         selected: Option<usize>,
     ) {
         let marks = has_marks(items);
-        for (i, (item, &r)) in items.iter().zip(rects).enumerate() {
+        for &i in shown {
+            let (item, r) = (&items[i], rects[i]);
             if matches!(item.entry, Entry::Line) {
                 fill(fb, r, BACKGROUND);
                 let line = Rect {
@@ -777,7 +947,8 @@ impl MenuBar {
             let x = r.x + r.w - PAD - text_width(keys);
             draw_text(fb, font, x, r.y + 4, keys, color);
         }
-        if let (Some(&first), Some(&last)) = (rects.first(), rects.last()) {
+        if let (Some(&first), Some(&last)) = (shown.first(), shown.last()) {
+            let (first, last) = (rects[first], rects[last]);
             let all = Rect {
                 h: last.y + last.h - first.y,
                 ..first
@@ -816,6 +987,15 @@ mod tests {
 
     fn at(r: Rect) -> (i32, i32) {
         ((r.x + 1) as i32, (r.y + 1) as i32)
+    }
+
+    /// Where an item is with room enough for every list.
+    fn item_rect(menu: usize, item: usize) -> Rect {
+        MenuBar::default().item_rect(menu, item)
+    }
+
+    fn sub_rect(menu: usize, parent: usize, item: usize) -> Rect {
+        MenuBar::default().sub_rect(menu, parent, item)
     }
 
     #[test]
@@ -1022,6 +1202,191 @@ mod tests {
         assert_eq!(Action::WindowSize(1).mark(&settings, context), "(*)");
         assert_eq!(Action::WindowSize(0).mark(&settings, context), "( )");
         assert_eq!(Action::WindowSize(1).mark(&settings, IDLE), "( )");
+    }
+
+    /// Every item of every list and submenu, with the bar's menu open.
+    fn every_rect(bar: &mut MenuBar) -> Vec<(Rect, bool)> {
+        let mut all = Vec::new();
+        for (menu, m) in MENUS.iter().enumerate() {
+            bar.open_menu(menu, "");
+            for (i, item) in m.items.iter().enumerate() {
+                all.push((bar.item_rect(menu, i), bar.item_shown(menu, i)));
+                for s in 0..sub_items(item).len() {
+                    all.push((bar.sub_rect(menu, i, s), true));
+                }
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn menus_with_room_open_where_they_always_did() {
+        let unlimited = every_rect(&mut MenuBar::default());
+        assert!(unlimited.iter().all(|&(_, shown)| shown));
+        // The main window's 1280x720 display and taller ones.
+        for space in [(1280, 720), (1280, 960), (1280, 1280)] {
+            let mut bar = MenuBar {
+                space: Some(space),
+                ..MenuBar::default()
+            };
+            assert_eq!(every_rect(&mut bar), unlimited, "{space:?}");
+        }
+        // The editor's own window at its smallest, 800x450, where only
+        // View > Window size moves: up, from past the bottom into it.
+        let mut bar = MenuBar {
+            space: Some((800, 450)),
+            ..MenuBar::default()
+        };
+        let moved: Vec<_> = (every_rect(&mut bar).into_iter().zip(&unlimited))
+            .filter(|(now, before)| now != *before)
+            .collect();
+        assert_eq!(moved.len(), SCALES.len());
+        for ((now, _), (before, _)) in &moved {
+            assert!(
+                now.y < before.y && now.y + now.h <= 450,
+                "{now:?} {before:?}"
+            );
+        }
+        let ((_, _), (last, _)) = moved[moved.len() - 1];
+        assert!(last.y + last.h > 450, "it went past the bottom");
+    }
+
+    #[test]
+    fn menus_stay_in_a_small_window() {
+        // 640x480 at 1x: every list and submenu fits as it is.
+        for space in [(640, 480), (800, 600), (720, 720), (1024, 768)] {
+            let mut bar = MenuBar {
+                space: Some(space),
+                ..MenuBar::default()
+            };
+            for (r, shown) in every_rect(&mut bar) {
+                assert!(shown, "{space:?} {r:?}");
+                assert!(
+                    r.x + r.w <= space.0 && r.y + r.h <= space.1,
+                    "{space:?} {r:?}"
+                );
+            }
+        }
+        // Narrower: a submenu without room on the right opens on the left
+        // of its list.
+        let view = menu("View");
+        let parent = (MENUS[view].items.iter())
+            .position(|i| i.label == "Window size")
+            .unwrap();
+        let mut bar = MenuBar {
+            space: Some((560, 480)),
+            ..MenuBar::default()
+        };
+        bar.open_menu(view, "Window size");
+        let (p, s) = (bar.item_rect(view, parent), bar.sub_rect(view, parent, 0));
+        assert_eq!(s.x + s.w, p.x, "on the left");
+        assert_eq!(s.y, p.y);
+        let fits = Context {
+            window_fits: 0b11_1111,
+            ..IDLE
+        };
+        assert_eq!(
+            bar.click(at(bar.sub_rect(view, parent, 1)), fits),
+            Click::Chosen(Action::WindowSize(1))
+        );
+        // Neither side: against the right edge, over the list, where the
+        // pointer stays with the submenu.
+        let mut bar = MenuBar {
+            space: Some((320, 480)),
+            ..MenuBar::default()
+        };
+        bar.open_menu(view, "Window size");
+        let s = bar.sub_rect(view, parent, 0);
+        assert_eq!(s.x + s.w, 320);
+        bar.mouse_move(Some(at(bar.sub_rect(view, parent, 3))));
+        assert_eq!(bar.sub, Some(parent));
+        // A list moves left to stay in the window.
+        let help = menu("Help");
+        let r = bar.item_rect(help, 0);
+        assert!(r.x + r.w <= 320 && r.x < title_rect(help).x);
+        // A submenu low in a short window goes up to fit.
+        let mut bar = MenuBar {
+            space: Some((640, 420)),
+            ..MenuBar::default()
+        };
+        bar.open_menu(view, "Window size");
+        let last = bar.sub_rect(view, parent, SCALES.len() - 1);
+        assert_eq!(last.y + last.h, 420);
+    }
+
+    #[test]
+    fn a_list_too_tall_scrolls_with_the_wheel() {
+        // The 0.5x window size, 640x360: View does not fit under the bar.
+        let view = menu("View");
+        let count = MENUS[view].items.len();
+        let mut bar = MenuBar {
+            space: Some((640, 360)),
+            ..MenuBar::default()
+        };
+        bar.mouse_move(Some((10, 5)));
+        bar.click(at(title_rect(view)), IDLE);
+        let shown = |bar: &MenuBar| (0..count).filter(|&i| bar.item_shown(view, i)).count();
+        let at_first = shown(&bar);
+        assert!(at_first < count && bar.item_shown(view, 0));
+        assert!(!bar.item_shown(view, count - 1));
+        // Every shown item is in the window, under the bar.
+        for i in (0..count).filter(|&i| bar.item_shown(view, i)) {
+            let r = bar.item_rect(view, i);
+            assert!(r.y >= ROW_HEIGHT && r.y + r.h <= 360, "{r:?}");
+        }
+        // A hidden item cannot be clicked: the click lands on nothing.
+        let last = bar.item_rect(view, count - 1);
+        assert!(!matches!(bar.click(at(last), IDLE), Click::Chosen(_)));
+        // The wheel over the list scrolls to the end, and no further.
+        bar.click(at(title_rect(view)), IDLE);
+        let over = at(bar.item_rect(view, 0));
+        for _ in 0..count {
+            assert!(bar.wheel(over, -1));
+        }
+        assert!(bar.item_shown(view, count - 1) && !bar.item_shown(view, 0));
+        let fullscreen = (MENUS[view].items.iter())
+            .position(|i| i.label == "Fullscreen")
+            .unwrap();
+        assert_eq!(
+            bar.click(at(bar.item_rect(view, fullscreen)), IDLE),
+            Click::Chosen(Action::ToggleFullscreen)
+        );
+        // Back up, and the wheel elsewhere is left to the window.
+        bar.click(at(title_rect(view)), IDLE);
+        assert!(!bar.wheel((600, 300), -1));
+        for _ in 0..count {
+            bar.wheel(over, 1);
+        }
+        assert_eq!(shown(&bar), at_first);
+        assert!(bar.item_shown(view, 0));
+        // Where it fits, the wheel does nothing to it.
+        let mut roomy = MenuBar {
+            space: Some((640, 480)),
+            ..MenuBar::default()
+        };
+        roomy.open_menu(view, "");
+        assert!(roomy.wheel(over, -1));
+        assert!((0..count).all(|i| roomy.item_shown(view, i)));
+        // The bench's View > Window size opens scrolled to the submenu.
+        bar.open_menu(view, "Window size");
+        let parent = bar.sub.unwrap();
+        assert!(bar.item_shown(view, parent));
+    }
+
+    #[test]
+    fn the_status_is_cut_from_its_start() {
+        let status = "MYPROJECT - EDIT PRG0*";
+        let full = text_width(status);
+        assert_eq!(fit_status(status, full + 1).as_deref(), Some(status));
+        let cut = fit_status(status, full).unwrap();
+        assert!(cut.starts_with("...") && cut.ends_with("EDIT PRG0*"));
+        assert!(text_width(&cut) < full);
+        // Too narrow for "..." and 4 characters: nothing.
+        assert_eq!(fit_status(status, text_width("...RG0*")), None);
+        assert_eq!(fit_status(status, 0), None);
+        // On 640 pixels at 1x, the bar's titles leave room for it.
+        let last = title_rect(MENUS.len() - 1);
+        assert!(fit_status(status, 640 - last.x - last.w - 2 * PAD).is_some());
     }
 
     #[test]

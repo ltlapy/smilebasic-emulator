@@ -449,9 +449,20 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   with Bilinear instead.
 - The desktop lays its UI out on a 1280x720 display and scales it to fit the
   window, keeping its aspect ratio, at the window's top. Below 1280x720 it is
-  scaled down: on a 640x480 output it shows at half size in the top 640x360,
-  with menus too small to read. The Simple UI is laid out for such outputs.
-  The main window starts no larger than the display's usable area.
+  scaled down: on a 640x480 output it shows at half size in the top 640x360.
+  The Simple UI is laid out for such outputs. The main window starts no
+  larger than the display's usable area.
+- The menu bar, its menus and the right-click menus are drawn at 1x where
+  the display is scaled down, so on 640x480 the bar is 24 pixels high with
+  80 columns of the UI font across, not half that and blurred. At 1280x720
+  and larger they scale with the display as before, at 1.5x on 1920x1080.
+  The menus open within the window: a list that would go past its right edge
+  moves left, a submenu opens on the left of its list where the right has
+  no room, and moves up to stay above the bottom. A list taller than the
+  window, as View is in a 640x360 one, shows what fits and scrolls with the
+  mouse wheel; a small triangle marks where it goes on. The status at the
+  bar's right loses its start, behind "...", where it does not fit, and is
+  left out where fewer than four of its characters would.
 - The program's screen is not confined to that display. It is centered in
   the whole window at the largest size View > Screen filter allows, so
   `XSCREEN 640,480` fills a 640x480 or 1280x960 window, and `XSCREEN 320,240`
@@ -461,8 +472,9 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
     to the window's bottom, and so do notices and the yellow border that
     shows the focus going back to the main program. A program's `DIALOG` is
     centered on the whole window and dims all of it.
-  - The menus, the emulator's windows and dialogs, and a subprogram's screen,
-    which `XSUBSCREEN` places on the 1280x720 display, stay in the display.
+  - The emulator's windows and dialogs, and a subprogram's screen, which
+    `XSUBSCREEN` places on the 1280x720 display, stay in the display. The
+    menus go down to the window's bottom.
 - The editor in the main window keeps SmileBASIC 4's frame, its rows at the
   editor's text size and the start-up screen's shape scaled to where the
   screen goes, only in a window of 16:9 or wider and at least 1280x720. In a

@@ -165,6 +165,49 @@ pub fn screen_place(
     crate::screen_place(mode, settings, false, out.0, height)
 }
 
+/// Where the main window's menu bar, its menus and its context menus go
+/// apart from the rest of the UI: at their own size, 1x, from the
+/// display's top left corner, with `size` pixels of room down to the
+/// window's bottom. That is in a window whose display is scaled below
+/// 1x, as 640x480 scales it to 0.5x, which would draw them shrunk and
+/// blurred. `None` where the display's scale is 1x or more: they are
+/// scaled with the display there, as the rest of the UI is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MenuPlace {
+    /// The bar's top left corner on the window, in its pixels.
+    pub at: (f32, f32),
+    pub size: (u32, u32),
+}
+
+impl MenuPlace {
+    /// The rectangle a layer of the menus is copied to at 1x.
+    pub fn rect(self) -> FRect {
+        FRect::new(self.at.0, self.at.1, self.size.0 as f32, self.size.1 as f32)
+    }
+}
+
+/// See [`MenuPlace`]: for a window of `out` pixels whose display of
+/// `display_w` pixels across is at `display`.
+pub fn menu_place(display: FRect, display_w: u32, out: (u32, u32)) -> Option<MenuPlace> {
+    if display.w + 0.5 >= display_w as f32 {
+        return None;
+    }
+    let at = (display.x.round(), display.y.round());
+    let w = (display.w.floor() as u32).max(1);
+    let h = out.1.saturating_sub(at.1 as u32).max(1);
+    Some(MenuPlace { at, size: (w, h) })
+}
+
+/// How many of the window's pixels a pixel of the menu bar takes: 1
+/// where it goes apart (see [`menu_place`]), the display's scale
+/// otherwise.
+pub fn menu_scale(display: FRect, display_w: u32, out: (u32, u32)) -> f32 {
+    match menu_place(display, display_w, out) {
+        Some(_) => 1.0,
+        None => display.w / display_w as f32,
+    }
+}
+
 /// The fewest columns the main window's editor is laid out with while a
 /// larger zoom would leave fewer: about what SmileBASIC 4's Large size
 /// shows across its screen.
@@ -623,6 +666,33 @@ mod tests {
     }
 
     #[test]
+    fn menus_go_apart_at_1x_below_the_displays_size() {
+        let place = |out: (u32, u32)| menu_place(display(out), 1280, out);
+        // At least 1280x720: scaled with the display, as before.
+        let mut large = vec![(1280, 720), (1280, 960), (1920, 1200), (2560, 1080)];
+        large.extend((16..=48).map(|n| (n * 80, n * 45)));
+        for out in large {
+            assert_eq!(place(out), None, "{out:?}");
+            let scale = menu_scale(display(out), 1280, out);
+            assert_eq!(scale, display(out).w / 1280.0, "{out:?}");
+            assert!(scale >= 1.0);
+        }
+        // Smaller: 1x from the display's corner to the window's bottom.
+        let rect = |out| place(out).map(|p| (p.at, p.size));
+        assert_eq!(rect((640, 480)), Some(((0.0, 0.0), (640, 480))));
+        assert_eq!(rect((800, 600)), Some(((0.0, 0.0), (800, 600))));
+        assert_eq!(rect((1024, 768)), Some(((0.0, 0.0), (1024, 768))));
+        assert_eq!(rect((720, 720)), Some(((0.0, 0.0), (720, 720))));
+        assert_eq!(rect((640, 360)), Some(((0.0, 0.0), (640, 360))));
+        assert_eq!(rect((1279, 720)), Some(((0.0, 0.0), (1279, 720))));
+        // Wider than 16:9: within the display, centered across.
+        assert_eq!(rect((1000, 500)), Some(((56.0, 0.0), (888, 500))));
+        assert_eq!(menu_scale(display((640, 480)), 1280, (640, 480)), 1.0);
+        // Nothing at all.
+        assert!(place((0, 0)).is_some_and(|p| p.size.0 >= 1 && p.size.1 >= 1));
+    }
+
+    #[test]
     fn a_click_lands_on_the_editors_pixel_under_it() {
         use EditorSize::{Large, Medium};
         let looks = [(FontSize::Large, Medium), (FontSize::Small, Large)];
@@ -643,6 +713,7 @@ mod tests {
                         display_w: 1280,
                         shown: fill.rect(),
                         space: fill.area.size,
+                        menu: None,
                     };
                     // Every pixel of the window, across and down, is the
                     // frame's pixel drawn there.
@@ -693,6 +764,7 @@ mod tests {
                                 display_w: 1280,
                                 shown,
                                 space,
+                                menu: None,
                             };
                             let (sw, sh) = map.space;
                             let corners = [(0, 0), (sw - 1, 0), (0, sh - 1), (sw - 1, sh - 1)];
@@ -724,6 +796,7 @@ mod tests {
             display_w: 1280,
             shown,
             space: (640, 480),
+            menu: None,
         };
         assert_eq!(map.to_screen(0.5, 0.5), (0, 0));
         assert_eq!(map.to_screen(320.5, 400.5), (320, 400));
