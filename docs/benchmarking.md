@@ -702,7 +702,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `occluded` | From when the timing begins, has the main window count as covered, as the system reports it when it can |
 | `shot=PATH` | Saves the last frame timed of each window shown, as `PATH-main.pam` and `PATH-editor.pam`, to compare drawings |
 | `luma=PATH` | Writes each timed frame's number and mean brightness (0 to 255), read as it goes to the window, to PATH, and reports the frames darker than both neighbors. That is a flicker, which `check` cannot see |
-| `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds. Two columns follow `wait`: `kept`, the frames the standby thread ran during the trip, and `worker`, its microseconds running them |
+| `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds. Two columns follow `wait`: `kept`, the frames the standby thread ran during the trip, and `worker`, its microseconds running them. The last four are `MAINCNT` after the trip and the frames so far that the program missed part of its trip in, by why, as the `missed` line counts them: `cut`, `held` and `deferred` |
 | `at=FRAME:WHAT` | Does WHAT to the frontend at that frame, counted from the start of the run. Give it any number of times |
 
 `at=FRAME:WHAT` takes:
@@ -765,6 +765,7 @@ Below the stages come:
 | `drawing` | The stages before `present` |
 | `frames` | Program frames run per second of the time timed |
 | `maincnt` | How far `MAINCNT` went per second of the time timed |
+| `missed` | Frames in the time timed in which the program missed part of its trip round its main loop, as `smilebasic-check --window` counts them ([Per-frame costs and overload](#per-frame-costs-and-overload)): out of time part-way through it, held at its `VSYNC` to catch up, and `VSYNC`s that waited for the next frame where SmileBASIC 4 would go straight on |
 | `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](frame-thread.md)), in how many trips, and the time it took |
 | `sound` | What the sound device's buffer went through |
 | `uploaded` | Bytes given to textures a frame |

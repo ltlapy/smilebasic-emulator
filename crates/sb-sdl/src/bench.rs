@@ -28,7 +28,8 @@
 //!   uploaded, the textures made, and in microseconds what the rest of the trip round
 //!   the loop took: events, running the program, waiting for the next frame; then the
 //!   frames the standby thread ran while the loop was held up, and its microseconds
-//!   running them;
+//!   running them; then MAINCNT, and the frames so far that the program
+//!   missed part of its trip in, by why, as the report's missed line says;
 //! - `menu`, `file-menu`, `view-menu`, `help`, `about`, `colors`, `settings`,
 //!   `toast`: shows the menu bar (as F8 does), the bar with its File menu
 //!   open or its View menu at Window size, the help beside the editor, the About dialog, the editor colors window,
@@ -63,7 +64,8 @@
 //!
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed, those of them the standby thread ran, how far MAINCNT
-//! went, and what the sound device's buffer went through, so
+//! went, the frames the program missed part of its trip in, and what the
+//! sound device's buffer went through, so
 //! that the frames keep time whatever happens to the drawing. For the
 //! sound, `SDL_AUDIO_DRIVER=dummy` with `SDL_AUDIO_DEVICE_SAMPLE_FRAMES`
 //! at 960 takes samples at very nearly the real rate without a device.
@@ -71,7 +73,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use sb_runtime::machine::Machine;
+use sb_runtime::machine::{Machine, Missed};
 use sb_runtime::sound::RATE;
 use sb_runtime::sound::output::Stats;
 use sdl3::keyboard::Mod;
@@ -209,6 +211,9 @@ pub struct Bench {
     kept_trips: u32,
     /// MAINCNT when the timing began, and now.
     maincnt: (u32, u32),
+    /// The frames the program missed part of its trip in, when the timing
+    /// began and now.
+    missed: (Missed, Missed),
     last: Option<Instant>,
     /// When the timing began.
     began: Option<Instant>,
@@ -323,8 +328,15 @@ impl Bench {
                 let made = MADE.load(Ordering::Relaxed);
                 let (frame, (w, h)) = (self.frame, self.size);
                 let (kept, busy) = (self.kept_now.frames, self.kept_now.busy.as_micros());
+                let count = machine.rt.main_count();
+                let Missed {
+                    cut,
+                    held,
+                    deferred,
+                } = machine.missed;
                 self.lines.push(format!(
-                    "{frame} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy}"
+                    "{frame} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy} \
+                     {count} {cut} {held} {deferred}"
                 ));
             }
         }
@@ -338,8 +350,10 @@ impl Bench {
             self.began = self.last;
             self.ran = 0;
             self.maincnt.0 = machine.rt.main_count();
+            self.missed.0 = machine.missed;
         }
         self.maincnt.1 = machine.rt.main_count();
+        self.missed.1 = machine.missed;
         let ended = self.until_end && self.frame > set_up + 10 && !machine.is_running();
         ended || self.timed.len() >= self.frames as usize
     }
@@ -506,7 +520,9 @@ impl Bench {
         if let Some(path) = &self.log {
             let (drawing, rest) = NAMES.split_at(DRAWING);
             let (drawing, rest) = (drawing.join(" "), rest.join(" "));
-            let head = format!("frame w h {drawing} uploaded made {rest} kept worker\n");
+            let head = format!(
+                "frame w h {drawing} uploaded made {rest} kept worker maincnt cut held deferred\n"
+            );
             let text = head + &self.lines.join("\n") + "\n";
             if let Err(e) = std::fs::write(path, text) {
                 eprintln!("SB_UI_BENCH: {e}");
@@ -567,6 +583,13 @@ impl Bench {
             println!(
                 "maincnt   {:.2} a second, {counted} in all",
                 counted as f64 / secs
+            );
+            let (from, to) = self.missed;
+            println!(
+                "missed    {} frames out of time mid-trip, {} held at VSYNC, {} VSYNCs deferred",
+                to.cut - from.cut,
+                to.held - from.held,
+                to.deferred - from.deferred
             );
         }
         println!(
