@@ -317,6 +317,7 @@ impl Compiler<'_> {
             }
             self.out.defs.push(DefInfo {
                 name,
+                at: (stmt.line, stmt.col),
                 entry: 0,
                 end: 0,
                 is_function: def.is_function,

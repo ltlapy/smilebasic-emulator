@@ -320,6 +320,46 @@ fn on_break_in_code_execed_from_a_def_ends_with_the_slot() {
     assert_eq!(&r[r.len() - 3..], ["BRK", "BACK", "OK"]);
 }
 
+/// A COMMON DEF may not share its name with a DEF of another slot, nor a
+/// DEF with another slot's COMMON DEF: Duplicate function as EXEC
+/// compiles the second.
+#[test]
+fn exec_refuses_a_def_named_as_another_slots_common_def() {
+    for (two, three, out) in [
+        (
+            "COMMON DEF F\nEND",
+            "\nCOMMON DEF F\nEND",
+            "Duplicate function in 3:2",
+        ),
+        (
+            "COMMON DEF F\nEND",
+            "?1\nDEF F\nEND",
+            "Duplicate function in 3:2",
+        ),
+        (
+            "DEF F\nEND",
+            "COMMON DEF F\nEND",
+            "Duplicate function in 3:1",
+        ),
+        ("DEF F\nEND", "DEF F\nEND\n?\"FINE\"", "FINE"),
+    ] {
+        let mut m = machine();
+        m.set_slot(0, "EXEC 2:EXEC 3".to_string());
+        m.set_slot(2, two.to_string());
+        m.set_slot(3, three.to_string());
+        enter(&mut m, "RUN");
+        let r = rows(&m);
+        assert!(r[r.len() - 2].starts_with(out), "{two:?} {three:?}: {r:?}");
+    }
+    // The same slot again replaces its own.
+    let mut m = machine();
+    m.set_slot(0, "EXEC 3:EXEC 3:?FA()".to_string());
+    m.set_slot(3, "COMMON DEF FA()\nRETURN 3\nEND".to_string());
+    enter(&mut m, "RUN");
+    let r = rows(&m);
+    assert_eq!(r[r.len() - 2], "3");
+}
+
 #[test]
 fn sysreq_out_of_input_also_stops() {
     let mut m = machine();

@@ -291,6 +291,8 @@ pub fn full_name(name: &str, suffix: Option<Suffix>) -> String {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DefInfo {
     pub name: String,
+    /// The line and column of the DEF statement.
+    pub at: (u32, u32),
     pub entry: Addr,
     /// Where the code after the body starts.
     pub end: Addr,

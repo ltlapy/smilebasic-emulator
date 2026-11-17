@@ -2782,6 +2782,8 @@ impl Vm {
         let slot = slot as usize;
         let program =
             crate::compile_in(&source, &*host, slot).map_err(|e| e.in_slot(Some(slot as u32)))?;
+        self.defs_fit(&program, slot)
+            .map_err(|e| e.in_slot(Some(slot as u32)))?;
         let unit = Unit::new(program);
         if own {
             let base = self.execs.last();
@@ -2818,6 +2820,41 @@ impl Vm {
         // Back to the host, which may give the new code its breakpoints
         // before it runs.
         Ok(Some(Status::Running))
+    }
+
+    /// Whether the DEFs of `program`, which EXEC is to start in `slot`,
+    /// can stand beside those of the other slots this run has: a COMMON
+    /// DEF may not take the name of any DEF of another slot, nor any DEF
+    /// that of another slot's COMMON DEF. Duplicate function, naming no
+    /// argument, on the first such DEF's line. The slot's own program,
+    /// which this one replaces, does not count. UNVERIFIED: two plain DEFs
+    /// of one name in two slots are let be.
+    fn defs_fit(&self, program: &Compiled, slot: usize) -> Result<()> {
+        let others = (self.units.iter().enumerate())
+            .filter_map(|(s, unit)| Some((s, &unit.as_ref()?.program)))
+            .chain(std::iter::once((self.slot, &self.program)))
+            .filter(|&(s, _)| s != slot)
+            .map(|(_, p)| p);
+        let mut clash: Option<&DefInfo> = None;
+        for other in others {
+            for def in &program.defs {
+                let Some(&i) = other.def_names.get(&def.name) else {
+                    continue;
+                };
+                if (def.common || other.defs[i as usize].common)
+                    && clash.is_none_or(|c| def.at < c.at)
+                {
+                    clash = Some(def);
+                }
+            }
+        }
+        match clash {
+            None => Ok(()),
+            Some(def) => Err(
+                Error::with_detail(ErrorKind::DuplicateFunction, def.name.clone())
+                    .at_pos(def.at.0, def.at.1),
+            ),
+        }
     }
 
     /// The DEF of the running slot that `text` was found to name, if it is
