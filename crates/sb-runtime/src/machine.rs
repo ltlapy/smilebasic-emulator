@@ -39,6 +39,8 @@ pub const FLASH_FADE: u32 = 15;
 /// With a time limit, the part of a frame's that a subprogram is sure of:
 /// a quarter.
 const SUB_SHARE: u32 = 4;
+/// The C key's USB usage ID, for Ctrl+C's break.
+const KEY_C: u8 = 0x06;
 /// Shown by FREEMEM on SmileBASIC 4.4.9 right after start-up.
 pub const FREE_MEMORY: u32 = sb_core::memory::TOTAL;
 
@@ -1108,12 +1110,17 @@ impl Machine {
         self.run_slot(0);
     }
 
-    /// Ctrl+C on a keyboard: in a running program a break, which jumps to
-    /// its ON BREAK GOTO label as the + button does (checked on hardware),
+    /// Ctrl+C on a keyboard, as it goes down: in a running program a
+    /// break, which jumps to its ON BREAK GOTO label as the + button does,
     /// or else stops it; it also stops a DIRECT mode line. Unlike +, it
-    /// never starts PRG0. UNVERIFIED: whether it also ends a SUBRUN
-    /// subprogram.
+    /// never starts PRG0. KEYBOARD sees Ctrl held but not C's press, only
+    /// its release, and C types nothing. UNVERIFIED: whether it also ends
+    /// a SUBRUN subprogram; it does what + does.
     pub fn keyboard_break(&mut self) {
+        self.rt.input.hide_press(KEY_C);
+        if let Some(sub) = &mut self.sub {
+            sub.rt.input.hide_press(KEY_C);
+        }
         match self.vm.is_some() && self.running_slot.is_some() {
             true => self.sysreq(),
             false => self.stop(),

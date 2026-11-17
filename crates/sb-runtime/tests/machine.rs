@@ -302,6 +302,62 @@ fn keyboard_break_jumps_to_on_break() {
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
 
+/// Without ON BREAK GOTO, Ctrl+C stops the program as the + button does.
+#[test]
+fn keyboard_break_stops_without_on_break() {
+    let mut m = machine();
+    m.set_slot(0, "@L:VSYNC:GOTO @L".to_string());
+    m.run_slot(0);
+    m.frame();
+    m.keyboard_break();
+    assert!(!m.is_running());
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["User break on 0:1", "OK"]);
+}
+
+/// After Ctrl+C's break, the program sees Ctrl held, but C's press
+/// neither reads as a press for KEYBOARD nor types for INKEY$, not even
+/// held on after Ctrl is released, long enough to repeat. Its release
+/// shows.
+#[test]
+fn keyboard_break_hides_c_from_the_program() {
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "ON BREAK GOTO @B\n@L:VSYNC:GOTO @L\n@B\n\
+         @W:K$=INKEY$():IF K$!=\"\" THEN ?\"K\";ASC(K$)\n\
+         IF KEYBOARD(6,2) THEN ?\"P\"\nIF KEYBOARD(6,3) THEN ?\"R\"\n\
+         IF KEYBOARD(224,2) THEN ?\"CTRL\"\nVSYNC:GOTO @W"
+            .to_string(),
+    );
+    m.run_slot(0);
+    m.frame();
+    // What the frontend does as Ctrl+C goes down: C would repeat 'c'.
+    m.rt.input.key_down(0x06);
+    m.rt.input.key_text(sb_runtime::input::KeyText {
+        plain: u16::from(b'c'),
+        shift: u16::from(b'C'),
+        ..Default::default()
+    });
+    m.keyboard_break();
+    m.rt.input.live.set_key(0xE0, true);
+    m.rt.input.live.set_key(0x06, true);
+    for _ in 0..10 {
+        m.frame();
+    }
+    // Ctrl released, C held on: it would repeat now.
+    m.rt.input.live.set_key(0xE0, false);
+    for _ in 0..60 {
+        m.frame();
+    }
+    m.rt.input.live.set_key(0x06, false);
+    m.frame();
+    m.frame();
+    assert!(m.is_running());
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["CTRL", "R"]);
+}
+
 /// A break jump in code EXEC'd from a DEF leaves the DEF behind, and the
 /// EXEC with it: the program ends where that slot ends.
 #[test]

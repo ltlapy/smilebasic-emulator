@@ -403,6 +403,9 @@ pub struct Input {
     /// The program has read the controllers, the keyboard, the mouse or
     /// the touch screen since this was last cleared, for the debugger.
     pub(crate) polled: bool,
+    /// Keyboard keys whose press [`Input::hide_press`] keeps from
+    /// KEYBOARD, by USB usage ID, until they are released.
+    hidden_presses: [u64; 4],
 }
 
 /// The keys a program has read for itself: those `KEYBOARD` asked about,
@@ -452,6 +455,7 @@ impl Default for Input {
             buttons_read: false,
             keys_read: KeysRead::default(),
             polled: false,
+            hidden_presses: [0; 4],
         }
     }
 }
@@ -462,6 +466,9 @@ impl Input {
     pub fn latch(&mut self) {
         self.before = self.now;
         self.now = self.live;
+        if self.hidden_presses != [0; 4] {
+            self.latch_hidden_presses();
+        }
         for (pad, held) in self.held.iter_mut().enumerate() {
             let buttons = with_any(self.now.buttons(pad));
             for (id, frames) in held.iter_mut().enumerate() {
@@ -609,6 +616,25 @@ impl Input {
         }
         for (before, now) in self.before.pads.iter_mut().zip(&self.now.pads) {
             before.buttons = now.buttons;
+        }
+    }
+
+    /// Keeps the press of keyboard key `usage`, which has just gone down,
+    /// from KEYBOARD, which reads it as held before; its release shows. Its
+    /// typing does not repeat either.
+    pub fn hide_press(&mut self, usage: u8) {
+        self.hidden_presses[usize::from(usage >> 6)] |= 1 << (usage & 63);
+        if self.key_repeat.usage == usage {
+            self.key_repeat = KeyRepeat::default();
+        }
+    }
+
+    /// The keys [`Input::hide_press`] hides count as held before while
+    /// they stay down, and are forgotten once released.
+    fn latch_hidden_presses(&mut self) {
+        for (i, hidden) in self.hidden_presses.iter_mut().enumerate() {
+            *hidden &= self.now.keys[i];
+            self.before.keys[i] |= *hidden;
         }
     }
 
