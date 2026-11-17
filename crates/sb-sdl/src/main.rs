@@ -2932,7 +2932,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         lap!(Events);
         // Each frame reads the setting, whichever screen or reload changed it;
         // a subprogram, a tool among them, runs on the same machine.
-        machine.keep_frames = machine.rt.settings.keep_frames;
+        apply_frame_setting(machine);
         let run_began = Instant::now();
         if !paused {
             machine.time_limit = Some(run_time.limit());
@@ -4898,6 +4898,12 @@ fn close_bar_on_start(menu: &mut MenuBar, was_running: &mut bool, running: bool)
     *was_running = running;
 }
 
+/// Gives the machine the setting for a program too slow for the computer:
+/// it keeps its frames, and slows down, unless frames are to be skipped.
+fn apply_frame_setting(machine: &mut Machine) {
+    machine.keep_frames = !machine.rt.settings.skip_frames;
+}
+
 /// The bar's right side: the project, the slot being edited (with `*`
 /// for unsaved changes) or direct mode, and a running or paused program.
 fn status_line(machine: &Machine, paused: bool) -> String {
@@ -5527,6 +5533,19 @@ mod tests {
         m.frame();
         assert!(m.is_running());
         m
+    }
+
+    /// A program too slow for the computer slows down unless the setting
+    /// says to skip frames.
+    #[test]
+    fn frames_are_kept_unless_skipped() {
+        let mut m = running_machine();
+        assert!(!m.keep_frames, "the machine's own default");
+        apply_frame_setting(&mut m);
+        assert!(m.keep_frames);
+        m.rt.settings.skip_frames = true;
+        apply_frame_setting(&mut m);
+        assert!(!m.keep_frames);
     }
 
     /// Ctrl+S in a `#` project tells that it takes no files and asks for

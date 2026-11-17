@@ -640,6 +640,11 @@ on. A program that counts its trips as frames goes wrong after such frames.
 `--keep-frames` runs with `Machine::keep_frames`, which spends no frame while
 a trip that started at a `VSYNC` is under way, so that the program runs slower
 instead; `FRAMES` and the script's frame numbers then count frames, not calls.
+The window keeps frames unless "Skip frames instead of slowing down" is on
+(`skip_frames` in `settings.txt`), so `--window --keep-frames` runs as the
+window does by default and `--window` alone as it does with the setting on.
+The flags stay as they are so that each run says what it measures.
+A frame kept is not counted as missed.
 A script's `button` or `usb` line with 0 frames presses and releases between
 two frames, as a tap shorter than the frontend's frame.
 
@@ -763,8 +768,8 @@ Below the stages come:
 | `whole` | The whole trip round the loop |
 | `stalls` | Trips of 100 ms or more, where sound starts to run out |
 | `drawing` | The stages before `present` |
-| `frames` | Program frames run per second of the time timed |
-| `maincnt` | How far `MAINCNT` went per second of the time timed |
+| `frames` | Program frames run per second of the time timed: calls of the machine's frame, including those that went on with a kept frame |
+| `maincnt` | How far `MAINCNT` went per second of the time timed: below 60 when frames were kept for a program too slow for the computer |
 | `missed` | Frames in the time timed in which the program missed part of its trip round its main loop, as `smilebasic-check --window` counts them ([Per-frame costs and overload](#per-frame-costs-and-overload)): out of time part-way through it, held at its `VSYNC` to catch up, and `VSYNC`s that waited for the next frame where SmileBASIC 4 would go straight on |
 | `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](frame-thread.md)), in how many trips, and the time it took |
 | `sound` | What the sound device's buffer went through |

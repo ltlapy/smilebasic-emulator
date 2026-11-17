@@ -57,9 +57,11 @@ const USAGE: &str = "usage:
         --log FILE     write each frame's times to FILE as CSV: frame,
                        run_us, draw_us, instructions, vsyncs (those the
                        program reached), redrawn, end_us (since the start)
-        --window       run frames as the window does: to the clock, with
-                       its time limits, catching up without drawing. Not
-                       with --fixed, as the work then follows the clock
+        --window       run frames as the window does with its setting to
+                       skip frames on: to the clock, with its time limits,
+                       catching up without drawing; add --keep-frames for
+                       the window's default. Not with --fixed, as the work
+                       then follows the clock
         --slower N     with --window, the clock and limits divided by N,
                        to stand for a machine N times slower than this
         --keep-frames  spend no frame while the program is part-way

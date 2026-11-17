@@ -178,13 +178,13 @@ const PAGES: &[Page] = &[
                 ),
             },
             check(
-                "Slow down instead of skipping frames",
-                "When this computer is too slow for a program's main loop, the whole \
-                 program slows down, music too, instead of letting frames pass \
-                 mid-loop. Games that count loops as frames then stay right. Off by \
-                 default: frames keep time, as on SmileBASIC 4.",
-                |s| s.keep_frames,
-                |s| s.keep_frames ^= true,
+                "Skip frames instead of slowing down",
+                "When this computer is slower than a program needs, skip frames \
+                 instead of slowing the program down. Music does not break up and \
+                 play feels faster, but programs that count frames may misbehave. \
+                 Off by default.",
+                |s| s.skip_frames,
+                |s| s.skip_frames ^= true,
             ),
             Row {
                 label: "Language reported to programs",
