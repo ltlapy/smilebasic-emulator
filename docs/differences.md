@@ -457,20 +457,24 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   `XSCREEN 640,480` fills a 640x480 or 1280x960 window, and `XSCREEN 320,240`
   shows at 5x in 1920x1200. In a window of 16:9 or wider the display fills
   the window's height, and nothing changes. In a narrower one:
-  - The editor uses the room below the display too. Its frame has
-    SmileBASIC 4's rows at the editor's text size and the start-up screen's
-    shape, twice as fine with 16-pixel characters (828x497 for Medium on a
-    400x240 screen). With Nearest it takes the larger of the screen's whole
-    factors and its frame's: a whole factor of the frame where it fits once,
-    shrunk to fit where it does not. On 640x480 that is 640x384 rather than
-    400x240. It is centered in the display, or where taller, starts at the
-    window's top, under the menu bar.
   - The debugger's panel, and the help and index beside the editor, go down
     to the window's bottom, and so do notices and the yellow border that
     shows the focus going back to the main program. A program's `DIALOG` is
     centered on the whole window and dims all of it.
   - The menus, the emulator's windows and dialogs, and a subprogram's screen,
     which `XSUBSCREEN` places on the 1280x720 display, stay in the display.
+- The editor in the main window keeps SmileBASIC 4's frame, its rows at the
+  editor's text size and the start-up screen's shape scaled to where the
+  screen goes, only in a window of 16:9 or wider and at least 1280x720. In a
+  narrower or smaller window it is laid out as in a window of its own (see
+  [Editor in a separate window](#editor-in-a-separate-window)): it fills the
+  window under the menu bar, each of its pixels a whole number of the
+  window's, with as many columns and rows as fit. The zoom is the whole number
+  nearest to the one at which F2's size shows SmileBASIC 4's rows in the
+  display's height, at least 1, made smaller where it would leave fewer than
+  40 columns. The 16-pixel font at Medium is 1x on 640x480 (40 columns, 30
+  rows), 800x600, 1024x768 and 720x720, and 2x on 1920x1200; the 8-pixel font
+  at Large is 2x on 640x480. Nothing is blurred and no margin is left.
 - View > Window size sets the main window to 0.5, 1, 1.5, 2, 2.5 or 3 times
   1280x720 pixels, leaving fullscreen first. The menu bar goes over the
   screen, so the screen gets the whole multiple: `XSCREEN 1280,720` at 2x

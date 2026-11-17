@@ -485,9 +485,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // The pixels that mouse positions are given in: the screen's, or the
     // editor's frame.
     let mut pointer_space = (mode.width, mode.height);
-    // Whether that frame was the editor's, which the desktop places
-    // apart from the screen in a window narrower than 16:9.
-    let mut shows_editor = false;
+    // Where the editor's frame was drawn, if that frame was the
+    // editor's laid out for the main window's room (see
+    // `window::editor_fill`), where the pointer maps through it.
+    let mut filled_editor: Option<FRect> = None;
     let mut menu = MenuBar::default();
     // Whether a program ran when the loop last looked, to see one start.
     let mut was_running = false;
@@ -1045,12 +1046,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             true => display_h,
             false => window::ui_height(display, display_h, out_h),
         };
-        let (shown, _) = match simple_ui {
-            true => screen_place(&mode, settings, true, out_w, screen_h),
-            false => {
-                let editor = shows_editor.then_some(pointer_space);
-                window::screen_place(&mode, settings, editor, (out_w, out_h), display)
-            }
+        let (shown, _) = match (simple_ui, filled_editor) {
+            (true, _) => screen_place(&mode, settings, true, out_w, screen_h),
+            (false, Some(rect)) => (rect, filter),
+            (false, None) => window::screen_place(&mode, settings, (out_w, out_h), display),
         };
         let main_map = Mapping {
             px: out_w as f32 / win_w.max(1) as f32,
@@ -3122,9 +3121,20 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let rect;
         (rect, filter) = match simple_ui {
             true => screen_place(&mode, settings, true, out_w, screen_h),
-            false => window::screen_place(&mode, settings, None, (out_w, out_h), display),
+            false => window::screen_place(&mode, settings, (out_w, out_h), display),
         };
         let editing = machine.is_editing() && !machine.is_detached();
+        // The main window's editor laid out for the room it has, where it
+        // does not keep SmileBASIC 4's frame, under the menu bar as the
+        // window shows it.
+        let fill = (!simple_ui && window::editor_fills(display, display_w, out_h)).then(|| {
+            let bar = (MenuBar::HEIGHT as f32 * display.w / display_w as f32).ceil() as u32;
+            let look = (settings.editor_font, settings.editor_size);
+            window::editor_fill(display, (out_w, out_h), look, bar)
+        });
+        if !apart {
+            machine.set_editor_area(fill.map(|fill| fill.area));
+        }
         let renderer = machine.rt.settings.renderer;
         if renderer_applied != Some(renderer) {
             renderer_applied = Some(renderer);
@@ -3169,14 +3179,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             false => machine.screen_frame(),
         };
         let frame = (fb.width(), fb.height());
-        shows_editor = editing;
-        let rect = match (editing, simple_ui) {
-            (true, false) => {
-                let (settings, out) = (&machine.rt.settings, (out_w, out_h));
-                window::screen_place(&mode, settings, Some(frame), out, display).0
-            }
+        // The editor's frame, of the fill's area, fills the window at its
+        // zoom, or goes where the screen does.
+        let rect = match (editing, fill) {
+            (true, Some(fill)) => fill.rect(),
             _ => rect,
         };
+        filled_editor = (editing && fill.is_some()).then_some(rect);
         // The frame the GPU path drew, which is not in `fb`.
         let on_gpu = !editing && machine.rt.frame_on_backend();
         // XSCREEN's mode 1 starts from a frame that stays sharp.

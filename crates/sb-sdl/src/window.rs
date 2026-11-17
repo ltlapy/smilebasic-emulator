@@ -3,6 +3,8 @@
 //! that another window's dialog keeps, and where the desktop puts the
 //! program's screen and the editor in the main one.
 
+use sb_runtime::editor::{Area, EditorSize, frame_size};
+use sb_runtime::font::FontSize;
 use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
 use sdl3::event::Event;
@@ -151,67 +153,81 @@ pub fn ui_height(display: FRect, display_h: u32, out_h: u32) -> u32 {
 /// Where the desktop shows the screen of `mode` in a window of `out`
 /// pixels whose display is at `display`, and the filter it is scaled
 /// with: centered in the whole window, at the largest size View > Screen
-/// filter allows (see [`crate::screen_place`]). With `editor`, the
-/// editor's frame of that many pixels instead, `mode` being the editor's,
-/// as [`editor_rect`] says; its filter is then [`crate::editor_filter`]'s
-/// to choose.
+/// filter allows (see [`crate::screen_place`]). The editor goes there
+/// too where it has SmileBASIC 4's frame (see [`editor_fills`]).
 pub fn screen_place(
     mode: &ScreenMode,
     settings: &Settings,
-    editor: Option<(u32, u32)>,
     out: (u32, u32),
     display: FRect,
 ) -> (FRect, Filter) {
     let height = screen_height(display, out.1);
-    let (rect, filter) = crate::screen_place(mode, settings, false, out.0, height);
-    match editor {
-        Some(frame) => {
-            let nearest = settings.screen_filter == Some(Filter::Nearest);
-            (editor_rect(rect, frame, nearest, out, display), filter)
-        }
-        None => (rect, filter),
+    crate::screen_place(mode, settings, false, out.0, height)
+}
+
+/// The fewest columns the main window's editor is laid out with while a
+/// larger zoom would leave fewer: about what SmileBASIC 4's Large size
+/// shows across its screen.
+pub const MIN_COLUMNS: u32 = 40;
+
+/// Whether the main window's editor is laid out for the room it has, as
+/// [`editor_fill`] says, rather than at SmileBASIC 4's frame scaled to
+/// the screen's place: in a window narrower than 16:9, where the display
+/// at `display` leaves room below it, and in one smaller than the
+/// display, whose `display_w` pixels are then shown narrower. A window
+/// of 16:9 or wider at least the display's size keeps the frame.
+pub fn editor_fills(display: FRect, display_w: u32, out_h: u32) -> bool {
+    room_below(display, out_h) || display.w + 0.5 < display_w as f32
+}
+
+/// The main window's editor laid out for the room it has, as in the
+/// editor's own window: its frame, the area, fills the window from its
+/// top left corner, and each of its pixels is `zoom` pixels of the
+/// window square, a whole number, so the dot fonts stay sharp.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fill {
+    pub zoom: u32,
+    pub area: Area,
+}
+
+impl Fill {
+    /// Where the frame goes on the window: from its top left corner,
+    /// past its right and bottom edges by less than a pixel of the frame.
+    pub fn rect(self) -> FRect {
+        let (w, h) = self.area.size;
+        FRect::new(0.0, 0.0, (w * self.zoom) as f32, (h * self.zoom) as f32)
     }
 }
 
-/// Where the desktop shows the editor's frame of `frame` pixels, which
-/// goes where the screen of the editor's shape goes, at `screen`, in a
-/// window of `out` pixels whose display is at `display`. `nearest` is
-/// View > Screen filter's Nearest, which keeps to whole factors.
+/// The main window's editor in a window of `out` pixels whose display is
+/// at `display`, for the editor's `font` at F2's `size`, under a menu bar
+/// `bar` pixels of the window high.
 ///
-/// In a window of 16:9 or wider it goes at `screen`. Where the display
-/// leaves room below, Nearest's rule is applied to the frame as well as
-/// to the screen's size, and the larger wins: a whole factor of the
-/// frame where it fits once, at which the editor is sharp (see
-/// [`crate::editor_filter`]), and scaled down to fit where it does not.
-/// The screen's whole factors alone leave the editor small there:
-/// XSCREEN 400,240 fits 640x480 once, and the editor's frame, twice as
-/// fine for 16-pixel characters, shows at half its size. It is centered
-/// in the display, or where taller than that, starts at the window's top,
-/// so that the menu bar covers the row the editor leaves it; on a whole
-/// pixel, where a whole factor stays sharp.
-pub fn editor_rect(
-    screen: FRect,
-    frame: (u32, u32),
-    nearest: bool,
-    out: (u32, u32),
+/// The zoom follows the editor's own window (see [`crate::editor_layout`]):
+/// the whole number nearest to the one at which F2's size shows
+/// SmileBASIC 4's rows in the display's height, at least 1. Where that
+/// leaves fewer than [`MIN_COLUMNS`] columns, the largest smaller zoom
+/// that does not, or 1. The frame then takes as many columns and rows as
+/// the window holds at that zoom, the menu bar's rows included.
+pub fn editor_fill(
     display: FRect,
-) -> FRect {
-    if !room_below(display, out.1) {
-        return screen;
-    }
-    let (out_w, out_h) = (out.0 as f32, out.1 as f32);
-    let (fw, fh) = (frame.0.max(1) as f32, frame.1.max(1) as f32);
-    let (mut w, mut h) = (screen.w, screen.h);
-    let fit = (out_w / fw).min(out_h / fh);
-    let scale = if fit >= 1.0 { fit.floor() } else { fit };
-    if nearest && fh * scale > h {
-        (w, h) = (fw * scale, fh * scale);
-    }
-    let y = match h <= display.h {
-        true => display.y + (display.h - h) / 2.0,
-        false => 0.0,
+    out: (u32, u32),
+    (font, size): (FontSize, EditorSize),
+    bar: u32,
+) -> Fill {
+    let (w, h) = (out.0.max(1), out.1.max(1));
+    let rows = frame_size((16, 9), font, size).1.max(1);
+    let nearest = (display.h / rows as f32).round().max(1.0) as u32;
+    let cell = font as u32;
+    let zoom = (1..=nearest)
+        .rev()
+        .find(|&zoom| w / (cell * zoom) >= MIN_COLUMNS)
+        .unwrap_or(1);
+    let area = Area {
+        size: (w.div_ceil(zoom), h.div_ceil(zoom)),
+        top: bar.div_ceil(zoom),
     };
-    FRect::new(((out_w - w) / 2.0).round(), y.round(), w, h)
+    Fill { zoom, area }
 }
 
 /// The rectangle [`ui_height`] makes of the focus border's `rect` on the
@@ -421,7 +437,7 @@ mod tests {
         out: (u32, u32),
     ) -> ((f32, f32, f32, f32), Filter) {
         let mode = ScreenMode::new(w, h);
-        let (r, filter) = screen_place(&mode, &with(filter), None, out, display(out));
+        let (r, filter) = screen_place(&mode, &with(filter), out, display(out));
         ((r.x, r.y, r.w, r.h), filter)
     }
 
@@ -522,6 +538,10 @@ mod tests {
         );
         for out in outs {
             assert_eq!(ui_height(display(out), 720, out.1), 720, "{out:?}");
+            // The editor keeps SmileBASIC 4's frame where the window is at
+            // least the display's size.
+            let large = out.0 >= 1280 && out.1 >= 720;
+            assert_eq!(editor_fills(display(out), 1280, out.1), !large, "{out:?}");
             for filter in filters {
                 for (w, h) in modes {
                     let mode = ScreenMode::new(w, h);
@@ -529,11 +549,8 @@ mod tests {
                     // As before: in the display, which fills the height.
                     let screen_h = display(out).h.min(out.1 as f32);
                     let before = crate::screen_place(&mode, &settings, false, out.0, screen_h);
-                    let now = screen_place(&mode, &settings, None, out, display(out));
+                    let now = screen_place(&mode, &settings, out, display(out));
                     assert_eq!(now, before, "{out:?} {filter:?} {w}x{h}");
-                    let frame = (828, 497);
-                    let editor = screen_place(&mode, &settings, Some(frame), out, display(out));
-                    assert_eq!(editor, before, "{out:?} {filter:?} {w}x{h} editor");
                 }
             }
         }
@@ -562,51 +579,84 @@ mod tests {
         assert_eq!(border_rect(sub, (1280, 720), 960), sub);
     }
 
+    /// The main window's editor in a window of `out` pixels under a menu
+    /// bar of 24: its zoom, its frame's size and the rows under the bar.
+    fn fill(out: (u32, u32), font: FontSize, size: EditorSize) -> (u32, (u32, u32), u32) {
+        let Fill { zoom, area } = editor_fill(display(out), out, (font, size), 24);
+        (zoom, area.size, area.top)
+    }
+
     #[test]
-    fn the_editor_takes_the_room_below_the_display() {
-        use sb_runtime::editor::{EditorSize, frame_size};
-        use sb_runtime::font::FontSize;
-        let editor = |frame: (u32, u32), filter: Option<Filter>, out: (u32, u32)| {
-            let mode = ScreenMode::new(400, 240);
-            let (r, _) = screen_place(&mode, &with(filter), Some(frame), out, display(out));
-            (r.x, r.y, r.w, r.h)
-        };
-        // The default editor, Medium with 16-pixel characters, twice as
-        // fine as the 400x240 screen: too large for 640x480 once, so
-        // shrunk to fit, at the top, where the menu bar covers the row it
-        // leaves for it. The screen's 1x would be 400x240.
-        let medium = frame_size((400, 240), FontSize::Large, EditorSize::Medium);
-        assert_eq!(medium, (828, 497));
-        let (x, y, w, h) = editor(medium, NEAREST, (640, 480));
-        assert!(
-            x.abs() < 0.01 && y == 0.0 && (w - 640.0).abs() < 0.01,
-            "{x} {y} {w}"
-        );
-        assert!((h - 384.15).abs() < 0.01, "{h}");
-        // Once where it fits, centered in the display's 576 rows.
-        assert_eq!(
-            editor(medium, NEAREST, (1024, 768)),
-            (98.0, 40.0, 828.0, 497.0)
-        );
-        // Twice in 1920x1200, where the screen's 4x is 1600x960.
-        assert_eq!(
-            editor(medium, NEAREST, (1920, 1200)),
-            (132.0, 43.0, 1656.0, 994.0)
-        );
-        // With 8-pixel characters, Large fits 640x480 twice, sharp.
-        let large = frame_size((400, 240), FontSize::Small, EditorSize::Large);
-        assert_eq!(large, (318, 191));
-        assert_eq!(editor(large, NEAREST, (640, 480)), (2.0, 0.0, 636.0, 382.0));
-        // Where the screen's whole factor is larger, the screen's place.
-        assert_eq!(editor(large, NEAREST, (800, 600)), (0.0, 0.0, 800.0, 480.0));
-        // Bilinear fits the screen's shape to the window.
-        assert_eq!(
-            editor(medium, BILINEAR, (640, 480)),
-            (0.0, 0.0, 640.0, 384.0)
-        );
-        // With the display's whole height, where the screen goes.
-        let short = editor(large, NEAREST, (720, 720));
-        assert_eq!(short, (42.0, 12.0, 636.0, 382.0));
+    fn the_editor_fills_the_window_at_a_whole_zoom() {
+        use EditorSize::{Large, Medium, Small, Tiny};
+        use FontSize::{Large as F16, Small as F8};
+        // The default, Medium with 16-pixel characters: 1x in each, as
+        // its 28 rows take 497 pixels and the displays are 360 to 576
+        // high. 40 columns on 640x480, 30 rows under the bar.
+        assert_eq!(fill((640, 480), F16, Medium), (1, (640, 480), 24));
+        assert_eq!(fill((800, 600), F16, Medium), (1, (800, 600), 24));
+        assert_eq!(fill((1024, 768), F16, Medium), (1, (1024, 768), 24));
+        assert_eq!(fill((720, 720), F16, Medium), (1, (720, 720), 24));
+        // 2x in 1920x1200, whose display is 1080 high.
+        assert_eq!(fill((1920, 1200), F16, Medium), (2, (960, 600), 12));
+        // 8-pixel characters at Large are 2x on 640x480: 40 columns.
+        assert_eq!(fill((640, 480), F8, Large), (2, (320, 240), 12));
+        assert_eq!(fill((1024, 768), F8, Large), (3, (342, 256), 8));
+        assert_eq!(fill((1024, 768), F8, Medium), (2, (512, 384), 12));
+        assert_eq!(fill((640, 480), F8, Medium), (1, (640, 480), 24));
+        assert_eq!(fill((640, 480), F8, Tiny), (1, (640, 480), 24));
+        // 16-pixel Large would be 2x on 1024x768, but 32 columns are
+        // fewer than 40, so 1x.
+        assert_eq!(fill((1024, 768), F16, Large), (1, (1024, 768), 24));
+        assert_eq!(fill((1920, 1200), F16, Large), (3, (640, 400), 8));
+        assert_eq!(fill((1920, 1200), F16, Small), (1, (1920, 1200), 24));
+        // A window too narrow for 40 columns even at 1x.
+        assert_eq!(fill((320, 240), F16, Large), (1, (320, 240), 24));
+        // Odd sizes: the frame covers the window, past it by less than a
+        // pixel of the frame.
+        let (zoom, (w, h), _) = fill((1025, 767), F8, Large);
+        assert_eq!(zoom, 3);
+        assert!(w * 3 >= 1025 && w * 3 - 1025 < 3 && h * 3 >= 767 && h * 3 - 767 < 3);
+        // Nothing at all.
+        let (zoom, (w, h), _) = fill((0, 0), F16, Medium);
+        assert!(zoom == 1 && w >= 1 && h >= 1);
+    }
+
+    #[test]
+    fn a_click_lands_on_the_editors_pixel_under_it() {
+        use EditorSize::{Large, Medium};
+        let looks = [(FontSize::Large, Medium), (FontSize::Small, Large)];
+        for out in [
+            (640, 480),
+            (800, 600),
+            (1024, 768),
+            (720, 720),
+            (1920, 1200),
+        ] {
+            for look in looks {
+                let fill = editor_fill(display(out), out, look, 24);
+                // A window coordinate of one or two pixels.
+                for px in [1u32, 2] {
+                    let map = crate::Mapping {
+                        px: px as f32,
+                        display: display(out),
+                        display_w: 1280,
+                        shown: fill.rect(),
+                        space: fill.area.size,
+                    };
+                    // Every pixel of the window, across and down, is the
+                    // frame's pixel drawn there.
+                    for x in (0..out.0).step_by(px as usize) {
+                        let at = map.to_screen((x / px) as f32 + 0.25, 0.25);
+                        assert_eq!(at.0, (x / fill.zoom) as i32, "{out:?} {look:?} {x}");
+                    }
+                    for y in (0..out.1).step_by(px as usize) {
+                        let at = map.to_screen(0.25, (y / px) as f32 + 0.25);
+                        assert_eq!(at.1, (y / fill.zoom) as i32, "{out:?} {look:?} {y}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -620,14 +670,21 @@ mod tests {
             (1280, 720),
         ];
         let modes = [(400, 240), (640, 480), (1280, 720), (320, 240)];
-        let frames = [None, Some((828, 497)), Some((318, 191))];
         for out in outs {
             for (w, h) in modes {
-                for frame in frames {
+                for fill in [false, true] {
                     for filter in [NEAREST, BILINEAR] {
                         let mode = ScreenMode::new(w, h);
-                        let (shown, _) =
-                            screen_place(&mode, &with(filter), frame, out, display(out));
+                        let look = (FontSize::Large, EditorSize::Medium);
+                        let editor = editor_fill(display(out), out, look, 24);
+                        let (shown, space) = match fill {
+                            true => (editor.rect(), editor.area.size),
+                            false => (
+                                screen_place(&mode, &with(filter), out, display(out)).0,
+                                (w, h),
+                            ),
+                        };
+                        let frame = fill.then_some(space);
                         // On a Retina display, two pixels to a coordinate.
                         for px in [1.0, 2.0] {
                             let map = crate::Mapping {
@@ -635,7 +692,7 @@ mod tests {
                                 display: display(out),
                                 display_w: 1280,
                                 shown,
-                                space: frame.unwrap_or((w, h)),
+                                space,
                             };
                             let (sw, sh) = map.space;
                             let corners = [(0, 0), (sw - 1, 0), (0, sh - 1), (sw - 1, sh - 1)];
@@ -660,7 +717,7 @@ mod tests {
         // A 4:3 screen in a 640x480 window: the window's pixel is the
         // screen's.
         let mode = ScreenMode::new(640, 480);
-        let (shown, _) = screen_place(&mode, &with(NEAREST), None, (640, 480), display((640, 480)));
+        let (shown, _) = screen_place(&mode, &with(NEAREST), (640, 480), display((640, 480)));
         let map = crate::Mapping {
             px: 1.0,
             display: display((640, 480)),

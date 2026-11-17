@@ -663,12 +663,14 @@ impl Machine {
     }
 
     /// Shows the editor apart from the screens, or in their place. Put
-    /// back in their place while a program runs, it closes.
+    /// back in their place while a program runs, it closes. The area
+    /// given for the one place does not carry over to the other.
     pub fn set_detached(&mut self, detached: bool) {
         if self.detached == detached {
             return;
         }
         self.detached = detached;
+        self.editor_area = None;
         self.editor_focus = false;
         if !detached && self.editing && self.vm.is_some() {
             self.close_editor();
@@ -679,9 +681,11 @@ impl Machine {
         self.detached
     }
 
-    /// The frame the editor draws while it shows apart: as many rows and
-    /// columns as `area` holds, instead of SmileBASIC 4's rows at the
-    /// screen's shape. `None` goes back to those.
+    /// The frame the editor draws: as many rows and columns as `area`
+    /// holds, as in a window of its own or a main window the frontend
+    /// lays it out for, instead of SmileBASIC 4's rows at the screen's
+    /// shape. `None`, or a change of [`Machine::set_detached`], goes back
+    /// to those.
     pub fn set_editor_area(&mut self, area: Option<Area>) {
         self.editor_area = area;
     }
@@ -2303,7 +2307,7 @@ impl Machine {
             self.active,
             self.split.then_some(self.split_rows),
             panel,
-            self.editor_area.filter(|_| self.detached),
+            self.editor_area,
         )
     }
 
