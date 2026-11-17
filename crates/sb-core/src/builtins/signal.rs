@@ -3,7 +3,7 @@
 use std::f64::consts::{LN_2, PI};
 
 use crate::error::{Error, ErrorKind, Result};
-use crate::value::{Array, ArrayRef, ElemType, Value};
+use crate::value::{Array, ArrayData, ArrayRef, ElemType, Value};
 
 use super::{mismatch, opt};
 
@@ -39,6 +39,24 @@ fn check_reals(a: &ArrayRef, v: &Value) -> Result<()> {
 
 fn reals(a: &Array) -> Result<Vec<f64>> {
     (0..a.len()).map(|i| a.get(i).to_real()).collect()
+}
+
+/// FFT's window of `n` reals. An int array's elements are taken two at a
+/// time as the bits of one real, the first the low half, as SmileBASIC 4
+/// reads the int array's memory as reals; it then reads the second half
+/// of the window past the array's end, which is taken as 0 here.
+/// UNVERIFIED: the reals made of nonzero ints, and what lies past the end.
+fn window_reals(a: &Array, n: usize) -> Result<Vec<f64>> {
+    let ArrayData::Int(ints) = &a.data else {
+        return reals(a);
+    };
+    let words = |i: usize| ints.get(i).map_or(0, |&w| u64::from(w as u32));
+    Ok((0..n)
+        .map(|i| match 2 * i + 1 < ints.len() {
+            true => f64::from_bits(words(2 * i) | words(2 * i + 1) << 32),
+            false => 0.0,
+        })
+        .collect())
 }
 
 fn store(a: &ArrayRef, values: &[f64]) -> Result<()> {
@@ -130,11 +148,8 @@ fn fourier(args: &[Value], inverse: bool) -> Result<Vec<Value>> {
             );
         }
     }
-    if let Some(window) = arrays.get(4)
-        && window.borrow().elem_type() != ElemType::Real
-    {
-        return Err(mismatch(&args[4]));
-    }
+    // An int window is no error: SmileBASIC 4 reads its bytes as reals
+    // (checked on hardware), see `window`.
     for (a, v) in arrays.iter().zip(args) {
         if a.borrow().elem_type() == ElemType::Str {
             return Err(mismatch(v));
@@ -148,7 +163,7 @@ fn fourier(args: &[Value], inverse: bool) -> Result<Vec<Value>> {
     let mut re = reals(&arrays[2].borrow())?;
     let mut im = reals(&arrays[3].borrow())?;
     if let Some(window) = arrays.get(4) {
-        let w = reals(&window.borrow())?;
+        let w = window_reals(&window.borrow(), n)?;
         for i in 0..n {
             re[i] *= w[i];
             im[i] *= w[i];

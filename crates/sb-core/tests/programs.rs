@@ -178,10 +178,13 @@ fn fft_names_the_array_of_another_length() {
         kind(&format!("{arrays}FFT A,B,C,D,F")),
         Some((illegal, Some(4)))
     );
-    // The window must be of reals.
+    // An int window is no error: its bytes are read as reals, so one of
+    // zeros gives zeros (checked on hardware).
     assert_eq!(
-        kind(&format!("{arrays}FFT A,B,C,D,W%")),
-        Some((ErrorKind::TypeMismatch, Some(4)))
+        output(
+            "DIM R[8],I[8],X[8],Y[8],W%[8]:FILL R,-1:FILL I,-1:X[0]=1\nFFT R,I,X,Y,W%:?R[0];I[0];R[7]"
+        ),
+        "000\n"
     );
 }
 
