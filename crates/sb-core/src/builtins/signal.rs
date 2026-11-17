@@ -106,10 +106,12 @@ fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
     let sign = if inverse { 1.0 } else { -1.0 };
     let mut len = 2;
     while len <= n {
-        for start in (0..n).step_by(len) {
-            for k in 0..len / 2 {
-                let (s, c) = turn(k, len);
-                let s = sign * s;
+        // Each angle once for all the blocks, which do their sums in the
+        // same order as block by block.
+        for k in 0..len / 2 {
+            let (s, c) = turn(k, len);
+            let s = sign * s;
+            for start in (0..n).step_by(len) {
                 let (a, b) = (start + k, start + k + len / 2);
                 let tr = re[b] * c - im[b] * s;
                 let ti = re[b] * s + im[b] * c;
