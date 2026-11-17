@@ -223,25 +223,23 @@ pub(crate) fn attach(program: &mut Compiled) {
     let layout = layout();
     let n = program.fast.len();
     let lowered: Vec<Option<Lowered>> = (0..n).map(|pc| lower(program, pc)).collect();
-    // A loop starts where an entry goes back to.
-    let mut heads = vec![false; n];
+    // A loop starts where an entry goes back to, and runs to the last entry
+    // that goes back to its start. A region that does not come back to its
+    // start saves less than entering native code costs, and what follows
+    // the loop is another loop's or the interpreter's. Found in one pass:
+    // looking for each loop's end from the program's end took time in the
+    // number of loops times the program's length, 27 seconds for a program
+    // of 20000 short loops.
+    let mut ends: Vec<Option<usize>> = vec![None; n];
     for (pc, l) in lowered.iter().enumerate() {
         for &to in l.iter().flat_map(|l| &l.next) {
             if to <= pc && lowered.get(to).is_some_and(Option::is_some) {
-                heads[to] = true;
+                ends[to] = Some(pc);
             }
         }
     }
     let mut regions = Vec::new();
-    for head in (0..n).filter(|&pc| heads[pc]) {
-        // The loop runs to the last entry that goes back to its start. A
-        // region that does not come back to its start saves less than
-        // entering native code costs, and what follows the loop is another
-        // loop's or the interpreter's.
-        let end = (head..n)
-            .rev()
-            .find(|&pc| (lowered[pc].as_ref()).is_some_and(|l| l.next.contains(&head)));
-        let Some(end) = end else { continue };
+    for (head, end) in (0..n).filter_map(|pc| Some((pc, ends[pc]?))) {
         let region = gather(head, end, &lowered);
         let closes = (region.entries.iter())
             .any(|e| (lowered[e.pc as usize].as_ref()).is_some_and(|l| l.next.contains(&head)));

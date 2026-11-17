@@ -818,6 +818,21 @@ fn long_array_literals_fuse_quickly() {
     assert_eq!(run(&source, 1_000_000, true).1, "1000\n");
 }
 
+/// A program of many loops takes time in proportion to its length to
+/// compile and start, native code looked for included. With the `jit`
+/// feature, looking for each loop's end from the program's end took 43
+/// seconds for these 40000 loops in a test build. Their bodies join
+/// strings, so no native code is made and the test stays short.
+#[test]
+fn many_loops_start_quickly() {
+    let source = "FOR I=0 TO 1:A$=A$+\"X\":NEXT\n".repeat(40_000) + "?LEN(A$)";
+    let start = std::time::Instant::now();
+    let (_, output) = run(&source, 1_000_000, true);
+    let took = start.elapsed();
+    assert_eq!(output, "80000\n");
+    assert!(took.as_secs() < 10, "compiling and running took {took:?}");
+}
+
 /// Loops of the kinds the `jit` feature compiles, and what makes native
 /// code leave a statement to the interpreter: an integer that overflows, a
 /// string written over, an error, a real FOR, a NaN.
