@@ -82,6 +82,22 @@ pub fn display_rect((w, h): (u32, u32), (out_w, out_h): (u32, u32), size: Simple
     )
 }
 
+/// The UI and its place on an output of `out` pixels for the notices in
+/// the bottom right corner at UI size `size`: Normal's at Normal and
+/// Medium, Medium's at Large, so that on a small screen they cover less
+/// of the game. Never larger than `size`'s own.
+pub fn notice_place(out: (u32, u32), size: SimpleUiSize) -> ((u32, u32), FRect) {
+    let size = match size {
+        SimpleUiSize::Large => [SimpleUiSize::Medium, size]
+            .into_iter()
+            .min_by_key(|&s| ui_halves(out, s))
+            .unwrap_or(size),
+        _ => SimpleUiSize::Normal,
+    };
+    let ui = ui_size(out, size);
+    (ui, display_rect(ui, out, size))
+}
+
 /// The filter the Simple UI scales the screen with, by `choice`, when the
 /// frame of `mode` is drawn `shown` pixels large. The screen fits the
 /// display at its aspect ratio whatever the filter, so it is seldom a
@@ -1699,6 +1715,39 @@ mod tests {
             let [n, m, l] = SimpleUiSize::ALL.map(|size| ui_halves(out, size));
             assert!(n < m && m < l, "{out:?}");
         }
+    }
+
+    /// The corner notices: Normal's scale at Normal and Medium, Medium's
+    /// at Large, at the bottom right corner of the UI.
+    #[test]
+    fn notices_are_a_size_smaller() {
+        let scale = |out, size| {
+            let (ui, r) = notice_place(out, size);
+            (ui, r.w / ui.0 as f32)
+        };
+        for (out, normal, large) in [
+            ((640, 480), ((640, 480), 1.0), ((427, 320), 1.5)),
+            ((1280, 720), ((1280, 720), 1.0), ((854, 480), 1.5)),
+            ((1920, 1080), ((960, 540), 2.0), ((640, 360), 3.0)),
+            // Where the UI sizes are all one, so are the notices.
+            ((320, 240), ((320, 240), 1.0), ((320, 240), 1.0)),
+        ] {
+            assert_eq!(scale(out, NORMAL), normal, "{out:?}");
+            assert_eq!(scale(out, MEDIUM), normal, "{out:?}");
+            assert_eq!(scale(out, LARGE), large, "{out:?}");
+            // The bottom right corner is the UI's, within a screen pixel.
+            for size in SimpleUiSize::ALL {
+                let (_, r) = notice_place(out, size);
+                let ui = display_rect(ui_size(out, size), out, size);
+                let corner = |r: FRect| (r.x + r.w, r.y + r.h);
+                let (a, b) = (corner(r), corner(ui));
+                assert!((a.0 - b.0).abs() <= 1.0 && (a.1 - b.1).abs() <= 1.0);
+            }
+        }
+        // Where Large's scale is below Medium's, as on a tall output, Large's.
+        let out = (800, 960);
+        assert!(ui_halves(out, LARGE) < ui_halves(out, MEDIUM));
+        assert_eq!(notice_place(out, LARGE).0, ui_size(out, LARGE));
     }
 
     #[test]

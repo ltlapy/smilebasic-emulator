@@ -508,6 +508,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut menu_layer = Layer::default();
     // The emulator's windows on the editor's window, at the display's size.
     let mut windows_layer = Layer::default();
+    // The Simple UI's notices in the bottom right corner, at a scale of
+    // their own (see `simple_ui::notice_place`).
+    let mut notice_layer = Layer::default();
     // View > "Keep 16:9 when resizing": what puts the main window's shape
     // right where the system ignores the shape asked for, and whether
     // that shape is asked for now.
@@ -690,6 +693,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             layers.chain(&mut overlay_layers).for_each(Layer::forget);
             windows_layer.forget();
             menu_layer.forget();
+            notice_layer.forget();
             (texture_holds, editor_holds) = (None, None);
             machine.rt.touch();
             machine.touch_sub();
@@ -1265,6 +1269,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 layers.chain(&mut overlay_layers).for_each(Layer::forget);
                 windows_layer.forget();
                 menu_layer.forget();
+                notice_layer.forget();
                 // A target comes back empty, and the frames are drawn again.
                 machine.touch_sub();
             }
@@ -3696,8 +3701,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     key_hint.draw(fb, font);
                 }
                 // Under the menus and windows, which the notice would only
-                // be in the way of.
-                if i == 0 && slow_hint.visible() && !paused && !modal {
+                // be in the way of. The Simple UI's goes on a layer of its own.
+                if i == 0 && slow_hint.visible() && !paused && !modal && !simple_ui {
                     slow_hint.draw(fb, font, simple_ui);
                 }
                 if i == ui && under {
@@ -3761,6 +3766,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         if let (0, Some((place, ..)), false) = (ed, &debug, panel_inside[0]) {
             drawing!(panel_layers[0].copy(&mut canvas, (place.x, place.y), display, display_w));
+        }
+        // The Simple UI's notice, under the rest of its UI as on the
+        // desktop.
+        if simple_ui && slow_hint.visible() && !paused && !modal {
+            let size = settings.simple_ui_size;
+            let (ui, place) = simple_ui::notice_place((out_w, out_h), size);
+            drawing!(
+                notice_layer.update(texture_creator, ui, |fb| { slow_hint.draw(fb, font, true) })
+            );
+            drawing!(notice_layer.copy(&mut canvas, (0, 0), place, ui.0));
+        } else {
+            notice_layer.release();
         }
         drawing!(overlay_layers[0].copy(&mut canvas, (0, 0), display, display_w));
         match (bar_shown[0], menus_apart) {
