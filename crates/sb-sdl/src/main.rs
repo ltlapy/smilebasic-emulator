@@ -2496,7 +2496,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     && !shift(keymod)
                     && !on_editor =>
                 {
-                    machine.stop()
+                    machine.keyboard_break()
                 }
                 // Ctrl+Shift+V pastes everywhere, also as keys to programs.
                 Event::KeyDown {
