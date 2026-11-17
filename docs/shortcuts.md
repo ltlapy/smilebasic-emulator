@@ -143,7 +143,8 @@ Settings it has:
   play feels faster, but programs that count frames may misbehave. Off by
   default. The desktop has it in File > Settings > General as "Skip frames
   instead of slowing down"; [differences.md](differences.md#speed) compares
-  both with SmileBASIC 4.
+  both with SmileBASIC 4. When a program runs slower than real time for a
+  while, a notice points here.
 
 A change shows at once and is kept.
 

@@ -64,7 +64,8 @@
 //!
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed, those of them the standby thread ran, how far MAINCNT
-//! went, the frames the program missed part of its trip in, and what the
+//! went, the frames the program missed part of its trip in, the frame the
+//! notice for a program slower than real time showed at, and what the
 //! sound device's buffer went through, so
 //! that the frames keep time whatever happens to the drawing. For the
 //! sound, `SDL_AUDIO_DRIVER=dummy` with `SDL_AUDIO_DEVICE_SAMPLE_FRAMES`
@@ -221,6 +222,9 @@ pub struct Bench {
     ran: u32,
     /// The sound device's buffer's stats when the timing began, and now.
     sound: Option<(Stats, Stats)>,
+    /// The frame the notice for a program slower than real time first
+    /// showed at.
+    slow_hint: Option<u32>,
 }
 
 impl Bench {
@@ -356,6 +360,11 @@ impl Bench {
         self.missed.1 = machine.missed;
         let ended = self.until_end && self.frame > set_up + 10 && !machine.is_running();
         ended || self.timed.len() >= self.frames as usize
+    }
+
+    /// Notes that the notice for a program slower than real time shows.
+    pub fn slow_hint_shown(&mut self) {
+        self.slow_hint.get_or_insert(self.frame);
     }
 
     /// Counts a program frame run.
@@ -596,6 +605,10 @@ impl Bench {
             "kept      {} frames run while the loop was held up, in {} trips, {:.2?} running them",
             self.kept.frames, self.kept_trips, self.kept.busy
         );
+        match self.slow_hint {
+            Some(frame) => println!("slow hint shown at frame {frame}"),
+            None => println!("slow hint not shown"),
+        }
         if let Some((from, to)) = self.sound {
             println!(
                 "sound     ran out {}, skipped {}, {:.1} ms silent",

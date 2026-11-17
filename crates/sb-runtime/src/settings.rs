@@ -249,6 +249,9 @@ pub struct Settings {
     /// trip keeps its frame and the program slows down instead (the
     /// frontend sets `Machine::keep_frames` to the opposite).
     pub skip_frames: bool,
+    /// A notice says where `skip_frames` is when a program runs slower
+    /// than real time for a while. On by default.
+    pub slow_hint: bool,
     /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
     /// set them.
     pub function_keys: [String; 5],
@@ -326,6 +329,7 @@ impl Default for Settings {
             debug_text_size: 2,
             speed: Speed::Unlimited,
             skip_frames: false,
+            slow_hint: true,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
             simple_ui: false,
@@ -391,6 +395,7 @@ impl Settings {
             debug_text_size: 2,
             speed: Speed::Unlimited,
             skip_frames: false,
+            slow_hint: true,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
             simple_ui: false,
@@ -557,6 +562,7 @@ impl Settings {
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
                 "keep_mouse_cursor" => &mut s.keep_mouse_cursor,
                 "skip_frames" => &mut s.skip_frames,
+                "slow_hint" => &mut s.slow_hint,
                 "helpinfo_cursor" => &mut s.helpinfo_cursor,
                 "complete_direct" => &mut s.complete_direct,
                 "complete_editor" => &mut s.complete_editor,
@@ -765,6 +771,7 @@ impl Settings {
              debug_text_size={}\n\
              speed={}\n\
              skip_frames={}\n\
+             slow_hint={}\n\
              simple_ui={}\n\
              simple_ui_filter={}\n\
              simple_ui_size={}\n\
@@ -817,6 +824,7 @@ impl Settings {
             self.debug_text_size,
             self.speed.name(),
             self.skip_frames,
+            self.slow_hint,
             self.simple_ui,
             choice_name(&SIMPLE_UI_FILTER, &self.simple_ui_filter),
             choice_name(&SIMPLE_UI_SIZE, &self.simple_ui_size),
@@ -876,6 +884,7 @@ mod tests {
             complete_all_slots: true,
             speed: Speed::Switch1,
             skip_frames: true,
+            slow_hint: false,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
             simple_ui: true,
@@ -893,12 +902,13 @@ mod tests {
     }
 
     #[test]
-    fn programs_slow_down_by_default() {
+    fn programs_slow_down_by_default_and_the_notice_shows() {
         let s = Settings::default();
-        assert!(!s.skip_frames);
-        assert!(s.to_text().contains("skip_frames=false\n"));
-        let s = Settings::from_text("skip_frames=true\n");
-        assert!(s.skip_frames);
+        assert!(!s.skip_frames && s.slow_hint);
+        let text = s.to_text();
+        assert!(text.contains("skip_frames=false\n") && text.contains("slow_hint=true\n"));
+        let s = Settings::from_text("skip_frames=true\nslow_hint=false\n");
+        assert!(s.skip_frames && !s.slow_hint);
         // keep_frames, the setting's name for a few hours on main, means
         // nothing now, as any unknown key.
         let s = Settings::from_text("keep_frames=true\nkeep_frames=false\nno_such_key=1\n");

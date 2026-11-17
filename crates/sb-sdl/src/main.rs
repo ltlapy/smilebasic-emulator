@@ -28,6 +28,7 @@ mod recovery;
 mod settings_window;
 mod shortcuts;
 mod simple_ui;
+mod slow_hint;
 mod standby;
 mod text_field;
 mod toast;
@@ -536,6 +537,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut toasts = Toasts::default();
     let mut frame_guard = FrameGuard::default();
     let mut key_hint = KeyHint::default();
+    let mut slow_hint = slow_hint::SlowHint::default();
     use_instruments(machine, bank.as_ref(), &mut toasts);
     if let Err(e) = machine.rt.load_extra_font() {
         toasts.push(e);
@@ -2934,9 +2936,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // a subprogram, a tool among them, runs on the same machine.
         apply_frame_setting(machine);
         let run_began = Instant::now();
+        // What the program's frames did this trip, for the notice when it
+        // runs slower than real time.
+        let (count_before, mut calls) = (machine.rt.main_count(), 0u32);
         if !paused {
             machine.time_limit = Some(run_time.limit());
             frame_guard.run(machine, &mut toasts, Machine::frame);
+            calls += 1;
             if let Some(b) = &mut bench {
                 b.ran_frame();
             }
@@ -2965,6 +2971,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             });
             machine.hold_at_sync = !whole;
             frame_guard.run(machine, &mut toasts, Machine::frame);
+            calls += 1;
             machine.hold_at_sync = false;
             if let Some(b) = &mut bench {
                 b.ran_frame();
@@ -2974,6 +2981,35 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             skipped += 1;
         }
         let ran = run_began.elapsed();
+        {
+            // A call that went on with a kept frame started none.
+            let started = machine
+                .rt
+                .main_count()
+                .wrapping_sub(count_before)
+                .min(calls);
+            let settings = &machine.rt.settings;
+            let shown = !pacing::hidden(canvas.window())
+                && !bench.as_ref().is_some_and(bench::Bench::occluded);
+            let counts = !paused
+                && machine.keep_frames
+                && settings.slow_hint
+                && settings.speed == sb_runtime::speed::Speed::Unlimited
+                && machine.program_dialog().is_none()
+                && !machine.is_editing()
+                && !machine.sub_running()
+                && shown;
+            let trip = slow_hint::Trip {
+                started,
+                kept: calls - started,
+                counts,
+                ..Default::default()
+            };
+            let project = machine.rt.storage.project();
+            let program =
+                (machine.is_running()).then(|| (project, machine.rt.slot_names[0].as_str()));
+            slow_hint.trip(run_began, trip, program);
+        }
         lap!(Run);
         // A step that waits for input needs the keys on the screen, and
         // the editor takes them back at the stop, unless the user has
@@ -3032,6 +3068,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             key_hint.buttons_read(keys, controls.gamepads());
         }
         key_hint.tick();
+        if machine.rt.settings.skip_frames {
+            slow_hint.dismiss();
+        }
+        let was_shown = slow_hint.visible();
+        slow_hint.tick(key_hint.visible());
+        if let (false, true, Some(b)) = (was_shown, slow_hint.visible(), &mut bench) {
+            b.slow_hint_shown();
+        }
         for notice in machine.take_notices() {
             toasts.push(notice);
         }
@@ -3557,6 +3601,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 }
                 if i == 0 && key_hint.visible() {
                     key_hint.draw(fb, font);
+                }
+                // Under the menus and windows, which the notice would only
+                // be in the way of.
+                if i == 0 && slow_hint.visible() && !paused && !modal {
+                    slow_hint.draw(fb, font, simple_ui);
                 }
                 if i == ui && under {
                     toasts.draw(fb, font);

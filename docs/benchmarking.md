@@ -746,6 +746,12 @@ it as a keyboard does: `key:Down` and `key:Return` run a project from the list,
 screen shows unless `settings.txt` in the scratch data directory has
 `simple_ui_welcome_shown=true`, and `simple_ui_size` there sets the UI size.
 
+A program whose trip round its main loop takes longer than a frame, such as
+one that counts to a million in a `FOR` loop before each `VSYNC`, brings up
+the notice for a program slower than real time about 5 seconds after it
+starts: run it for 400 frames with `settle=0` and `shot=` to capture it, and
+the report's `slow hint` line gives the frame it showed at.
+
 The report says who drew, and why any frame stayed on the CPU. It gives the
 mean, median, 99th percentile and maximum of each stage:
 
@@ -772,6 +778,7 @@ Below the stages come:
 | `maincnt` | How far `MAINCNT` went per second of the time timed: below 60 when frames were kept for a program too slow for the computer |
 | `missed` | Frames in the time timed in which the program missed part of its trip round its main loop, as `smilebasic-check --window` counts them ([Per-frame costs and overload](#per-frame-costs-and-overload)): out of time part-way through it, held at its `VSYNC` to catch up, and `VSYNC`s that waited for the next frame where SmileBASIC 4 would go straight on |
 | `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](frame-thread.md)), in how many trips, and the time it took |
+| `slow hint` | The frame the notice for a program slower than real time first showed at, or that it did not show |
 | `sound` | What the sound device's buffer went through |
 | `uploaded` | Bytes given to textures a frame |
 
