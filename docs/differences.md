@@ -438,9 +438,8 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   `OK`, so the console keeps only what the program printed. This covers steps,
   breakpoints, `TRACE`, Run to cursor, watched changes, and any stop while the
   panel is pinned. `OK` shows once the keys go back to DIRECT mode.
-- Ctrl+C on a keyboard stops a running program only when File > Settings says
-  so; it is off to start with, and programs read Ctrl+C as a key. On
-  SmileBASIC 4, Ctrl+C on a USB keyboard stops the program.
+- Ctrl+C's break acts as the key goes down. On SmileBASIC 4 the jump to
+  `ON BREAK GOTO`'s label was seen 20 frames after the press.
 - `RUN` reaches the program's first line two frames after the Enter, as on a
   Switch 2, at every speed setting. A Switch 1 takes four for a short program.
 - Run on a project in the project manager returns to the manager when the

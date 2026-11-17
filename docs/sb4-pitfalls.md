@@ -960,9 +960,13 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   - TEST69K: with L and R held the whole time, the stick pushed down, then
     left, then right typed `CHR$(3)`, `CHR$(2)` and `CHR$(3)`, each repeating
     20 frames after its push.
-- Ctrl+C on a USB keyboard stops the running program (TEST67: the step that
+- Ctrl+C on a USB keyboard is a break, as a short press of the + button is.
+  Without `ON BREAK GOTO` it stops the running program (TEST67: the step that
   asked for it ended there on both consoles, and the test went on with its
-  next part).
+  next part). With one, the program jumps to the label, 20 frames after the
+  press (TEST76 on a Switch 2, 4.4.9). Ctrl+C types nothing for `INKEY$`, and
+  `KEYBOARD` sees Ctrl (usage 224) held but never C's press, only its
+  release. Whether Ctrl+C also ends a subprogram is not known.
 
 ### USB keyboards
 

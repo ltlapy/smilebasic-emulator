@@ -51,7 +51,7 @@ The emulator shows this list too, in Help > Keyboard shortcuts.
 |---|---|
 | F5, controller + | Run PRG0, or stop; hold 1 s to force a stop |
 | Pause/Break | Stop |
-| Ctrl+C | Stop, if turned on in File > Settings |
+| Ctrl+C | Stop the program |
 | F8 | Menu bar and pause |
 | Shift+F7 | Toggle a breakpoint |
 | Ctrl+F7 | Debugger panel |
