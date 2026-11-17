@@ -534,6 +534,12 @@ impl Input {
         }
     }
 
+    /// Forgets what [`Input::tap`] saw since the last frame, as when one of
+    /// the frontend's own screens had the controls.
+    pub fn drop_taps(&mut self) {
+        self.taps = Taps::default();
+    }
+
     /// Starts a frame: what the frontend reports is what the program sees
     /// until the next frame, with the presses and releases
     /// [`Input::tap`] saw since the last.
@@ -1331,6 +1337,13 @@ mod tests {
         press(&mut input, 0);
         assert_eq!(input.buttons(2, 2) & a, a);
         assert_eq!(input.buttons(0, 2) & a, a);
+        // Dropped, as for a press one of the frontend's screens took.
+        press(&mut input, 0);
+        input.tap(Tap::Buttons(0, a), true);
+        input.tap(Tap::Buttons(0, a), false);
+        input.drop_taps();
+        press(&mut input, 0);
+        assert_eq!(input.buttons(1, 0) | input.buttons(1, 2), 0);
     }
 
     #[test]
