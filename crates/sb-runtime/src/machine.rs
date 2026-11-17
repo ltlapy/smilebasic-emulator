@@ -39,6 +39,13 @@ pub const FLASH_FADE: u32 = 15;
 /// With a time limit, the part of a frame's that a subprogram is sure of:
 /// a quarter.
 const SUB_SHARE: u32 = 4;
+/// The longest trip round a program's main loop that
+/// [`Machine::keep_frames`] keeps in one frame, under a time limit: four
+/// frames' time. Longer ones, such as loading, let frames go by as usual.
+pub const KEEP_LONGEST: Duration = Duration::from_nanos(4 * 1_000_000_000 / 60);
+/// The same without a time limit, in calls of [`Machine::frame`] of
+/// [`FRAME_BUDGET`] instructions each.
+pub const KEEP_MOST_CALLS: u32 = 4;
 /// The C key's USB usage ID, for Ctrl+C's break.
 const KEY_C: u8 = 0x06;
 /// Shown by FREEMEM on SmileBASIC 4.4.9 right after start-up.
@@ -95,6 +102,21 @@ fn rounded(quad: [f32; 4]) -> [i32; 4] {
     quad.map(|v| v.round() as i32)
 }
 
+/// Frames in which a running program missed part of its trip round its
+/// main loop, by why, for measuring how a slow computer runs it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Missed {
+    /// The frame ran out of time part-way through the trip, which then
+    /// takes the next frame too.
+    pub cut: u64,
+    /// The frame left the program at its VSYNC, to catch up.
+    pub held: u64,
+    /// A VSYNC that was behind waited for the next frame rather than go
+    /// straight on as on SmileBASIC 4, as the trip after it would not end
+    /// in the frame's time.
+    pub deferred: u64,
+}
+
 pub struct Machine {
     pub rt: Runtime,
     vm: Option<Vm>,
@@ -118,6 +140,35 @@ pub struct Machine {
     /// A frame leaves a program that [`Machine::at_sync`] where it is,
     /// for a frame run to catch up that has no time for a whole trip.
     pub hold_at_sync: bool,
+    /// Frames are not spent while the program's main loop is part-way
+    /// through, so that each trip round it gets one frame however slow
+    /// the computer: a frame that runs out of time with the program
+    /// between VSYNCs goes on at the next [`Machine::frame`], which then
+    /// starts no new frame (no animation step, MAINCNT, sound or new
+    /// input), and a frame [`Machine::hold_at_sync`] would leave the
+    /// program out of does not happen. The program runs slower than 60
+    /// trips a second instead of missing frames, and the sound has gaps.
+    /// Only for a loop that started at a VSYNC or WAIT and has run less
+    /// than [`KEEP_LONGEST`] (or [`KEEP_MOST_CALLS`] calls without a time
+    /// limit), at unlimited speed, with no subprogram, editor or step.
+    ///
+    /// SmileBASIC 4 gives a program that takes longer than a frame fewer
+    /// trips than frames, as this does when it is off. On a slow computer
+    /// that is far more often, as the emulator's frames carry the drawing
+    /// too and give the program part of a frame (see `time_limit`).
+    /// Programs that count their trips as frames then go wrong, such as
+    /// a relative SPANIM started again every N calls of CALL SPRITE.
+    pub keep_frames: bool,
+    /// The last frame ran out of time part-way through a loop that
+    /// [`Machine::keep_frames`] lets go on in the same frame.
+    keep_going: bool,
+    /// The trip round the loop under way started at a VSYNC or WAIT and
+    /// is short enough for [`Machine::keep_frames`] to keep in a frame.
+    keepable: bool,
+    /// Calls of [`Machine::frame`] the frame being kept has had so far.
+    kept_calls: u32,
+    /// Frames a program missed part of its trip in, so far.
+    pub missed: Missed,
     /// Globals of the last program and the direct-mode lines since, kept
     /// for the next direct-mode line; each line adds its own.
     vars: HashMap<String, Value>,
@@ -495,6 +546,11 @@ impl Machine {
             loop_time: Duration::ZERO,
             loop_so_far: Duration::ZERO,
             hold_at_sync: false,
+            keep_frames: false,
+            keep_going: false,
+            keepable: false,
+            kept_calls: 0,
+            missed: Missed::default(),
             vars: HashMap::new(),
             editors: [Editor::new(w * 8, h * 8), Editor::new(w * 8, h * 8)],
             active: 0,
@@ -1837,6 +1893,10 @@ impl Machine {
     /// Runs one frame: the program, the editor, or direct-mode line
     /// editing, and then the subprogram, if one runs.
     pub fn frame(&mut self) {
+        if self.keeping_frames() && self.hold_at_sync && self.at_sync && self.wait <= 1 {
+            // The frame would leave the program waiting at its VSYNC.
+            return;
+        }
         if let Home::Waiting(n) = &mut self.home {
             *n = n.saturating_sub(1);
         }
@@ -1844,10 +1904,13 @@ impl Machine {
             *age += 1;
         }
         self.move_focus();
-        let beside = self.sub.as_ref().map(|sub| sub.rt.input.live);
-        let editor = self.editor_has_keys();
-        self.rt.repeat_held_key(beside.as_ref(), editor);
-        self.give_input();
+        // A frame kept for a loop that goes on reads no new input.
+        if !self.keep_going {
+            let beside = self.sub.as_ref().map(|sub| sub.rt.input.live);
+            let editor = self.editor_has_keys();
+            self.rt.repeat_held_key(beside.as_ref(), editor);
+            self.give_input();
+        }
         self.rt.env_status = self.env_status();
         // With a subprogram running, a busy main program leaves it a
         // quarter of the frame's time, and it gets what the main program
@@ -1872,9 +1935,51 @@ impl Machine {
         self.link_dialogs();
     }
 
+    /// Whether [`Machine::keep_frames`] applies now.
+    fn keeping_frames(&self) -> bool {
+        self.keep_frames
+            && self.rt.meter.is_none()
+            && !self.editing
+            && self.stepping.is_none()
+            && !self.sub_running()
+    }
+
+    /// Whether the program, out of time part-way through a loop that
+    /// started at a VSYNC or WAIT, goes on in this frame at the next call;
+    /// see [`Machine::keep_frames`]. A trip found too long to keep is not
+    /// kept again until the program reaches a VSYNC or WAIT.
+    fn keeps_loop(&mut self) -> bool {
+        if !self.mid_loop() {
+            return false;
+        }
+        let short = match self.time_limit {
+            Some(_) => self.loop_so_far < KEEP_LONGEST,
+            None => self.kept_calls + 1 < KEEP_MOST_CALLS,
+        };
+        self.keepable &= short;
+        self.keepable && self.keeping_frames()
+    }
+
     /// One frame of this interpreter; `main` is the main interpreter's
     /// runtime when this is the sub interpreter.
     fn run_frame(&mut self, mut main: Option<&mut Runtime>) {
+        // A loop kept in its frame goes on without a new frame's work.
+        let resume = std::mem::take(&mut self.keep_going) && main.is_none() && self.vm.is_some();
+        if resume {
+            self.kept_calls += 1;
+        } else {
+            self.kept_calls = 0;
+            if !self.start_frame(main.as_deref_mut()) {
+                return;
+            }
+        }
+        self.run_program(main);
+    }
+
+    /// Starts a frame of this interpreter: MAINCNT, input, sound,
+    /// animations, the editor or direct mode. Gives whether the program
+    /// is to run in this frame.
+    fn start_frame(&mut self, main: Option<&mut Runtime>) -> bool {
         self.frame += 1;
         self.rt.in_frame_job = false;
         self.follow_edits();
@@ -1887,7 +1992,7 @@ impl Machine {
             self.rt.sound.master = main.sound.master;
         }
         self.rt.sound.render_frame();
-        if let Some(main) = main.as_deref_mut() {
+        if let Some(main) = main {
             main.sound.hear_sub(&mut self.rt.sound);
         }
         // Animations play in direct mode too, and go on while the editor
@@ -1898,11 +2003,11 @@ impl Machine {
             self.sync_slots();
             // A step from the editor runs with it shown.
             if !self.detached && (self.stepping.is_none() || self.vm.is_none()) {
-                return;
+                return false;
             }
         }
-        let mut vsynced = false;
         if self.vm.is_none() {
+            self.keepable = false;
             if self.quiet_stop && !self.editor_has_keys() {
                 self.ready();
             }
@@ -1911,17 +2016,28 @@ impl Machine {
                 self.direct(&String::from_utf16_lossy(&line));
             }
         }
+        if self.vm.is_none() {
+            return false;
+        }
+        self.wait = self.wait.saturating_sub(1);
+        if self.wait > 0 {
+            return false;
+        }
+        if self.hold_at_sync && self.at_sync {
+            self.missed.held += 1;
+            return false;
+        }
+        self.at_sync = false;
+        true
+    }
+
+    /// Runs the program in this frame, until it reaches a VSYNC or WAIT or
+    /// runs out of time.
+    fn run_program(&mut self, mut main: Option<&mut Runtime>) {
+        let mut vsynced = false;
         let Some(mut vm) = self.vm.as_mut() else {
             return;
         };
-        self.wait = self.wait.saturating_sub(1);
-        if self.wait > 0 {
-            return;
-        }
-        if self.hold_at_sync && self.at_sync {
-            return;
-        }
-        self.at_sync = false;
         // A console's speed: the frame has the console's time, and the
         // window's time limit too.
         self.rt.set_speed(self.rt.settings.speed);
@@ -1993,6 +2109,7 @@ impl Machine {
                     vsync: false,
                 }) => {
                     vsynced = true;
+                    self.keepable = true;
                     if let Some(from) = began {
                         let now = Instant::now();
                         self.loop_time = self.loop_so_far + (now - from);
@@ -2018,6 +2135,7 @@ impl Machine {
                     vsync: true,
                 }) => {
                     vsynced = true;
+                    self.keepable = true;
                     self.vsyncs += 1;
                     let now = began.map(|began| (began, Instant::now()));
                     if let Some((from, now)) = now {
@@ -2049,6 +2167,9 @@ impl Machine {
                         });
                         if fits && has_time(vm, &self.rt, start) {
                             continue;
+                        }
+                        if !fits {
+                            self.missed.deferred += 1;
                         }
                     }
                     self.at_sync = true;
@@ -2086,6 +2207,10 @@ impl Machine {
         }
         if let Some(began) = began.filter(|_| !self.at_sync) {
             self.loop_so_far += began.elapsed();
+        }
+        self.keep_going = main.is_none() && self.keeps_loop();
+        if self.mid_loop() && !self.keep_going {
+            self.missed.cut += 1;
         }
         // A step that waits for input shows the screen until it stops: an
         // INPUT, or one going over lines that read the controls and waited

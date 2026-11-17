@@ -659,6 +659,130 @@ fn a_program_can_be_held_at_its_vsync() {
     assert!(m.vsyncs() > vsyncs);
 }
 
+/// Runs `program` to its end, or for `frames` calls of [`Machine::frame`],
+/// with [`Machine::keep_frames`] as given, and gives what it printed last.
+fn last_line_kept(program: &str, keep: bool, frames: u32) -> String {
+    let mut m = machine();
+    m.keep_frames = keep;
+    m.set_slot(0, program.to_string());
+    m.run_slot(0);
+    for _ in 0..frames {
+        m.frame();
+        if !m.is_running() {
+            break;
+        }
+    }
+    let rows = rows(&m);
+    let last = (rows.iter().rev()).find(|r| !r.trim().is_empty() && r.as_str() != "OK");
+    last.cloned().unwrap_or_default()
+}
+
+/// A trip round the main loop that takes more than a frame's
+/// instructions misses frames, as on SmileBASIC 4; kept frames give each
+/// trip one frame.
+#[test]
+fn kept_frames_give_each_trip_one_frame() {
+    let program = "VSYNC:M=MAINCNT()\n\
+                   FOR J=1 TO 5:FOR I=1 TO 100000:NEXT:VSYNC:NEXT\n\
+                   ?MAINCNT()-M\n";
+    let missed: u32 = last_line_kept(program, false, 1000).trim().parse().unwrap();
+    assert!(missed > 5, "{missed}");
+    assert_eq!(last_line_kept(program, true, 1000).trim(), "5");
+}
+
+/// Kept frames leave alone a program that does not VSYNC and a trip too
+/// long to keep, such as loading: their frames go by as usual.
+#[test]
+fn kept_frames_let_long_trips_and_busy_programs_be() {
+    let busy = "M=MAINCNT():FOR I=1 TO 600000:NEXT:?MAINCNT()-M\n";
+    assert_eq!(
+        last_line_kept(busy, true, 1000),
+        last_line_kept(busy, false, 1000)
+    );
+    // One frame for the calls it keeps, and then one each.
+    let long = "VSYNC:M=MAINCNT():FOR I=1 TO 600000:NEXT:VSYNC:?MAINCNT()-M\n";
+    let frames = |keep| -> u32 { last_line_kept(long, keep, 1000).trim().parse().unwrap() };
+    let kept = sb_runtime::machine::KEEP_MOST_CALLS - 1;
+    assert!(frames(false) > 2 * kept, "{}", frames(false));
+    assert_eq!(frames(true), frames(false) - kept);
+}
+
+/// OTAKA_GAME_COLLECTION00's pellets: a relative SPANIM of 32 frames,
+/// started again every 32 trips by a counter in the main loop. A trip of
+/// more than two frames' work misses a frame even though the VSYNC after
+/// it goes straight on, and each missed frame moves the place the next
+/// start counts from, so the sprite wanders off. Kept frames keep it
+/// where it was.
+#[test]
+fn kept_frames_keep_a_restarted_relative_animation_in_place() {
+    let program = "SPSET 0,0:SPOFS 0,100,100:C=0:VSYNC\n\
+                   FOR J=0 TO 95\n\
+                   IF C==0 THEN SPANIM 0,\"XY+\",-8,0,-1,-8,0,0,-8,0,1,-8,0,0,0\n\
+                   C=(C+1) MOD 32\n\
+                   IF J MOD 5==2 THEN FOR I=1 TO 160000:NEXT\n\
+                   VSYNC\n\
+                   NEXT\n\
+                   SPOFS 0 OUT X,Y:?Y\n";
+    let wandered: f64 = last_line_kept(program, false, 1000).trim().parse().unwrap();
+    assert!((wandered - 100.0).abs() > 0.5, "{wandered}");
+    assert_eq!(last_line_kept(program, true, 1000).trim(), "100");
+}
+
+/// The presses of A that a program counts with BUTTON(0,#B_RRIGHT,2) once a
+/// trip, each trip taking `work` FOR steps, when A is held for `hold`
+/// calls of [`Machine::frame`] every 20, 15 times.
+fn presses_counted(work: u32, hold: u32, keep: bool) -> String {
+    let mut m = machine();
+    m.keep_frames = keep;
+    m.set_slot(
+        0,
+        format!(
+            "CLS:N=0:WHILE 1:FOR I=1 TO {work}:NEXT\n\
+             IF BUTTON(0,#B_RRIGHT,2) THEN INC N\n\
+             LOCATE 0,0:?N;\" \";:VSYNC:WEND\n"
+        ),
+    );
+    m.run_slot(0);
+    for call in 0..20 * 15 + 40 {
+        let pressed = (20..20 * 16).contains(&call) && call % 20 < hold;
+        m.rt.input.live.pads[0].buttons = u32::from(pressed) << sb_runtime::input::A;
+        m.frame();
+    }
+    rows(&m)[0].trim().to_string()
+}
+
+/// A trip longer than a frame's work reads BUTTON in one of the frames it
+/// takes, and a press shows only on the frame it starts in, so presses
+/// go missing; SmileBASIC 4 at full speed sees them all. Kept frames give
+/// the trip one frame, which sees them all.
+#[test]
+fn kept_frames_keep_presses_a_long_trip_would_miss() {
+    assert_eq!(presses_counted(1000, 3, false), "15");
+    let missed: u32 = presses_counted(120_000, 3, false).parse().unwrap();
+    assert!(missed < 15, "{missed}");
+    assert_eq!(presses_counted(120_000, 3, true), "15");
+}
+
+/// Kept frames do not spend a frame that would leave the program at its
+/// VSYNC: MAINCNT and the animations wait for the program.
+#[test]
+fn kept_frames_spend_no_frame_held_at_vsync() {
+    let mut m = machine();
+    m.keep_frames = true;
+    m.time_limit = Some(std::time::Duration::from_secs(1));
+    m.set_slot(0, "@L:VSYNC:GOTO @L".to_string());
+    m.run_slot(0);
+    m.frame();
+    let count = m.rt.main_count();
+    m.hold_at_sync = true;
+    m.frame();
+    m.frame();
+    assert_eq!(m.rt.main_count(), count);
+    m.hold_at_sync = false;
+    m.frame();
+    assert_eq!(m.rt.main_count(), count.wrapping_add(1));
+}
+
 /// A program out of time between VSYNCs has only part of a scene made.
 #[test]
 fn a_program_out_of_time_is_mid_loop() {
