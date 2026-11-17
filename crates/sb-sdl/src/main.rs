@@ -3180,16 +3180,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             && machine.mid_loop()
             && !machine.sub_running()
             && !machine.is_editing()
+            && !bench.as_ref().is_some_and(bench::Bench::shoots)
             && clock.late_at(Instant::now() + draw_time)
         {
             undrawn += 1;
+            if let Some(b) = &mut bench {
+                b.undrawn();
+            }
             pacing::delay(clock.end(Instant::now(), false));
+            lap!(Wait);
             continue;
         }
         undrawn = 0;
 
         if let Some(b) = &mut bench {
             b.skip();
+            b.burn();
         }
         mode = machine.screen_mode();
         let settings = &machine.rt.settings;
@@ -3846,7 +3852,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             lap!(Present);
         }
         if iterations.is_multiple_of(60) {
-            at_60_hz = pacing::at_60_hz(canvas.window());
+            at_60_hz = pacing::at_60_hz(canvas.window())
+                || bench.as_ref().is_some_and(bench::Bench::vblank);
         }
         iterations = iterations.wrapping_add(1);
         // The frames follow the vsync of a display at about 60 Hz, when

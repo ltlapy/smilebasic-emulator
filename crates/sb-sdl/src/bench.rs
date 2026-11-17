@@ -29,7 +29,8 @@
 //!   the loop took: events, running the program, waiting for the next frame; then the
 //!   frames the standby thread ran while the loop was held up, and its microseconds
 //!   running them; then MAINCNT, and the frames so far that the program
-//!   missed part of its trip in, by why, as the report's missed line says;
+//!   missed part of its trip in, by why, as the report's missed line says; then 1
+//!   if the trip drew the window and 0 if it left the drawing out;
 //! - `menu`, `file-menu`, `view-menu`, `help`, `about`, `colors`, `settings`,
 //!   `toast`: shows the menu bar (as F8 does), the bar with its File menu
 //!   open or its View menu at Window size, the help beside the editor, the About dialog, the editor colors window,
@@ -43,6 +44,12 @@
 //!   main window that waits for vsync take MS milliseconds more, as a
 //!   compositor that throttles a covered window does (SDL's Wayland
 //!   backend waits up to 50 ms);
+//! - `draw=US`: from then too, makes each drawing of the main window take US
+//!   microseconds more, of work rather than of waiting, as a slow GPU does;
+//! - `vblank`: from then too, makes each present of the main window that
+//!   waits for vsync return at the next sixtieth of a second, as a display
+//!   at 60 Hz does, and has the display count as one: the offscreen driver's
+//!   presents do not wait;
 //! - `occluded`: from then too, has the main window count as covered, as
 //!   the system reports it when it can;
 //! - `at=FRAME:WHAT`, any number of them: does something to the frontend at
@@ -64,7 +71,8 @@
 //!
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed, those of them the standby thread ran, how far MAINCNT
-//! went, the frames the program missed part of its trip in, the frame the
+//! went, the frames the program missed part of its trip in, the trips that
+//! left the drawing out, the frame the
 //! notice for a program slower than real time showed at, and what the
 //! sound device's buffer went through, so
 //! that the frames keep time whatever happens to the drawing. For the
@@ -191,6 +199,10 @@ pub struct Bench {
     size: (u32, u32),
     /// Added to each present that waits for vsync.
     slow: Duration,
+    /// Added to each drawing of the main window, as work.
+    draw: Duration,
+    /// Presents that wait for vsync return at the next sixtieth of a second.
+    vblank: bool,
     occluded: bool,
     /// Whether XSCREEN's mode 1 is scaled on the CPU.
     pub cpu_smart: bool,
@@ -215,6 +227,9 @@ pub struct Bench {
     /// The frames the program missed part of its trip in, when the timing
     /// began and now.
     missed: (Missed, Missed),
+    /// Whether this trip left the drawing out, and the trips timed that did.
+    undrawn_now: bool,
+    undrawn: u32,
     last: Option<Instant>,
     /// When the timing began.
     began: Option<Instant>,
@@ -254,6 +269,9 @@ impl Bench {
                 Some(("slow", ms)) => {
                     bench.slow = Duration::from_millis(ms.parse().unwrap_or(50));
                 }
+                Some(("draw", us)) => {
+                    bench.draw = Duration::from_micros(us.parse().unwrap_or(0));
+                }
                 Some(("load", path)) => {
                     let (project, program) = path.split_once('/').unwrap_or((path, "MAIN.PRG"));
                     bench.load = Some((project.to_string(), program.to_string()));
@@ -269,6 +287,7 @@ impl Bench {
                     "editor" => bench.editor = true,
                     "apart" => bench.apart = true,
                     "panel" => bench.panel = true,
+                    "vblank" => bench.vblank = true,
                     "occluded" => bench.occluded = true,
                     "cpu-smart" => bench.cpu_smart = true,
                     "menu" | "file-menu" | "view-menu" | "help" | "about" | "colors"
@@ -325,6 +344,7 @@ impl Bench {
             self.timed.push((self.current, uploaded));
             self.kept.add(self.kept_now);
             self.kept_trips += u32::from(self.kept_now.frames > 0);
+            self.undrawn += u32::from(self.undrawn_now);
             if self.log.is_some() {
                 let stages = self.current.map(|t| t.as_micros().to_string());
                 let (drawing, rest) = stages.split_at(DRAWING);
@@ -340,13 +360,15 @@ impl Bench {
                 } = machine.missed;
                 self.lines.push(format!(
                     "{frame} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy} \
-                     {count} {cut} {held} {deferred}"
+                     {count} {cut} {held} {deferred} {}",
+                    u8::from(!self.undrawn_now)
                 ));
             }
         }
         self.frame += 1;
         self.current = [Duration::ZERO; STAGES];
         self.kept_now = Kept::default();
+        self.undrawn_now = false;
         UPLOADED.store(0, Ordering::Relaxed);
         MADE.store(0, Ordering::Relaxed);
         self.last = (self.frame > set_up + self.settle).then(Instant::now);
@@ -399,12 +421,48 @@ impl Bench {
         self.occluded && self.began.is_some()
     }
 
-    /// Stands for a compositor's throttling, after a present of the main
-    /// window; `vsync` is whether it waits for vsync.
+    /// Stands for a display's vsync and a compositor's throttling, after
+    /// a present of the main window; `vsync` is whether it waits for vsync.
     pub fn present(&self, vsync: bool) {
-        if vsync && !self.slow.is_zero() && self.began.is_some() {
+        let Some(began) = self.began.filter(|_| vsync) else {
+            return;
+        };
+        if self.vblank {
+            let frame = crate::FRAME.as_nanos();
+            let left = frame - began.elapsed().as_nanos() % frame;
+            crate::pacing::delay(Duration::from_nanos(left as u64));
+        }
+        if !self.slow.is_zero() {
             std::thread::sleep(self.slow);
         }
+    }
+
+    /// Whether the display is to count as one at 60 Hz, whose vsync the
+    /// presents wait for.
+    pub fn vblank(&self) -> bool {
+        self.vblank
+    }
+
+    /// Stands for a slow drawing of the main window, before it.
+    pub fn burn(&self) {
+        if self.draw.is_zero() || self.began.is_none() {
+            return;
+        }
+        let start = Instant::now();
+        while start.elapsed() < self.draw {
+            std::hint::spin_loop();
+        }
+    }
+
+    /// Counts this trip as one that left the drawing out.
+    pub fn undrawn(&mut self) {
+        self.undrawn_now = true;
+    }
+
+    /// Whether this trip's frame is the one [`Bench::shoot`] saves, which
+    /// must then be drawn.
+    pub fn shoots(&self) -> bool {
+        self.shot.is_some() && self.last.is_some() && self.timed.len() + 1 == self.frames as usize
     }
 
     /// Saves what `canvas` shows as `PATH-name.pam`, in the last frame
@@ -530,7 +588,8 @@ impl Bench {
             let (drawing, rest) = NAMES.split_at(DRAWING);
             let (drawing, rest) = (drawing.join(" "), rest.join(" "));
             let head = format!(
-                "frame w h {drawing} uploaded made {rest} kept worker maincnt cut held deferred\n"
+                "frame w h {drawing} uploaded made {rest} kept worker maincnt cut held deferred \
+                 drawn\n"
             );
             let text = head + &self.lines.join("\n") + "\n";
             if let Err(e) = std::fs::write(path, text) {
@@ -601,6 +660,11 @@ impl Bench {
                 to.deferred - from.deferred
             );
         }
+        println!(
+            "undrawn   {} of {} trips ran the program and left the drawing out",
+            self.undrawn,
+            self.timed.len()
+        );
         println!(
             "kept      {} frames run while the loop was held up, in {} trips, {:.2?} running them",
             self.kept.frames, self.kept_trips, self.kept.busy

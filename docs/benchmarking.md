@@ -705,9 +705,11 @@ the project that `run=` names from the data directory, so use a scratch one
 | `scale=N` | Lays the editor's own window out at UI scale N instead of the desktop's |
 | `slow=MS` | From when the timing begins, makes each present of the main window that waits for vsync take MS milliseconds more, as a compositor that throttles a covered window does (SDL's Wayland backend waits up to 50 ms) |
 | `occluded` | From when the timing begins, has the main window count as covered, as the system reports it when it can |
+| `draw=US` | From when the timing begins, makes each drawing of the main window take US microseconds more, of work rather than waiting, as a slow GPU does |
+| `vblank` | From when the timing begins, makes each present of the main window that waits for vsync return at the next sixtieth of a second, as a display at 60 Hz does, and has the display count as one. The offscreen driver's presents do not wait |
 | `shot=PATH` | Saves the last frame timed of each window shown, as `PATH-main.pam` and `PATH-editor.pam`, to compare drawings |
 | `luma=PATH` | Writes each timed frame's number and mean brightness (0 to 255), read as it goes to the window, to PATH, and reports the frames darker than both neighbors. That is a flicker, which `check` cannot see |
-| `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds. Two columns follow `wait`: `kept`, the frames the standby thread ran during the trip, and `worker`, its microseconds running them. The last four are `MAINCNT` after the trip and the frames so far that the program missed part of its trip in, by why, as the `missed` line counts them: `cut`, `held` and `deferred` |
+| `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds. Two columns follow `wait`: `kept`, the frames the standby thread ran during the trip, and `worker`, its microseconds running them. The last four are `MAINCNT` after the trip and the frames so far that the program missed part of its trip in, by why, as the `missed` line counts them: `cut`, `held` and `deferred`. The last column, `drawn`, is 1 if the trip drew the window and 0 if it left the drawing out |
 | `at=FRAME:WHAT` | Does WHAT to the frontend at that frame, counted from the start of the run. Give it any number of times |
 
 `at=FRAME:WHAT` takes:
@@ -777,6 +779,7 @@ Below the stages come:
 | `frames` | Program frames run per second of the time timed: calls of the machine's frame, including those that went on with a kept frame |
 | `maincnt` | How far `MAINCNT` went per second of the time timed: below 60 when frames were kept for a program too slow for the computer |
 | `missed` | Frames in the time timed in which the program missed part of its trip round its main loop, as `smilebasic-check --window` counts them ([Per-frame costs and overload](#per-frame-costs-and-overload)): out of time part-way through it, held at its `VSYNC` to catch up, and `VSYNC`s that waited for the next frame where SmileBASIC 4 would go straight on |
+| `undrawn` | Trips in the time timed that ran the program and left the drawing out, because it would have ended after the frame's time ([differences.md](differences.md#speed)) |
 | `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](frame-thread.md)), in how many trips, and the time it took |
 | `slow hint` | The frame the notice for a program slower than real time first showed at, or that it did not show |
 | `sound` | What the sound device's buffer went through |
