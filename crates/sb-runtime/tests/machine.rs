@@ -279,6 +279,29 @@ fn sysreq_jumps_to_on_break_once() {
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
 
+/// Ctrl+C is a break ON BREAK GOTO takes, as the + button is, but it
+/// never starts PRG0.
+#[test]
+fn keyboard_break_jumps_to_on_break() {
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "ON BREAK GOTO @B\n@L:VSYNC:GOTO @L\n@B:?\"B\"\n@M:VSYNC:GOTO @M".to_string(),
+    );
+    m.run_slot(0);
+    m.frame();
+    m.keyboard_break();
+    m.frame();
+    assert!(m.is_running());
+    assert_eq!(rows(&m).last().unwrap(), "B");
+    m.keyboard_break();
+    assert!(!m.is_running());
+    m.keyboard_break();
+    m.frame();
+    assert!(!m.is_running());
+    assert_eq!(rows(&m).last().unwrap(), "OK");
+}
+
 /// A break jump in code EXEC'd from a DEF leaves the DEF behind, and the
 /// EXEC with it: the program ends where that slot ends.
 #[test]

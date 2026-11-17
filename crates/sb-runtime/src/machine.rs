@@ -1108,6 +1108,18 @@ impl Machine {
         self.run_slot(0);
     }
 
+    /// Ctrl+C on a keyboard: in a running program a break, which jumps to
+    /// its ON BREAK GOTO label as the + button does (checked on hardware),
+    /// or else stops it; it also stops a DIRECT mode line. Unlike +, it
+    /// never starts PRG0. UNVERIFIED: whether it also ends a SUBRUN
+    /// subprogram.
+    pub fn keyboard_break(&mut self) {
+        match self.vm.is_some() && self.running_slot.is_some() {
+            true => self.sysreq(),
+            false => self.stop(),
+        }
+    }
+
     /// Stops the running program or direct-mode line, as the Break key
     /// does, and returns to direct mode.
     ///
