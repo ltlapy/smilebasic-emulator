@@ -279,6 +279,47 @@ fn sysreq_jumps_to_on_break_once() {
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
 
+/// A break jump in code EXEC'd from a DEF leaves the DEF behind, and the
+/// EXEC with it: the program ends where that slot ends.
+#[test]
+fn on_break_in_code_execed_from_a_def_ends_with_the_slot() {
+    for exec in ["EXEC 3", "GOSUB @G\n@G:EXEC 3"] {
+        let mut m = machine();
+        m.set_slot(
+            0,
+            format!("DEF RUNIT\n VAR Q=5\n {exec}\n ?\"BACK\";Q\nEND\nRUNIT\n?\"DONE\""),
+        );
+        m.set_slot(
+            3,
+            "ON BREAK GOTO @B\n@L:VSYNC:GOTO @L\n@B:?\"BRK\"".to_string(),
+        );
+        m.run_slot(0);
+        m.frame();
+        m.frame();
+        m.sysreq();
+        m.frame();
+        m.frame();
+        assert!(!m.is_running(), "{exec}");
+        let r = rows(&m);
+        assert_eq!(&r[r.len() - 2..], ["BRK", "OK"], "{exec}");
+    }
+    // An EXEC from the top level goes back as ever.
+    let mut m = machine();
+    m.set_slot(0, "EXEC 3\n?\"BACK\"".to_string());
+    m.set_slot(
+        3,
+        "ON BREAK GOTO @B\n@L:VSYNC:GOTO @L\n@B:?\"BRK\"".to_string(),
+    );
+    m.run_slot(0);
+    m.frame();
+    m.frame();
+    m.sysreq();
+    m.frame();
+    m.frame();
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 3..], ["BRK", "BACK", "OK"]);
+}
+
 #[test]
 fn sysreq_out_of_input_also_stops() {
     let mut m = machine();

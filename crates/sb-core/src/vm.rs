@@ -1281,9 +1281,30 @@ impl Vm {
         self.values_room_reached = false;
         self.callbacks.clear();
         self.reading_input = false;
+        let kept = self.execs_kept_on_break(slot);
+        self.execs.truncate(kept);
         self.switch_to(slot, host);
         self.pc = addr;
         true
+    }
+
+    /// How many of [`Vm::execs`] an ON BREAK jump into `slot` keeps: those
+    /// under the EXEC that started `slot`, as long as none of them was made
+    /// in a DEF, a GOSUB or a callback, which the jump leaves behind. When
+    /// the slot ends, the EXEC below goes on; with none, the program ends.
+    /// UNVERIFIED: SB4 crashed on CONT into the DEF an EXEC was made in
+    /// after such a jump, so its own rule is not known.
+    fn execs_kept_on_break(&self, slot: usize) -> usize {
+        // The slot each EXEC started: the next one's caller, or the one
+        // running for the last.
+        let started = (self.execs.iter().skip(1).map(|r| r.slot)).chain(std::iter::once(self.slot));
+        let under = (self.execs.iter().zip(started))
+            .position(|(_, s)| s == slot)
+            .map_or(0, |i| i + 1);
+        let clean = (self.execs.iter())
+            .take_while(|r| r.frames == 0 && r.gosubs == 0 && r.callbacks == 0 && r.stack == 0)
+            .count();
+        under.min(clean)
     }
 
     /// Executes up to `budget` instructions.
