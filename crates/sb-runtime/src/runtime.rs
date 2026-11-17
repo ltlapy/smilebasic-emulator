@@ -822,6 +822,8 @@ pub struct Runtime {
     /// Graphic pages GRP0-GRP5.
     pub grp: Graphics,
     pub sprites: Sprites,
+    /// SPVAR's and TVAR's variables in all, or more.
+    pub(crate) var_entries: usize,
     pub input: Input,
     pub(crate) system: System,
     pub sound: Sound,
@@ -1472,6 +1474,7 @@ impl Runtime {
             font_patch: FontPatch::default(),
             grp: Graphics::default(),
             sprites: Sprites::default(),
+            var_entries: 0,
             input: Input::default(),
             system: System::default(),
             sound: Sound::default(),
@@ -1626,7 +1629,14 @@ impl Runtime {
         keep_font: bool,
         keep_anims: bool,
     ) {
+        // Text screens keep their variables.
+        let vars: Vec<_> = (self.text.iter_mut())
+            .map(|t| std::mem::take(&mut t.vars))
+            .collect();
         self.text = startup_screens(&self.startup_mode);
+        for (t, vars) in self.text.iter_mut().zip(vars) {
+            t.vars = vars;
+        }
         // Before set_mode, which puts #GSPRITE on SPLAYER's layer.
         self.sprites.reset(keep_defs, keep_anims);
         self.set_mode(self.startup_mode);
@@ -3162,6 +3172,10 @@ impl Host for Runtime {
     fn own_arrays(&self) -> Vec<sb_core::value::ArrayRef> {
         let text = self.text.iter().filter_map(|t| t.array_if_made());
         text.chain(self.grp.arrays()).collect()
+    }
+
+    fn count_held(&self, tally: &mut sb_core::memory::Tally) {
+        self.count_vars(tally);
     }
 
     fn set_data_pos(&mut self, pos: usize, def: Option<u32>) {

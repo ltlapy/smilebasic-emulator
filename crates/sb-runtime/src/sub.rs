@@ -267,4 +267,8 @@ impl Host for Linked<'_> {
     fn own_arrays(&self) -> Vec<ArrayRef> {
         self.sub.own_arrays()
     }
+
+    fn count_held(&self, tally: &mut sb_core::memory::Tally) {
+        self.sub.count_held(tally);
+    }
 }

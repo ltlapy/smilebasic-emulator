@@ -261,6 +261,17 @@ fn tvar_and_tanim_v() {
 }
 
 #[test]
+fn acls_keeps_tvar() {
+    let out = play(concat!(
+        // ACLS clears the console's start-up OK, which play() looks for.
+        "TVAR 0,\"a\",12:TVAR 0,3,1:TVAR 0,7,2:TVAR 4,\"B\",5:ACLS:?\"OK\"\n",
+        "?TVAR(0,\"A\");TVAR(0,3);TVAR(0,7);TVAR(4,\"B\")\n",
+        "TANIM 1,\"V\",-60,100:WAIT 10:TVAR 1,7,0:WAIT 30:?TVAR(1,7);TCHK(1)",
+    ));
+    assert_eq!(out, ["12125", "00"]);
+}
+
+#[test]
 fn call_text_runs_each_callback() {
     let out = play(concat!(
         "TFUNC 3,\"F\":TFUNC 0,\"@T\":TFUNC 1,\"@T\":TFUNC 1\n",

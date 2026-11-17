@@ -126,6 +126,50 @@ fn variables() {
 }
 
 #[test]
+fn variable_keys() {
+    // ASCII a-z fold to upper case, nothing else does; number keys are
+    // apart from string keys, and a real key is cut to an int.
+    let (_, out) = run("SPVAR 0,\"name\",1:SPVAR 0,\"Mixed\",2\n\
+         ?SPVAR(0,\"NAME\");SPVAR(0,\"MIXED\");SPVAR(0,\"name\");\n\
+         SPVAR 0,\"ａ\",1:?SPVAR(0,\"Ａ\");SPVAR(0,\"ａ\");\n\
+         SPVAR 0,5,1:?SPVAR(0,\"5\");SPVAR(0,5);SPVAR(0,5.7);\n\
+         K$=\"a\"*40:SPVAR 0,K$,3:?SPVAR(0,\"A\"*40)");
+    assert_eq!(out, "121010113");
+    // A key over 1024 characters is never found.
+    let (_, out) = run("K$=\"A\"*1025:SPVAR 0,K$,5:?SPVAR(0,K$);\n\
+         K$=\"A\"*1024:SPVAR 0,K$,5:?SPVAR(0,K$)");
+    assert_eq!(out, "05");
+}
+
+#[test]
+fn writing_variable_7_stops_v() {
+    let (_, out) = run(
+        "SPSET 0,0:SPANIM 0,\"V\",-60,100:WAIT 10:SPVAR 0,7,0:WAIT 30\n\
+         ?SPVAR(0,7);SPCHK(0);\n\
+         SPANIM 0,\"V\",-60,100:WAIT 10:SPVAR 0,7:WAIT 30:?SPVAR(0,7);SPCHK(0);\n\
+         SPANIM 0,\"V\",-60,100:WAIT 10:SPVAR 0,\"7\",0:?SPCHK(0)",
+    );
+    assert_eq!(out, "000032");
+}
+
+/// Variables take FREEMEM for keys over 16 characters, made by reading a
+/// missing one too, and the values they hold count as any others do.
+#[test]
+fn variables_take_memory() {
+    let (_, out) = run(
+        "F=FREEMEM():FOR I=0 TO 999:SPVAR 1,I,0:SPVAR 1,\"K\"*16,0:NEXT\n\
+         ?F-FREEMEM();\" \";\n\
+         F=FREEMEM():FOR I=0 TO 999:SPVAR 1,\"KEY_LONGER_THAN_16_\"+STR$(I),0:NEXT\n\
+         ?F-FREEMEM();\" \";\n\
+         F=FREEMEM():FOR I=0 TO 999:X=SPVAR(2,\"KEY_LONGER_THAN_16_\"+STR$(I)):NEXT\n\
+         ?F-FREEMEM();\" \";\n\
+         F=FREEMEM():TVAR 0,1,ARRAY%(1000):?F-FREEMEM();\" \";\n\
+         SPCLR:?F-FREEMEM()",
+    );
+    assert_eq!(out, "0 192000 192000 4096 -379904");
+}
+
+#[test]
 fn variables_of_unset_sprites() {
     let (_, out) = run("SPVAR 5,\"A\",3:?SPVAR(5,\"A\");SPVAR(6,\"A\");\n\
          SPVAR 5:?SPVAR(5,\"A\");\n\
@@ -246,7 +290,23 @@ fn errors() {
             "Wrong number of arguments",
         ),
         ("SPSET 0,0:SPANIM 0,\"XY\",1,2", "Illegal function call"),
-        ("SPSET 0,0:SPANIM 0,\"Q\",1,2", "Out of range"),
+        (
+            "SPSET 0,0:SPANIM 0,\"Q\",1,2",
+            "Animation type mismatch in 0:1(SPANIM:2)",
+        ),
+        // An array among the keys names no argument.
+        (
+            "SPSET 0,0:DIM A[1]:SPANIM 0,0,A,0,0",
+            "Illegal function call in 0:1(SPANIM)",
+        ),
+        (
+            "DIM A[1]:TANIM 0,0,A,0,0",
+            "Illegal function call in 0:1(TANIM)",
+        ),
+        (
+            "DIM A[1]:ANIMDEF 0,0,A,0,0",
+            "Illegal function call in 0:1(ANIMDEF)",
+        ),
         ("SPSET 0,0:SPANIM 0,\"Z\",\"@NOPE\"", "Undefined label"),
         (
             "SPSET 0,0:DIM A[4]:SPANIM 0,A,1,2",

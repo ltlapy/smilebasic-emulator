@@ -66,6 +66,13 @@ fn bad_target(detail: String) -> Error {
     Error::with_detail(ErrorKind::OutOfRange, detail)
 }
 
+/// A name that is no target, such as `"X"`.
+// UNVERIFIED: that a known name with flags it does not take (`"XY++"`)
+// is refused the same way.
+fn bad_name(detail: String) -> Error {
+    Error::with_detail(ErrorKind::AnimationTypeMismatch, detail)
+}
+
 impl Mode {
     pub fn parse(v: &Value) -> Result<Mode> {
         checking(v, || {
@@ -83,7 +90,7 @@ impl Mode {
                         .filter(|_| {
                             flags.matches('+').count() <= 1 && flags.matches('.').count() <= 1
                         })
-                        .ok_or_else(|| bad_target(format!("animation target \"{text}\"")))?;
+                        .ok_or_else(|| bad_name(format!("animation target \"{text}\"")))?;
                     Ok(Mode {
                         target,
                         relative: flags.contains('+'),

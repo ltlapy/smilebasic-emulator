@@ -11,7 +11,7 @@ use sb_core::value::Value;
 use crate::anim::{Anim, Target, Track};
 use crate::grp::{array_colors, numeric_array, store_ints};
 use crate::runtime::{Command, Runtime, checking, no_form, screen_id, with_screen};
-use crate::sp::{anim_id, var_key};
+use crate::sp::{VarsOf, anim_id, var_value, with_var_key};
 use crate::text::{Cell, CellRect, TextScreen};
 
 fn int(v: &Value) -> Result<i32> {
@@ -353,32 +353,23 @@ impl Runtime {
                     .fold(0, |bits, (i, _)| bits | 1 << i);
                 Ok(vec![Value::Int(bits)])
             }
-            (Command::Tvar, Want::Outs(0), 3) => {
-                let key = var_key(&args[1])?;
-                let value = match &args[2] {
-                    // An array is kept as itself, not copied.
-                    Value::Int(_) | Value::Real(_) | Value::Str(_) | Value::Array(_) => {
-                        args[2].clone()
-                    }
-                    _ => return Err(ErrorKind::TypeMismatch.into()),
-                };
-                self.text[screen_id(&args[0])?].vars.insert(key, value);
+            (Command::Tvar, Want::Outs(0), 3) => with_var_key(&args[1], |key| {
+                let value = var_value(&args[2])?;
+                let id = screen_id(&args[0])?;
+                self.set_var(VarsOf::Text(id), key, value)?;
                 Ok(vec![])
-            }
-            (Command::Tvar, Want::Value, 2) => {
-                let key = var_key(&args[1])?;
-                let t = &self.text[screen_id(&args[0])?];
-                Ok(vec![t.vars.get(&key).cloned().unwrap_or(Value::Int(0))])
-            }
-            (Command::Tvar, Want::Outs(0), 1 | 2) => {
-                let key = args.get(1).map(var_key).transpose()?;
-                let t = &mut self.text[screen_id(&args[0])?];
-                match key {
-                    Some(key) => {
-                        t.vars.remove(&key);
-                    }
-                    None => t.vars.clear(),
-                }
+            }),
+            (Command::Tvar, Want::Value, 2) => with_var_key(&args[1], |key| {
+                let id = screen_id(&args[0])?;
+                Ok(vec![self.read_var(VarsOf::Text(id), key)?])
+            }),
+            (Command::Tvar, Want::Outs(0), 2) => with_var_key(&args[1], |key| {
+                let id = screen_id(&args[0])?;
+                self.delete_var(VarsOf::Text(id), Some(key));
+                Ok(vec![])
+            }),
+            (Command::Tvar, Want::Outs(0), 1) => {
+                self.delete_var(VarsOf::Text(screen_id(&args[0])?), None);
                 Ok(vec![])
             }
             (Command::Tfunc, Want::Outs(0), 1 | 2) => {

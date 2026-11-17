@@ -2,14 +2,14 @@
 
 use sb_core::value::{Array, ArrayData, ArrayRef, ElemType, Value};
 
-use crate::anim::{self, ANIM_VAR, Animated, Target, Track};
+use crate::anim::{self, Animated, Target, Track};
 use crate::compose::{self, Affine};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::Graphics;
 use crate::raster;
 use crate::scene::{CursorBar, TextItem};
-use crate::sprites::{VarKey, Vars, var_number};
+use crate::sprites::{Vars, var_number};
 
 pub const SCREENS: usize = 5;
 pub const CONSOLE: usize = 4;
@@ -736,9 +736,7 @@ impl Animated for TextScreen {
             Target::R => self.rot = v[0],
             Target::S => self.scale = (v[0], v[1]),
             Target::C => self.tint = v[0] as i64 as u32,
-            Target::V => {
-                self.vars.insert(VarKey::Int(ANIM_VAR), Value::Real(v[0]));
-            }
+            Target::V => self.vars.set_seven(Value::Real(v[0])),
             Target::Uv | Target::I => {}
         }
     }

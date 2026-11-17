@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
+use sb_core::memory;
 use sb_core::value::Value;
 
 use crate::anim::{self, ANIM_VAR, Anim, Animated, Target, Track};
@@ -138,9 +139,7 @@ impl Animated for WithDefs<'_> {
             Target::R => s.rot = single(v[0]),
             Target::S => s.scale = (single(v[0]), single(v[1])),
             Target::C => s.color = v[0] as i64 as u32,
-            Target::V => {
-                s.vars.insert(VarKey::Int(ANIM_VAR), Value::Real(v[0]));
-            }
+            Target::V => s.vars.set_seven(Value::Real(v[0])),
             Target::Uv => (s.u, s.v) = (v[0] as i32, v[1] as i32),
             Target::I => {
                 let n = (v[0] as i32).clamp(0, DEFS as i32 - 1);
@@ -154,19 +153,145 @@ impl Animated for WithDefs<'_> {
 
 /// Variable 7, which target "V" animates, as a number.
 pub fn var_number(vars: &Vars) -> f64 {
-    let v = vars.get(&VarKey::Int(ANIM_VAR));
-    v.and_then(|v| v.to_real().ok()).unwrap_or(0.0)
+    vars.seven.to_real().unwrap_or(0.0)
 }
 
-/// A key of a sprite variable (SPVAR): a number or a string.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum VarKey {
+/// Keys of SPVAR's and TVAR's variables up to this many characters are
+/// looked up. A longer key is never found.
+pub const MAX_KEY: usize = 1024;
+/// Variables of all the sprites and text screens of one program, at most.
+/// SmileBASIC 4 takes each from a pool of this many small blocks, which
+/// short strings share.
+pub const MAX_ENTRIES: usize = 2_097_152;
+
+/// A key of a sprite or text screen variable (SPVAR, TVAR), as stored: a
+/// number or a string with ASCII a-z in upper case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VarKey<'a> {
     Int(i32),
-    Str(Vec<u16>),
+    Str(&'a [u16]),
 }
 
-/// SPVAR's and TVAR's variables.
-pub type Vars = HashMap<VarKey, Value, BuildHasherDefault<VarHasher>>;
+/// A key as a command looks it up.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Key<'a> {
+    /// Variable 7, which has a place of its own for target "V".
+    Seven,
+    Int(i32),
+    Str(&'a [u16]),
+    /// Over [`MAX_KEY`] characters.
+    Unfound,
+}
+
+/// What a new variable takes of FREEMEM: nothing for a number key or a
+/// key of up to 16 characters, which SmileBASIC 4 keeps in its small
+/// blocks, and a block of its own for a longer key.
+// A key of 20-23 characters takes 192 bytes.
+// UNVERIFIED: other lengths: 32 bytes and the key's, rounded up to 64
+// bytes and at least 128, with a block's 64 bytes besides.
+pub fn entry_bytes(chars: usize) -> usize {
+    let size = 32 + 2 * chars;
+    if size <= 64 {
+        return 0;
+    }
+    size.div_ceil(64).max(2) * 64 + 64
+}
+
+type VarMap<K> = HashMap<K, Value, BuildHasherDefault<VarHasher>>;
+
+/// SPVAR's and TVAR's variables of one sprite or text screen.
+#[derive(Clone, Debug)]
+pub struct Vars {
+    seven: Value,
+    ints: VarMap<i32>,
+    strs: VarMap<Box<[u16]>>,
+}
+
+impl Default for Vars {
+    fn default() -> Vars {
+        Vars {
+            seven: Value::Int(0),
+            ints: VarMap::default(),
+            strs: VarMap::default(),
+        }
+    }
+}
+
+impl Vars {
+    /// A variable, if it is there. Variable 7 always is.
+    #[inline]
+    pub(crate) fn get(&self, key: Key) -> Option<&Value> {
+        match key {
+            Key::Seven => Some(&self.seven),
+            Key::Int(n) => self.ints.get(&n),
+            Key::Str(s) => self.strs.get(s),
+            Key::Unfound => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get_mut(&mut self, key: Key) -> Option<&mut Value> {
+        match key {
+            Key::Seven => Some(&mut self.seven),
+            Key::Int(n) => self.ints.get_mut(&n),
+            Key::Str(s) => self.strs.get_mut(s),
+            Key::Unfound => None,
+        }
+    }
+
+    /// Adds a variable that [`Vars::get`] did not find.
+    pub(crate) fn insert(&mut self, key: Key, value: Value) {
+        match key {
+            Key::Seven => self.seven = value,
+            Key::Int(n) => drop(self.ints.insert(n, value)),
+            Key::Str(s) => drop(self.strs.insert(s.into(), value)),
+            Key::Unfound => {}
+        }
+    }
+
+    pub(crate) fn remove(&mut self, key: Key) {
+        match key {
+            Key::Seven => self.seven = Value::Int(0),
+            Key::Int(n) => drop(self.ints.remove(&n)),
+            Key::Str(s) => drop(self.strs.remove(s)),
+            Key::Unfound => {}
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.seven = Value::Int(0);
+        self.ints.clear();
+        self.strs.clear();
+    }
+
+    /// Variable 7, which target "V" animates.
+    pub fn set_seven(&mut self, value: Value) {
+        self.seven = value;
+    }
+
+    /// The variables that count towards [`MAX_ENTRIES`].
+    pub fn entries(&self) -> usize {
+        self.ints.len() + self.strs.len()
+    }
+
+    /// Every variable, 7 first.
+    pub fn iter(&self) -> impl Iterator<Item = (VarKey<'_>, &Value)> {
+        let seven = std::iter::once((VarKey::Int(ANIM_VAR), &self.seven));
+        let ints = self.ints.iter().map(|(&n, v)| (VarKey::Int(n), v));
+        let strs = self.strs.iter().map(|(s, v)| (VarKey::Str(s), v));
+        seven.chain(ints).chain(strs)
+    }
+
+    /// Adds what the variables take to a count of FREEMEM.
+    pub fn count(&self, tally: &mut memory::Tally) {
+        tally.add(&self.seven);
+        self.ints.values().for_each(|v| tally.add(v));
+        for (key, v) in &self.strs {
+            tally.bytes += entry_bytes(key.len());
+            tally.add(v);
+        }
+    }
+}
 
 /// The hash of [`Vars`]: a multiply and a rotate a word, as FxHash
 /// does, where the standard library's SipHash took about a third of an
@@ -431,6 +556,12 @@ impl Sprites {
     pub fn sprite_mut(&mut self, id: usize) -> &mut Sprite {
         self.mark_stale(id);
         &mut self.list[id]
+    }
+
+    /// A sprite's variables, which the screen does not show.
+    #[inline]
+    pub fn vars_mut(&mut self, id: usize) -> &mut Vars {
+        &mut self.list[id].vars
     }
 
     /// A sprite to change, with SPDEF's definitions to read.

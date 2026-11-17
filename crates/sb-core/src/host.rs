@@ -122,6 +122,10 @@ pub trait Host {
     fn own_arrays(&self) -> Vec<crate::value::ArrayRef> {
         Vec::new()
     }
+
+    /// Adds to a count of FREEMEM what the host holds for the program,
+    /// such as the values of sprite variables.
+    fn count_held(&self, _tally: &mut crate::memory::Tally) {}
 }
 
 /// A host with no commands that records PRINT output and answers INPUT

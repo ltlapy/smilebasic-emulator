@@ -13,7 +13,10 @@ use crate::collision::{Body, Collision, Search};
 use crate::runtime::{
     Command, Runtime, checking, give, illegal, no_form, one, opt_int, put_ints, put_reals,
 };
-use crate::sprites::{DEFS, SPRITES, Sprite, SpriteDef, VarKey, WithDefs};
+use crate::sprites::{
+    DEFS, Key, MAX_ENTRIES, MAX_KEY, SPRITES, Sprite, SpriteDef, Vars, WithDefs, entry_bytes,
+};
+use sb_core::memory;
 
 fn int(v: &Value) -> Result<i32> {
     v.to_int()
@@ -93,11 +96,145 @@ fn flag(v: Option<&Value>) -> Result<bool> {
     Ok(v.map(opt_int).transpose()?.flatten().unwrap_or(1) != 0)
 }
 
-pub(crate) fn var_key(v: &Value) -> Result<VarKey> {
-    checking(v, || match v {
-        Value::Str(s) => Ok(VarKey::Str(s.borrow().clone())),
-        v => Ok(VarKey::Int(int(v)?)),
-    })
+/// Runs `f` with the key of a sprite or text screen variable that `v`
+/// names. A number key is an int, a real cut to one; ASCII a-z in a
+/// string key count as A-Z, and no other letters are folded.
+pub(crate) fn with_var_key<R>(v: &Value, f: impl FnOnce(Key) -> Result<R>) -> Result<R> {
+    let Value::Str(s) = v else {
+        let n = checking(v, || int(v))?;
+        return f(if n == anim::ANIM_VAR {
+            Key::Seven
+        } else {
+            Key::Int(n)
+        });
+    };
+    let s = s.borrow();
+    if s.len() > MAX_KEY {
+        // SmileBASIC 4 adds a variable each time that no lookup finds,
+        // which only takes memory.
+        return f(Key::Unfound);
+    }
+    let lower = |c: u16| (u16::from(b'a')..=u16::from(b'z')).contains(&c);
+    if !s.iter().any(|&c| lower(c)) {
+        return f(Key::Str(&s));
+    }
+    let mut small = [0; 32];
+    let mut big = Vec::new();
+    let folded = match s.len() <= small.len() {
+        true => &mut small[..s.len()],
+        false => {
+            big.resize(s.len(), 0);
+            &mut big[..]
+        }
+    };
+    for (to, &c) in folded.iter_mut().zip(s.iter()) {
+        *to = if lower(c) { c - 0x20 } else { c };
+    }
+    f(Key::Str(folded))
+}
+
+/// A value SPVAR or TVAR stores. An array is kept as itself, not copied.
+pub(crate) fn var_value(v: &Value) -> Result<Value> {
+    match v {
+        Value::Int(_) | Value::Real(_) | Value::Str(_) | Value::Array(_) => Ok(v.clone()),
+        _ => Err(ErrorKind::TypeMismatch.into()),
+    }
+}
+
+/// Whose variables: a sprite's or a text screen's.
+#[derive(Clone, Copy)]
+pub(crate) enum VarsOf {
+    Sprite(usize),
+    Text(usize),
+}
+
+impl Runtime {
+    #[inline]
+    fn vars_of(&mut self, of: VarsOf) -> &mut Vars {
+        match of {
+            VarsOf::Sprite(id) => self.sprites.vars_mut(id),
+            VarsOf::Text(id) => &mut self.text[id].vars,
+        }
+    }
+
+    /// Writing or deleting variable 7 stops target "V"'s animation.
+    fn stop_v(&mut self, of: VarsOf) {
+        let v = Target::V.index();
+        match of {
+            VarsOf::Sprite(id) => self.sprites.sprite_mut(id).anims[v] = None,
+            VarsOf::Text(id) => self.text[id].anims[v] = None,
+        }
+    }
+
+    /// SPVAR or TVAR with a value.
+    pub(crate) fn set_var(&mut self, of: VarsOf, key: Key, value: Value) -> Result<()> {
+        if let Some(v) = self.vars_of(of).get_mut(key) {
+            *v = value;
+        } else if !matches!(key, Key::Unfound) {
+            self.admit_var(key)?;
+            self.vars_of(of).insert(key, value);
+        }
+        if matches!(key, Key::Seven) {
+            self.stop_v(of);
+        }
+        Ok(())
+    }
+
+    /// SPVAR() or TVAR(). A variable not there is made, holding 0.
+    pub(crate) fn read_var(&mut self, of: VarsOf, key: Key) -> Result<Value> {
+        if let Some(v) = self.vars_of(of).get(key) {
+            return Ok(v.clone());
+        }
+        if !matches!(key, Key::Unfound) {
+            self.admit_var(key)?;
+            self.vars_of(of).insert(key, Value::Int(0));
+        }
+        Ok(Value::Int(0))
+    }
+
+    /// SPVAR or TVAR deleting one variable, or all with no key.
+    pub(crate) fn delete_var(&mut self, of: VarsOf, key: Option<Key>) {
+        match key {
+            Some(key) => self.vars_of(of).remove(key),
+            None => self.vars_of(of).clear(),
+        }
+        if matches!(key, None | Some(Key::Seven)) {
+            self.stop_v(of);
+        }
+    }
+
+    /// Room for a new variable: Out of memory past [`MAX_ENTRIES`] in all.
+    fn admit_var(&mut self, key: Key) -> Result<()> {
+        // An upper bound, counted again when it reaches the limit.
+        self.var_entries += 1;
+        if self.var_entries > MAX_ENTRIES {
+            self.var_entries = self.count_var_entries() + 1;
+            if self.var_entries > MAX_ENTRIES {
+                return Err(ErrorKind::OutOfMemory.into());
+            }
+        }
+        match key {
+            Key::Str(s) => memory::request(entry_bytes(s.len())),
+            _ => Ok(()),
+        }
+    }
+
+    #[cold]
+    fn count_var_entries(&self) -> usize {
+        let sprites = self.sprites.list().iter().map(|s| s.vars.entries());
+        let text = self.text.iter().map(|t| t.vars.entries());
+        sprites.chain(text).sum()
+    }
+
+    /// Adds what SPVAR's and TVAR's variables take to a count of FREEMEM.
+    pub(crate) fn count_vars(&self, tally: &mut memory::Tally) {
+        for s in self.sprites.list() {
+            s.vars.count(tally);
+        }
+        for t in &self.text {
+            t.vars.count(tally);
+        }
+    }
 }
 
 fn ints(values: &[i32]) -> Vec<Value> {
@@ -206,7 +343,15 @@ impl Runtime {
                         format!("{per} values per key"),
                     ));
                 }
-                let data = keys.iter().map(real).collect::<Result<Vec<_>>>()?;
+                let key = |v: &Value| match v {
+                    // Named by no argument.
+                    Value::Array(_) => Err(Error::with_detail(
+                        ErrorKind::IllegalFunctionCall,
+                        "an array among the keys",
+                    )),
+                    v => real(v),
+                };
+                let data = keys.iter().map(key).collect::<Result<Vec<_>>>()?;
                 Anim::new(mode, &data, loops(rest.first())?)
             }
         }
@@ -532,35 +677,23 @@ impl Runtime {
             (Command::Spdef, _, _) => give(out, self.spdef(args, want)),
             // Every sprite has its variables, set or not: BASICDEMO keeps
             // its menu positions in sprite 0, which it never sets.
-            (Command::Spvar, Want::Outs(0), 3) => {
-                let key = var_key(&args[1])?;
-                let value = match &args[2] {
-                    // An array is kept as itself, not copied.
-                    Value::Int(_) | Value::Real(_) | Value::Str(_) | Value::Array(_) => {
-                        args[2].clone()
-                    }
-                    _ => return Err(ErrorKind::TypeMismatch.into()),
-                };
-                self.sprites
-                    .sprite_mut(sprite_id(&args[0])?)
-                    .vars
-                    .insert(key, value);
+            (Command::Spvar, Want::Outs(0), 3) => with_var_key(&args[1], |key| {
+                let value = var_value(&args[2])?;
+                let id = sprite_id(&args[0])?;
+                self.set_var(VarsOf::Sprite(id), key, value)
+            }),
+            (Command::Spvar, Want::Value, 2) => with_var_key(&args[1], |key| {
+                let id = sprite_id(&args[0])?;
+                let v = self.read_var(VarsOf::Sprite(id), key)?;
+                one(out, v)
+            }),
+            (Command::Spvar, Want::Outs(0), 2) => with_var_key(&args[1], |key| {
+                let id = sprite_id(&args[0])?;
+                self.delete_var(VarsOf::Sprite(id), Some(key));
                 Ok(())
-            }
-            (Command::Spvar, Want::Value, 2) => {
-                let key = var_key(&args[1])?;
-                let s = &self.sprites.list()[sprite_id(&args[0])?];
-                one(out, s.vars.get(&key).cloned().unwrap_or(Value::Int(0)))
-            }
-            (Command::Spvar, Want::Outs(0), 1 | 2) => {
-                let key = args.get(1).map(var_key).transpose()?;
-                let s = self.sprites.sprite_mut(sprite_id(&args[0])?);
-                match key {
-                    Some(key) => {
-                        s.vars.remove(&key);
-                    }
-                    None => s.vars.clear(),
-                }
+            }),
+            (Command::Spvar, Want::Outs(0), 1) => {
+                self.delete_var(VarsOf::Sprite(sprite_id(&args[0])?), None);
                 Ok(())
             }
             (Command::Spanim, Want::Outs(0), 0) => {

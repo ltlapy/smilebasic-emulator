@@ -2588,6 +2588,7 @@ impl Vm {
         for array in host.own_arrays() {
             tally.skip(&array);
         }
+        host.count_held(&mut tally);
         let frames = (self.locals.iter()).chain(
             self.frames
                 .iter()
