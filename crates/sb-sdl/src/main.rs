@@ -100,6 +100,7 @@ use settings_window::SettingsWindow;
 use shortcuts::ShortcutsWindow;
 use simple_ui::{GameList, MenuSettings, PauseMenu, Welcome, Welcomed};
 use toast::Toasts;
+use window::Which;
 
 const USAGE: &str = "usage:
   smilebasic                    start in direct mode
@@ -137,6 +138,9 @@ const MOST_UNDRAWN: u32 = 3;
 /// Holding the + button, or F5 for it, this long stops a program even
 /// past ON BREAK GOTO (checked on hardware).
 const FORCED_STOP: Duration = Duration::from_secs(1);
+/// How long a window brought to the front for input in the other one has
+/// to get the keys before it is flashed instead.
+const RAISE_WAIT: Duration = Duration::from_millis(300);
 type AnyError = Box<dyn std::error::Error>;
 
 fn main() {
@@ -508,6 +512,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // window. They follow the keys, but a dialog or window stays where it
     // opened until it closes.
     let mut ui_on_editor = false;
+    // The window that input in the other one brought to the front, and
+    // when, to mark it if the system would not raise it.
+    let mut raised: Option<(Which, Instant)> = None;
     let mouse = sdl.mouse();
     let mut cursor_shown = true;
     // A question, which takes all input while it is open: before quitting
@@ -758,6 +765,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     window_id: gfx.id,
                     win_event: WindowEvent::FocusGained,
                 }),
+                "main-focus" => editor_gfx.get().map(|gfx| Event::Window {
+                    timestamp: 0,
+                    window_id: gfx.id,
+                    win_event: WindowEvent::FocusLost,
+                }),
                 "fullscreen" | "windowed" => {
                     let _ = canvas.window_mut().set_fullscreen(what == "fullscreen");
                     None
@@ -786,11 +798,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     bench_usb = what[4..].parse().ok();
                     None
                 }
-                _ if what.starts_with("key:") => {
-                    let (keymod, name) = bench::key_mods(&what[4..]);
+                _ if what.starts_with("key:") || what.starts_with("editor-key:") => {
+                    let (from, key) = what.split_once(':').expect("checked");
+                    let (keymod, name) = bench::key_mods(key);
+                    let window_id = match (from, editor_gfx.get()) {
+                        ("editor-key", Some(gfx)) => gfx.id,
+                        _ => canvas.window().id(),
+                    };
                     Keycode::from_name(name).map(|key| Event::KeyDown {
                         timestamp: 0,
-                        window_id: canvas.window().id(),
+                        window_id,
                         keycode: Some(key),
                         // Any will do, but SDL's event must have one.
                         scancode: Some(Scancode::A),
@@ -1284,6 +1301,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // with the menu bar and the emulator's windows.
             let editor_window = !apart || from_editor;
             let ui_window = from_editor == ui_editor;
+            // Input in the window without the emulator's window that takes
+            // it all brings that one forward instead.
+            let modal_on = window::modal_window(apart, modal_shown!(), ui_editor);
+            let from = if from_editor {
+                Which::Editor
+            } else {
+                Which::Main
+            };
+            if let Some(target) = window::blocked_by(&event, modal_on, from) {
+                match (target, editor_gfx.get()) {
+                    (Which::Editor, Some(gfx)) => gfx.canvas.borrow_mut().window_mut().raise(),
+                    _ => canvas.window_mut().raise(),
+                };
+                raised = Some((target, Instant::now()));
+                continue;
+            }
             if let Event::KeyDown {
                 scancode, repeat, ..
             } = event
@@ -2703,6 +2736,24 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
         }
 
+        // A window the system would not raise, as Wayland may refuse, is
+        // flashed until it has the keys. Not at once: on Wayland a flash
+        // takes the place of the raise's request.
+        if let Some((target, at)) = raised
+            && at.elapsed() >= RAISE_WAIT
+        {
+            raised = None;
+            let flash = sdl3::video::FlashOperation::UntilFocused;
+            match (target, editor_gfx.get()) {
+                (Which::Editor, Some(gfx)) if !editor_focused => {
+                    let _ = gfx.canvas.borrow_mut().window_mut().flash(flash);
+                }
+                (Which::Main, _) if !canvas.window().has_input_focus() => {
+                    let _ = canvas.window_mut().flash(flash);
+                }
+                _ => {}
+            }
+        }
         // Opened or closed since its window was shown or hidden above, the
         // editor shows where it did until the next frame.
         let apart = apart && machine.is_editing();

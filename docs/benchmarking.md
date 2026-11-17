@@ -723,9 +723,11 @@ the project that `run=` names from the data directory, so use a scratch one
 | `unsaved` | Gives PRG0 unsaved edits |
 | `sleep:MS` | Holds the main thread up for that long, as a call into the system can, and counts it as a suspend. The standby thread runs the program's frames meanwhile |
 | `key:NAME` | Presses the key SDL calls NAME, such as `Escape`. `ctrl+`, `shift+` and `alt+` before the name hold those too, as in `key:ctrl+shift+F12` |
+| `editor-key:NAME` | The same in the editor's own window, once it is open |
 | `usb:USAGE` | Has `KEYBOARD` read that key as down for a frame, which `key` does not |
 | `pad:NAME`, `padup:NAME` | Presses or releases the first controller's button SDL calls NAME, as both the event and what is held. `b` is the right face button, as SDL goes by Xbox labels |
 | `editor-focus` | Gives the editor's own window the keys |
+| `main-focus` | Takes the keys from the editor's own window, back to the main one |
 | `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast` | Shows that part of the UI then, as the parts of the same names do once the rest is set up |
 
 `lost`, `fail`, `refuse:N`, `panic`, `unsaved` and `sleep:MS` try the

@@ -738,7 +738,11 @@ SmileBASIC 4 the editor replaces the screen and no program runs while it shows.
 - The emulator's other windows, such as Settings, Projects, the file dialogs
   and questions, keep the layout they have on the main window. On the editor's
   window they show at the desktop's scale when they fit, and shrink to fit
-  when they don't.
+  when they don't. Each shows in the window that had the keys when it opened,
+  and takes all input until it closes. A key, a click or the wheel in the
+  other window brings that window to the front and goes no further. Where
+  the system refuses to raise a window, as Wayland may, the window is
+  flashed instead.
 - A subprogram's screen shows over the screens rather than the editor's window,
   but what it types with `PUSHKEY` still goes into the editor while that window
   has the keys.
