@@ -47,26 +47,33 @@ const LONG_PAUSE: f64 = 600.0;
 /// `#`: 0.1 seconds without sound.
 const BREAK: f64 = 100.0;
 /// What TALKCHK still counts after the last sound: 20 vowels keep it
-/// set for about 121 frames.
+/// set for 121 frames.
 // UNVERIFIED: whether this is silence or the voice's own delay.
-const TAIL: f64 = 170.0;
+const TAIL: f64 = 205.0;
 /// Glides between targets.
 const TRANSITION: f64 = 25.0;
 const QUICK: f64 = 8.0;
 
-/// The voice's pitch at `<P128>`. SmileBASIC 4 speaks at one pitch: no
-/// fall through a phrase or before 、 and 。.
+/// The voice's pitch without a `<P…>`: one pitch, with no fall through a
+/// phrase or before 、 and 。.
 const BASE_PITCH: f32 = 100.0;
-/// How far `<P…>` moves the pitch: it goes as (128 / P) to this power.
-/// `<P256>` is about 78 Hz.
-// UNVERIFIED: fitted to `<P256>` alone; the voice also drifts lower
-// through a phrase there.
-const PITCH_POWER: f32 = 0.35;
+/// With a `<P…>`, 128 included, the voice speaks at about this over P Hz
+/// (`<P64>` 314 Hz, `<P256>` 79 Hz) and its pitch moves through the
+/// phrase: see [`INTONATION`].
+const PITCH_TIMES_P: f32 = 20100.0;
+// What `<P…>` did before: (128 / P) to this power times the base pitch.
+// const PITCH_POWER: f32 = 0.35;
+/// With a `<P…>`, the first mora is this much above the pitch, the last
+/// this much below, and those between at it: あいうえお at `<P128>` goes
+/// 180, 157, 160, 160 and 110 Hz.
+// UNVERIFIED: seen on あいうえお alone, at five values of P; how longer
+// phrases, 、 and 。 move it.
+const INTONATION: (f32, f32) = (1.14, 0.70);
 /// The rate the voice's pitch periods are counted in: a period is a
 /// whole number of these samples, so A4 sings at 16000 / 36 = 444.4 Hz.
 const PERIOD_RATE: f32 = 16000.0;
 /// The synthesizer's gain at `<V128>`.
-const BASE_GAIN: f32 = 0.53;
+const BASE_GAIN: f32 = 0.42;
 /// The synthesizer's gain for a sung note.
 const SINGING_GAIN: f32 = 1.88;
 // The intonation this voice had before: SmileBASIC 4 speaks flat.
@@ -79,13 +86,23 @@ const SINGING_GAIN: f32 = 1.88;
 const FALL: f32 = 0.8;
 
 /// `hz` moved to the nearest pitch whose period is a whole number of
-/// [`PERIOD_RATE`] samples.
-// UNVERIFIED: rounded to the nearest period, or cut down to it.
+/// [`PERIOD_RATE`] samples, for `TALK`.
+// UNVERIFIED: rounded to the nearest period, or cut down to it as sung
+// notes are; `<P64>`'s 314 Hz fits the nearest.
 pub(crate) fn whole_period(hz: f32) -> f32 {
     if hz <= 0.0 {
         return hz;
     }
     PERIOD_RATE / (PERIOD_RATE / hz).round().max(1.0)
+}
+
+/// `hz` with its period cut down to a whole number of [`PERIOD_RATE`]
+/// samples, as sung notes have it: C5 sings at 533.3 Hz, F4 at 355.6.
+pub(crate) fn sung_period(hz: f32) -> f32 {
+    if hz <= 0.0 {
+        return hz;
+    }
+    PERIOD_RATE / (PERIOD_RATE / hz).floor().max(1.0)
 }
 
 /// One beat of speech.
@@ -573,6 +590,8 @@ pub struct Talk {
     synth: FormantSynth,
     /// Samples left to play.
     left: u64,
+    /// Samples left while TALKCHK reads 1.
+    busy: u64,
     buffer: Vec<f32>,
 }
 
@@ -581,6 +600,7 @@ impl Default for Talk {
         Talk {
             synth: FormantSynth::new(RATE),
             left: 0,
+            busy: 0,
             buffer: Vec::new(),
         }
     }
@@ -608,6 +628,10 @@ impl Talk {
             None => kana_letters(&text),
         };
         let morae = morae(&letters);
+        let sounds = |m: &Mora| matches!(m, Mora::Syllable { .. } | Mora::Nasal);
+        let spoken = morae.iter().filter(|m| sounds(m)).count();
+        let intoned = morae.iter().any(|m| matches!(m, Mora::Control('P', _)));
+        let mut beat = 0;
         let mut plan = Planner {
             table: table(),
             events: Vec::new(),
@@ -626,7 +650,15 @@ impl Talk {
         for (i, m) in morae.iter().enumerate() {
             // let fall = beat as f32 / spoken as f32;
             // let f0 = plan.pitch * (PITCH_START + (PITCH_END - PITCH_START) * fall);
-            let f0 = plan.pitch;
+            let f0 = match (intoned && spoken > 1, beat) {
+                (false, _) => plan.pitch,
+                (true, 0) => whole_period(plan.pitch * INTONATION.0),
+                (true, b) if b + 1 == spoken => whole_period(plan.pitch * INTONATION.1),
+                (true, _) => plan.pitch,
+            };
+            if sounds(m) {
+                beat += 1;
+            }
             match *m {
                 Mora::Fall => {}
                 Mora::Control(kind, n) => match kind {
@@ -635,7 +667,8 @@ impl Talk {
                     // 0 high to 1024 low, 128 standard.
                     'P' => {
                         let p = n.clamp(16, 1024) as f32;
-                        plan.pitch = whole_period(BASE_PITCH * (128.0 / p).powf(PITCH_POWER));
+                        // plan.pitch = whole_period(BASE_PITCH * (128.0 / p).powf(PITCH_POWER));
+                        plan.pitch = whole_period(PITCH_TIMES_P / p);
                     }
                     'V' => plan.gain = BASE_GAIN * n.clamp(0, 128) as f32 / 128.0,
                     _ => {}
@@ -707,19 +740,31 @@ impl Talk {
         });
         self.synth
             .queue_schedule(Schedule::from_sample_events(RATE, events));
-        self.left = total;
+        // Nothing to say, or one mora, keeps TALKCHK set only until the
+        // next frame, though the mora sounds on.
+        // UNVERIFIED: whether one mora alone sounds at all.
+        self.left = if spoken == 0 { 0 } else { total };
+        self.busy = if spoken <= 1 { 1 } else { total };
     }
 
+    /// TALKCHK.
     pub fn speaking(&self) -> bool {
+        self.busy > 0
+    }
+
+    /// Whether there is speech to play.
+    pub fn sounding(&self) -> bool {
         self.left > 0
     }
 
     pub fn stop(&mut self) {
         self.left = 0;
+        self.busy = 0;
     }
 
     /// Adds the speech into the buffers.
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
+        self.busy = self.busy.saturating_sub(left.len() as u64);
         if self.left == 0 {
             return;
         }
@@ -780,7 +825,7 @@ impl Singer {
         if morae.is_empty() {
             return false;
         }
-        let hz = whole_period(hz);
+        let hz = sung_period(hz);
         let share = ms / morae.len() as f64;
         let mut plan = Planner {
             table: table(),
@@ -844,7 +889,7 @@ impl Singer {
 
     /// Moves the note by `cents`, for a portamento.
     pub(crate) fn bend(&mut self, cents: f32) {
-        let f0 = whole_period(self.hz * (cents / 1200.0).exp2());
+        let f0 = sung_period(self.hz * (cents / 1200.0).exp2());
         let update = ParamUpdate {
             f0: Some(f0),
             ..ParamUpdate::default()
@@ -1061,6 +1106,31 @@ mod tests {
         assert!((whole_period(440.0) - 16000.0 / 36.0).abs() < 1e-3);
         assert_eq!(whole_period(BASE_PITCH), 100.0);
         assert_eq!(whole_period(0.0), 0.0);
+        // Sung notes cut the period down.
+        assert!((sung_period(523.25) - 16000.0 / 30.0).abs() < 1e-3);
+        assert!((sung_period(349.23) - 16000.0 / 45.0).abs() < 1e-3);
+    }
+
+    /// Frames while TALKCHK reads 1, a frame of 800 samples at a time.
+    fn busy_frames(text: &str) -> usize {
+        let mut talk = Talk::default();
+        talk.say(text);
+        let (mut l, mut r) = (vec![0.0; 800], vec![0.0; 800]);
+        let mut n = 0;
+        while talk.speaking() {
+            talk.render(&mut l, &mut r);
+            n += 1;
+        }
+        n
+    }
+
+    /// Nothing to say, or one mora, keeps TALKCHK set for one frame; 20
+    /// vowels for 121.
+    #[test]
+    fn talkchk_counts_what_is_said() {
+        assert_eq!(busy_frames("<V32>$a"), 1);
+        assert_eq!(busy_frames("<V32>あ"), 1);
+        assert_eq!(busy_frames("$<V32>aiueoaiueoaiueoaiueo"), 121);
     }
 
     #[test]

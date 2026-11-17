@@ -810,7 +810,7 @@ impl Sound {
         // recording, still sending to the effector.
         let pcm_apart = record && self.pcm.playing;
         // Whether PCMSTREAM or TALK may write into `whole` this frame.
-        let whole_used = self.pcm.playing && !pcm_apart || self.talk.speaking();
+        let whole_used = self.pcm.playing && !pcm_apart || self.talk.sounding();
         if pcm_apart {
             let [l, r] = &mut self.pcm_part;
             l.clear();
