@@ -138,6 +138,12 @@ Settings it has:
   In `settings.txt` this is `simple_ui_size=normal`, `medium` or `large`.
 - Swap A/B and X/Y: A and B trade places, as do X and Y, for programs too.
   The desktop has it in File > Settings > Input.
+- Frame skip: On (the default) lets frames pass while a program too slow for
+  the device is part-way through its main loop, so that the game and its
+  music keep time. Off slows the whole program down instead, music too, for
+  games that go wrong when frames pass. The desktop has it in File > Settings >
+  General as "Slow down instead of skipping frames", which is Frame skip Off;
+  [differences.md](differences.md#speed) compares both with SmileBASIC 4.
 
 A change shows at once and is kept.
 

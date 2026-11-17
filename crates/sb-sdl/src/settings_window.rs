@@ -177,6 +177,15 @@ const PAGES: &[Page] = &[
                     |s, i| s.speed = Speed::ALL[i],
                 ),
             },
+            check(
+                "Slow down instead of skipping frames",
+                "When this computer is too slow for a program's main loop, the whole \
+                 program slows down, music too, instead of letting frames pass \
+                 mid-loop. Games that count loops as frames then stay right. Off by \
+                 default: frames keep time, as on SmileBASIC 4.",
+                |s| s.keep_frames,
+                |s| s.keep_frames ^= true,
+            ),
             Row {
                 label: "Language reported to programs",
                 about: "The value SYSPARAM(\"LANG\") returns: \"en-US\" as in the \

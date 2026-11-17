@@ -268,6 +268,27 @@ music keep time. A frame it does draw shows the scene the program finished:
   emulator does not do this. What SmileBASIC 4 shows a program whose loop
   takes more than a frame is not known.
 
+File > Settings > General > "Slow down instead of skipping frames" (Frame skip
+Off in the Simple UI's pause menu; `keep_frames=true` in `settings.txt`), off
+by default, keeps the frame of a trip round the main loop that runs out of
+time: the next frame, with its `MAINCNT`, animation step, sound and input,
+starts only when the trip reaches its `VSYNC` or `WAIT`. The program then runs
+slower than 60 frames a second, and its sound has gaps.
+
+- On SmileBASIC 4 a program gets a fixed amount of work a frame, so one made
+  there fits its frames and never sees a frame pass part-way through its
+  loop. With the setting on, the emulator keeps it so on a computer too slow
+  for the program; the program runs as on the console, only slower.
+- With it off, the frames keep time with the clock, as SmileBASIC 4's do, and
+  the music keeps its tempo. A program too slow for the computer then sees
+  frames pass part-way through its loop, which on SmileBASIC 4 happens only
+  to a program too slow for the console: animations and `MAINCNT` get ahead
+  of the loop, and a game that starts a relative `SPANIM` again every few
+  loops moves its sprites off their places.
+- It applies at unlimited speed, to the main program without a subprogram,
+  editor or step, and to a trip shorter than four frames: a longer one, such
+  as loading, lets frames pass as usual.
+
 When the system holds the window up, as GNOME does while you drag or resize it,
 another thread runs the program and its sound, and the window shows nothing new
 until it comes back ([frame-thread.md](frame-thread.md)). The program sees the

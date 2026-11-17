@@ -1484,7 +1484,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Some(
                         simple_ui::Choice::Filter
                         | simple_ui::Choice::UiSize
-                        | simple_ui::Choice::Swap,
+                        | simple_ui::Choice::Swap
+                        | simple_ui::Choice::FrameSkip,
                     ) => settings.apply(&mut machine.rt.settings),
                     Some(simple_ui::Choice::Restart) => {
                         pause_menu = None;
@@ -2902,6 +2903,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         machine.set_changes(&debug_panel.change_watches());
         lap!(Events);
+        // Each frame reads the setting, whichever screen or reload changed it;
+        // a subprogram, a tool among them, runs on the same machine.
+        machine.keep_frames = machine.rt.settings.keep_frames;
         let run_began = Instant::now();
         if !paused {
             machine.time_limit = Some(run_time.limit());

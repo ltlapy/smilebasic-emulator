@@ -171,12 +171,16 @@ pub enum Choice {
     Filter,
     UiSize,
     Swap,
+    FrameSkip,
 }
 
 impl Choice {
     /// Whether it is one of the settings, which Left and Right change.
     fn is_setting(self) -> bool {
-        matches!(self, Choice::Filter | Choice::UiSize | Choice::Swap)
+        matches!(
+            self,
+            Choice::Filter | Choice::UiSize | Choice::Swap | Choice::FrameSkip
+        )
     }
 }
 
@@ -186,6 +190,9 @@ pub struct MenuSettings {
     pub filter: SimpleUiFilter,
     pub ui_size: SimpleUiSize,
     pub swap: bool,
+    /// Frames pass while a slow program's main loop is under way, as by
+    /// default; off is the setting `keep_frames`.
+    pub frame_skip: bool,
 }
 
 impl MenuSettings {
@@ -194,6 +201,7 @@ impl MenuSettings {
             filter: s.simple_ui_filter,
             ui_size: s.simple_ui_size,
             swap: s.swap_ab_xy,
+            frame_skip: !s.keep_frames,
         }
     }
 
@@ -202,6 +210,7 @@ impl MenuSettings {
         s.simple_ui_filter = self.filter;
         s.simple_ui_size = self.ui_size;
         s.swap_ab_xy = self.swap;
+        s.keep_frames = !self.frame_skip;
     }
 }
 
@@ -312,6 +321,7 @@ impl PauseMenu {
             Choice::Filter => s.filter = s.filter.step(by),
             Choice::UiSize => s.ui_size = s.ui_size.step(by),
             Choice::Swap => s.swap ^= true,
+            Choice::FrameSkip => s.frame_skip ^= true,
             _ => return None,
         }
         Some(choice)
@@ -377,7 +387,12 @@ const CLOSE_HINTS: [Hint; 3] = [
     (&[Cap::Name("B")], "Close"),
     (&[Cap::Left, Cap::Right], "Change"),
 ];
-const SETTINGS: [Choice; 3] = [Choice::Filter, Choice::UiSize, Choice::Swap];
+const SETTINGS: [Choice; 4] = [
+    Choice::Filter,
+    Choice::UiSize,
+    Choice::Swap,
+    Choice::FrameSkip,
+];
 
 /// A filter's name in the menu.
 fn filter_name(filter: SimpleUiFilter) -> &'static str {
@@ -428,6 +443,7 @@ impl PauseMenu {
             Choice::Filter => "Screen filter:",
             Choice::UiSize => "UI size:",
             Choice::Swap => "Swap A/B and X/Y:",
+            Choice::FrameSkip => "Frame skip:",
         }
     }
 
@@ -438,6 +454,7 @@ impl PauseMenu {
             Choice::Filter => Some(filter_name(s.filter)),
             Choice::UiSize => Some(ui_size_name(s.ui_size)),
             Choice::Swap => Some(on_off(s.swap)),
+            Choice::FrameSkip => Some(on_off(s.frame_skip)),
             _ => None,
         }
     }
@@ -1804,8 +1821,8 @@ mod tests {
         for _ in 0..5 {
             menu.pad(Button::DPadDown);
         }
-        assert_eq!(menu.focused(), Choice::Swap);
-        for _ in 0..3 {
+        assert_eq!(menu.focused(), Choice::FrameSkip);
+        for _ in 0..4 {
             menu.key(Keycode::Up);
         }
         assert_eq!(menu.focused(), Choice::Quit, "back over the divider");
@@ -1866,12 +1883,18 @@ mod tests {
         }
         assert_eq!(menu.pad(Button::DPadRight), Some(Choice::Swap));
         assert_eq!(menu.value(Choice::Swap), Some("On"));
+        // Frame skip is on until turned off, which keeps the frames.
+        menu.key(Keycode::Down);
+        assert_eq!(menu.value(Choice::FrameSkip), Some("On"));
+        assert_eq!(menu.pad(Button::DPadLeft), Some(Choice::FrameSkip));
+        assert_eq!(menu.value(Choice::FrameSkip), Some("Off"));
         // What it changed goes into the settings, and nothing else.
         let mut settings = Settings::default();
         menu.settings().apply(&mut settings);
         let changed = Settings {
             simple_ui_size: LARGE,
             swap_ab_xy: true,
+            keep_frames: true,
             ..Settings::default()
         };
         assert_eq!(settings, changed);

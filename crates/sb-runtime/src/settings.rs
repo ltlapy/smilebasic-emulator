@@ -244,6 +244,10 @@ pub struct Settings {
     /// How fast programs run: as fast as they can, or about as fast as on
     /// a Switch 2 or a Switch 1.
     pub speed: Speed,
+    /// A program whose trip round its main loop takes longer than the
+    /// frame leaves it keeps its frame, so that it runs slower instead of
+    /// missing frames: see `Machine::keep_frames`.
+    pub keep_frames: bool,
     /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
     /// set them.
     pub function_keys: [String; 5],
@@ -320,6 +324,7 @@ impl Default for Settings {
             debug_open_editor: true,
             debug_text_size: 2,
             speed: Speed::Unlimited,
+            keep_frames: false,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
             simple_ui: false,
@@ -384,6 +389,7 @@ impl Settings {
             debug_open_editor: true,
             debug_text_size: 2,
             speed: Speed::Unlimited,
+            keep_frames: false,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
             simple_ui: false,
@@ -549,6 +555,7 @@ impl Settings {
                 "swap_ab_xy" => &mut s.swap_ab_xy,
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
                 "keep_mouse_cursor" => &mut s.keep_mouse_cursor,
+                "keep_frames" => &mut s.keep_frames,
                 "helpinfo_cursor" => &mut s.helpinfo_cursor,
                 "complete_direct" => &mut s.complete_direct,
                 "complete_editor" => &mut s.complete_editor,
@@ -756,6 +763,7 @@ impl Settings {
              debug_open_editor={}\n\
              debug_text_size={}\n\
              speed={}\n\
+             keep_frames={}\n\
              simple_ui={}\n\
              simple_ui_filter={}\n\
              simple_ui_size={}\n\
@@ -807,6 +815,7 @@ impl Settings {
             self.debug_open_editor,
             self.debug_text_size,
             self.speed.name(),
+            self.keep_frames,
             self.simple_ui,
             choice_name(&SIMPLE_UI_FILTER, &self.simple_ui_filter),
             choice_name(&SIMPLE_UI_SIZE, &self.simple_ui_size),
@@ -865,6 +874,7 @@ mod tests {
             write_system_projects: true,
             complete_all_slots: true,
             speed: Speed::Switch1,
+            keep_frames: true,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
             simple_ui: true,
