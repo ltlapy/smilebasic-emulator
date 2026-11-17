@@ -233,8 +233,12 @@ apart from the macro hang below.
 SmileBASIC 4 runs a fixed amount of code each frame (see
 [sb4-pitfalls.md](sb4-pitfalls.md)). The emulator runs code that does not wait
 for the next frame for as long as the frame leaves after drawing, which is far
-more on any recent computer. Programs time themselves with `VSYNC`, `WAIT` and
-`MAINCNT`, so none needs the slower speed. Headless runs (`smilebasic-check`,
+more on any recent computer: the 1/60 s frame less what the last frames'
+events, drawing and presenting took and 2 ms to spare, from 10 to 14 ms. With
+vsync on a display that does not refresh at 60 Hz it is 10 ms, as a present
+can then wait for most of one of the display's frames. Programs time
+themselves with `VSYNC`, `WAIT` and `MAINCNT`, so none needs the slower
+speed. Headless runs (`smilebasic-check`,
 the tests) instead run a fixed million instructions a frame, so that they come
 out the same each time.
 

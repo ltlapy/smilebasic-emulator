@@ -626,8 +626,9 @@ On a busy machine, wall-clock times swing with other processes' load. With
 up, so this leaves the frame's own cost.
 
 `--window` runs frames as the window does: to the clock, with its time limits,
-catching up without drawing. It cannot go with `--fixed`, as the work then
-follows the clock. `--slower N` divides that clock and its limits by N, to see
+catching up without drawing. It gives each frame the window's least time, 10
+ms, where the window gives what its drawing leaves, up to 14 ms. It cannot go
+with `--fixed`, as the work then follows the clock. `--slower N` divides that clock and its limits by N, to see
 how a machine N times slower would go. It has no window, so no upload, scaling
 or present is included.
 

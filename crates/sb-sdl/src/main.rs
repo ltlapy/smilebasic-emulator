@@ -126,10 +126,8 @@ const SETTINGS_FILE: &str = "settings.txt";
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 /// Frames run without drawing them, at most, when drawing falls behind.
 const MOST_SKIPPED: u32 = 3;
-/// How long a frame runs a program that does not wait for the next one,
-/// leaving the rest of the frame for drawing.
-const RUN_TIME: Duration = Duration::from_millis(10);
-/// The same for frames run to catch up.
+/// How long a frame run to catch up runs a program that does not wait for
+/// the next one; [`pacing::RunTime`] sizes the others' time.
 const CATCH_UP_RUN_TIME: Duration = Duration::from_millis(1);
 /// Frames in a row whose drawing is left out because the program is
 /// part-way through its main loop and drawing would make them late, so
@@ -529,6 +527,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut blink = 0u32;
     let mut undrawn = 0u32;
     let mut draw_time = Duration::ZERO;
+    // The time the frames give the program, sized to what the drawing
+    // leaves.
+    let mut run_time = pacing::RunTime::default();
     let mut toasts = Toasts::default();
     let mut frame_guard = FrameGuard::default();
     let mut key_hint = KeyHint::default();
@@ -633,6 +634,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 guard: &mut frame_guard,
                 toasts: &mut toasts,
                 clock: &mut clock,
+                run_time: run_time.limit(),
             }
         };
     }
@@ -645,6 +647,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         };
     }
     'running: loop {
+        let trip_began = Instant::now();
         // A renderer that failed ends the frame here, to be replaced above it.
         macro_rules! drawing {
             ($result:expr) => {
@@ -2899,8 +2902,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         machine.set_changes(&debug_panel.change_watches());
         lap!(Events);
+        let run_began = Instant::now();
         if !paused {
-            machine.time_limit = Some(RUN_TIME);
+            machine.time_limit = Some(run_time.limit());
             frame_guard.run(machine, &mut toasts, Machine::frame);
             if let Some(b) = &mut bench {
                 b.ran_frame();
@@ -2917,12 +2921,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // A program at its VSYNC runs a whole trip round its main loop if
         // two trips and a drawing fit in two frames, so that it keeps
         // time, and otherwise stays there: a part of a trip would only
-        // make the frame drawn next show a half-made scene.
+        // make the frame drawn next show a half-made scene. That trip
+        // has the time a frame gives, or a trip that a frame holds would
+        // be cut short here.
         let mut skipped = 0;
         while !paused && skipped < MOST_SKIPPED && clock.behind(Instant::now()) {
             let whole = 2 * machine.loop_time() + draw_time <= 2 * FRAME;
             machine.time_limit = Some(if whole && machine.at_sync() {
-                RUN_TIME
+                run_time.limit()
             } else {
                 CATCH_UP_RUN_TIME
             });
@@ -2936,6 +2942,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             clock.caught_up();
             skipped += 1;
         }
+        let ran = run_began.elapsed();
         lap!(Run);
         // A step that waits for input needs the keys on the screen, and
         // the editor takes them back at the stop, unless the user has
@@ -3562,7 +3569,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             b.measure(&canvas);
         }
         let vsync = main_presents.vsync();
+        let present_began = Instant::now();
         let presented = main_presents.present(&mut canvas, bench.as_ref());
+        let present_took = present_began.elapsed();
         lap!(Present);
         if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
             let mut editor_canvas = gfx.canvas.borrow_mut();
@@ -3605,6 +3614,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // the present waited for it and was not so slow that vsync was
         // dropped; otherwise they go by the clock.
         let locked = presented && vsync && main_presents.vsync() && at_60_hz;
+        // A present that waits for vsync waits for as long as the drawing
+        // left, which is not part of the drawing's time; on a display at
+        // another rate it can hold the loop up for one of the display's
+        // frames besides.
+        let waited = presented && vsync;
+        let rest = trip_began.elapsed().saturating_sub(ran);
+        run_time.drew(match (waited, at_60_hz) {
+            (false, _) => Some(rest),
+            (true, true) => Some(rest.saturating_sub(present_took)),
+            (true, false) => None,
+        });
         pacing::delay(clock.end(Instant::now(), locked));
         lap!(Wait);
         watch.frame_shown();

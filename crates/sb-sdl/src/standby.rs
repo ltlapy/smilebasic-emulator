@@ -11,10 +11,10 @@ use std::time::{Duration, Instant};
 
 use sb_runtime::machine::Machine;
 
+use crate::FrameGuard;
 use crate::audio::Sink;
 use crate::pacing::Clock;
 use crate::toast::Toasts;
-use crate::{FrameGuard, RUN_TIME};
 
 /// What the loop lends for a call.
 pub struct Lend<'a> {
@@ -24,6 +24,9 @@ pub struct Lend<'a> {
     pub clock: &'a mut Clock,
     /// Whether frames may run at all: not while the program is paused.
     pub frames: bool,
+    /// How long each frame runs a program that does not wait for the next
+    /// one, as the loop's frames do.
+    pub run_time: Duration,
 }
 
 /// The frames the standby thread ran during a call, and the time they took.
@@ -46,6 +49,7 @@ struct Job {
     guard: *mut FrameGuard,
     toasts: *mut Toasts,
     clock: Clock,
+    run_time: Duration,
     kept: Kept,
 }
 
@@ -114,6 +118,7 @@ impl Standby {
                 guard: lend.guard,
                 toasts: lend.toasts,
                 clock: *lend.clock,
+                run_time: lend.run_time,
                 kept: Kept::default(),
             });
             slot.back = false;
@@ -195,6 +200,7 @@ fn serve(shared: &Shared, sink: &Sink) {
         }
         let job = slot.job.as_ref().expect("checked");
         let (machine, guard, toasts, mut clock) = (job.machine, job.guard, job.toasts, job.clock);
+        let run_time = job.run_time;
         slot.busy = true;
         drop(slot);
         let began = Instant::now();
@@ -204,7 +210,7 @@ fn serve(shared: &Shared, sink: &Sink) {
         // FrameGuard catches a panic in the frame; this one anything else, so
         // that `busy` is always cleared.
         let _ = catch_unwind(AssertUnwindSafe(|| {
-            machine.time_limit = Some(RUN_TIME);
+            machine.time_limit = Some(run_time);
             guard.run(machine, toasts, |m| {
                 m.frame();
                 sink.play(&m.take_samples());
@@ -254,6 +260,7 @@ mod tests {
             toasts: &mut toasts,
             clock: &mut clock,
             frames: true,
+            run_time: crate::pacing::LEAST_RUN_TIME,
         };
         let ((), kept) = standby.hold(lend, || std::thread::sleep(held));
         (kept, clock)
@@ -332,6 +339,7 @@ mod tests {
             toasts: &mut toasts,
             clock: &mut clock,
             frames: false,
+            run_time: crate::pacing::LEAST_RUN_TIME,
         };
         let ((), kept) = standby.hold(lend, || std::thread::sleep(Duration::from_millis(100)));
         assert_eq!(kept.frames, 0);
@@ -350,6 +358,7 @@ mod tests {
             toasts: &mut toasts,
             clock: &mut clock,
             frames: true,
+            run_time: crate::pacing::LEAST_RUN_TIME,
         };
         let panicked = catch_unwind(AssertUnwindSafe(|| {
             standby.hold(lend, || {

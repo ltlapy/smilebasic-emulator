@@ -38,6 +38,62 @@ const LOCKED_RATES: std::ops::RangeInclusive<f32> = 59.7..=60.3;
 /// sound has run out by then anyway.
 const MOST_BEHIND: Duration = Duration::from_nanos(8 * 1_000_000_000 / 60);
 
+/// The least time a frame gives a program that does not wait for the next
+/// one: what every frame gave before the time was sized to the frame.
+pub const LEAST_RUN_TIME: Duration = Duration::from_millis(10);
+/// The most: past this, a slow trip round the loop would leave too little
+/// for a drawing that takes longer than the last ones did.
+const MOST_RUN_TIME: Duration = Duration::from_millis(14);
+/// Left free in each frame besides what the rest of the trip took: for a
+/// present's own work, which a present that waits for vsync cannot be told
+/// from its wait, and for a drawing a little slower than the last ones.
+const RUN_MARGIN: Duration = Duration::from_millis(2);
+/// How far each trip moves [`RunTime`]'s estimate towards what it took, as
+/// a fraction 1/N.
+const RUN_SMOOTHING: u32 = 8;
+
+/// How long a frame runs a program that does not wait for the next one:
+/// the frame less the rest of a trip round the loop (the system's events,
+/// drawing, presenting) and [`RUN_MARGIN`], from
+/// [`LEAST_RUN_TIME`] to [`MOST_RUN_TIME`]. The frame is SmileBASIC's,
+/// 1/60 s, whatever the display.
+///
+/// The rest is a moving average: each trip moves it an eighth of the way
+/// to what that trip took, at most a frame. One slow drawing then takes no
+/// more than 2 ms from the next frame's time, and a scene that starts to
+/// draw more has the time it needs within a few frames.
+#[derive(Clone, Copy, Debug)]
+pub struct RunTime {
+    rest: Duration,
+}
+
+impl Default for RunTime {
+    /// Starts with no time to spare, as if the rest took a whole frame.
+    fn default() -> Self {
+        RunTime { rest: FRAME }
+    }
+}
+
+impl RunTime {
+    /// Notes a trip round the loop that drew a frame: what it took besides
+    /// the program's frames and the waits, or `None` when its present
+    /// waited for the vsync of a display that does not refresh at 60 Hz,
+    /// which then holds up the loop for up to one of its own frames
+    /// besides: the program gets the least time.
+    pub fn drew(&mut self, rest: Option<Duration>) {
+        let rest = rest.unwrap_or(FRAME).min(FRAME);
+        let (now, to) = (self.rest.as_nanos() as i64, rest.as_nanos() as i64);
+        let moved = now + (to - now) / i64::from(RUN_SMOOTHING);
+        self.rest = Duration::from_nanos(moved as u64);
+    }
+
+    /// The time the program gets in the next frame.
+    pub fn limit(&self) -> Duration {
+        let left = FRAME.saturating_sub(self.rest + RUN_MARGIN);
+        left.clamp(LEAST_RUN_TIME, MOST_RUN_TIME)
+    }
+}
+
 /// The emulated frames' clock.
 #[derive(Clone, Copy)]
 pub struct Clock {
@@ -291,6 +347,54 @@ mod tests {
         assert!(held_back(slow, false));
         assert!(!held_back(slow, true));
         assert!(!held_back(SLOW_PRESENT, false));
+    }
+
+    fn ms(ms: f64) -> Duration {
+        Duration::from_secs_f64(ms / 1000.0)
+    }
+
+    #[test]
+    fn the_program_gets_what_the_frame_has_left() {
+        let mut time = RunTime::default();
+        assert_eq!(time.limit(), LEAST_RUN_TIME, "nothing measured yet");
+        // A light drawing leaves the most; 16.7 - 3 - 2 ms in between.
+        for (rest, limit) in [(0.5, 14.0), (3.0, 16.667 - 3.0 - 2.0), (6.0, 10.0)] {
+            for _ in 0..100 {
+                time.drew(Some(ms(rest)));
+            }
+            let got = time.limit().as_secs_f64() * 1000.0;
+            assert!((got - limit).abs() < 0.01, "{rest}: {got}");
+        }
+    }
+
+    #[test]
+    fn one_slow_drawing_takes_little_from_the_next_frame() {
+        let mut time = RunTime::default();
+        for _ in 0..100 {
+            time.drew(Some(ms(0.5)));
+        }
+        assert_eq!(time.limit(), MOST_RUN_TIME);
+        // However slow, it counts as a frame at most.
+        time.drew(Some(Duration::from_millis(300)));
+        let limit = time.limit();
+        assert!(limit >= ms(12.0) && limit < MOST_RUN_TIME, "{limit:?}");
+        let back = (0..20).find(|_| {
+            time.drew(Some(ms(0.5)));
+            time.limit() >= ms(13.5)
+        });
+        assert!(back.is_some_and(|n| n < 10), "{back:?}");
+    }
+
+    #[test]
+    fn a_display_not_at_60_hz_with_vsync_gets_the_least() {
+        let mut time = RunTime::default();
+        for _ in 0..100 {
+            time.drew(Some(ms(1.0)));
+        }
+        for _ in 0..30 {
+            time.drew(None);
+        }
+        assert_eq!(time.limit(), LEAST_RUN_TIME);
     }
 
     #[test]
