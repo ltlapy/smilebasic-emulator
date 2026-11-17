@@ -2448,9 +2448,14 @@ fn direct_mode_refuses_unknown_names() {
     assert_eq!(e.kind, ErrorKind::UndefinedConstant);
     let e = compile("NOSUCH #ZZ").unwrap_err();
     assert_eq!(e.kind, ErrorKind::UndefinedConstant);
-    // A DEF on the line is found, and so is a function used as a
-    // command, whose call finds the OUT count wrong as it runs.
-    compile("F 1:DEF F X:?X:END").unwrap();
+    // A DEF is refused in DIRECT mode, the whole line with it (checked on
+    // hardware). A function used as a command is found, and its call
+    // finds the OUT count wrong as it runs.
+    for line in ["DEF F X:?X:END", "COMMON DEF F:END", "?1:DEF F:END"] {
+        let e = compile(line).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::CantUseFromDirectMode, "{line}");
+    }
+    assert!(compile("F 1:DEF F X:?X:END").is_err());
     compile("ABS 1").unwrap();
     // A program compiles it, and fails when it gets there.
     assert_eq!(

@@ -510,7 +510,15 @@ impl Parser {
         if self.direct
             && matches!(
                 keyword,
-                K::Return | K::Break | K::Continue | K::Defout | K::Data | K::Read | K::Restore
+                K::Return
+                    | K::Break
+                    | K::Continue
+                    | K::Defout
+                    | K::Data
+                    | K::Read
+                    | K::Restore
+                    | K::Def
+                    | K::Common
             )
         {
             return Err(self.direct_mode(span));
