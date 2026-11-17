@@ -196,6 +196,26 @@ fn preset_ranges_follow_4_4_9() {
     );
 }
 
+/// An error in MML names the first argument, whichever command reads it;
+/// MML over 1,048,576 characters is too long, naming none.
+#[test]
+fn mml_errors_name_the_first_argument() {
+    let mut rt = runtime();
+    for line in ["BGMPLAY \"V200C\"", "BGMSET 128,\"V200C\""] {
+        let e = run_on(&mut rt, line).unwrap_err();
+        assert_eq!(
+            (e.kind, e.arg),
+            (ErrorKind::MmlVolumeOutOfRange, Some(0)),
+            "{line}"
+        );
+    }
+    for line in ["BGMPLAY \"C\"*1048577", "BGMSET 128,\"C\"*1048577"] {
+        let e = run_on(&mut rt, line).unwrap_err();
+        assert_eq!((e.kind, e.arg), (ErrorKind::MmlTooLong, None), "{line}");
+    }
+    run_on(&mut rt, "BGMSET 128,\"C\"*1048576").unwrap();
+}
+
 #[test]
 fn unset_user_songs_play_nothing() {
     let mut rt = runtime();

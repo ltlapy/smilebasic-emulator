@@ -259,8 +259,16 @@ fn text(v: &Value) -> Result<String> {
     })
 }
 
+/// The most MML that BGMPLAY, BGMSET and BGMSETD take, in characters.
+const MML_MOST: usize = 1 << 20;
+
+/// MML for BGMPLAY, BGMSET or BGMSETD. An error in it names the first
+/// argument whichever command it is; MML that is too long names none.
 fn parse(mml: &str) -> Result<Song> {
-    mml::parse(mml).map_err(|e| Error::with_detail(e.kind, format!("at {}", e.at)))
+    if mml.len() > MML_MOST && mml.encode_utf16().count() > MML_MOST {
+        return Err(Error::new(ErrorKind::MmlTooLong));
+    }
+    mml::parse(mml).map_err(|e| Error::with_detail(e.kind, format!("at {}", e.at)).of_arg(0))
 }
 
 /// An omittable track, then the arguments after it: `[track,] rest...`
