@@ -12,8 +12,9 @@ use crate::runtime::{Command, Runtime, checking, illegal, opt_int};
 use crate::storage;
 
 const TEXT_CHARS: usize = 256;
+/// The file name form cuts its caption as the others do, not at the
+/// manual's 39.
 const CAPTION_CHARS: usize = 46;
-const NAME_CAPTION_CHARS: usize = 39;
 const NAME_CHARS: usize = 32;
 const DEFAULT_CAPTION: &str = "DIALOG";
 /// DIALOG's button bit for the touch screen.
@@ -132,8 +133,7 @@ fn shortened(text: &str, max: usize) -> String {
 }
 
 /// A caption longer than `max` keeps one character less and ends in
-/// "……" (checked on hardware: 45 characters of a 50-character caption
-/// show). UNVERIFIED: the same for the file name dialog's 39.
+/// "……": 45 characters of a 50-character caption show.
 fn cut_caption(text: &str, max: usize) -> String {
     match text.chars().count() > max {
         true => format!("{}……", shortened(text, max - 1)),
@@ -225,7 +225,7 @@ impl Runtime {
                     return Err(error.of_arg(0));
                 }
                 let dialog = ProgramDialog {
-                    caption: caption(args.get(1), NAME_CAPTION_CHARS)?,
+                    caption: caption(args.get(1), CAPTION_CHARS)?,
                     lines: Vec::new(),
                     kind: DialogKind::Name { initial, max },
                 };
@@ -290,9 +290,11 @@ impl Runtime {
             (DialogKind::Buttons(_), DialogAnswer::Buttons(bits)) => {
                 Ok(vec![Value::Int(bits as i32)])
             }
-            // UNVERIFIED: what the right (or only) button gives.
+            // The right button of two gives 0 and RESULT() 1.
+            // UNVERIFIED: RESULT() for the left one, and for an only button.
             (DialogKind::Buttons(_), DialogAnswer::Choice(i)) => {
-                Ok(vec![Value::Int(choice_result(shown_buttons, i).min(0))])
+                self.result = choice_result(shown_buttons, i);
+                Ok(vec![Value::Int(self.result.min(0))])
             }
             (DialogKind::Buttons(_), _) => Ok(vec![Value::Int(0)]),
             (DialogKind::Name { .. }, DialogAnswer::Name(Some(name))) => {

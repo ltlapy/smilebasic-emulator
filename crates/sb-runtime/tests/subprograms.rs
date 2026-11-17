@@ -1113,6 +1113,21 @@ fn a_wait_for_buttons_behind_a_choice_takes_minus_1_for_the_left_button() {
     );
 }
 
+/// The right button gives it 0, with RESULT() 1.
+#[test]
+fn a_wait_for_buttons_behind_a_choice_takes_0_for_the_right_button() {
+    let (_dir, mut m) = two_dialogs(
+        "buttons-behind-choice-right",
+        ("B=DIALOG(\"MAIN\",8):?B;\" \";RESULT()", 1),
+        ("DIALOG \"SUB\",1", 40),
+    );
+    frames(&mut m, 44);
+    assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+    m.answer_dialog(DialogAnswer::Choice(1));
+    frames(&mut m, 2);
+    assert!(rows(&m).iter().any(|r| r == "0 1"), "{:?}", rows(&m));
+}
+
 #[test]
 fn stopping_a_subprogram_takes_its_dialog_and_question_with_it() {
     let dir = TempDir::new("sub-dialog-stop");

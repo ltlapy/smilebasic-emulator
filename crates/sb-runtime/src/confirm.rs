@@ -25,8 +25,7 @@ pub struct Confirm {
     /// The label of the button that goes ahead.
     pub accept: &'static str,
     /// Whether the button that goes ahead is chosen at first, as on
-    /// SmileBASIC 4's file questions. Otherwise Cancel is, so that a
-    /// quick press does not throw unsaved edits away.
+    /// SmileBASIC 4's file questions. Otherwise Cancel is.
     pub accept_first: bool,
 }
 
@@ -193,15 +192,16 @@ impl Runtime {
                     lines.extend(HINT.map(String::from));
                 }
                 // SmileBASIC 4 starts on the button that goes ahead for
-                // DELETE and RENAME.
+                // DELETE and RENAME, and for LOAD and EXEC over unsaved
+                // edits. Changing files the emulator was started with
+                // starts on Cancel.
                 // UNVERIFIED: that it does for the other file commands but
-                // saving, and which button it starts on when unsaved edits
-                // would be lost.
+                // saving.
                 Confirm {
                     title: action.title,
                     lines,
                     accept: action.accept,
-                    accept_first: unsaved.is_empty() && !originals,
+                    accept_first: !originals,
                 }
             }),
         }
