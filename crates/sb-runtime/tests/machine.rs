@@ -1124,6 +1124,90 @@ fn inspect_pages_long_arrays() {
     assert_eq!(s[27], "");
 }
 
+/// INSPECT shows each type of array, in one to four dimensions, page by
+/// page: after each page the screen holds the last lines shown, all of
+/// them in order.
+#[test]
+fn inspect_pages_show_every_line_in_order() {
+    // The program, the dimensions, and each element's text.
+    type Element = fn(usize) -> String;
+    let cases: [(&str, &[usize], &str, Element); 4] = [
+        (
+            "DIM A%[100]:FOR I=0 TO 99:A%[I]=I*I-500:NEXT:INSPECT A%",
+            &[100],
+            "INT",
+            |i| (i as i64 * i as i64 - 500).to_string(),
+        ),
+        (
+            "DIM A#[7,9]:FOR I=0 TO 62:A#[I DIV 9,I MOD 9]=I/8-3:NEXT:INSPECT A#",
+            &[7, 9],
+            "REAL",
+            |i| format!("{:.8}", i as f64 / 8.0 - 3.0),
+        ),
+        (
+            "DIM A$[3,4,5]:FOR I=0 TO 59:A$[I DIV 20,(I DIV 5) MOD 4,I MOD 5]=\"S\"*(I MOD 9):NEXT:INSPECT A$",
+            &[3, 4, 5],
+            "STRING",
+            |i| format!("({})\"{}\"", i % 9, "S".repeat(i % 9)),
+        ),
+        (
+            "DIM A%[2,3,4,5]:FOR I=0 TO 119:A%[I DIV 60,(I DIV 20) MOD 3,(I DIV 5) MOD 4,I MOD 5]=-I:NEXT:INSPECT A%",
+            &[2, 3, 4, 5],
+            "INT",
+            |i| (-(i as i64)).to_string(),
+        ),
+    ];
+    for (setup, dims, kind, element) in cases {
+        let mut m = machine();
+        m.set_slot(0, format!("ACLS\n{setup}\nWAIT 9999"));
+        m.run_slot(0);
+        for _ in 0..5 {
+            m.frame();
+        }
+        let names: Vec<String> = dims.iter().map(usize::to_string).collect();
+        let mut expected = vec![format!("{kind}[{}]:", names.join(","))];
+        let len: usize = dims.iter().product();
+        for i in 0..len {
+            let mut index = Vec::new();
+            let mut flat = i;
+            for &n in dims.iter().rev() {
+                index.push((flat % n).to_string());
+                flat /= n;
+            }
+            index.reverse();
+            expected.push(format!(" [{}]: {}", index.join(","), element(i)));
+        }
+        expected.push(String::new());
+        let page = m.rt.text[4].size().1 as usize - 2;
+        let mut shown = 0;
+        loop {
+            shown = (shown + page).min(expected.len());
+            let screen: Vec<String> = (0..page as u32)
+                .map(|y| {
+                    let console = &m.rt.text[4];
+                    let codes: Vec<u16> = (0..console.size().0)
+                        .map(|x| console.cell(x, y).code)
+                        .collect();
+                    let row = String::from_utf16(&codes).unwrap();
+                    row.trim_end_matches(['\0', ' ']).to_string()
+                })
+                .collect();
+            let from = shown.saturating_sub(page);
+            let want = &expected[from..shown];
+            assert_eq!(&screen[..want.len()], want, "{setup}, {shown} lines");
+            let prompt = (m.rt.text[4].cell(0, page as u32 + 1).code) == u16::from(b'=');
+            assert_eq!(prompt, shown < expected.len(), "{setup}, {shown} lines");
+            if !prompt {
+                break;
+            }
+            m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+            for _ in 0..3 {
+                m.frame();
+            }
+        }
+    }
+}
+
 #[test]
 fn every_line_of_a_paste_runs_though_the_prompt_drops_keys() {
     let mut m = machine();

@@ -317,17 +317,18 @@ impl Runtime {
         if console.cursor().0 != 0 {
             console.newline();
         }
-        self.inspect_page(sb_core::inspect::lines(value).into())
+        self.inspect_page(sb_core::inspect::Lines::new(value))
     }
 
     /// Prints a page of INSPECT's lines: all the console's rows but two.
     /// Meanwhile the console scrolls above its last row, which is kept
-    /// for the prompt to press Enter.
-    fn inspect_page(&mut self, mut lines: VecDeque<Vec<u16>>) -> Vec<Value> {
+    /// for the prompt to press Enter. The lines are made as they are
+    /// printed, so a huge array costs no more than its pages shown.
+    fn inspect_page(&mut self, mut lines: sb_core::inspect::Lines) -> Vec<Value> {
         let console = &mut self.text[CONSOLE];
         let rows = console.size().1;
         for _ in 0..rows.saturating_sub(2).max(1) {
-            let Some(line) = lines.pop_front() else {
+            let Some(line) = lines.next() else {
                 return vec![];
             };
             console.print(&line);
@@ -337,7 +338,7 @@ impl Runtime {
                 let _ = console.locate(Some(0), Some(rows as i32 - 2));
             }
         }
-        if !lines.is_empty() {
+        if lines.has_more() {
             let _ = console.locate(Some(0), Some(rows as i32 - 1));
             console.print(&LISTING_PROMPT.encode_utf16().collect::<Vec<_>>());
             self.inspect_left = Some(lines);
@@ -863,5 +864,32 @@ mod tests {
         for plain in ["MAIN.PRG", "GRP:HG16", "#TOOL/T.PRG", "A/B/C"] {
             assert!(!names_project(plain), "{plain}");
         }
+    }
+
+    /// INSPECT of the largest array memory allows makes the lines of the
+    /// pages it has shown, not one for each element.
+    #[test]
+    fn inspect_makes_a_page_of_lines_at_a_time() {
+        use crate::machine::Machine;
+        let mut m = Machine::new(Runtime::for_tests(crate::font::Font::blank()));
+        m.boot();
+        // Inspected only if no more is left than a small array takes.
+        let src = "N=(FREEMEM()-256) DIV 4:DIM A%[N]\n\
+                   IF FREEMEM()<256 && N>33000000 THEN INSPECT A%\nWAIT 9999";
+        m.set_slot(0, src.to_string());
+        m.run_slot(0);
+        for _ in 0..5 {
+            m.frame();
+        }
+        let page = m.rt.text[CONSOLE].size().1 as usize - 2;
+        let made = |m: &Machine| m.rt.inspect_left.as_ref().map(|l| l.made());
+        assert_eq!(made(&m), Some(page));
+        m.rt.key_press(crate::runtime::keys::ENTER);
+        for _ in 0..3 {
+            m.frame();
+        }
+        assert_eq!(made(&m), Some(2 * page));
+        m.stop();
+        assert_eq!(made(&m), None);
     }
 }

@@ -928,8 +928,8 @@ pub struct Runtime {
     pub(crate) dialog_beside: bool,
     /// Lines of a FILES listing still to show, after a key is pressed.
     pub(crate) listing_left: Option<VecDeque<Vec<u16>>>,
-    /// Lines of an INSPECT still to show, after a key is pressed.
-    pub(crate) inspect_left: Option<VecDeque<Vec<u16>>>,
+    /// The rest of an INSPECT, to show after a key is pressed.
+    pub(crate) inspect_left: Option<sb_core::inspect::Lines>,
     /// The project metadata that METAEDIT edits.
     pub(crate) meta: crate::env::Meta,
     pub settings: Settings,
