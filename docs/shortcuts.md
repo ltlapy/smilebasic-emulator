@@ -135,8 +135,9 @@ Settings it has:
   640x480 display), Medium at 1.5 times that (24-pixel text, a 427x320 UI on
   640x480), and Large at twice that (320x240 on 640x480). Where Normal is
   2x, as on 1920x1080, Medium is 3x. The program's screen keeps its size.
-  The notice for a program slower than real time covers less of it: it
-  stays at Normal's size at Medium, and takes Medium's at Large.
+  The notices in the bottom right corner, the keys for the buttons and a
+  program slower than real time, cover less of it: they stay at Normal's
+  size at Medium, and take Medium's at Large.
   In `settings.txt` this is `simple_ui_size=normal`, `medium` or `large`.
 - Swap A/B and X/Y: A and B trade places, as do X and Y, for programs too.
   The desktop has it in File > Settings > Input.

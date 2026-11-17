@@ -169,8 +169,13 @@ impl SlowHint {
     }
 
     /// Counts down a frame; a notice that is due shows unless `held`, as
-    /// while the keys' picture shows in the same corner.
+    /// while the keys' picture shows in the same corner. One that shows
+    /// when the picture comes up waits for it to go, and then shows its
+    /// whole time again, so that the two never overlap.
     pub fn tick(&mut self, held: bool) {
+        if held && self.visible() {
+            (self.pending, self.frames_left) = (true, 0);
+        }
         if self.pending && !held {
             (self.pending, self.frames_left) = (false, SHOW_FRAMES);
         }
@@ -405,6 +410,20 @@ mod tests {
         hint.tick(false);
         assert!(hint.visible());
         for _ in 0..SHOW_FRAMES {
+            hint.tick(false);
+        }
+        assert!(!hint.visible());
+        // The picture comes up while the notice shows: the notice goes,
+        // and comes back for its whole time once the picture has gone.
+        hint.pending = true;
+        for _ in 0..100 {
+            hint.tick(false);
+        }
+        hint.tick(true);
+        assert!(!hint.visible());
+        hint.tick(false);
+        for _ in 1..SHOW_FRAMES {
+            assert!(hint.visible());
             hint.tick(false);
         }
         assert!(!hint.visible());

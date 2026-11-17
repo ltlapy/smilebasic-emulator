@@ -3697,11 +3697,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 if let (true, None, Some(open)) = (i == ed && under, menus_apart, &debug_menu) {
                     open.draw(fb, font);
                 }
-                if i == 0 && key_hint.visible() {
+                // The Simple UI's notices go on a layer of their own.
+                if i == 0 && key_hint.visible() && !simple_ui {
                     key_hint.draw(fb, font);
                 }
                 // Under the menus and windows, which the notice would only
-                // be in the way of. The Simple UI's goes on a layer of its own.
+                // be in the way of.
                 if i == 0 && slow_hint.visible() && !paused && !modal && !simple_ui {
                     slow_hint.draw(fb, font, simple_ui);
                 }
@@ -3767,14 +3768,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if let (0, Some((place, ..)), false) = (ed, &debug, panel_inside[0]) {
             drawing!(panel_layers[0].copy(&mut canvas, (place.x, place.y), display, display_w));
         }
-        // The Simple UI's notice, under the rest of its UI as on the
-        // desktop.
-        if simple_ui && slow_hint.visible() && !paused && !modal {
+        // The Simple UI's notices, under the rest of its UI as on the
+        // desktop. Neither shows with the pause menu or the game list, so
+        // they stay clear of the bar of hints at the bottom; the slow
+        // program's notice waits for the keys' picture to go.
+        let notice = key_hint.visible() || slow_hint.visible();
+        if simple_ui && notice && !paused && !modal {
             let size = settings.simple_ui_size;
             let (ui, place) = simple_ui::notice_place((out_w, out_h), size);
-            drawing!(
-                notice_layer.update(texture_creator, ui, |fb| { slow_hint.draw(fb, font, true) })
-            );
+            drawing!(notice_layer.update(texture_creator, ui, |fb| {
+                if key_hint.visible() {
+                    key_hint.draw(fb, font);
+                }
+                if slow_hint.visible() {
+                    slow_hint.draw(fb, font, true);
+                }
+            }));
             drawing!(notice_layer.copy(&mut canvas, (0, 0), place, ui.0));
         } else {
             notice_layer.release();
