@@ -271,6 +271,17 @@ fn parse(mml: &str) -> Result<Song> {
     mml::parse(mml).map_err(|e| Error::with_detail(e.kind, format!("at {}", e.at)).of_arg(0))
 }
 
+/// SNDMVOL's volume and its time in whole seconds. The time is checked
+/// first, and a subprogram's SNDMVOL checks both before it does nothing.
+pub(crate) fn sndmvol_args(args: &[Value]) -> Result<(i32, f32)> {
+    let seconds = match args.get(1) {
+        None => 0,
+        Some(v) => in_range("time", v, 0..=32767)?,
+    };
+    let volume = in_range("volume", &args[0], 0..=127)?;
+    Ok((volume, seconds as f32))
+}
+
 /// An omittable track, then the arguments after it: `[track,] rest...`
 /// takes `rest` arguments, the first of them required.
 fn split_track(args: &[Value], rest: usize) -> Result<(Option<usize>, &[Value])> {
@@ -463,25 +474,26 @@ impl Runtime {
                 };
                 Ok(vec![Value::Int(at)])
             }
-            // SNDSTOP holds the program until the next frame.
-            // UNVERIFIED: that it waits for the frame's end wherever in the
-            // frame it runs; right after VSYNC it takes one frame.
+            // SNDSTOP holds the program until the next frame when it synced
+            // in this one (VSYNC, WAIT or SNDSTOP), and goes straight on
+            // when a frame has passed since. VSYNC then counts from where
+            // SNDSTOP left off, as from a VSYNC.
             (Command::Sndstop, Want::Outs(0), 0) => {
                 if !self.frame_wait_over() {
-                    self.sound.stop_all();
-                    self.sound.reset_mixer();
-                    self.sound.reset_effector();
-                    self.hold_for_a_frame();
+                    self.sound.sndstop();
+                    let now = self.sync.now;
+                    if self.sync.mark.is_some_and(|mark| now <= mark) {
+                        self.sync.moved = Some(now + 1);
+                        self.hold_for_a_frame();
+                    } else {
+                        self.sync.moved = Some(now);
+                    }
                 }
                 Ok(vec![])
             }
             (Command::Sndmvol, Want::Outs(0), 1..=2) => {
-                let volume = in_range("volume", &args[0], 0..=127)?;
-                let fade = match args.get(1) {
-                    None => 0,
-                    Some(v) => frames(f64::from(in_range("time", v, 0..=32767)?)),
-                };
-                self.sound.set_master(volume, fade);
+                let (volume, seconds) = sndmvol_args(args)?;
+                self.sound.set_master(volume, seconds);
                 Ok(vec![])
             }
             (Command::Sndmvol, Want::Outs(1) | Want::Value, 0) => {
@@ -755,8 +767,8 @@ impl Runtime {
             // The balance moves over the time in seconds, a step each frame.
             (Command::Sndmsbal, Want::Outs(0), 1..=2) => {
                 let balance = in_range("balance", &args[0], 0..=127)?;
-                let fade = frames(f64::from(opt_in_range("time", args.get(1), 0..=32767, 0)?));
-                self.sound.set_balance(balance, fade);
+                let seconds = opt_in_range("time", args.get(1), 0..=32767, 0)? as f32;
+                self.sound.set_balance(balance, seconds);
                 Ok(vec![])
             }
             (Command::Sndmsbal, Want::Outs(1) | Want::Value, 0) => {

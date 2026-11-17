@@ -1949,6 +1949,7 @@ impl Machine {
                     FRAME_BUDGET.saturating_sub(vm.executed().wrapping_sub(start) as u32)
                 }
             };
+            (self.rt.sync.now, self.rt.sync.mark) = (self.frame, self.vsync_at);
             let status = match main.as_deref_mut() {
                 Some(main) => {
                     let mut linked = Linked {
@@ -1959,6 +1960,9 @@ impl Machine {
                 }
                 None => vm.run(&mut self.rt, left),
             };
+            if let Some(mark) = self.rt.sync.moved.take() {
+                self.vsync_at = Some(mark);
+            }
             match status {
                 Ok(Status::Running) => {
                     // EXEC, PRGINS and the like changed slots: the program

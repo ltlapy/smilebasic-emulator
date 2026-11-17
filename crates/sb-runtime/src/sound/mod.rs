@@ -93,6 +93,112 @@ impl Ramp {
     }
 }
 
+/// A level that SNDMVOL and SNDMSBAL move to a target over whole seconds,
+/// a step each frame, in single precision as SmileBASIC 4 keeps it: the
+/// time passed grows by 1/60 a frame and the level is the straight line's
+/// value there, until the time passed reaches the whole. From 0 to 1 over
+/// a second it is just under 1 at the 60th frame, and 1 at the 61st.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Fade {
+    moving: bool,
+    seconds: f32,
+    passed: f32,
+    from: f32,
+    to: f32,
+    /// The level now, 0 to 1.
+    value: f32,
+}
+
+impl Fade {
+    pub(crate) const fn at(value: f32) -> Fade {
+        Fade {
+            moving: false,
+            seconds: 0.0,
+            passed: 0.0,
+            from: value,
+            to: value,
+            value,
+        }
+    }
+
+    /// Moves from where it is to `target` over `seconds`, at once for 0.
+    pub(crate) fn to(&mut self, target: f32, seconds: f32) {
+        self.moving = true;
+        self.from = self.value;
+        self.to = target;
+        self.seconds = seconds;
+        self.passed = 0.0;
+        if seconds == 0.0 {
+            self.value = target;
+        }
+    }
+
+    /// A frame's step.
+    pub(crate) fn step_frame(&mut self) {
+        if !self.moving {
+            return;
+        }
+        self.passed += 1.0 / 60.0;
+        if self.seconds <= self.passed {
+            self.value = self.to;
+            self.moving = false;
+        } else {
+            self.value = self.from + (self.passed * (self.to - self.from)) / self.seconds;
+        }
+    }
+
+    /// What SNDMVOL() and SNDMSBAL() read: 0 to 127, rounded down.
+    pub(crate) fn read(&self) -> i32 {
+        (self.value * 127.0) as i32
+    }
+}
+
+/// A volume or balance of 0 to 127 as the level [`Fade`] keeps.
+fn level(n: i32) -> f32 {
+    n as f32 / 127.0
+}
+
+/// SNDMVOL's level, and the gain a sample at a time that follows it from
+/// frame to frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Master {
+    pub(crate) level: Fade,
+    gain: Ramp,
+}
+
+/// SNDMVOL's level for a gain of 1, which it starts at and goes back to:
+/// 0.7, which SNDMVOL() reads as 88. The output is linear in the level, so
+/// 127 plays at 1.43 times the start's level.
+const MASTER_UNITY: f32 = 0.7;
+
+impl Master {
+    pub(crate) const START: Master = Master {
+        level: Fade::at(MASTER_UNITY),
+        gain: Ramp {
+            value: 1.0,
+            target: 1.0,
+            step: 0.0,
+        },
+    };
+
+    /// The gain the level gives.
+    fn level_gain(&self) -> f64 {
+        f64::from(self.level.value / MASTER_UNITY)
+    }
+
+    /// A frame's step: the level moves, and the gain goes to it in a
+    /// straight line through the frame.
+    fn step_frame(&mut self, own: bool) {
+        if own {
+            self.level.step_frame();
+        }
+        let gain = self.level_gain();
+        if gain != self.gain.target {
+            self.gain.to(gain, 1);
+        }
+    }
+}
+
 /// The furthest a sample going into the effector may reach: well beyond
 /// full scale, which only a sum that would clip anyway comes near.
 const MOST_SENT: f32 = 8.0;
@@ -124,11 +230,6 @@ pub(crate) fn add_scaled(to: &mut [f32], from: &[f32], gain: f32) {
 pub(crate) fn frames(seconds: f64) -> u32 {
     (seconds * 60.0).round().clamp(0.0, f64::from(u32::MAX)) as u32
 }
-
-/// SNDMVOL's volume for a gain of 1, which it starts at and goes back to:
-/// 0.7 of 127, which SNDMVOL() reads as 88. The output is linear in the
-/// volume, so 127 plays at 1.43 times the start's level.
-const MASTER_UNITY: f64 = 0.7 * 127.0;
 
 /// RECSTART's recording of what plays, as 16-bit samples.
 #[derive(Clone, Debug, Default)]
@@ -188,72 +289,43 @@ impl Recorder {
     }
 }
 
-/// The main and the sub interpreter's gains for a balance SNDMSBAL set:
-/// b/127 and (127-b)/127 of the output, twice over, so that halfway, where
-/// each subprogram starts, both play as loud as the main program alone.
-pub(crate) fn balance_gains(balance: i32) -> (f32, f32) {
-    let b = balance.clamp(0, 127) as f32;
-    (2.0 * b / 127.0, 2.0 * (127.0 - b) / 127.0)
-}
-
-/// SNDMSBAL's balance, which moves to a new one in steps of a frame
-/// when it is given a time.
+/// SNDMSBAL's balance, which moves to a new one a step each frame when it
+/// is given a time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Balance {
-    /// Where it is, 0 to 127. A subprogram starts halfway, at 63.5, which
+    /// Where it is, 0 to 1. A subprogram starts halfway, at 0.5, which
     /// SNDMSBAL reads as 63; the manual calls 64 even.
-    at: f32,
-    /// The main and the sub interpreter's gains there.
-    gains: (f32, f32),
-    /// Where it goes, and the frames left to get there.
-    target: f32,
-    target_gains: (f32, f32),
-    left: u32,
+    level: Fade,
 }
 
 impl Balance {
     /// Halfway, where the subprogram's sound and the main program's are
     /// each as loud as the main program's alone.
     pub(crate) const START: Balance = Balance {
-        at: 63.5,
-        gains: (1.0, 1.0),
-        target: 63.5,
-        target_gains: (1.0, 1.0),
-        left: 0,
+        level: Fade::at(0.5),
     };
 
-    /// SNDMSBAL: moves to `balance` over `frames` frames, at once for 0.
-    pub(crate) fn to(&mut self, balance: i32, frames: u32) {
-        self.target = balance as f32;
-        self.target_gains = balance_gains(balance);
-        self.left = frames;
-        if frames == 0 {
-            self.at = self.target;
-            self.gains = self.target_gains;
-        }
+    /// SNDMSBAL: moves to `balance` over `seconds`, at once for 0.
+    pub(crate) fn to(&mut self, balance: i32, seconds: f32) {
+        self.level.to(level(balance.clamp(0, 127)), seconds);
     }
 
-    /// One frame's step of the move: the same share of what is left each
-    /// frame, which moves in a straight line.
     fn step_frame(&mut self) {
-        if self.left == 0 {
-            return;
-        }
-        let k = 1.0 / self.left as f32;
-        self.left -= 1;
-        if self.left == 0 {
-            self.at = self.target;
-            self.gains = self.target_gains;
-        } else {
-            self.at += (self.target - self.at) * k;
-            self.gains.0 += (self.target_gains.0 - self.gains.0) * k;
-            self.gains.1 += (self.target_gains.1 - self.gains.1) * k;
-        }
+        self.level.step_frame();
     }
 
     /// What SNDMSBAL reads: where it is now, rounded down.
     pub(crate) fn read(&self) -> i32 {
-        self.at as i32
+        self.level.read()
+    }
+
+    /// The main and the sub interpreter's gains here: b/127 and
+    /// (127-b)/127 of the output for a balance b, twice over, so that
+    /// halfway, where each subprogram starts, both play as loud as the
+    /// main program alone.
+    fn gains(&self) -> (f32, f32) {
+        let b = self.level.value;
+        (2.0 * b, 2.0 * (1.0 - b))
     }
 }
 
@@ -324,9 +396,14 @@ pub struct Sound {
     /// SNDMSBAL, which only subprograms set. The main and the sub
     /// interpreter share one from the sub's first frame on.
     balance: Rc<Cell<Balance>>,
-    /// SNDMVOL, as a gain: 1 at its start, which SNDMVOL() reads as 88.
-    /// The sub interpreter's follows the main one's.
-    pub(crate) master: Ramp,
+    /// SNDMVOL: 0.7 at its start, which SNDMVOL() reads as 88, and the
+    /// gain that gives. The sub interpreter's follows the main one's.
+    pub(crate) master: Master,
+    /// SNDSTOPs so far, shared by the main and the sub interpreter: either
+    /// one's SNDSTOP stops every sound of both.
+    stops: Rc<Cell<u32>>,
+    /// The SNDSTOPs this interpreter's sound has taken.
+    stops_seen: u32,
     /// Mixed samples, left and right in turn, not yet taken.
     out: Vec<f32>,
     scratch: [Vec<f32>; 2],
@@ -359,7 +436,9 @@ impl Default for Sound {
             balance: Rc::new(Cell::new(Balance::START)),
             recorder: Rc::default(),
             sub: false,
-            master: Ramp::at(1.0),
+            master: Master::START,
+            stops: Rc::default(),
+            stops_seen: 0,
             out: Vec::new(),
             scratch: Default::default(),
             mix: Default::default(),
@@ -524,34 +603,46 @@ impl Sound {
         }
     }
 
-    /// SNDMVOL: moves to `volume` over `frames` frames, at once for 0.
-    pub(crate) fn set_master(&mut self, volume: i32, frames: u32) {
-        self.master.to(f64::from(volume) / MASTER_UNITY, frames);
+    /// SNDMVOL: moves to `volume` over `seconds`, at once for 0.
+    pub(crate) fn set_master(&mut self, volume: i32, seconds: f32) {
+        self.master.level.to(level(volume), seconds);
+        if seconds == 0.0 {
+            self.master.gain = Ramp::at(self.master.level_gain());
+        }
     }
 
     /// What SNDMVOL() reads: the volume now, rounded down.
     pub(crate) fn master_volume(&self) -> i32 {
-        (self.master.value * MASTER_UNITY + 1e-6).floor() as i32
+        self.master.level.read()
     }
 
     /// RUN puts SNDMVOL back at its start.
     pub(crate) fn run_started(&mut self) {
-        self.master = Ramp::at(1.0);
+        self.master = Master::START;
     }
 
     /// SNDSTOP's reset of the mixer: SNDMVOL and the shared SNDMSBAL go
-    /// back to their start.
-    // UNVERIFIED: that a subprogram's SNDSTOP resets the balance too.
+    /// back to their start, from either program.
     pub(crate) fn reset_mixer(&mut self) {
-        self.master = Ramp::at(1.0);
+        self.master = Master::START;
         self.balance.set(Balance::START);
     }
 
+    /// SNDSTOP: every sound of both programs stops, and the mixer and the
+    /// effector go back to their start.
+    pub(crate) fn sndstop(&mut self) {
+        self.stop_all();
+        self.reset_mixer();
+        self.reset_effector();
+        self.stops.set(self.stops.get().wrapping_add(1));
+        self.stops_seen = self.stops.get();
+    }
+
     /// SNDMSBAL, which does nothing in the main program.
-    pub(crate) fn set_balance(&mut self, balance: i32, frames: u32) {
+    pub(crate) fn set_balance(&mut self, balance: i32, seconds: f32) {
         if self.sub {
             let mut b = self.balance.get();
-            b.to(balance, frames);
+            b.to(balance, seconds);
             self.balance.set(b);
         }
     }
@@ -574,7 +665,7 @@ impl Sound {
     /// The main and the sub interpreter's gains for this subprogram's
     /// balance.
     pub(crate) fn balance_gains(&self) -> (f32, f32) {
-        self.balance.get().gains
+        self.balance.get().gains()
     }
 
     /// A subprogram starts: the balance goes back to halfway.
@@ -620,12 +711,20 @@ impl Sound {
 
     /// Mixes one frame of samples.
     pub fn render_frame(&mut self) {
-        // The sub interpreter moves the shared balance, once a frame.
+        // The other program's SNDSTOP.
+        if self.stops_seen != self.stops.get() {
+            self.stops_seen = self.stops.get();
+            self.stop_all();
+            self.master = Master::START;
+        }
+        // The sub interpreter moves the shared balance, once a frame, and
+        // the main one SNDMVOL, which the sub's follows.
         if self.sub {
             let mut b = self.balance.get();
             b.step_frame();
             self.balance.set(b);
         }
+        self.master.step_frame(!self.sub);
         let n = FRAME_SAMPLES;
         let [left, right] = &mut self.mix;
         left.clear();
@@ -815,11 +914,11 @@ impl Sound {
         let keep = passed.unwrap_or(HALF);
         let rest = 1.0 - keep;
         let mut rec = self.recorder.borrow_mut();
-        if !record && self.master.done() {
+        if !record && self.master.gain.done() {
             // The loop below with its gain fixed and nothing to record:
             // the same sums, in loops the compiler can do several samples
             // at a time.
-            let gain = self.master.value as f32;
+            let gain = self.master.gain.value as f32;
             self.out.resize(start + 2 * n, 0.0);
             let out = &mut self.out[start..];
             for (o, (&l, &w)) in out.iter_mut().step_by(2).zip(left.iter().zip(whole_l)) {
@@ -851,7 +950,7 @@ impl Sound {
             return;
         }
         for i in 0..n {
-            let gain = self.master.value as f32;
+            let gain = self.master.gain.value as f32;
             let (l, r) = (left[i] * gain, right[i] * gain);
             if record {
                 rec.record(l.clamp(-1.0, 1.0), r.clamp(-1.0, 1.0));
@@ -870,7 +969,7 @@ impl Sound {
             }
             self.out.push(l.clamp(-1.0, 1.0));
             self.out.push(r.clamp(-1.0, 1.0));
-            self.master.step_sample();
+            self.master.gain.step_sample();
         }
         silence_nans(&mut self.out[start..]);
     }
@@ -890,13 +989,15 @@ impl Sound {
             // SmileBASIC 4, after the main program's EFCWET 0, the
             // subprogram's tones played at the main program's level.
             sub.effector = Rc::clone(&self.effector);
+            sub.stops = Rc::clone(&self.stops);
+            sub.stops_seen = self.stops.get();
         }
         let rec = &mut *self.recorder.borrow_mut();
         if rec.taken == 0 {
             return;
         }
         let (own, theirs) = sub.balance_gains();
-        let theirs = theirs * sub.master.value as f32;
+        let theirs = theirs * sub.master.gain.value as f32;
         let [left, right] = &sub.mix;
         let mixed = |s: i16, t: Option<&f32>| {
             let x = f32::from(s) / 32767.0 * own + t.copied().unwrap_or(0.0) * theirs;
@@ -926,7 +1027,7 @@ mod tests {
         let heard = |balance: i32| {
             let (mut main, mut sub) = (Sound::default(), Sound::default());
             sub.sub = true;
-            sub.set_balance(balance, 0);
+            sub.set_balance(balance, 0.0);
             main.recorder.borrow_mut().start(FRAME_SAMPLES, false);
             main.render_frame();
             sub.render_frame();
@@ -938,8 +1039,10 @@ mod tests {
         assert_eq!(heard(127), [0, 0]);
         let [l, r] = heard(64);
         assert!((l - 8127).abs() <= 1 && (r + 8127).abs() <= 1, "{l} {r}");
-        assert_eq!(balance_gains(127), (2.0, 0.0));
-        assert_eq!(Balance::START.gains, (1.0, 1.0));
+        let mut b = Balance::START;
+        b.to(127, 0.0);
+        assert_eq!(b.gains(), (2.0, 0.0));
+        assert_eq!(Balance::START.gains(), (1.0, 1.0));
     }
 
     /// The main program's SNDMSBAL does nothing, and both programs read
@@ -948,21 +1051,68 @@ mod tests {
     #[test]
     fn the_balance_is_shared_and_sndstop_resets_the_mixer() {
         let (mut main, mut sub) = (Sound::default(), Sound::default());
-        main.set_balance(127, 0);
+        main.set_balance(127, 0.0);
         assert_eq!(main.balance(), 63);
         main.render_frame();
         sub.render_frame();
         main.hear_sub(&mut sub);
-        sub.set_balance(127, 0);
+        sub.set_balance(127, 0.0);
         assert_eq!((main.balance(), sub.balance()), (127, 127));
-        main.set_master(32, 0);
+        main.set_master(32, 0.0);
         assert_eq!(main.master_volume(), 32);
         main.reset_mixer();
         assert_eq!((main.balance(), sub.balance()), (63, 63));
         assert_eq!(main.master_volume(), 88);
-        main.set_master(127, 0);
+        main.set_master(127, 0.0);
         assert_eq!(main.master_volume(), 127);
-        assert!((main.master.value - 127.0 / 88.9).abs() < 1e-9);
+        assert!((main.master.gain.value - 127.0 / 88.9).abs() < 1e-6);
+    }
+
+    /// A fade of SNDMVOL or SNDMSBAL over a second from 0 reads 126 at the
+    /// 60th frame and 127 at the 61st, as single precision steps of 1/60
+    /// add up to just under 1; it moves in a straight line before that.
+    #[test]
+    fn fades_reach_their_target_a_frame_after_the_last_step() {
+        let (mut main, mut sub) = (Sound::default(), Sound::default());
+        main.render_frame();
+        sub.render_frame();
+        main.hear_sub(&mut sub);
+        main.set_master(0, 0.0);
+        main.set_master(127, 1.0);
+        sub.set_balance(0, 0.0);
+        sub.set_balance(127, 1.0);
+        let mut read = vec![(main.master_volume(), sub.balance())];
+        for _ in 0..62 {
+            main.render_frame();
+            sub.render_frame();
+            read.push((main.master_volume(), sub.balance()));
+        }
+        let levels: Vec<i32> = read.iter().map(|r| r.0).collect();
+        assert_eq!(read.iter().map(|r| r.1).collect::<Vec<_>>(), levels);
+        assert_eq!(&levels[..10], [0, 2, 4, 6, 8, 10, 12, 14, 16, 19]);
+        assert_eq!(&levels[58..], [122, 124, 126, 127, 127]);
+    }
+
+    /// Either program's SNDSTOP stops the other's sound too.
+    #[test]
+    fn sndstop_in_either_program_stops_both() {
+        let song = || Some(Rc::new(mml::parse("@219C1").unwrap()));
+        let (mut main, mut sub) = (Sound::default(), Sound::default());
+        main.render_frame();
+        sub.render_frame();
+        main.hear_sub(&mut sub);
+        main.play(0, song(), 100, 0);
+        sub.play(0, song(), 100, 0);
+        main.set_master(32, 0.0);
+        sub.sndstop();
+        assert!(main.playing(0) && !sub.playing(0));
+        main.render_frame();
+        assert!(!main.playing(0));
+        assert_eq!(main.master_volume(), 88);
+        sub.play(0, song(), 100, 0);
+        main.sndstop();
+        sub.render_frame();
+        assert!(!sub.playing(0));
     }
 
     /// The mix's loops for a gain that does not move give what its loop
@@ -982,7 +1132,7 @@ mod tests {
             let mut out = Vec::new();
             for frame in 0..90 {
                 match frame {
-                    10 => s.set_master(40, 15),
+                    10 => s.set_master(40, 1.0),
                     30 => s.set_sends([127, 60, 127, 127]),
                     40 => s.stop(1, 12),
                     _ => {}

@@ -116,12 +116,16 @@ impl Runtime {
                 Command::Irsprite
                 | Command::Irstart
                 | Command::Irstop
-                | Command::Sndmvol
                 | Command::Vibrate
                 | Command::Xctrlstyle,
                 Want::Outs(0),
                 _,
             ) => Ok(vec![]),
+            // The subprogram's SNDMVOL checks its arguments, then does
+            // nothing: the main program's sets the level of both.
+            (Command::Sndmvol, Want::Outs(0), [_] | [_, _]) => {
+                crate::snd::sndmvol_args(args).map(|_| vec![])
+            }
             // The keys go to the interpreter with the focus, so that a
             // subprogram can type into the main one's direct mode.
             (Command::Pushkey, Want::Outs(0), [_]) if !self.focus => {

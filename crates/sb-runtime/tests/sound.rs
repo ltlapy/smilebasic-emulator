@@ -229,9 +229,11 @@ fn master_volume() {
         run_on(&mut rt, "SNDMVOL 64:SNDMVOL OUT V:?V").unwrap(),
         "64"
     );
+    // Halfway down, in single precision steps of 1/60 that add up to a
+    // little more than a half.
     run_on(&mut rt, "SNDMVOL 0,1").unwrap();
     frames(&mut rt, 30);
-    assert_eq!(run_on(&mut rt, "SNDMVOL OUT V:?V").unwrap(), "32");
+    assert_eq!(run_on(&mut rt, "SNDMVOL OUT V:?V").unwrap(), "31");
 }
 
 #[test]

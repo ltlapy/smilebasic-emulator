@@ -946,6 +946,9 @@ pub struct Runtime {
     pub(crate) retry: bool,
     /// See [`Runtime::hold_for_a_frame`].
     frame_waited: bool,
+    /// The frame now and the one VSYNC counts from, which the machine sets
+    /// before it runs the program, and where SNDSTOP moves the latter.
+    pub(crate) sync: SyncMark,
     /// See [`Runtime::mode_taken`]; until the next frame or VSYNC.
     pub(crate) in_frame_job: bool,
     pub(crate) notices: Vec<String>,
@@ -1413,6 +1416,16 @@ fn no_form_error(command: Command, args: usize, outs: usize) -> Error {
     }
 }
 
+/// The frame a program runs in and the frame VSYNC, WAIT and SNDSTOP last
+/// left it at, as frame numbers of the machine's.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SyncMark {
+    pub(crate) now: u64,
+    pub(crate) mark: Option<u64>,
+    /// Where SNDSTOP moved the mark, for the machine to take.
+    pub(crate) moved: Option<u64>,
+}
+
 /// Runs `check` on `v`, so that an error it gives names `v` as the
 /// argument that was wrong, for ENVSTAT.
 pub(crate) fn checking<T>(v: &Value, check: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -1530,6 +1543,7 @@ impl Runtime {
             answer: None,
             retry: false,
             frame_waited: false,
+            sync: SyncMark::default(),
             in_frame_job: false,
             listing_left: None,
             inspect_left: None,
