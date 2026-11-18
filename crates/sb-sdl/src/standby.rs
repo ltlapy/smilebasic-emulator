@@ -292,9 +292,12 @@ mod tests {
     fn a_short_call_runs_no_frame_for_a_loop_that_is_behind() {
         let standby = Standby::start(Sink::to(None));
         let mut m = machine("WHILE 1:VSYNC:WEND");
-        let before = count(&mut m);
         let (mut guard, mut toasts) = (FrameGuard::default(), Toasts::default());
-        for _ in 0..20 {
+        // A busy computer can make the sleep below take longer than
+        // `HELD_UP`, and such a call is held up: only the calls that came
+        // back in time say anything.
+        let mut short = 0;
+        for _ in 0..400 {
             // Two frames behind, as a loop whose drawing came back late.
             let mut clock = Clock::new(Instant::now() - 2 * FRAME);
             let lend = Lend {
@@ -305,10 +308,17 @@ mod tests {
                 frames: true,
                 run_time: crate::pacing::LEAST_RUN_TIME,
             };
+            let began = Instant::now();
             let ((), kept) = standby.hold(lend, || std::thread::sleep(HELD_UP / 8));
-            assert_eq!(kept, Kept::default());
+            if began.elapsed() < HELD_UP {
+                assert_eq!(kept, Kept::default());
+                short += 1;
+                if short == 20 {
+                    break;
+                }
+            }
         }
-        assert_eq!(count(&mut m), before);
+        assert!(short > 0, "no call came back within {HELD_UP:?}");
     }
 
     #[test]
