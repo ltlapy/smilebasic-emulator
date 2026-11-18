@@ -3442,10 +3442,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             .map(|g| g as &mut dyn SceneBackend);
         if let Some(sub) = machine.sub_screen_with(sub_backend) {
             let fb = sub.frame;
-            let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
-            let on_window = |[x, y, w, h]: [f32; 4]| {
-                FRect::new(display.x + x * sx, display.y + y * sy, w * sx, h * sy)
-            };
+            let lcd = main_map.lcd(simple_ui);
+            let (at, s) = (lcd.display, lcd.display.w / lcd.display_w as f32);
+            let on_window =
+                |[x, y, w, h]: [f32; 4]| FRect::new(at.x + x * s, at.y + y * s, w * s, h * s);
             if let Some(bars) = sub.bars() {
                 let c = |shift: u32| (sub.back >> shift & 0xFF) as u8;
                 let before = canvas.blend_mode();

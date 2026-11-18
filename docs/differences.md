@@ -603,8 +603,8 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   - Pixel art and Smooth (bilinear) always use that filter.
   - Sharp is nearest at the fitted size, so pixels differ in width.
   - Program follows `XSCREEN`'s composite mode, as SmileBASIC 4 does.
-- In the Simple UI, `MOUSE` and `TOUCH` with flag 1 still count in pixels
-  of a 1280x720 display: the smallest 16:9 rectangle around the screen,
+- In the Simple UI, `MOUSE` and `TOUCH` with flag 1 and `XSUBSCREEN`'s
+  area still count in pixels of a 1280x720 display: the smallest 16:9 rectangle around the screen,
   centered on it, which is where SmileBASIC 4's display would be. A point
   on the screen has the same coordinates as on SmileBASIC 4, and the right
   stick moves the pointer as far. Where the screen is narrower than 16:9
