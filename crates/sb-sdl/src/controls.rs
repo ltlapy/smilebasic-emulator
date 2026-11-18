@@ -726,6 +726,8 @@ impl StickPointer {
 /// The right stick as the right-stick mouse reads it: each axis from the
 /// controller tilted furthest along it, and whether any has R3 pressed.
 fn right_stick(state: &State) -> ((f64, f64), bool) {
+    // UNVERIFIED: SmileBASIC 4 merges the controllers into one, by the
+    // largest reading of each axis; taken here as the largest either way.
     let furthest = |a: f64, b: f64| if b.abs() > a.abs() { b } else { a };
     state
         .pads
