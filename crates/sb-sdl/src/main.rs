@@ -55,7 +55,7 @@ use audio::Audio;
 use bench::Stage;
 use colors::ColorWindow;
 use controls::Controls;
-use debug_panel::{DebugPanel, Hit, Tab, Typed, View, value_text};
+use debug_panel::{DebugPanel, Hit, Tab, View, value_text};
 use dialog::Dialog;
 use editor_layout::Layout;
 use events::Taken;
@@ -1676,34 +1676,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 events::welcome(&event, &mut screens, cx!());
                 continue;
             }
-            if let (Some(open), false) = (&mut program_dialog, from_editor) {
-                let (taken, answer) = match event {
-                    Event::MouseMotion { x, y, .. } => {
-                        open.mouse_move(to_display(x, y));
-                        (false, None)
-                    }
-                    Event::MouseButtonDown {
-                        mouse_btn: MouseButton::Left,
-                        x,
-                        y,
-                        ..
-                    } if open.contains(to_display(x, y)) => (true, open.click(to_display(x, y))),
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } => match open.key(key) {
-                        Some(answer) => (true, answer),
-                        None => (false, None),
-                    },
-                    Event::TextInput { ref text, .. } => (open.text(text), None),
-                    _ => (false, None),
-                };
-                machine.set_dialog_focus(open.focus());
-                if let Some(answer) = answer {
-                    machine.answer_dialog(answer);
-                }
-                if taken {
-                    continue;
-                }
+            if let (Some(open), false) = (&mut program_dialog, from_editor)
+                && events::program_dialog(&event, open, machine, to_display)
+            {
+                continue;
             }
             let side_window = if side_panel.direct {
                 !from_editor
@@ -1722,122 +1698,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             {
                 continue;
             }
-            if let (Some(open), true) = (&mut side_panel.open, side_window) {
-                match event {
-                    Event::MouseWheel {
-                        y,
-                        mouse_x,
-                        mouse_y,
-                        ..
-                    } if open.frame().contains(to_display(mouse_x, mouse_y)) => {
-                        open.wheel(-y.round() as i32);
-                        continue;
-                    }
-                    Event::MouseMotion { x, y, .. } => open.mouse_move(to_display(x, y)),
-                    _ => {}
-                }
-            }
-            // The help or the index beside the editor is over the panel.
-            if let Event::MouseWheel {
-                y,
-                mouse_x,
-                mouse_y,
-                ..
-            } = event
-                && editor_window
-                && debugger.panel.contains(to_display(mouse_x, mouse_y))
-            {
-                let shown = debug_view(machine, &debugger.panel).scrolled();
-                debugger.panel.wheel(-y.round() as i32, shown);
+            if side_window && events::side_pointer(&event, &mut side_panel, to_display) {
                 continue;
             }
-            if let (Some(open), true) = (&mut debugger.menu, editor_window) {
-                match event {
-                    Event::MouseMotion { x, y, .. } => open.hover(to_menu(x, y)),
-                    Event::MouseButtonDown {
-                        mouse_btn, x, y, ..
-                    } => {
-                        let chosen = (mouse_btn == MouseButton::Left)
-                            .then(|| open.click(to_menu(x, y)))
-                            .flatten();
-                        debugger.menu = None;
-                        if let Some(choice) = chosen {
-                            let panel = &mut debugger.panel;
-                            let size = (display_w, display_h);
-                            let asks =
-                                choose(choice, machine, panel, &clipboard, &mut toasts, size);
-                            screens.dialog = asks.or(screens.dialog);
-                        }
-                        continue;
-                    }
-                    Event::KeyDown { .. } => {
-                        debugger.menu = None;
-                        continue;
-                    }
-                    _ => {}
-                }
-            }
-            if debugger.panel.typing() && editor_window {
-                match event {
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } => {
-                        if let Typed::Value(name, text) = debugger.panel.key(key) {
-                            set_value(machine, &debugger.panel, &name, &text, &mut toasts);
-                        }
-                        continue;
-                    }
-                    Event::TextInput { text, .. } => {
-                        debugger.panel.text(&text);
-                        continue;
-                    }
-                    _ => {}
-                }
-            }
-            if let (Some(open), true) = (&mut side_panel.open, side_panel.focus && side_window) {
-                let (taken, outcome) = match (open, &event) {
-                    (
-                        Side::Help(help),
-                        Event::KeyDown {
-                            keycode: Some(Keycode::F2),
-                            ..
-                        },
-                    ) => {
-                        let size = &mut machine.rt.settings.help_text_size;
-                        *size = if *size <= 1 { 3 } else { *size - 1 };
-                        help.set_scale(*size);
-                        (true, index::Outcome::Stay)
-                    }
-                    (
-                        Side::Help(help),
-                        Event::KeyDown {
-                            keycode: Some(key), ..
-                        },
-                    ) => match help.key(*key) {
-                        help::Outcome::Close => (true, index::Outcome::Back),
-                        help::Outcome::Stay => (true, index::Outcome::Stay),
-                    },
-                    (
-                        Side::Index(index, _),
-                        Event::KeyDown {
-                            keycode: Some(key), ..
-                        },
-                    ) => (true, index.key(*key)),
-                    (Side::Index(index, _), Event::TextInput { text, .. }) => {
-                        (true, index.text(text))
-                    }
-                    (_, Event::TextInput { .. }) => (true, index::Outcome::Stay),
-                    _ => (false, index::Outcome::Stay),
-                };
-                side_outcome(
-                    &mut side_panel.open,
-                    &mut side_panel.focus,
-                    machine,
-                    outcome,
-                );
-                if taken {
+            // The help or the index beside the editor is over the panel.
+            if editor_window {
+                let (clip, places) = (&clipboard, (to_display, to_menu));
+                if events::debugger(&event, &mut debugger, &mut screens, clip, cx!(), places) {
                     continue;
                 }
+            }
+            if side_panel.focus
+                && side_window
+                && events::side_keys(&event, &mut side_panel, machine)
+            {
+                continue;
             }
             if screens.game_list.is_some() {
                 let (memory, ran) = (&mut list_memory, &mut ran_from_list);

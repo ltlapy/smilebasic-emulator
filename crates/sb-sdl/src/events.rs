@@ -10,18 +10,23 @@ use std::sync::mpsc::Sender;
 
 use sb_runtime::machine::Machine;
 use sb_runtime::sound::bank::Bank;
+use sdl3::clipboard::ClipboardUtil;
 use sdl3::event::Event;
+use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
 use sdl3::video::Window;
 
+use crate::debug_panel::Typed;
 use crate::dialog::{Answer, Dialog};
 use crate::file_dialogs::FilePicker;
+use crate::program_dialog::ProgramView;
 use crate::projects::{Memory, Outcome, Transfer};
 use crate::simple_ui::{self, GameList, Welcomed};
 use crate::toast::Toasts;
 use crate::{
-    Asking, FileDialog, Screens, choose_extra_font, choose_sound_font, colors, file_dialogs,
-    load_edited, run_from_list, save_edited, settings_window, shortcuts, simple_ui_leave,
+    Asking, Beside, Debugger, FileDialog, Screens, Side, choose, choose_extra_font,
+    choose_sound_font, colors, debug_view, file_dialogs, help, index, load_edited, run_from_list,
+    save_edited, set_value, settings_window, shortcuts, side_outcome, simple_ui_leave,
     use_instruments,
 };
 
@@ -743,4 +748,188 @@ pub fn pause_menu(
         }
         None => {}
     }
+}
+
+/// A program's DIALOG's, in the main window. It takes clicks on it,
+/// Enter and typing, and leaves the rest to the menu bar and the stop
+/// keys: true if it took the event.
+pub fn program_dialog(
+    event: &Event,
+    open: &mut ProgramView,
+    machine: &mut Machine,
+    to_display: impl Fn(f32, f32) -> (i32, i32),
+) -> bool {
+    let (taken, answer) = match *event {
+        Event::MouseMotion { x, y, .. } => {
+            open.mouse_move(to_display(x, y));
+            (false, None)
+        }
+        Event::MouseButtonDown {
+            mouse_btn: MouseButton::Left,
+            x,
+            y,
+            ..
+        } if open.contains(to_display(x, y)) => (true, open.click(to_display(x, y))),
+        Event::KeyDown {
+            keycode: Some(key), ..
+        } => match open.key(key) {
+            Some(answer) => (true, answer),
+            None => (false, None),
+        },
+        Event::TextInput { ref text, .. } => (open.text(text), None),
+        _ => (false, None),
+    };
+    machine.set_dialog_focus(open.focus());
+    if let Some(answer) = answer {
+        machine.answer_dialog(answer);
+    }
+    taken
+}
+
+/// The pointer's on the help or the index beside the editor, in the
+/// window that panel is in: true if the wheel turned over it.
+pub fn side_pointer(
+    event: &Event,
+    side: &mut Beside,
+    to_display: impl Fn(f32, f32) -> (i32, i32),
+) -> bool {
+    let Some(open) = &mut side.open else {
+        return false;
+    };
+    match *event {
+        Event::MouseWheel {
+            y,
+            mouse_x,
+            mouse_y,
+            ..
+        } if open.frame().contains(to_display(mouse_x, mouse_y)) => {
+            open.wheel(-y.round() as i32);
+            return true;
+        }
+        Event::MouseMotion { x, y, .. } => open.mouse_move(to_display(x, y)),
+        _ => {}
+    }
+    false
+}
+
+/// The debugger's, for an event of the window the editor is in: the
+/// wheel over its panel, its menu, and typing into the panel. `places`
+/// give the display's and the menus' pixel under a window position.
+/// True if it took the event.
+pub fn debugger(
+    event: &Event,
+    debugger: &mut Debugger,
+    screens: &mut Screens,
+    clipboard: &ClipboardUtil,
+    cx: Ctx,
+    places: (
+        impl Fn(f32, f32) -> (i32, i32),
+        impl Fn(f32, f32) -> (i32, i32),
+    ),
+) -> bool {
+    let Ctx {
+        machine,
+        toasts,
+        size,
+        ..
+    } = cx;
+    let (to_display, to_menu) = places;
+    if let Event::MouseWheel {
+        y,
+        mouse_x,
+        mouse_y,
+        ..
+    } = *event
+        && debugger.panel.contains(to_display(mouse_x, mouse_y))
+    {
+        let shown = debug_view(machine, &debugger.panel).scrolled();
+        debugger.panel.wheel(-y.round() as i32, shown);
+        return true;
+    }
+    if let Some(open) = &mut debugger.menu {
+        match *event {
+            Event::MouseMotion { x, y, .. } => open.hover(to_menu(x, y)),
+            Event::MouseButtonDown {
+                mouse_btn, x, y, ..
+            } => {
+                let chosen = (mouse_btn == MouseButton::Left)
+                    .then(|| open.click(to_menu(x, y)))
+                    .flatten();
+                debugger.menu = None;
+                if let Some(choice) = chosen {
+                    let panel = &mut debugger.panel;
+                    let asks = choose(choice, machine, panel, clipboard, toasts, size);
+                    if asks.is_some() {
+                        screens.dialog = asks;
+                    }
+                }
+                return true;
+            }
+            Event::KeyDown { .. } => {
+                debugger.menu = None;
+                return true;
+            }
+            _ => {}
+        }
+    }
+    if debugger.panel.typing() {
+        match *event {
+            Event::KeyDown {
+                keycode: Some(key), ..
+            } => {
+                if let Typed::Value(name, text) = debugger.panel.key(key) {
+                    set_value(machine, &debugger.panel, &name, &text, toasts);
+                }
+                return true;
+            }
+            Event::TextInput { ref text, .. } => {
+                debugger.panel.text(text);
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The keys' of the help or the index beside the editor, while it has
+/// them: true if it took the event.
+pub fn side_keys(event: &Event, side: &mut Beside, machine: &mut Machine) -> bool {
+    let Some(open) = &mut side.open else {
+        return false;
+    };
+    let (taken, outcome) = match (open, event) {
+        (
+            Side::Help(help),
+            Event::KeyDown {
+                keycode: Some(Keycode::F2),
+                ..
+            },
+        ) => {
+            let size = &mut machine.rt.settings.help_text_size;
+            *size = if *size <= 1 { 3 } else { *size - 1 };
+            help.set_scale(*size);
+            (true, index::Outcome::Stay)
+        }
+        (
+            Side::Help(help),
+            Event::KeyDown {
+                keycode: Some(key), ..
+            },
+        ) => match help.key(*key) {
+            help::Outcome::Close => (true, index::Outcome::Back),
+            help::Outcome::Stay => (true, index::Outcome::Stay),
+        },
+        (
+            Side::Index(index, _),
+            Event::KeyDown {
+                keycode: Some(key), ..
+            },
+        ) => (true, index.key(*key)),
+        (Side::Index(index, _), Event::TextInput { text, .. }) => (true, index.text(text)),
+        (_, Event::TextInput { .. }) => (true, index::Outcome::Stay),
+        _ => (false, index::Outcome::Stay),
+    };
+    side_outcome(&mut side.open, &mut side.focus, machine, outcome);
+    taken
 }
