@@ -34,7 +34,8 @@ const SIDE: u32 = 32;
 const SB4_DISPLAY_H: f32 = 720.0;
 
 /// Our own arrow, not SmileBASIC 4's: `#` black, `o` white, its tip at the
-/// top left corner.
+/// top left corner. The tail starts under the head, by the notch in its
+/// base, as a desktop's arrow does.
 const ARROW: [&str; SIDE as usize] = [
     "#",
     "##",
@@ -54,20 +55,20 @@ const ARROW: [&str; SIDE as usize] = [
     "##oooooooooooo##",
     "##ooooooooooooo##",
     "##oooooooooooooo##",
-    "##ooooooooooooo####",
-    "##oooooo####ooo#####",
-    "##oooo######ooo##",
-    "##ooo##...##ooo##",
-    "##oo##.....##ooo##",
-    "##o##......##ooo##",
-    "####........##ooo##",
-    "###.........##ooo##",
-    "##...........##ooo##",
-    "#............##ooo##",
-    "..............##ooo##",
-    "..............##ooo##",
-    "..............#######",
-    "...............#####",
+    "##ooooooooo########",
+    "##ooooooooo#########",
+    "##ooooo##ooo##",
+    "##oooo###ooo##",
+    "##ooo##.##ooo##",
+    "##oo##..##ooo##",
+    "##o##....##ooo##",
+    "####.....##ooo##",
+    "###.......##ooo##",
+    "##........##ooo##",
+    "#..........##ooo##",
+    "...........##ooo##",
+    "............#######",
+    ".............#####",
 ];
 
 /// [`ARROW`]'s pixels, ARGB, row by row.
