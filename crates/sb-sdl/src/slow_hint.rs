@@ -14,7 +14,8 @@ use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
 use sb_runtime::settings::Settings;
 
-use crate::ui::{BACKGROUND, BORDER, CHAR, DISABLED, PAD, Rect, TEXT, draw_text, fill, outline};
+use crate::corner::{self, SHOW_FRAMES};
+use crate::ui::{CHAR, DISABLED, PAD, Rect, TEXT, draw_text};
 
 /// The trips of a span, about half a second, are summed up before they
 /// are judged: 30 frames at full speed, so that one frame is 2 frames a
@@ -38,9 +39,6 @@ const GRACE: Duration = Duration::from_secs(3);
 /// the system suspended the emulator, or a file loaded in one go: skipping
 /// frames would not help, so the span starts again.
 const STALL: Duration = Duration::from_millis(100);
-/// About 6 seconds at 60 frames per second, as the keys' picture.
-const SHOW_FRAMES: u32 = 360;
-
 const TITLE: &str = "Running slower than real time";
 const DESKTOP_LINES: [&str; 2] = [
     "To keep time, turn on \"Skip frames instead of slowing down\"",
@@ -214,21 +212,14 @@ impl SlowHint {
     fn place((fw, fh): (u32, u32), simple_ui: bool) -> Rect {
         let lines = Self::lines(simple_ui);
         let widest = lines.map(crate::ui::text_width).max().unwrap_or(0);
-        let (w, h) = (widest + 2 * PAD, 4 * CHAR + 3 * PAD);
-        Rect {
-            x: fw.saturating_sub(w + PAD),
-            y: fh.saturating_sub(h + PAD),
-            w,
-            h,
-        }
+        corner::place((fw, fh), (widest + 2 * PAD, 4 * CHAR + 3 * PAD))
     }
 
     /// Draws the notice in the bottom right corner of `fb`, worded for
     /// the Simple UI or the desktop.
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font, simple_ui: bool) {
-        let panel = Self::place((fb.width(), fb.height()), simple_ui);
-        fill(fb, panel, BACKGROUND);
-        outline(fb, panel, BORDER);
+        let size = Self::place((fb.width(), fb.height()), simple_ui);
+        let panel = corner::panel(fb, (size.w, size.h));
         let x = panel.x + PAD;
         let mut y = panel.y + PAD;
         for (i, line) in Self::lines(simple_ui).enumerate() {

@@ -4,6 +4,7 @@ mod audio;
 mod bench;
 mod colors;
 mod controls;
+mod corner;
 mod debug_panel;
 mod dialog;
 mod editor_layout;
@@ -3700,12 +3701,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // only be in the way of. The Simple UI's go on a layer of
                 // their own.
                 if i == 0 && !paused && !modal && !simple_ui {
-                    if key_hint.visible() {
-                        key_hint.draw(fb, font);
-                    }
-                    if slow_hint.visible() {
-                        slow_hint.draw(fb, font, simple_ui);
-                    }
+                    corner::draw(fb, font, &key_hint, &slow_hint, false);
                 }
                 match &side {
                     _ if i != side_on || !under => {}
@@ -3811,17 +3807,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // desktop. Neither shows with the pause menu or the game list, so
         // they stay clear of the bar of hints at the bottom; the slow
         // program's notice waits for the keys' picture to go.
-        let notice = key_hint.visible() || slow_hint.visible();
+        let notice = corner::visible(&key_hint, &slow_hint);
         if simple_ui && notice && !paused && !modal {
             let size = settings.simple_ui_size;
             let (ui, place) = simple_ui::notice_place((out_w, out_h), size);
             drawing!(notice_layer.update(texture_creator, ui, |fb| {
-                if key_hint.visible() {
-                    key_hint.draw(fb, font);
-                }
-                if slow_hint.visible() {
-                    slow_hint.draw(fb, font, true);
-                }
+                corner::draw(fb, font, &key_hint, &slow_hint, true);
             }));
             drawing!(notice_layer.copy(&mut canvas, (0, 0), place, ui.0));
         } else {

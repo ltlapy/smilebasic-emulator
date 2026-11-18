@@ -7,12 +7,9 @@ use sb_runtime::font::Font;
 use sdl3::keyboard::Scancode;
 
 use crate::controls::KEY_BUTTONS;
-use crate::ui::{
-    BACKGROUND, BORDER, CHAR, DISABLED, PAD, Rect, TEXT, draw_text, fill, outline, text_width,
-};
+use crate::corner::{self, SHOW_FRAMES};
+use crate::ui::{BORDER, CHAR, DISABLED, PAD, Rect, TEXT, draw_text, fill, outline, text_width};
 
-/// About 6 seconds at 60 frames per second.
-const SHOW_FRAMES: u32 = 360;
 const CAP: u32 = 40;
 const GAP: u32 = 4;
 const STEP: u32 = CAP + GAP;
@@ -73,14 +70,7 @@ impl KeyHint {
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
         let w = (7 * STEP - GAP).max(text_width(TITLE)) + 2 * PAD;
         let h = 2 * CHAR + 4 * STEP - GAP + 4 * PAD;
-        let panel = Rect {
-            x: fb.width().saturating_sub(w + PAD),
-            y: fb.height().saturating_sub(h + PAD),
-            w,
-            h,
-        };
-        fill(fb, panel, BACKGROUND);
-        outline(fb, panel, BORDER);
+        let panel = corner::panel(fb, (w, h));
         draw_text(fb, font, panel.x + PAD, panel.y + PAD, TITLE, TEXT);
         let (x0, y0) = (panel.x + PAD, panel.y + 2 * PAD + CHAR);
         for (id, (col, row)) in PLACES {
