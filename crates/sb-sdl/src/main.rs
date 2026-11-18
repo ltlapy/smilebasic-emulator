@@ -1241,7 +1241,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 controls.event(&mut event);
                 // R3 clicks on the emulator's screens as the mouse does.
                 let main_id = canvas.window().id();
-                controls.stick_click(&mut event, stick_role!(), main_id, main_map);
+                let lcd = main_map.lcd(simple_ui);
+                controls.stick_click(&mut event, stick_role!(), main_id, lcd);
                 // A press and its release can both come between two
                 // frames, which what is held then would miss. One of the
                 // emulator's screens takes them back below.
@@ -1669,9 +1670,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             match event {
                 Event::MouseMotion { x, y, .. } if !from_editor => {
                     let size = (mode.width as i32, mode.height as i32);
-                    let display_size = (display_w as i32, display_h as i32);
-                    let m = &mut controls.mouse;
-                    controls::place_mouse(m, to_screen(x, y), size, to_display(x, y), display_size);
+                    let lcd = map().lcd(simple_ui).to_display(x, y);
+                    controls::place_mouse(&mut controls.mouse, to_screen(x, y), size, lcd);
                 }
                 Event::MouseWheel { y, .. }
                     if screens.manager.is_none() && !on_editor && !from_editor =>
@@ -3024,12 +3024,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         );
         // The right stick moves the main window's pointer, but not while
         // the editor's own window has the keys.
-        let stick_display = (display_w, display_h);
-        if let Some(at) = controls.stick_pointer(&mut held, stick_role!(), stick_display) {
-            let (x, y) = main_map.display_to_window(at);
+        if let Some(at) = controls.stick_pointer(&mut held, stick_role!()) {
+            let (x, y) = main_map.lcd(simple_ui).display_to_window(at);
             let size = (mode.width as i32, mode.height as i32);
-            let display_size = (display_w as i32, display_h as i32);
-            controls.place_pointer(&mut held, main_map.to_screen(x, y), size, at, display_size);
+            controls.place_pointer(&mut held, main_map.to_screen(x, y), size, at);
             mouse.warp_mouse_in_window(canvas.window(), x, y);
         }
         typing.hold(&held);
@@ -3128,7 +3126,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let (x, y) = if (sent.x, sent.y) != (now.x, now.y) {
                 main_map.screen_to_window(now.x, now.y)
             } else {
-                main_map.display_to_window(now.display)
+                main_map.lcd(simple_ui).display_to_window(now.display)
             };
             mouse.warp_mouse_in_window(canvas.window(), x, y);
             (sent.x, sent.y, sent.display) = (now.x, now.y, now.display);
@@ -3830,14 +3828,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if let Some(place) = menus_apart {
             drawing!(menu_layer.copy(&mut canvas, (0, 0), place.rect(), place.size.0));
         }
-        let at = controls.mouse.display;
+        let (at, lcd) = (controls.mouse.display, main_map.lcd(simple_ui));
         drawing!(drawn_cursor.draw(
             &mut canvas,
             texture_creator,
             show_cursor,
             at,
-            display,
-            display_w
+            lcd.display,
+            lcd.display_w
         ));
         bench.lap(Stage::Overlays);
         bench.shoot(&canvas, "main");

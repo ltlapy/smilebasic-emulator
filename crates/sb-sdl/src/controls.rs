@@ -10,7 +10,7 @@ use sdl3::joystick::JoystickId;
 use sdl3::keyboard::{KeyboardState, Mod, Scancode};
 use sdl3::mouse::{MouseButton, MouseState};
 
-use crate::placement::Mapping;
+use crate::placement::{Mapping, SB4_DISPLAY};
 use sdl3::{GamepadSubsystem, Sdl};
 
 /// The bit in BUTTON's value of one of SDL's buttons, for the bench.
@@ -578,10 +578,6 @@ impl Carried {
 /// #B_RSTICK's bit in BUTTON's value: R3, the right stick pressed.
 const R3: u32 = 1 << 13;
 
-/// The width of SmileBASIC 4's display, in whose pixels the right stick
-/// moves the pointer.
-const SB4_DISPLAY_W: i32 = 1280;
-
 /// How far the right stick tilted by `x`, `y` (Y down, as [`Pad::sticks`]
 /// has it) moves the mouse pointer in a frame, in pixels of SmileBASIC
 /// 4's 1280x720 display, as SmileBASIC 4 moves it: a speed by how far the
@@ -606,18 +602,19 @@ pub fn stick_step(x: f64, y: f64) -> (i32, i32) {
 }
 
 /// Puts the pointer at the screen's pixel `screen`, of a screen `size`
-/// big, and the display's pixel `display`, of a display `display_size`
-/// big. The program reads a pointer past the screen's edges as at them.
-pub fn place_mouse(
-    m: &mut Mouse,
-    (sx, sy): (i32, i32),
-    (w, h): (i32, i32),
-    (dx, dy): (i32, i32),
-    (display_w, display_h): (i32, i32),
-) {
+/// big, and the pixel `display` of SmileBASIC 4's display, which
+/// [`Mapping::lcd`] maps. The program reads a pointer past the edges of
+/// either as at them.
+pub fn place_mouse(m: &mut Mouse, (sx, sy): (i32, i32), (w, h): (i32, i32), display: (i32, i32)) {
     (m.x, m.y) = (sx.clamp(0, w - 1), sy.clamp(0, h - 1));
-    m.display = (dx.clamp(0, display_w - 1), dy.clamp(0, display_h - 1));
+    m.display = on_display(display);
     m.on_screen = (0..w).contains(&sx) && (0..h).contains(&sy);
+}
+
+/// `(x, y)` kept on [`SB4_DISPLAY`].
+fn on_display((x, y): (i32, i32)) -> (i32, i32) {
+    let (w, h) = (SB4_DISPLAY.0 as i32, SB4_DISPLAY.1 as i32);
+    (x.clamp(0, w - 1), y.clamp(0, h - 1))
 }
 
 /// Select (SDL's Back, the − button) as the right-stick mouse and the
@@ -692,38 +689,6 @@ impl HeldBack {
                 pad.sticks[1] = (0.0, 0.0);
             }
         }
-    }
-}
-
-/// The pointer's place in SmileBASIC 4's display pixels, finer than the
-/// display's own where that is smaller, so that the right stick moves it
-/// as far across as on SmileBASIC 4.
-#[derive(Debug, Default)]
-struct StickPointer {
-    at: (i32, i32),
-    /// The display pixel `at` gave last; the pointer comes from the
-    /// display again if it went elsewhere.
-    gave: Option<(i32, i32)>,
-}
-
-impl StickPointer {
-    /// The display pixel `display` moves to by `step`, in SmileBASIC 4's
-    /// pixels, on a display `size` big. It stays on the display.
-    fn moved(&mut self, display: (i32, i32), step: (i32, i32), size: (u32, u32)) -> (i32, i32) {
-        let (w, h) = (size.0.max(1) as i32, size.1.max(1) as i32);
-        if self.gave != Some(display) {
-            let fine = |d: i32| (d * SB4_DISPLAY_W + w - 1) / w;
-            self.at = (fine(display.0), fine(display.1));
-        }
-        let max = (SB4_DISPLAY_W - 1, h * SB4_DISPLAY_W / w - 1);
-        self.at = (
-            (self.at.0 + step.0).clamp(0, max.0),
-            (self.at.1 + step.1).clamp(0, max.1),
-        );
-        let coarse = |v: i32, n: i32| (v * w / SB4_DISPLAY_W).clamp(0, n - 1);
-        let to = (coarse(self.at.0, w), coarse(self.at.1, h));
-        self.gave = Some(to);
-        to
     }
 }
 
@@ -919,7 +884,6 @@ pub struct StickMouse {
     pub on: bool,
     pub select: Select,
     held_back: HeldBack,
-    pointer: StickPointer,
     click: StickClick,
 }
 
@@ -931,9 +895,8 @@ impl StickMouse {
     }
 
     /// The right-stick mouse in a frame, on `state` as the program is to
-    /// see it: the right stick moves the pointer from the display pixel
-    /// `from` to the one this returns, on a display `size` big, as `role`
-    /// says. For the program R3 is the left mouse button, and with Select
+    /// see it: the right stick moves the pointer from the pixel `from` of
+    /// SmileBASIC 4's display to the one this returns, as `role` says. For the program R3 is the left mouse button, and with Select
     /// held this works whatever the program does, which then sees neither
     /// the right stick nor R3. Nor does it see them while the emulator's
     /// screens have them.
@@ -942,7 +905,6 @@ impl StickMouse {
         state: &mut State,
         role: StickRole,
         from: (i32, i32),
-        size: (u32, u32),
     ) -> Option<(i32, i32)> {
         if !self.on {
             self.held_back = HeldBack::default();
@@ -970,7 +932,7 @@ impl StickMouse {
             return None;
         }
         self.select.used |= select;
-        Some(self.pointer.moved(from, step, size))
+        Some(on_display((from.0 + step.0, from.1 + step.1)))
     }
 
     /// Whether Select has the right stick for the pointer now, which
@@ -1099,18 +1061,13 @@ impl Controls {
 
     /// [`StickMouse::frame`] for `state` as [`Controls::state`] made it,
     /// from where the pointer is now.
-    pub fn stick_pointer(
-        &mut self,
-        state: &mut State,
-        role: StickRole,
-        size: (u32, u32),
-    ) -> Option<(i32, i32)> {
-        (self.stick_mouse).frame(state, role, self.mouse.display, size)
+    pub fn stick_pointer(&mut self, state: &mut State, role: StickRole) -> Option<(i32, i32)> {
+        (self.stick_mouse).frame(state, role, self.mouse.display)
     }
 
     /// Makes `event` a click of the left mouse button where R3 clicks for
     /// the emulator's screens (`role`), at the pointer on `window`, whose
-    /// coordinates `map` has. Goes after [`Controls::event`] and before
+    /// coordinates `map`, a [`Mapping::lcd`], has. Goes after [`Controls::event`] and before
     /// [`Controls::taps`], so that the program has no tap of that R3.
     pub fn stick_click(&mut self, event: &mut Event, role: StickRole, window: u32, map: Mapping) {
         let at = map.display_to_window(self.mouse.display);
@@ -1125,9 +1082,8 @@ impl Controls {
         screen: (i32, i32),
         size: (i32, i32),
         display: (i32, i32),
-        display_size: (i32, i32),
     ) {
-        place_mouse(&mut self.mouse, screen, size, display, display_size);
+        place_mouse(&mut self.mouse, screen, size, display);
         state.mouse = Mouse {
             buttons: state.mouse.buttons,
             ..self.mouse
@@ -2038,25 +1994,30 @@ mod tests {
 
     #[test]
     fn the_pointer_stays_on_the_display() {
-        let mut p = StickPointer::default();
-        let size = (1280, 720);
-        assert_eq!(p.moved((1275, 3), (16, -16), size), (1279, 0));
-        assert_eq!(p.moved((1279, 0), (16, -16), size), (1279, 0));
-        assert_eq!(p.moved((0, 715), (-16, 16), size), (0, 719));
-        assert_eq!(p.moved((0, 719), (5, -1), size), (5, 718));
+        let mut stick = stick_mouse();
+        let mut moved = |from, tilt| {
+            let mut state = holding(0);
+            state.pads[0].sticks[1] = tilt;
+            stick.frame(&mut state, CURSOR, from)
+        };
+        // A full tilt goes 16 of SmileBASIC 4's pixels, whatever size the
+        // UI's display is.
+        assert_eq!(moved((100, 100), (1.0, 0.0)), Some((116, 100)));
+        assert_eq!(moved((1275, 3), (1.0, -1.0)), Some((1279, 0)));
+        assert_eq!(moved((1279, 0), (1.0, -1.0)), Some((1279, 0)));
+        assert_eq!(moved((0, 715), (-1.0, 1.0)), Some((0, 719)));
+        assert_eq!(moved((0, 719), (0.0, -0.35)), Some((0, 718)));
     }
 
     #[test]
-    fn a_smaller_display_takes_steps_of_smilebasic_4s_pixels() {
-        // Half as wide: two of SmileBASIC 4's pixels to one of its own.
-        let mut p = StickPointer::default();
-        let size = (640, 360);
-        assert_eq!(p.moved((100, 100), (1, 1), size), (100, 100));
-        assert_eq!(p.moved((100, 100), (1, 1), size), (101, 101));
-        assert_eq!(p.moved((101, 101), (16, 0), size), (109, 101));
-        // Moved elsewhere meanwhile, by the mouse: it goes on from there.
-        assert_eq!(p.moved((10, 10), (2, 0), size), (11, 10));
-        assert_eq!(p.moved((11, 10), (2000, 2000), size), (639, 359));
+    fn a_pointer_is_kept_on_smilebasic_4s_display() {
+        let mut m = Mouse::default();
+        place_mouse(&mut m, (10, 20), (400, 240), (-5, 800));
+        assert_eq!(m.display, (0, 719));
+        place_mouse(&mut m, (10, 20), (400, 240), (1280, -1));
+        assert_eq!(m.display, (1279, 0));
+        place_mouse(&mut m, (10, 20), (400, 240), (640, 360));
+        assert_eq!(m.display, (640, 360));
     }
 
     fn stick_mouse() -> StickMouse {
@@ -2066,7 +2027,6 @@ mod tests {
         }
     }
 
-    const DISPLAY: (u32, u32) = (1280, 720);
     /// A running program that shows the mouse cursor, and one that hides it.
     const CURSOR: StickRole = StickRole::Program { cursor: true };
     const NO_CURSOR: StickRole = StickRole::Program { cursor: false };
@@ -2081,17 +2041,17 @@ mod tests {
         };
         let mut stick = stick_mouse();
         let mut state = pressed();
-        assert_eq!(stick.frame(&mut state, CURSOR, (10, 10), DISPLAY), None);
+        assert_eq!(stick.frame(&mut state, CURSOR, (10, 10)), None);
         // In place of the mouse's own buttons, and BUTTON still sees it.
         assert_eq!(state.mouse.buttons, 1);
         assert_eq!(state.pads[1].buttons, R3);
         assert!(!stick.holds_back(1, Tap::Buttons(1, R3)));
         let mut state = pressed();
-        stick.frame(&mut state, NO_CURSOR, (10, 10), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (10, 10));
         assert_eq!(state.mouse.buttons, 0b110);
         let mut state = pressed();
         stick.on = false;
-        stick.frame(&mut state, CURSOR, (10, 10), DISPLAY);
+        stick.frame(&mut state, CURSOR, (10, 10));
         assert_eq!(state.mouse.buttons, 0b110);
     }
 
@@ -2102,12 +2062,12 @@ mod tests {
         state.pads[2].sticks[1] = (1.0, 0.0);
         state.pads[0].sticks[1] = (0.2, -0.9);
         // Each axis from the controller tilted furthest along it.
-        let moved = stick.frame(&mut state, CURSOR, (10, 100), DISPLAY);
+        let moved = stick.frame(&mut state, CURSOR, (10, 100));
         assert_eq!(moved, Some((26, 86)));
         assert_eq!(state.pads[2].sticks[1], (1.0, 0.0));
-        assert_eq!(stick.frame(&mut state, NO_CURSOR, (10, 100), DISPLAY), None);
+        assert_eq!(stick.frame(&mut state, NO_CURSOR, (10, 100)), None);
         stick.on = false;
-        assert_eq!(stick.frame(&mut state, CURSOR, (10, 100), DISPLAY), None);
+        assert_eq!(stick.frame(&mut state, CURSOR, (10, 100)), None);
     }
 
     #[test]
@@ -2122,7 +2082,7 @@ mod tests {
         assert!(stick.select_points());
         let mut state = tilted(R3);
         assert_eq!(
-            stick.frame(&mut state, NO_CURSOR, (10, 100), DISPLAY),
+            stick.frame(&mut state, NO_CURSOR, (10, 100)),
             Some((10, 84))
         );
         assert_eq!(state.pads[0].sticks, [(0.5, 0.0), (0.0, 0.0)]);
@@ -2135,14 +2095,14 @@ mod tests {
         stick.select.event(&pad_event(Button::Back, false));
         assert!(!stick.select_points());
         let mut state = tilted(R3);
-        assert_eq!(stick.frame(&mut state, NO_CURSOR, (10, 84), DISPLAY), None);
+        assert_eq!(stick.frame(&mut state, NO_CURSOR, (10, 84)), None);
         assert_eq!(state.pads[0].sticks[1], (0.0, 0.0));
         assert_eq!(state.pads[0].buttons, 1 << 1);
         assert!(stick.holds_back(0, Tap::Buttons(0, R3)));
         let mut state = holding(0);
-        stick.frame(&mut state, NO_CURSOR, (10, 84), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (10, 84));
         let mut state = tilted(R3);
-        stick.frame(&mut state, NO_CURSOR, (10, 84), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (10, 84));
         assert_eq!(state.pads[0].sticks[1], (0.0, -1.0));
         assert_eq!(state.pads[0].buttons, R3 | 1 << 1);
         assert!(!stick.holds_back(0, Tap::Buttons(0, R3)));
@@ -2169,7 +2129,7 @@ mod tests {
         stick.select.arm();
         let mut state = holding(0);
         state.pads[0].sticks[1] = (1.0, 0.0);
-        stick.frame(&mut state, NO_CURSOR, (0, 0), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (0, 0));
         select(&mut stick, false);
         assert!(!stick.select.alone());
         // ...or a press that was not one to open them.
@@ -2181,7 +2141,7 @@ mod tests {
         stick.select.arm();
         let mut state = holding(0);
         state.pads[0].sticks[1] = (0.2, 0.0);
-        stick.frame(&mut state, NO_CURSOR, (0, 0), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (0, 0));
         select(&mut stick, false);
         assert!(stick.select.alone());
     }
@@ -2245,7 +2205,7 @@ mod tests {
             state
         };
         let mut state = tilted();
-        let moved = stick.frame(&mut state, StickRole::Screens, (10, 10), DISPLAY);
+        let moved = stick.frame(&mut state, StickRole::Screens, (10, 10));
         assert_eq!(moved, Some((26, 10)));
         // R3 clicks there by its events, not as the program's button.
         assert_eq!(state.mouse.buttons, 0);
@@ -2257,10 +2217,7 @@ mod tests {
         // The Simple UI's screens: no pointer, and nothing for the program.
         let mut stick = stick_mouse();
         let mut state = tilted();
-        assert_eq!(
-            stick.frame(&mut state, StickRole::Hidden, (10, 10), DISPLAY),
-            None
-        );
+        assert_eq!(stick.frame(&mut state, StickRole::Hidden, (10, 10)), None);
         assert_eq!(
             (state.pads[0].buttons, state.pads[0].sticks[1]),
             (0, (0.0, 0.0))
@@ -2268,17 +2225,11 @@ mod tests {
         // Select does not make a mouse of them there.
         stick.select.event(&pad_event(Button::Back, true));
         let mut state = tilted();
-        assert_eq!(
-            stick.frame(&mut state, StickRole::Hidden, (10, 10), DISPLAY),
-            None
-        );
+        assert_eq!(stick.frame(&mut state, StickRole::Hidden, (10, 10)), None);
         // Off: as if there were no right-stick mouse.
         let mut stick = stick_mouse();
         let mut state = tilted();
-        assert_eq!(
-            stick.frame(&mut state, StickRole::Off, (10, 10), DISPLAY),
-            None
-        );
+        assert_eq!(stick.frame(&mut state, StickRole::Off, (10, 10)), None);
         assert_eq!(state.pads[0].buttons, R3);
     }
 

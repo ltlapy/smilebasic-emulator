@@ -10,6 +10,10 @@ use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
 use sdl3::render::FRect;
 
+/// SmileBASIC 4's display, in whose pixels `Mouse::display` goes: MOUSE
+/// and TOUCH with their flag 1, and XSUBSCREEN's area.
+pub const SB4_DISPLAY: (u32, u32) = (1280, 720);
+
 /// How a window's pointer positions map to the display's pixels and to
 /// those of the frame shown in `shown`, which has `space` pixels.
 #[derive(Clone, Copy)]
@@ -65,6 +69,27 @@ impl Mapping {
         )
     }
 
+    /// This mapping with [`SB4_DISPLAY`] for its display, which the
+    /// program's pointer goes by. On the desktop that is the UI's
+    /// display. The Simple UI's display is the output's size in pixels of
+    /// its own, so there SmileBASIC 4's display is where it would be
+    /// around the screen, which SmileBASIC 4 fits to it: the smallest
+    /// 16:9 rectangle around the screen, centered on it. A screen point
+    /// then has the same coordinates as on SmileBASIC 4, whatever the
+    /// output; where the output cuts the display off, the pointer cannot
+    /// reach its edges.
+    pub fn lcd(self, simple_ui: bool) -> Mapping {
+        let display = match simple_ui {
+            true => around(self.shown),
+            false => self.display,
+        };
+        Mapping {
+            display,
+            display_w: SB4_DISPLAY.0,
+            ..self
+        }
+    }
+
     /// The window coordinates of the middle of the screen's or the
     /// editor's pixel (x, y), which [`Mapping::to_screen`] maps back.
     pub fn screen_to_window(self, x: i32, y: i32) -> (f32, f32) {
@@ -74,6 +99,20 @@ impl Mapping {
             (shown.y + (y as f32 + 0.5) * shown.h / h as f32) / self.px,
         )
     }
+}
+
+/// The smallest rectangle of [`SB4_DISPLAY`]'s shape around `shown`,
+/// centered on it.
+fn around(shown: FRect) -> FRect {
+    let (w, h) = (SB4_DISPLAY.0 as f32, SB4_DISPLAY.1 as f32);
+    let scale = (shown.w / w).max(shown.h / h);
+    let (w, h) = (w * scale, h * scale);
+    FRect::new(
+        shown.x + (shown.w - w) / 2.0,
+        shown.y + (shown.h - h) / 2.0,
+        w,
+        h,
+    )
 }
 
 /// Where the display (emulator UI coordinates) goes in a window of
@@ -932,5 +971,114 @@ mod tests {
         assert_eq!(map.to_screen(0.5, 0.5), (0, 0));
         assert_eq!(map.to_screen(320.5, 400.5), (320, 400));
         assert_eq!(map.to_screen(639.5, 479.5), (639, 479));
+    }
+
+    /// The main window's mapping in the Simple UI on an output of `out`
+    /// pixels, with the screen of `mode`, as the frontend makes it.
+    fn simple_map(out: (u32, u32), mode: &ScreenMode) -> Mapping {
+        use sb_runtime::settings::SimpleUiSize::Normal;
+        let ui = simple_ui::ui_size(out, Normal);
+        let display = simple_ui::display_rect(ui, out, Normal);
+        let screen_h = display.h.min(out.1 as f32);
+        let (shown, _) = screen_place(mode, &Settings::default(), true, out.0, screen_h);
+        Mapping {
+            px: 1.0,
+            display,
+            display_w: ui.0,
+            shown,
+            space: (mode.width, mode.height),
+            menu: None,
+        }
+    }
+
+    #[test]
+    fn the_programs_display_is_the_desktops_own() {
+        for out in [(1280, 720), (640, 480), (1920, 1200), (2560, 1440)] {
+            let mode = ScreenMode::new(400, 240);
+            for px in [1.0, 2.0] {
+                let map = Mapping {
+                    px,
+                    display: display(out),
+                    display_w: 1280,
+                    shown: desktop_screen_place(&mode, &with(NEAREST), out, display(out)).0,
+                    space: (400, 240),
+                    menu: None,
+                };
+                let lcd = map.lcd(false);
+                for (x, y) in [(0.0, 0.0), (0.4, 0.6), (100.5, 33.25), (639.0, 359.5)] {
+                    assert_eq!(lcd.to_display(x, y), map.to_display(x, y), "{out:?}");
+                }
+                for at in [(0, 0), (1279, 719), (640, 360)] {
+                    assert_eq!(lcd.display_to_window(at), map.display_to_window(at));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_simple_ui_puts_the_programs_display_around_the_screen() {
+        let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
+        // A 16:9 screen on a 4:3 output: the display is the screen, with
+        // the bars above and below it left over.
+        let wide = ScreenMode::new(1280, 720);
+        let lcd = simple_map((1024, 768), &wide).lcd(true);
+        assert_eq!(box_of(lcd.display), (0.0, 96.0, 1024.0, 576.0));
+        assert_eq!(lcd.to_display(0.0, 96.0), (0, 0));
+        assert_eq!(lcd.to_display(512.0, 384.0), (640, 360));
+        assert_eq!(lcd.to_display(1023.9, 671.9), (1279, 719));
+        // SmileBASIC 4's own 400x240 screen at 5:3 on a 640x480 output:
+        // the display is wider than the screen, which SmileBASIC 4 shows
+        // 40 pixels in.
+        let lcd = simple_map((640, 480), &ScreenMode::new(400, 240)).lcd(true);
+        let (x, y, w, h) = box_of(lcd.display);
+        let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+        assert!(near(x, -64.0 / 3.0) && near(y, 48.0), "{x} {y}");
+        assert!(near(w, 2048.0 / 3.0) && near(h, 384.0), "{w} {h}");
+        assert_eq!(lcd.to_display(320.0, 240.0), (640, 360));
+        assert_eq!(lcd.to_display(0.5, 48.5), (40, 0));
+    }
+
+    #[test]
+    fn a_screen_pixel_is_where_smilebasic_4_shows_it_in_the_simple_ui() {
+        let outs = [
+            (640, 480),
+            (1024, 768),
+            (1280, 720),
+            (800, 480),
+            (1920, 1080),
+        ];
+        let modes = [(400, 240), (1280, 720), (640, 480), (320, 240), (512, 512)];
+        for out in outs {
+            for (w, h) in modes {
+                let mode = ScreenMode::new(w, h);
+                let map = simple_map(out, &mode);
+                let lcd = map.lcd(true);
+                // Where SmileBASIC 4 shows the screen on its display.
+                let sb4 = screen_rect(&mode, None, 1280, 720.0);
+                let corners = [
+                    (0, 0),
+                    (w - 1, 0),
+                    (0, h - 1),
+                    (w - 1, h - 1),
+                    (w / 2, h / 2),
+                ];
+                for (sx, sy) in corners {
+                    let (x, y) = map.screen_to_window(sx as i32, sy as i32);
+                    let (dx, dy) = lcd.to_display(x, y);
+                    let ex = sb4.x + (sx as f32 + 0.5) * sb4.w / w as f32;
+                    let ey = sb4.y + (sy as f32 + 0.5) * sb4.h / h as f32;
+                    let near = (dx as f32 - ex).abs() <= 1.0 && (dy as f32 - ey).abs() <= 1.0;
+                    assert!(
+                        near,
+                        "{out:?} {w}x{h} ({sx}, {sy}): ({dx}, {dy}) for ({ex}, {ey})"
+                    );
+                }
+                // And back: the pointer put on a display pixel reads it.
+                for at in [(0, 0), (1, 1), (1279, 719), (640, 360), (1278, 3)] {
+                    let (x, y) = lcd.display_to_window(at);
+                    assert_eq!(lcd.to_display(x, y), at, "{out:?} {w}x{h}");
+                }
+            }
+        }
     }
 }

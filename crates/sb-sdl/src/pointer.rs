@@ -167,10 +167,10 @@ impl<'a> DrawnCursor<'a> {
         self.texture = None;
     }
 
-    /// Draws the cursor if `shown`, with its tip at the display's pixel
-    /// `at`, the display being `display` on the canvas and `display_w`
-    /// pixels wide. It is as large on the display as SmileBASIC 4's is on
-    /// its own.
+    /// Draws the cursor if `shown`, with its tip at the pixel `at` of
+    /// SmileBASIC 4's display, which is `display` on the canvas and
+    /// `display_w` pixels wide (see [`crate::placement::Mapping::lcd`]).
+    /// It is as large there as SmileBASIC 4's is on its own.
     pub fn draw(
         &mut self,
         canvas: &mut Canvas<Window>,
