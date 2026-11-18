@@ -242,10 +242,10 @@ apart from the macro hang below.
     if nothing else was pressed or moved while it was held.
   - On the desktop, R3 clicks the emulator's own screens as the left mouse
     button does: the menu bar and its menus, the emulator's windows and
-    dialogs, Projects, and the editor. Holding R3 while tilting the stick
-    drags. While one of these screens is open over a running program, the
-    stick and R3 work there whatever `MOUSECURSOR` says, and the program sees
-    neither until both are let go.
+    dialogs, Projects, the editor, and a program's `DIALOG`. Holding R3
+    while tilting the stick drags. While one of these is open over a running
+    program, the stick and R3 work there whatever `MOUSECURSOR` says, and the
+    program sees neither until both are let go.
   - The Simple UI's own screens go by the buttons alone. There, and while a
     program's `DIALOG` is open, the right stick and R3 do nothing as a mouse
     and no cursor shows.

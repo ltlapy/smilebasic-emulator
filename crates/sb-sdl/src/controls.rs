@@ -793,15 +793,15 @@ pub struct Where {
 
 impl Where {
     /// Who the right stick and R3 are for. On the desktop the emulator's
-    /// screens take them, and with no program running so does everything
-    /// else there is: DIRECT mode, the menu bar, the editor. The Simple
-    /// UI's screens are for the pad, and so is a program's DIALOG there.
-    /// Otherwise the program has them.
+    /// screens and a program's DIALOG take them, and with no program
+    /// running so does everything else there is: DIRECT mode, the menu
+    /// bar, the editor. The Simple UI's screens and DIALOG are for the
+    /// pad. Otherwise the program has them.
     pub fn role(self) -> StickRole {
-        let ours = !self.running || self.screen;
+        let ours = !self.running || self.screen || self.program_dialog;
         match self.simple_ui {
             _ if self.editor_window => StickRole::Off,
-            true if ours || self.program_dialog => StickRole::Hidden,
+            true if ours => StickRole::Hidden,
             false if ours => StickRole::Screens,
             _ => StickRole::Program {
                 cursor: self.cursor,
@@ -2208,12 +2208,14 @@ mod tests {
         assert_eq!(screen.role(), StickRole::Screens);
         let direct = Where::default();
         assert_eq!(direct.role(), StickRole::Screens);
-        // The program's DIALOG is the program's on the desktop.
+        // A program's DIALOG takes them on the desktop, as our screens do,
+        // whatever MOUSECURSOR says.
         let dialog = Where {
             program_dialog: true,
+            cursor: false,
             ..program
         };
-        assert_eq!(dialog.role(), CURSOR);
+        assert_eq!(dialog.role(), StickRole::Screens);
         // The Simple UI's screens, and a program's DIALOG there, have no
         // mouse.
         let simple = |at: Where| Where {

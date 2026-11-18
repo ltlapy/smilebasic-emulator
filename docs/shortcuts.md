@@ -115,8 +115,9 @@ The menu needs the mouse or keys.
 
 The right stick moves the mouse pointer while no program runs, and in a
 program that shows the mouse cursor, as on SmileBASIC 4. It also works on
-the menu bar, the emulator's windows and dialogs, and Projects while they are
-open over a program; the program then does not see the right stick or R3.
+the menu bar, the emulator's windows and dialogs, Projects, and a program's
+`DIALOG` while they are open over a program; the program then does not see
+the right stick or R3.
 Holding − (Select) makes it work in any program, which then does not see the
 right stick or R3 either. File > Settings > Input > *Right stick moves the
 mouse* turns it off.
