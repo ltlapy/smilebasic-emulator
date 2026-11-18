@@ -1,29 +1,34 @@
 //! A timing log of the frontend's drawing, for measuring it without
 //! anyone at the keys: `SB_UI_BENCH` sets the emulator up as it says,
-//! times the parts of each frame's drawing for a while, prints what they
-//! took and quits. It is meant for a scratch data directory (set
+//! times the parts of each trip round the loop for a while, prints what
+//! they took and quits. It is meant for a scratch data directory (set
 //! `XDG_DATA_HOME` on Linux), as it runs the project named there, and
 //! with `SDL_VIDEO_DRIVER=offscreen` it needs no display.
 //!
+//! It counts trips round the frontend's loop. A trip runs one frame of the
+//! program as a rule, but none while it is paused and several to catch up,
+//! and it may leave the drawing out. The variable's parts and the report
+//! call a trip a frame, as they did when each trip ran and drew one.
+//!
 //! The variable is a comma-separated list:
 //!
-//! - `frames=N`: frames timed (600 by default);
-//! - `settle=N`: frames drawn before the timing begins (60 by default), to
-//!   get past what a program sets up;
+//! - `frames=N`: trips timed (600 by default);
+//! - `settle=N`: trips before the timing begins (60 by default), to get
+//!   past what a program sets up;
 //! - `run=PROJECT/PROGRAM`: runs a program of a project from the start;
 //! - `load=PROJECT/PROGRAM`: loads a program of a project into PRG0;
-//! - `end`: stops timing when the program ends, however many frames it was;
+//! - `end`: stops timing when the program ends, however many trips it was;
 //! - `novsync`: presents without waiting for vsync;
 //! - `stop`: stops it, as the Break key does, a second in;
 //! - `type=TEXT`: half a second after that, types TEXT, with no commas;
 //! - `editor`: opens the editor; `apart` in its own window;
 //! - `panel`: shows the debugger's panel with it;
-//! - `shot=PATH`: saves the last frame timed of each window shown, as
+//! - `shot=PATH`: saves the frame of the last trip timed of each window shown, as
 //!   `PATH-main.pam` and `PATH-editor.pam`, to compare drawings;
 //! - `luma=PATH`: reads each frame timed as it goes to the window, writes
-//!   its frame number and mean brightness (0 to 255) to PATH, and reports
+//!   its trip's number and mean brightness (0 to 255) to PATH, and reports
 //!   the frames darker than both of their neighbours, as a flicker is;
-//! - `log=PATH`: writes each frame timed to PATH, at the end of the run: its number,
+//! - `log=PATH`: writes each trip timed to PATH, at the end of the run: its number,
 //!   the window's size in pixels, the drawing's stages in microseconds, the bytes
 //!   uploaded, the textures made, and in microseconds what the rest of the trip round
 //!   the loop took: events, running the program, waiting for the next frame; then the
@@ -52,8 +57,8 @@
 //!   presents do not wait;
 //! - `occluded`: from then too, has the main window count as covered, as
 //!   the system reports it when it can;
-//! - `at=FRAME:WHAT`, any number of them: does something to the frontend at
-//!   that frame: `targets` or `device` as if the renderer reset them (the
+//! - `at=TRIP:WHAT`, any number of them: does something to the frontend in
+//!   that trip, counted from the start: `targets` or `device` as if the renderer reset them (the
 //!   first also spoils what the GPU path holds), `resize:W:H` (`editor-resize:W:H`
 //!   for the editor's own window), `fullscreen`,
 //!   `windowed`, `auto` and `cpu` for the renderer setting, `tool` to start
@@ -72,7 +77,7 @@
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed, those of them the standby thread ran, how far MAINCNT
 //! went, the frames the program missed part of its trip in, the trips that
-//! left the drawing out, the frame the
+//! left the drawing out, the trip the
 //! notice for a program slower than real time showed at, and what the
 //! sound device's buffer went through, so
 //! that the frames keep time whatever happens to the drawing. For the
@@ -91,9 +96,9 @@ use sdl3::video::Window;
 
 use crate::standby::Kept;
 
-/// Bytes given to textures since the frame began.
+/// Bytes given to textures since the trip began.
 static UPLOADED: AtomicU64 = AtomicU64::new(0);
-/// Textures made since the frame began.
+/// Textures made since the trip began.
 static MADE: AtomicU64 = AtomicU64::new(0);
 
 /// The modifiers before a key's name in `key:`, as in `ctrl+shift+F12`,
@@ -127,7 +132,7 @@ pub fn made() {
     MADE.fetch_add(1, Ordering::Relaxed);
 }
 
-/// The parts of a frame's drawing that are timed.
+/// The parts of a trip round the loop that are timed.
 #[derive(Clone, Copy)]
 pub enum Stage {
     /// The screens' or the inline editor's frame, made and uploaded.
@@ -158,7 +163,7 @@ const NAMES: [&str; STAGES] = [
 /// A trip round the loop this long is listed as a stall: sound starts to run out at
 /// about a tenth of a second.
 const STALL: Duration = Duration::from_millis(100);
-/// Frames from the start before the program is stopped, and before the
+/// Trips from the start before the program is stopped, and before the
 /// timing begins after the last step of setting up.
 const SETTLE: u32 = 60;
 
@@ -177,7 +182,9 @@ fn single_frame_dips(lumas: &[f32], least: f32) -> Vec<(usize, f32)> {
 
 #[derive(Default)]
 pub struct Bench {
-    frames: u32,
+    /// Trips timed, and trips before the timing begins, as `frames=` and
+    /// `settle=` say.
+    trips: u32,
     settle: u32,
     run: Option<(String, String)>,
     load: Option<(String, String)>,
@@ -188,14 +195,14 @@ pub struct Bench {
     apart: bool,
     panel: bool,
     shot: Option<String>,
-    /// Where the frames' brightness goes, and what it was so far: the frame's
-    /// number and its mean brightness.
+    /// Where the frames' brightness goes, and what it was so far: the number
+    /// of the trip that drew the frame, and its mean brightness.
     luma: Option<String>,
     lumas: Vec<(u32, f32)>,
-    /// Where each frame's line goes, and the lines so far.
+    /// Where each trip's line goes, and the lines so far.
     log: Option<String>,
     lines: Vec<String>,
-    /// The window's size in pixels this frame.
+    /// The window's size in pixels this trip.
     size: (u32, u32),
     /// Added to each present that waits for vsync.
     slow: Duration,
@@ -210,11 +217,11 @@ pub struct Bench {
     pub ui_scale: Option<u32>,
     /// Parts of the UI the frontend shows, as [`Bench::opens`] tells.
     extras: Vec<String>,
-    /// What happens to the frontend at which frame.
+    /// What happens to the frontend at which trip.
     at: Vec<(u32, String)>,
-    /// Frames since the start.
-    frame: u32,
-    /// Each timed frame's stages, and the bytes it uploaded.
+    /// Trips since the start.
+    trip: u32,
+    /// Each timed trip's stages, and the bytes it uploaded.
     timed: Vec<([Duration; STAGES], u64)>,
     current: [Duration; STAGES],
     /// What the standby thread ran this trip, and in the trips timed.
@@ -237,7 +244,7 @@ pub struct Bench {
     ran: u32,
     /// The sound device's buffer's stats when the timing began, and now.
     sound: Option<(Stats, Stats)>,
-    /// The frame the notice for a program slower than real time first
+    /// The trip the notice for a program slower than real time first
     /// showed at.
     slow_hint: Option<u32>,
 }
@@ -247,13 +254,13 @@ impl Bench {
     pub fn from_env() -> Option<Bench> {
         let spec = std::env::var("SB_UI_BENCH").ok()?;
         let mut bench = Bench {
-            frames: 600,
+            trips: 600,
             settle: SETTLE,
             ..Bench::default()
         };
         for part in spec.split(',').map(str::trim) {
             match part.split_once('=') {
-                Some(("frames", n)) => bench.frames = n.parse().unwrap_or(600),
+                Some(("frames", n)) => bench.trips = n.parse().unwrap_or(600),
                 Some(("settle", n)) => bench.settle = n.parse().unwrap_or(SETTLE),
                 Some(("shot", path)) => bench.shot = Some(path.to_string()),
                 Some(("luma", path)) => bench.luma = Some(path.to_string()),
@@ -261,9 +268,9 @@ impl Bench {
                 Some(("scale", n)) => bench.ui_scale = n.parse().ok(),
                 Some(("type", text)) => bench.typed = Some(text.to_string()),
                 Some(("at", what)) => {
-                    if let Some((frame, what)) = what.split_once(':') {
-                        let frame = frame.parse().unwrap_or(u32::MAX);
-                        bench.at.push((frame, what.to_string()));
+                    if let Some((trip, what)) = what.split_once(':') {
+                        let trip = trip.parse().unwrap_or(u32::MAX);
+                        bench.at.push((trip, what.to_string()));
                     }
                 }
                 Some(("slow", ms)) => {
@@ -300,12 +307,12 @@ impl Bench {
         Some(bench)
     }
 
-    /// Sets the emulator up a step at a time, at the start of each frame,
-    /// and starts timing it. True once the frames are timed.
+    /// Sets the emulator up a step at a time, at the start of each trip
+    /// round the loop, and starts timing it. True once the trips are timed.
     pub fn step(&mut self, machine: &mut Machine) -> bool {
         let stop_at = if self.stop { SETTLE } else { 0 };
         let set_up = stop_at + 1;
-        match self.frame {
+        match self.trip {
             0 => {
                 machine.rt.settings.editor_window = self.apart;
                 if let Some((project, program)) = &self.load {
@@ -323,10 +330,10 @@ impl Bench {
                     }
                 }
             }
-            f if f == stop_at && self.stop => machine.stop(),
+            t if t == stop_at && self.stop => machine.stop(),
             _ => {}
         }
-        if self.frame == set_up {
+        if self.trip == set_up {
             if self.editor && !machine.is_editing() {
                 machine.toggle_editor();
             }
@@ -334,12 +341,12 @@ impl Bench {
                 machine.show_panel(true);
             }
         }
-        if self.frame == set_up + SETTLE / 2
+        if self.trip == set_up + SETTLE / 2
             && let Some(text) = &self.typed
         {
             machine.type_text(text);
         }
-        if self.frame >= set_up + self.settle && self.last.is_some() {
+        if self.trip >= set_up + self.settle && self.last.is_some() {
             let uploaded = UPLOADED.load(Ordering::Relaxed);
             self.timed.push((self.current, uploaded));
             self.kept.add(self.kept_now);
@@ -350,7 +357,7 @@ impl Bench {
                 let (drawing, rest) = stages.split_at(DRAWING);
                 let (drawing, rest) = (drawing.join(" "), rest.join(" "));
                 let made = MADE.load(Ordering::Relaxed);
-                let (frame, (w, h)) = (self.frame, self.size);
+                let (trip, (w, h)) = (self.trip, self.size);
                 let (kept, busy) = (self.kept_now.frames, self.kept_now.busy.as_micros());
                 let count = machine.rt.main_count();
                 let Missed {
@@ -359,19 +366,19 @@ impl Bench {
                     deferred,
                 } = machine.missed;
                 self.lines.push(format!(
-                    "{frame} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy} \
+                    "{trip} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy} \
                      {count} {cut} {held} {deferred} {}",
                     u8::from(!self.undrawn_now)
                 ));
             }
         }
-        self.frame += 1;
+        self.trip += 1;
         self.current = [Duration::ZERO; STAGES];
         self.kept_now = Kept::default();
         self.undrawn_now = false;
         UPLOADED.store(0, Ordering::Relaxed);
         MADE.store(0, Ordering::Relaxed);
-        self.last = (self.frame > set_up + self.settle).then(Instant::now);
+        self.last = (self.trip > set_up + self.settle).then(Instant::now);
         if self.last.is_some() && self.began.is_none() {
             self.began = self.last;
             self.ran = 0;
@@ -380,13 +387,13 @@ impl Bench {
         }
         self.maincnt.1 = machine.rt.main_count();
         self.missed.1 = machine.missed;
-        let ended = self.until_end && self.frame > set_up + 10 && !machine.is_running();
-        ended || self.timed.len() >= self.frames as usize
+        let ended = self.until_end && self.trip > set_up + 10 && !machine.is_running();
+        ended || self.timed.len() >= self.trips as usize
     }
 
     /// Notes that the notice for a program slower than real time shows.
     pub fn slow_hint_shown(&mut self) {
-        self.slow_hint.get_or_insert(self.frame);
+        self.slow_hint.get_or_insert(self.trip);
     }
 
     /// Counts a program frame run.
@@ -411,7 +418,7 @@ impl Bench {
         }
     }
 
-    /// Notes the window's size in pixels this frame.
+    /// Notes the window's size in pixels this trip.
     pub fn window_size(&mut self, size: (u32, u32)) {
         self.size = size;
     }
@@ -459,19 +466,19 @@ impl Bench {
         self.undrawn_now = true;
     }
 
-    /// Whether this trip's frame is the one [`Bench::shoot`] saves, which
-    /// must then be drawn.
+    /// Whether this trip is the last one timed, whose frame
+    /// [`Bench::shoot`] saves and which must then draw.
     pub fn shoots(&self) -> bool {
-        self.shot.is_some() && self.last.is_some() && self.timed.len() + 1 == self.frames as usize
+        self.shot.is_some() && self.last.is_some() && self.timed.len() + 1 == self.trips as usize
     }
 
-    /// Saves what `canvas` shows as `PATH-name.pam`, in the last frame
+    /// Saves what `canvas` shows as `PATH-name.pam`, in the last trip
     /// timed, before it is presented.
     pub fn shoot(&self, canvas: &Canvas<Window>, name: &str) {
         let (Some(path), Some(_)) = (&self.shot, self.last) else {
             return;
         };
-        if self.timed.len() + 1 != self.frames as usize {
+        if self.timed.len() + 1 != self.trips as usize {
             return;
         }
         let shot = canvas
@@ -518,24 +525,23 @@ impl Bench {
             }
         });
         let luma = sum as f64 / 1000.0 / (w * h as usize).max(1) as f64;
-        self.lumas.push((self.frame, luma as f32));
+        self.lumas.push((self.trip, luma as f32));
     }
 
-    /// What is to happen to the frontend at this frame.
+    /// What is to happen to the frontend in this trip.
     pub fn due(&self) -> Vec<&str> {
-        let due = self.at.iter().filter(|(frame, _)| *frame == self.frame);
+        let due = self.at.iter().filter(|(trip, _)| *trip == self.trip);
         due.map(|(_, what)| what.as_str()).collect()
     }
 
     /// Whether the frontend is to show `part` of its UI now.
     pub fn opens(&self, part: &str) -> bool {
         let set_up = if self.stop { SETTLE } else { 0 } + 1;
-        self.frame == set_up + 1 && self.extras.iter().any(|e| e == part)
+        self.trip == set_up + 1 && self.extras.iter().any(|e| e == part)
             || self.due().contains(&part)
     }
 
-    /// Ends a stage of the frame's drawing, which began where the last
-    /// one ended.
+    /// Ends a stage of the trip, which began where the last one ended.
     pub fn lap(&mut self, stage: Stage) {
         if let Some(last) = &mut self.last {
             let now = Instant::now();
@@ -557,7 +563,7 @@ impl Bench {
             return;
         };
         let lines: Vec<String> = (self.lumas.iter())
-            .map(|(frame, luma)| format!("{frame} {luma:.3}"))
+            .map(|(trip, luma)| format!("{trip} {luma:.3}"))
             .collect();
         if let Err(e) = std::fs::write(path, lines.join("\n") + "\n") {
             eprintln!("SB_UI_BENCH: {e}");
@@ -614,7 +620,7 @@ impl Bench {
         for (i, name) in NAMES.iter().enumerate() {
             line(name, self.timed.iter().map(|(t, _)| t[i]).collect());
         }
-        // Frames the screens were drawn again in, as a heavy scene's are not
+        // Trips the screens were drawn again in, as a heavy scene's are not
         // all of them.
         let screen = Stage::Screen as usize;
         let mut drawn: Vec<&[Duration; STAGES]> = self.timed.iter().map(|(t, _)| t).collect();
@@ -670,7 +676,7 @@ impl Bench {
             self.kept.frames, self.kept_trips, self.kept.busy
         );
         match self.slow_hint {
-            Some(frame) => println!("slow hint shown at frame {frame}"),
+            Some(trip) => println!("slow hint shown at frame {trip}"),
             None => println!("slow hint not shown"),
         }
         if let Some((from, to)) = self.sound {
@@ -682,11 +688,11 @@ impl Bench {
             );
         }
         let bytes: u64 = self.timed.iter().map(|&(_, b)| b).sum();
-        let frames = self.timed.len().max(1) as u64;
+        let trips = self.timed.len().max(1) as u64;
         let uploads = self.timed.iter().filter(|&&(_, b)| b > 0).count();
         println!(
             "uploaded  {:.1} KB a frame, in {uploads} of {} frames",
-            bytes as f64 / frames as f64 / 1024.0,
+            bytes as f64 / trips as f64 / 1024.0,
             self.timed.len()
         );
     }

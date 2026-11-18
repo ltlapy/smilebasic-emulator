@@ -683,17 +683,21 @@ These variables go with it:
 ### `SB_UI_BENCH`
 
 `SB_UI_BENCH` is a comma-separated list. The emulator sets itself up as the
-list says, times each frame's drawing, prints the results and quits. It runs
-the project that `run=` names from the data directory, so use a scratch one
-(set `XDG_DATA_HOME` on Linux).
+list says, times each trip round its loop, prints the results and quits. It
+runs the project that `run=` names from the data directory, so use a scratch
+one (set `XDG_DATA_HOME` on Linux).
+
+A trip round the loop runs one frame of the program as a rule, none while the
+program is paused and several to catch up, and it may leave the drawing out.
+The keys and the report call a trip a frame.
 
 | Key | What it does |
 |---|---|
-| `frames=N` | Times N frames (600 by default) |
-| `settle=N` | Draws N frames before the timing begins (60 by default), to get past what a program sets up |
+| `frames=N` | Times N trips (600 by default) |
+| `settle=N` | Makes N trips before the timing begins (60 by default), to get past what a program sets up |
 | `run=PROJECT/PROGRAM` | Runs a program of a project from the start. `PROGRAM` defaults to `MAIN.PRG` |
 | `load=PROJECT/PROGRAM` | Loads a program of a project into PRG0 without running it |
-| `end` | Stops timing when the program ends, however many frames it was |
+| `end` | Stops timing when the program ends, however many trips it was |
 | `novsync` | Presents without waiting for vsync, whatever View > "Wait for vsync" says |
 | `stop` | Stops the program, as the Break key does, a second in |
 | `type=TEXT` | Half a second after `stop`, or after the start without it, types TEXT, which can hold no commas |
@@ -707,12 +711,12 @@ the project that `run=` names from the data directory, so use a scratch one
 | `occluded` | From when the timing begins, has the main window count as covered, as the system reports it when it can |
 | `draw=US` | From when the timing begins, makes each drawing of the main window take US microseconds more, of work rather than waiting, as a slow GPU does |
 | `vblank` | From when the timing begins, makes each present of the main window that waits for vsync return at the next sixtieth of a second, as a display at 60 Hz does, and has the display count as one. The offscreen driver's presents do not wait |
-| `shot=PATH` | Saves the last frame timed of each window shown, as `PATH-main.pam` and `PATH-editor.pam`, to compare drawings |
+| `shot=PATH` | Saves the frame of the last trip timed of each window shown, as `PATH-main.pam` and `PATH-editor.pam`, to compare drawings |
 | `luma=PATH` | Writes each timed frame's number and mean brightness (0 to 255), read as it goes to the window, to PATH, and reports the frames darker than both neighbors. That is a flicker, which `check` cannot see |
 | `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds. Two columns follow `wait`: `kept`, the frames the standby thread ran during the trip, and `worker`, its microseconds running them. The last four are `MAINCNT` after the trip and the frames so far that the program missed part of its trip in, by why, as the `missed` line counts them: `cut`, `held` and `deferred`. The last column, `drawn`, is 1 if the trip drew the window and 0 if it left the drawing out |
-| `at=FRAME:WHAT` | Does WHAT to the frontend at that frame, counted from the start of the run. Give it any number of times |
+| `at=TRIP:WHAT` | Does WHAT to the frontend in that trip, counted from the start of the run. Give it any number of times |
 
-`at=FRAME:WHAT` takes:
+`at=TRIP:WHAT` takes:
 
 | `WHAT` | What it does |
 |---|---|
