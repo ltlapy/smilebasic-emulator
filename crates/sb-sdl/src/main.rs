@@ -641,13 +641,34 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut suspend = SuspendWatch::new();
     // The events of a trip round the loop, as they were drained.
     let mut polled: Vec<Event> = Vec::new();
+    // Whether one of the emulator's own windows or dialogs is open now. It
+    // takes the input, and the program sees nothing pressed.
+    macro_rules! modal_shown {
+        () => {
+            dialog.is_some()
+                || manager.is_some()
+                || file_dialog.is_some()
+                || settings_window.is_some()
+                || shortcuts_window.is_some()
+                || color_window.is_some()
+                || game_list.is_some()
+                || pause_menu.is_some()
+                || welcome.is_some()
+        };
+    }
+    // Whether the menu bar, the pause menu or the welcome screen holds a
+    // running program's frames now.
+    macro_rules! program_paused {
+        () => {
+            (menu.shown || pause_menu.is_some() || welcome.is_some()) && machine.is_running()
+        };
+    }
     // Lends the machine for a call that may hold the loop up, unless the
     // program is paused.
     macro_rules! lend {
         () => {
             standby::Lend {
-                frames: !((menu.shown || pause_menu.is_some() || welcome.is_some())
-                    && machine.is_running()),
+                frames: !program_paused!(),
                 run_time: frame_time(machine, &pacer),
                 machine: &mut *machine,
                 guard: &mut frame_guard,
@@ -1012,19 +1033,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         machine.focus_editor(apart && editor_focused);
         // The menu bar and the emulator's windows show in the window with
         // the keys.
-        macro_rules! modal_shown {
-            () => {
-                dialog.is_some()
-                    || manager.is_some()
-                    || file_dialog.is_some()
-                    || settings_window.is_some()
-                    || shortcuts_window.is_some()
-                    || color_window.is_some()
-                    || game_list.is_some()
-                    || pause_menu.is_some()
-                    || welcome.is_some()
-            };
-        }
         if !modal_shown!() {
             ui_on_editor = editor_focused;
         }
@@ -1397,16 +1405,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 typing.any_key_down(&mut machine.rt, scancode, repeat);
             }
             if matches!(event, Event::KeyDown { .. }) {
-                eat_text = dialog.is_some()
+                eat_text = modal_shown!()
                     || program_dialog.is_some()
-                    || manager.is_some()
-                    || file_dialog.is_some()
-                    || settings_window.is_some()
-                    || shortcuts_window.is_some()
-                    || color_window.is_some()
-                    || game_list.is_some()
-                    || pause_menu.is_some()
-                    || welcome.is_some()
                     || debug_panel.typing()
                     || (side.is_some() && side_focus);
             }
@@ -2926,15 +2926,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
 
         // Programs see nothing pressed while the emulator's own screens
         // take the input.
-        let modal = dialog.is_some()
-            || manager.is_some()
-            || color_window.is_some()
-            || settings_window.is_some()
-            || shortcuts_window.is_some()
-            || file_dialog.is_some()
-            || game_list.is_some()
-            || pause_menu.is_some()
-            || welcome.is_some();
+        let modal = modal_shown!();
         // The help opened in direct mode closes when the editor opens or
         // a program runs; the editor's panels close with the editor.
         if side_direct && (machine.is_editing() || machine.is_running())
@@ -2955,8 +2947,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             machine.stop();
         }
         close_bar_on_start(&mut menu, &mut was_running, machine.is_running());
-        let paused =
-            (menu.shown || pause_menu.is_some() || welcome.is_some()) && machine.is_running();
+        let paused = program_paused!();
         menu.status = status_line(machine, paused);
         machine.focus_editor(editor_focused);
         let editor_keys = machine.editor_has_keys() && machine.program_dialog().is_none();
