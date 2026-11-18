@@ -378,6 +378,50 @@ fn failure_message(why: &str, saved: Option<Vec<String>>) -> String {
     }
 }
 
+/// The emulator's own windows and dialogs. While one is open it takes the
+/// input, and the program sees nothing pressed.
+#[derive(Default)]
+struct Screens {
+    /// A question, which takes all input while it is open: before quitting
+    /// with unsaved programs, or for a command such as LOAD.
+    dialog: Option<(Dialog, Asking)>,
+    /// Takes all input while it is open, except for a dialog over it.
+    manager: Option<ProjectManager>,
+    /// Ctrl+S's and Ctrl+L's windows.
+    file_dialog: Option<FileDialog>,
+    settings_window: Option<SettingsWindow>,
+    shortcuts_window: Option<ShortcutsWindow>,
+    color_window: Option<ColorWindow>,
+    /// The Simple UI's game list, which takes all input but a dialog's
+    /// while it is open, and its pause menu, which takes all input.
+    game_list: Option<GameList>,
+    pause_menu: Option<PauseMenu>,
+    /// The screen shown the first time the Simple UI starts, over the
+    /// list: it takes all input but a dialog's.
+    welcome: Option<Welcome>,
+}
+
+impl Screens {
+    /// Whether one of them is open now.
+    fn any(&self) -> bool {
+        self.dialog.is_some()
+            || self.manager.is_some()
+            || self.file_dialog.is_some()
+            || self.settings_window.is_some()
+            || self.shortcuts_window.is_some()
+            || self.color_window.is_some()
+            || self.game_list.is_some()
+            || self.pause_menu.is_some()
+            || self.welcome.is_some()
+    }
+
+    /// Whether the menu bar, if `bar` is shown, the pause menu or the
+    /// welcome screen holds the frames of a program that is `running`.
+    fn pause(&self, bar: bool, running: bool) -> bool {
+        (bar || self.pause_menu.is_some() || self.welcome.is_some()) && running
+    }
+}
+
 /// What the frontend starts from.
 struct Start {
     screen: sb_profiles::ScreenConfig,
@@ -543,9 +587,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut raised: Option<(Which, Instant)> = None;
     let mouse = sdl.mouse();
     let mut cursor_shown = true;
-    // A question, which takes all input while it is open: before quitting
-    // with unsaved programs, or for a command such as LOAD.
-    let mut dialog: Option<(Dialog, Asking)> = None;
+    // The emulator's own windows and dialogs.
+    let mut screens = Screens::default();
     // A program's DIALOG. It takes clicks on it, Enter and typing, but
     // leaves the menu bar and the stop keys working.
     let mut program_dialog: Option<ProgramView> = None;
@@ -564,30 +607,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             ["The emulator failed last time.".to_string(), String::new()],
         );
         let notice = Dialog::notice("Recovered programs", lines, (display_w, display_h));
-        dialog = Some((notice, Asking::Notice));
+        screens.dialog = Some((notice, Asking::Notice));
     }
-    // Takes all input while it is open, except for a dialog over it.
-    let mut manager: Option<ProjectManager> = None;
     // Where the manager was when Run left it, for the return to it.
     let mut home_memory = Memory::default();
-    // The Simple UI's game list, which takes all input but a dialog's
-    // while it is open, and its pause menu, which takes all input.
-    let mut game_list: Option<GameList> = None;
-    let mut pause_menu: Option<PauseMenu> = None;
-    // The screen shown the first time the Simple UI starts, over the
-    // list: it takes all input but a dialog's.
-    let mut welcome = (simple_ui && !machine.rt.settings.simple_ui_welcome_shown)
+    screens.welcome = (simple_ui && !machine.rt.settings.simple_ui_welcome_shown)
         .then(|| Welcome::new((display_w, display_h)));
     // Select, for the menu and quitting; where the list was left; and the
     // program it ran last, for Restart.
     let mut hotkeys = simple_ui::Hotkeys::default();
     let mut list_memory = simple_ui::Memory::default();
     let mut ran_from_list = restart;
-    let mut color_window: Option<ColorWindow> = None;
-    let mut settings_window: Option<SettingsWindow> = None;
-    let mut shortcuts_window: Option<ShortcutsWindow> = None;
-    // Ctrl+S's and Ctrl+L's windows.
-    let mut file_dialog: Option<FileDialog> = None;
     // The debugger's panel below the editor, and the stop it last showed.
     let mut debug_panel = DebugPanel::default();
     let mut shown_stop = None;
@@ -644,28 +674,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut suspend = SuspendWatch::new();
     // The events of a trip round the loop, as they were drained.
     let mut polled: Vec<Event> = Vec::new();
-    // Whether one of the emulator's own windows or dialogs is open now. It
-    // takes the input, and the program sees nothing pressed.
-    macro_rules! modal_shown {
-        () => {
-            dialog.is_some()
-                || manager.is_some()
-                || file_dialog.is_some()
-                || settings_window.is_some()
-                || shortcuts_window.is_some()
-                || color_window.is_some()
-                || game_list.is_some()
-                || pause_menu.is_some()
-                || welcome.is_some()
-        };
-    }
-    // Whether the menu bar, the pause menu or the welcome screen holds a
-    // running program's frames now.
-    macro_rules! program_paused {
-        () => {
-            (menu.shown || pause_menu.is_some() || welcome.is_some()) && machine.is_running()
-        };
-    }
     // Who the right stick and R3 are for now: the program or the
     // emulator's screens.
     macro_rules! stick_role {
@@ -673,8 +681,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             controls::Where {
                 simple_ui,
                 running: machine.is_running(),
-                screen: modal_shown!()
-                    || program_paused!()
+                screen: screens.any()
+                    || screens.pause(menu.shown, machine.is_running())
                     || menu.is_open()
                     || machine.editor_has_keys() && machine.program_dialog().is_none(),
                 program_dialog: machine.program_dialog().is_some(),
@@ -689,7 +697,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     macro_rules! lend {
         () => {
             standby::Lend {
-                frames: !program_paused!(),
+                frames: !screens.pause(menu.shown, machine.is_running()),
                 run_time: frame_time(machine, &pacer),
                 machine: &mut *machine,
                 guard: &mut frame_guard,
@@ -954,16 +962,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         };
         if wanted != (display_w, display_h) {
             (display_w, display_h) = wanted;
-            if let Some((open, _)) = &mut dialog {
+            if let Some((open, _)) = &mut screens.dialog {
                 open.set_size(wanted);
             }
-            if let Some(open) = &mut game_list {
+            if let Some(open) = &mut screens.game_list {
                 open.set_size(wanted);
             }
-            if let Some(open) = &mut pause_menu {
+            if let Some(open) = &mut screens.pause_menu {
                 open.set_size(wanted);
             }
-            if let Some(open) = &mut welcome {
+            if let Some(open) = &mut screens.welcome {
                 open.set_size(wanted);
             }
             // Made again at the new size, from the machine's, below.
@@ -977,10 +985,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             if bench.opens("about") {
                 let lines = about_lines(&drawn_by);
-                dialog = Some((Dialog::notice("About", lines, size), Asking::Notice));
+                screens.dialog = Some((Dialog::notice("About", lines, size), Asking::Notice));
             }
             if bench.opens("colors") {
-                color_window = Some(ColorWindow::new(size));
+                screens.color_window = Some(ColorWindow::new(size));
             }
             if bench.opens("file-menu") {
                 menu.open_menu(0, "");
@@ -994,7 +1002,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if bench.opens("settings") {
                 let mut window = SettingsWindow::new(size);
                 window.show_page("Editor");
-                settings_window = Some(window);
+                screens.settings_window = Some(window);
             }
             if bench.opens("toast") {
                 toasts.push("A notice".to_string());
@@ -1002,14 +1010,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         // The program that Projects ran has ended: back to Projects. Opened
         // some other way, a wait for a button is over.
-        if manager.is_some() {
+        if screens.manager.is_some() {
             machine.home_leave();
         } else if simple_ui {
             // The game list opens below, whenever nothing runs.
             simple_ui_ended(machine);
         } else if machine.home_done() {
             let size = (display_w, display_h);
-            manager = Some(ProjectManager::reopen(
+            screens.manager = Some(ProjectManager::reopen(
                 &machine.rt.storage,
                 size,
                 &home_memory,
@@ -1021,13 +1029,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if machine.is_editing() {
                 machine.toggle_editor();
             }
-            if game_list.is_none()
-                && pause_menu.is_none()
+            if screens.game_list.is_none()
+                && screens.pause_menu.is_none()
                 && !machine.is_running()
                 && !machine.home_waiting()
             {
                 let size = (display_w, display_h);
-                game_list = Some(GameList::new(&machine.rt.storage, size, &list_memory));
+                screens.game_list = Some(GameList::new(&machine.rt.storage, size, &list_memory));
             }
         }
         // The editor shows in a window of its own while it is open, if
@@ -1065,7 +1073,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         machine.focus_editor(apart && editor_focused);
         // The menu bar and the emulator's windows show in the window with
         // the keys.
-        if !modal_shown!() {
+        if !screens.any() {
             ui_on_editor = editor_focused;
         }
         let mut ui_editor = apart && ui_on_editor;
@@ -1172,10 +1180,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // The pad repeats on the screen that has it, once a frame whatever
         // events came; a new screen or mode starts without the old hold.
         let screen = input_screen(
-            pause_menu.is_some(),
-            dialog.is_some(),
-            manager.as_ref().map(ProjectManager::mode_id),
-            game_list.as_ref().map(GameList::mode_id),
+            screens.pause_menu.is_some(),
+            screens.dialog.is_some(),
+            screens.manager.as_ref().map(ProjectManager::mode_id),
+            screens.game_list.as_ref().map(GameList::mode_id),
         );
         let pad_dt = pad_tick.elapsed().min(Duration::from_millis(100));
         pad_tick = Instant::now();
@@ -1216,10 +1224,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         {
             // A repeat that changes the screen ends the rest of them.
             let now = input_screen(
-                pause_menu.is_some(),
-                dialog.is_some(),
-                manager.as_ref().map(ProjectManager::mode_id),
-                game_list.as_ref().map(GameList::mode_id),
+                screens.pause_menu.is_some(),
+                screens.dialog.is_some(),
+                screens.manager.as_ref().map(ProjectManager::mode_id),
+                screens.game_list.as_ref().map(GameList::mode_id),
             );
             if repeated && now != screen {
                 continue;
@@ -1366,10 +1374,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             } = event
             {
                 let storage = &machine.rt.storage;
-                if let Some(open) = &mut manager {
+                if let Some(open) = &mut screens.manager {
                     open.reread(storage, true);
                 }
-                if let Some(FileDialog::Load(picker)) = &mut file_dialog {
+                if let Some(FileDialog::Load(picker)) = &mut screens.file_dialog {
                     picker.reread(storage, true);
                 }
             }
@@ -1381,7 +1389,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     WindowEvent::MouseLeave => pointer_in_editor = false,
                     _ => {}
                 }
-                if !modal_shown!() && editor_focused != ui_on_editor {
+                if !screens.any() && editor_focused != ui_on_editor {
                     ui_on_editor = editor_focused;
                     ui_editor = apart && ui_on_editor;
                     menu.leave();
@@ -1408,7 +1416,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             };
             let from_editor = apart && from_editor;
             source.set(usize::from(from_editor));
-            windows_on_editor.set(ui_editor && modal_shown!());
+            windows_on_editor.set(ui_editor && screens.any());
             // The event is on the editor, wherever it shows, unless a
             // subprogram beside it has the keys...
             let on_editor = machine.is_editing()
@@ -1421,7 +1429,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let ui_window = from_editor == ui_editor;
             // Input in the window without the emulator's window that takes
             // it all brings that one forward instead.
-            let modal_on = window::modal_window(apart, modal_shown!(), ui_editor);
+            let modal_on = window::modal_window(apart, screens.any(), ui_editor);
             let from = if from_editor {
                 Which::Editor
             } else {
@@ -1442,7 +1450,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 typing.any_key_down(&mut machine.rt, scancode, repeat);
             }
             if matches!(event, Event::KeyDown { .. }) {
-                eat_text = modal_shown!()
+                eat_text = screens.any()
                     || program_dialog.is_some()
                     || debug_panel.typing()
                     || (side.is_some() && side_focus);
@@ -1456,7 +1464,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     | Event::MouseButtonUp { .. }
                     | Event::MouseWheel { .. }
             );
-            if pointer && modal_shown!() && !ui_window {
+            if pointer && screens.any() && !ui_window {
                 continue;
             }
             // Ctrl+Shift+F12 turns the Simple UI on or off, whatever shows.
@@ -1479,16 +1487,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     machine.rt.settings.fullscreen = desktop;
                     let _ = window.set_fullscreen(true);
                     // What needs a keyboard or a mouse closes.
-                    (manager, file_dialog, side, debug_menu) = (None, None, None, None);
-                    (settings_window, shortcuts_window, color_window) = (None, None, None);
+                    (screens.manager, screens.file_dialog, side, debug_menu) =
+                        (None, None, None, None);
+                    (
+                        screens.settings_window,
+                        screens.shortcuts_window,
+                        screens.color_window,
+                    ) = (None, None, None);
                     menu.shown = false;
                     menu.leave();
                     if !machine.rt.settings.simple_ui_welcome_shown {
-                        welcome = Some(Welcome::new((display_w, display_h)));
+                        screens.welcome = Some(Welcome::new((display_w, display_h)));
                     }
                 } else {
                     let _ = window.set_fullscreen(machine.rt.settings.fullscreen);
-                    (game_list, pause_menu, welcome) = (None, None, None);
+                    (screens.game_list, screens.pause_menu, screens.welcome) = (None, None, None);
                 }
                 plus_down = None;
                 continue;
@@ -1520,23 +1533,23 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Event::GamepadButtonDown {
                         button: Button::East,
                         ..
-                    } => hotkeys.a_down(true) && welcome.is_none(),
+                    } => hotkeys.a_down(true) && screens.welcome.is_none(),
                     Event::GamepadButtonDown {
                         button: Button::Start,
                         ..
                     } if hotkeys.start_down(true) == simple_ui::Start::Quit => {
-                        (pause_menu, plus_down, quit) = (None, None, true);
+                        (screens.pause_menu, plus_down, quit) = (None, None, true);
                         continue;
                     }
                     Event::KeyDown {
                         keycode: Some(Keycode::F8),
                         repeat: false,
                         ..
-                    } => welcome.is_none(),
+                    } => screens.welcome.is_none(),
                     _ => false,
                 };
                 if toggled {
-                    pause_menu = match pause_menu {
+                    screens.pause_menu = match screens.pause_menu {
                         Some(_) => None,
                         None => {
                             let running = machine.is_running();
@@ -1560,7 +1573,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             {
                 continue;
             }
-            if let Some(open) = &mut pause_menu {
+            if let Some(open) = &mut screens.pause_menu {
                 let chosen = match event {
                     Event::Quit { .. } => Some(simple_ui::Choice::Quit),
                     Event::KeyDown {
@@ -1575,7 +1588,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // the controls.
                 let settings = open.settings();
                 match chosen {
-                    Some(simple_ui::Choice::Resume) => pause_menu = None,
+                    Some(simple_ui::Choice::Resume) => screens.pause_menu = None,
                     Some(
                         simple_ui::Choice::Filter
                         | simple_ui::Choice::UiSize
@@ -1584,7 +1597,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         | simple_ui::Choice::Vsync,
                     ) => settings.apply(&mut machine.rt.settings),
                     Some(simple_ui::Choice::Restart) => {
-                        pause_menu = None;
+                        screens.pause_menu = None;
                         if let Some(file) = &ran_from_list {
                             simple_ui_leave(machine);
                             if let Err(e) = machine.run_home(file) {
@@ -1593,13 +1606,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                     }
                     Some(simple_ui::Choice::List) => {
-                        pause_menu = None;
+                        screens.pause_menu = None;
                         simple_ui_leave(machine);
                         let size = (display_w, display_h);
-                        game_list = Some(GameList::new(&machine.rt.storage, size, &list_memory));
+                        screens.game_list =
+                            Some(GameList::new(&machine.rt.storage, size, &list_memory));
                     }
                     Some(simple_ui::Choice::Quit) => {
-                        pause_menu = None;
+                        screens.pause_menu = None;
                         quit = true;
                     }
                     None => {}
@@ -1609,7 +1623,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // After an error of the program that Projects ran, only A or
             // Enter, freshly pressed, does anything on the keyboard and
             // the pad; the window and its menu bar work as ever.
-            if machine.home_waiting() && !modal_shown!() && program_dialog.is_none() {
+            if machine.home_waiting() && !screens.any() && program_dialog.is_none() {
                 match &event {
                     Event::KeyDown {
                         keycode: Some(Keycode::Return | Keycode::KpEnter),
@@ -1626,9 +1640,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             }
                             let (storage, size) = (&machine.rt.storage, (display_w, display_h));
                             if simple_ui {
-                                game_list = Some(GameList::new(storage, size, &list_memory));
+                                screens.game_list =
+                                    Some(GameList::new(storage, size, &list_memory));
                             } else {
-                                manager = Some(ProjectManager::reopen(storage, size, &home_memory));
+                                screens.manager =
+                                    Some(ProjectManager::reopen(storage, size, &home_memory));
                             }
                         }
                         continue;
@@ -1657,7 +1673,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     let m = &mut controls.mouse;
                     controls::place_mouse(m, to_screen(x, y), size, to_display(x, y), display_size);
                 }
-                Event::MouseWheel { y, .. } if manager.is_none() && !on_editor && !from_editor => {
+                Event::MouseWheel { y, .. }
+                    if screens.manager.is_none() && !on_editor && !from_editor =>
+                {
                     controls.mouse.wheel += y.round() as i32;
                 }
                 // Here, before the dialogs and menus below take the event
@@ -1683,10 +1701,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 Event::GamepadButtonDown {
                     button: Button::Start,
                     ..
-                } if !modal_shown!() => plus_down = Some(Instant::now()),
+                } if !screens.any() => plus_down = Some(Instant::now()),
                 _ => {}
             }
-            if let Some((open, asking)) = &mut dialog {
+            if let Some((open, asking)) = &mut screens.dialog {
                 let answer = match event {
                     Event::Quit { .. } if *asking == Asking::Quit => break 'running,
                     Event::Quit { .. } => {
@@ -1717,36 +1735,36 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     (Some(Answer::Accept), Asking::Quit) => break 'running,
                     (Some(answer), Asking::Command(_)) => {
                         machine.answer(answer == Answer::Accept);
-                        dialog = None;
+                        screens.dialog = None;
                     }
                     (Some(Answer::Accept), Asking::Overwrite(name)) => {
                         save_edited(machine, &name, &mut toasts);
-                        dialog = None;
+                        screens.dialog = None;
                     }
                     (Some(Answer::Accept), Asking::Discard(name)) => {
                         load_edited(machine, &name, &mut toasts);
-                        dialog = None;
+                        screens.dialog = None;
                     }
                     (Some(Answer::Accept), Asking::Run(project, file)) => {
-                        dialog = None;
+                        screens.dialog = None;
                         if run_from_list(machine, &project, &file, &mut toasts) {
-                            (game_list, ran_from_list) = (None, Some(file));
+                            (screens.game_list, ran_from_list) = (None, Some(file));
                         }
                     }
                     (Some(Answer::Accept), Asking::Condition(slot, line)) => {
                         match machine.set_condition(slot, line, open.field()) {
-                            Ok(()) => dialog = None,
+                            Ok(()) => screens.dialog = None,
                             Err(e) => toasts.push(format!("Condition: {e}")),
                         }
                     }
-                    (Some(_), Asking::Notice) | (Some(Answer::Cancel), _) => dialog = None,
+                    (Some(_), Asking::Notice) | (Some(Answer::Cancel), _) => screens.dialog = None,
                     (None, _) => {}
                 }
                 continue;
             }
             // The welcome screen takes the button pressed for A as A, by
             // its place, and keeps that and that it was shown.
-            if let Some(open) = &mut welcome {
+            if let Some(open) = &mut screens.welcome {
                 let swap = machine.rt.settings.swap_ab_xy;
                 let welcomed = match event {
                     Event::Quit { .. } => {
@@ -1766,7 +1784,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     _ => Welcomed::Stay,
                 };
                 if let Welcomed::Continue(chosen) = welcomed {
-                    welcome = None;
+                    screens.welcome = None;
                     let settings = &mut machine.rt.settings;
                     settings.simple_ui_welcome_shown = true;
                     if let Some(swap) = chosen {
@@ -1865,7 +1883,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             let size = (display_w, display_h);
                             let asks =
                                 choose(choice, machine, panel, &clipboard, &mut toasts, size);
-                            dialog = asks.or(dialog);
+                            screens.dialog = asks.or(screens.dialog);
                         }
                         continue;
                     }
@@ -1941,7 +1959,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     | Event::MouseButtonDown { .. }
                     | Event::GamepadButtonDown { .. }
             );
-            if let Some(open) = &mut game_list {
+            if let Some(open) = &mut screens.game_list {
                 let storage = &machine.rt.storage;
                 let outcome = match event {
                     Event::Quit { .. } => {
@@ -1966,9 +1984,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             lines.extend(sb_runtime::confirm::unsaved_lines(&unsaved));
                             let size = (display_w, display_h);
                             let ask = Dialog::new("Unsaved programs", lines, "Run", size);
-                            dialog = Some((ask, Asking::Run(project, file)));
+                            screens.dialog = Some((ask, Asking::Run(project, file)));
                         } else if run_from_list(machine, &project, &file, &mut toasts) {
-                            (game_list, ran_from_list) = (None, Some(file));
+                            (screens.game_list, ran_from_list) = (None, Some(file));
                         }
                     }
                 }
@@ -1976,7 +1994,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // prompt under it.
                 continue;
             }
-            if let Some(open) = &mut manager {
+            if let Some(open) = &mut screens.manager {
                 let unsaved = machine.unsaved_slots();
                 let storage = &mut machine.rt.storage;
                 let outcome = match event {
@@ -2032,16 +2050,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 };
                 match outcome {
                     Outcome::Stay => {}
-                    Outcome::Close => manager = None,
+                    Outcome::Close => screens.manager = None,
                     Outcome::Switched(name) => {
                         toasts.push(format!("Switched to project {name}"));
-                        manager = None;
+                        screens.manager = None;
                     }
                     Outcome::Open { switched, open } => {
                         if let Some(name) = switched {
                             toasts.push(format!("Switched to project {name}"));
                         }
-                        if let (true, Some(m)) = (open.home, &manager) {
+                        if let (true, Some(m)) = (open.home, &screens.manager) {
                             home_memory = m.memory();
                         }
                         let done = match (open.run, open.home) {
@@ -2056,7 +2074,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             Ok(()) => {}
                             Err(e) => toasts.push(format!("Could not load {}: {e}", open.file)),
                         }
-                        manager = None;
+                        screens.manager = None;
                     }
                     Outcome::ChooseFile(transfer, start) => {
                         let send = chosen_folder.clone();
@@ -2099,12 +2117,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         );
                     }
                 }
-                if let (true, Some(open)) = (input, &mut manager) {
+                if let (true, Some(open)) = (input, &mut screens.manager) {
                     open.reread(&machine.rt.storage, false);
                 }
                 continue;
             }
-            if let Some(open) = &mut file_dialog {
+            if let Some(open) = &mut screens.file_dialog {
                 let storage = &machine.rt.storage;
                 let outcome = match (open, event) {
                     (_, Event::Quit { .. }) => {
@@ -2154,9 +2172,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 let size = (display_w, display_h);
                 match outcome {
                     file_dialogs::Outcome::Stay => {}
-                    file_dialogs::Outcome::Close => file_dialog = None,
+                    file_dialogs::Outcome::Close => screens.file_dialog = None,
                     file_dialogs::Outcome::Save(name) => {
-                        file_dialog = None;
+                        screens.file_dialog = None;
                         let own = machine.rt.slot_names[slot] == name;
                         // A file of the folder the program was run from
                         // asks the first time, even when it is the slot's.
@@ -2171,37 +2189,37 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                                 lines.extend(sb_runtime::confirm::original_lines(&originals));
                             }
                             let open = Dialog::new("Save file", lines, "Save", size);
-                            dialog = Some((open, Asking::Overwrite(name)));
+                            screens.dialog = Some((open, Asking::Overwrite(name)));
                         } else {
                             save_edited(machine, &name, &mut toasts);
                         }
                     }
                     // Only the projects window copies.
-                    file_dialogs::Outcome::Copy { .. } => file_dialog = None,
+                    file_dialogs::Outcome::Copy { .. } => screens.file_dialog = None,
                     file_dialogs::Outcome::Tool(n, file) => {
-                        file_dialog = None;
+                        screens.file_dialog = None;
                         machine.rt.settings.tools[n] = file;
                     }
                     file_dialogs::Outcome::Load(spec) => {
-                        file_dialog = None;
+                        screens.file_dialog = None;
                         if machine.unsaved_slots().contains(&slot) {
                             let lines = vec![
                                 format!("Load {spec} into slot {slot}."),
                                 "Its unsaved changes will be lost.".to_string(),
                             ];
                             let open = Dialog::new("Load file", lines, "Load", size);
-                            dialog = Some((open, Asking::Discard(spec)));
+                            screens.dialog = Some((open, Asking::Discard(spec)));
                         } else {
                             load_edited(machine, &spec, &mut toasts);
                         }
                     }
                 }
-                if let (true, Some(FileDialog::Load(picker))) = (input, &mut file_dialog) {
+                if let (true, Some(FileDialog::Load(picker))) = (input, &mut screens.file_dialog) {
                     picker.reread(&machine.rt.storage, false);
                 }
                 continue;
             }
-            if let Some(open) = &mut shortcuts_window {
+            if let Some(open) = &mut screens.shortcuts_window {
                 let outcome = match event {
                     Event::Quit { .. } => {
                         quit = true;
@@ -2223,11 +2241,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     _ => shortcuts::Outcome::Stay,
                 };
                 if outcome == shortcuts::Outcome::Close {
-                    shortcuts_window = None;
+                    screens.shortcuts_window = None;
                 }
                 continue;
             }
-            if let Some(open) = &mut settings_window {
+            if let Some(open) = &mut screens.settings_window {
                 let settings = &mut machine.rt.settings;
                 let outcome = match event {
                     Event::Quit { .. } => {
@@ -2251,7 +2269,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 };
                 match outcome {
                     settings_window::Outcome::Stay => {}
-                    settings_window::Outcome::Close => settings_window = None,
+                    settings_window::Outcome::Close => screens.settings_window = None,
                     settings_window::Outcome::Instruments => {
                         if machine.rt.settings.smilebasic_instruments && bank.is_none() {
                             toasts.push(
@@ -2282,12 +2300,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         let now = &machine.rt.settings.tools[n];
                         let size = (display_w, display_h);
                         let picker = FilePicker::tool(size, n, now, storage);
-                        file_dialog = Some(FileDialog::Load(picker));
+                        screens.file_dialog = Some(FileDialog::Load(picker));
                     }
                 }
                 continue;
             }
-            if let Some(open) = &mut color_window {
+            if let Some(open) = &mut screens.color_window {
                 let palette = &mut machine.rt.settings.editor_colors;
                 let outcome = match event {
                     Event::Quit { .. } => {
@@ -2315,7 +2333,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 };
                 match outcome {
                     colors::Outcome::Stay => {}
-                    colors::Outcome::Close => color_window = None,
+                    colors::Outcome::Close => screens.color_window = None,
                     colors::Outcome::Import | colors::Outcome::Export => {
                         let save = outcome == colors::Outcome::Export;
                         let send = chosen_colors.clone();
@@ -2436,8 +2454,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         let size = (display_w, display_h);
                         let save = action == Action::SaveSlot;
                         match open_file_dialog(machine, save, size) {
-                            Ok(open) => file_dialog = Some(open),
-                            Err(refused) => dialog = Some((*refused, Asking::Notice)),
+                            Ok(open) => screens.file_dialog = Some(open),
+                            Err(refused) => screens.dialog = Some((*refused, Asking::Notice)),
                         }
                     }
                     Click::Chosen(Action::Undo) => machine.edit().undo(),
@@ -2464,7 +2482,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         | Action::DebugPanel),
                     ) => {
                         let size = (display_w, display_h);
-                        dialog = debug_action(machine, action, &mut toasts, size).or(dialog);
+                        screens.dialog =
+                            debug_action(machine, action, &mut toasts, size).or(screens.dialog);
                     }
                     Click::Chosen(Action::Help) => {
                         if !machine.is_editing() {
@@ -2479,16 +2498,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                     }
                     Click::Chosen(Action::Shortcuts) => {
-                        shortcuts_window = Some(ShortcutsWindow::new((display_w, display_h)));
+                        screens.shortcuts_window =
+                            Some(ShortcutsWindow::new((display_w, display_h)));
                     }
                     Click::Chosen(Action::About) => {
                         let lines = about_lines(&drawn_by);
                         let about = Dialog::notice("About", lines, (display_w, display_h));
-                        dialog = Some((about, Asking::Notice));
+                        screens.dialog = Some((about, Asking::Notice));
                     }
                     Click::Chosen(Action::Projects) => {
                         let size = (display_w, display_h);
-                        manager = Some(ProjectManager::new(&machine.rt.storage, size));
+                        screens.manager = Some(ProjectManager::new(&machine.rt.storage, size));
                     }
                     Click::Chosen(Action::OpenFolder) => {
                         open_folder(&machine.rt.storage, &mut toasts)
@@ -2523,10 +2543,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                     }
                     Click::Chosen(Action::Settings) => {
-                        settings_window = Some(SettingsWindow::new((display_w, display_h)));
+                        screens.settings_window = Some(SettingsWindow::new((display_w, display_h)));
                     }
                     Click::Chosen(Action::EditColors) => {
-                        color_window = Some(ColorWindow::new((display_w, display_h)));
+                        screens.color_window = Some(ColorWindow::new((display_w, display_h)));
                     }
                     Click::Chosen(Action::ToggleFullscreen) => {
                         toggle_fullscreen(canvas.window_mut(), &mut machine.rt.settings);
@@ -2575,7 +2595,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                                     machine.show_line(slot, line);
                                     if clicks == 2 {
                                         let size = (display_w, display_h);
-                                        dialog = Some(condition_dialog(machine, slot, line, size));
+                                        screens.dialog =
+                                            Some(condition_dialog(machine, slot, line, size));
                                     }
                                 }
                             }
@@ -2615,7 +2636,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } if let Some(action) = debug_key(key, shift(keymod), ctrl(keymod)) => {
                     let size = (display_w, display_h);
-                    dialog = debug_action(machine, action, &mut toasts, size).or(dialog);
+                    screens.dialog =
+                        debug_action(machine, action, &mut toasts, size).or(screens.dialog);
                 }
                 // SmileBASIC 4's F5 is the + button.
                 Event::KeyDown {
@@ -2752,7 +2774,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } if !machine.is_running() => {
                     let size = (display_w, display_h);
-                    manager = Some(ProjectManager::new(&machine.rt.storage, size));
+                    screens.manager = Some(ProjectManager::new(&machine.rt.storage, size));
                 }
                 // A controller's Select (-) opens them in direct mode, so
                 // that a game can be picked with the pad alone, when it is
@@ -2774,7 +2796,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     && !simple_ui =>
                 {
                     let size = (display_w, display_h);
-                    manager = Some(ProjectManager::new(&machine.rt.storage, size));
+                    screens.manager = Some(ProjectManager::new(&machine.rt.storage, size));
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::F2),
@@ -2806,8 +2828,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } if ctrl(keymod) && (!machine.is_running() || on_editor && apart) => {
                     let size = (display_w, display_h);
                     match open_file_dialog(machine, key == Keycode::S, size) {
-                        Ok(open) => file_dialog = Some(open),
-                        Err(refused) => dialog = Some((*refused, Asking::Notice)),
+                        Ok(open) => screens.file_dialog = Some(open),
+                        Err(refused) => screens.dialog = Some((*refused, Asking::Notice)),
                     }
                 }
                 Event::KeyDown {
@@ -2956,7 +2978,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if unsaved.is_empty() {
                 break 'running;
             }
-            dialog = Some((Dialog::quit(&unsaved, (display_w, display_h)), Asking::Quit));
+            screens.dialog = Some((Dialog::quit(&unsaved, (display_w, display_h)), Asking::Quit));
         }
         if renderer_failed.is_some() {
             continue 'running;
@@ -2964,7 +2986,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
 
         // Programs see nothing pressed while the emulator's own screens
         // take the input.
-        let modal = modal_shown!();
+        let modal = screens.any();
         // The help opened in direct mode closes when the editor opens or
         // a program runs; the editor's panels close with the editor.
         if side_direct && (machine.is_editing() || machine.is_running())
@@ -2985,7 +3007,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             machine.stop();
         }
         close_bar_on_start(&mut menu, &mut was_running, machine.is_running());
-        let paused = program_paused!();
+        let paused = screens.pause(menu.shown, machine.is_running());
         menu.status = status_line(machine, paused);
         machine.focus_editor(editor_focused);
         let editor_keys = machine.editor_has_keys() && machine.program_dialog().is_none();
@@ -3043,7 +3065,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
         }
         if let Ok((path, transfer)) = folder_choice.try_recv()
-            && let Some(open) = &mut manager
+            && let Some(open) = &mut screens.manager
         {
             open.folder_chosen(transfer, path, &machine.rt.storage);
         }
@@ -3144,13 +3166,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         for notice in machine.take_notices() {
             toasts.push(notice);
         }
-        match (&dialog, machine.confirmation()) {
+        match (&screens.dialog, machine.confirmation()) {
             (Some((_, Asking::Command(shown))), Some(confirm)) if shown == confirm => {}
             (None | Some((_, Asking::Command(_))), Some(confirm)) => {
                 let open = Dialog::ask(confirm, (display_w, display_h));
-                dialog = Some((open, Asking::Command(confirm.clone())));
+                screens.dialog = Some((open, Asking::Command(confirm.clone())));
             }
-            (Some((_, Asking::Command(_))), None) => dialog = None,
+            (Some((_, Asking::Command(_))), None) => screens.dialog = None,
             _ => {}
         }
         // Centered on the screen, which goes below the desktop's display
@@ -3514,7 +3536,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         // The colors window leaves the editor behind it bright, to show
         // its colors.
-        let dims = dialog.is_some() || manager.is_some() || pause_menu.is_some();
+        let dims =
+            screens.dialog.is_some() || screens.manager.is_some() || screens.pause_menu.is_some();
         // A running program shows the mouse cursor only if it asks to,
         // unless the emulator's own screens or the editor's window need
         // it, or Select has the right stick for the pointer. The Simple
@@ -3580,14 +3603,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // display as on the main window. The main window's goes below its
         // display, where the screen goes too.
         let ui_sizes = [(display_w, main_ui_h), editor_place.3];
-        let windows_apart = apart && ui == 1 && modal_shown!();
+        let windows_apart = apart && ui == 1 && screens.any();
         if let Some(open) = &mut side {
             open.set_size(ui_sizes[side_on]);
         }
         // The menu bar shows over everything in the window with the keys,
         // and the editor's window always shows it.
         let mut bar_shown = [false; 2];
-        bar_shown[ui] = !simple_ui && dialog.is_none() && !modal && menu.visible();
+        bar_shown[ui] = !simple_ui && screens.dialog.is_none() && !modal && menu.visible();
         bar_shown[1] |= apart && ui == 0;
         let closed_bar = menu.closed();
         let font = machine.rt.font();
@@ -3685,29 +3708,29 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     None => {}
                 }
                 // Windows over the editor go over its panels too.
-                if let (true, Some(open)) = (i == ui && over, &manager) {
+                if let (true, Some(open)) = (i == ui && over, &screens.manager) {
                     open.draw(fb, font, cursor_on);
                 }
-                if let (true, Some(open)) = (i == ui && over, &game_list) {
+                if let (true, Some(open)) = (i == ui && over, &screens.game_list) {
                     open.draw(fb, font);
                 }
-                if let (true, Some(open)) = (i == ui && over, &welcome) {
+                if let (true, Some(open)) = (i == ui && over, &screens.welcome) {
                     open.draw(fb, font);
                 }
                 if let (0, Some(open)) = (i, &program_dialog) {
                     open.draw(fb, font, cursor_on);
                 }
                 if i == ui && over {
-                    if let Some(open) = &color_window {
+                    if let Some(open) = &screens.color_window {
                         open.draw(fb, font, &settings.editor_colors);
                     }
-                    if let Some(open) = &settings_window {
+                    if let Some(open) = &screens.settings_window {
                         open.draw(fb, font, settings);
                     }
-                    if let Some(open) = &shortcuts_window {
+                    if let Some(open) = &screens.shortcuts_window {
                         open.draw(fb, font);
                     }
-                    match &file_dialog {
+                    match &screens.file_dialog {
                         Some(FileDialog::Save(d)) => d.draw(fb, font, cursor_on),
                         Some(FileDialog::Load(p)) => p.draw(fb, font, cursor_on),
                         None => {}
@@ -3720,7 +3743,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     toasts.draw(fb, font);
                 }
                 if i == ui {
-                    match &dialog {
+                    match &screens.dialog {
                         Some((open, _)) if over => open.draw(fb, font),
                         None if bar_shown[i] && under && menus_apart.is_none() => {
                             menu.draw_lists(fb, font, settings, context)
@@ -3728,7 +3751,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         _ => {}
                     }
                 }
-                if let (true, Some(open)) = (i == ui && over, &pause_menu) {
+                if let (true, Some(open)) = (i == ui && over, &screens.pause_menu) {
                     open.draw(fb, font);
                 }
                 // The bar covers what is under it.
@@ -3760,7 +3783,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             windows_layer.release();
         }
         // The main window's open menus and context menu, apart at 1x.
-        let lists = ui == 0 && bar_shown[0] && dialog.is_none() && menu.is_open();
+        let lists = ui == 0 && bar_shown[0] && screens.dialog.is_none() && menu.is_open();
         let popup = (debug_menu.as_ref()).filter(|_| ed == 0);
         match menus_apart {
             Some(place) if lists || popup.is_some() => {
