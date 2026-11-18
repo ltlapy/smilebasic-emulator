@@ -1565,7 +1565,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         simple_ui::Choice::Filter
                         | simple_ui::Choice::UiSize
                         | simple_ui::Choice::Swap
-                        | simple_ui::Choice::FrameSkip,
+                        | simple_ui::Choice::FrameSkip
+                        | simple_ui::Choice::Vsync,
                     ) => settings.apply(&mut machine.rt.settings),
                     Some(simple_ui::Choice::Restart) => {
                         pause_menu = None;

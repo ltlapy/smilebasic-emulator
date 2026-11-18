@@ -148,6 +148,11 @@ Settings it has:
   instead of slowing down"; [differences.md](differences.md#speed) compares
   both with SmileBASIC 4. When a program runs slower than real time for a
   while, a notice points here.
+- Wait for vsync: On, the default, has the window's presents wait for the
+  display's refresh. Off, each frame waits for its own time, for a game
+  where the timing of input matters on a device that leaves drawings out;
+  the picture may tear, and a slow device may run the program slower. The
+  desktop has it in View.
 
 A change shows at once and is kept.
 

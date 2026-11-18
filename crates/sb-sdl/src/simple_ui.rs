@@ -188,6 +188,7 @@ pub enum Choice {
     UiSize,
     Swap,
     FrameSkip,
+    Vsync,
 }
 
 impl Choice {
@@ -195,7 +196,7 @@ impl Choice {
     fn is_setting(self) -> bool {
         matches!(
             self,
-            Choice::Filter | Choice::UiSize | Choice::Swap | Choice::FrameSkip
+            Choice::Filter | Choice::UiSize | Choice::Swap | Choice::FrameSkip | Choice::Vsync
         )
     }
 }
@@ -209,6 +210,8 @@ pub struct MenuSettings {
     /// Frames pass while a slow program's main loop is under way: the
     /// setting `skip_frames`, off by default.
     pub frame_skip: bool,
+    /// Presents wait for vsync: the setting `vsync`, on by default.
+    pub vsync: bool,
 }
 
 impl MenuSettings {
@@ -218,6 +221,7 @@ impl MenuSettings {
             ui_size: s.simple_ui_size,
             swap: s.swap_ab_xy,
             frame_skip: s.skip_frames,
+            vsync: s.vsync,
         }
     }
 
@@ -227,6 +231,7 @@ impl MenuSettings {
         s.simple_ui_size = self.ui_size;
         s.swap_ab_xy = self.swap;
         s.skip_frames = self.frame_skip;
+        s.vsync = self.vsync;
     }
 }
 
@@ -338,6 +343,7 @@ impl PauseMenu {
             Choice::UiSize => s.ui_size = s.ui_size.step(by),
             Choice::Swap => s.swap ^= true,
             Choice::FrameSkip => s.frame_skip ^= true,
+            Choice::Vsync => s.vsync ^= true,
             _ => return None,
         }
         Some(choice)
@@ -403,11 +409,12 @@ const CLOSE_HINTS: [Hint; 3] = [
     (&[Cap::Name("B")], "Close"),
     (&[Cap::Left, Cap::Right], "Change"),
 ];
-const SETTINGS: [Choice; 4] = [
+const SETTINGS: [Choice; 5] = [
     Choice::Filter,
     Choice::UiSize,
     Choice::Swap,
     Choice::FrameSkip,
+    Choice::Vsync,
 ];
 
 /// A filter's name in the menu.
@@ -460,6 +467,7 @@ impl PauseMenu {
             Choice::UiSize => "UI size:",
             Choice::Swap => "Swap A/B and X/Y:",
             Choice::FrameSkip => "Frame skip:",
+            Choice::Vsync => "Wait for vsync:",
         }
     }
 
@@ -471,6 +479,7 @@ impl PauseMenu {
             Choice::UiSize => Some(ui_size_name(s.ui_size)),
             Choice::Swap => Some(on_off(s.swap)),
             Choice::FrameSkip => Some(on_off(s.frame_skip)),
+            Choice::Vsync => Some(on_off(s.vsync)),
             _ => None,
         }
     }
@@ -1870,8 +1879,8 @@ mod tests {
         for _ in 0..5 {
             menu.pad(Button::DPadDown);
         }
-        assert_eq!(menu.focused(), Choice::FrameSkip);
-        for _ in 0..4 {
+        assert_eq!(menu.focused(), Choice::Vsync);
+        for _ in 0..5 {
             menu.key(Keycode::Up);
         }
         assert_eq!(menu.focused(), Choice::Quit, "back over the divider");
@@ -1937,6 +1946,12 @@ mod tests {
         assert_eq!(menu.value(Choice::FrameSkip), Some("Off"));
         assert_eq!(menu.pad(Button::DPadLeft), Some(Choice::FrameSkip));
         assert_eq!(menu.value(Choice::FrameSkip), Some("On"));
+        // Presents wait for vsync until told not to.
+        menu.key(Keycode::Down);
+        assert_eq!(menu.value(Choice::Vsync), Some("On"));
+        assert_eq!(menu.pad(Button::East), Some(Choice::Vsync));
+        assert_eq!(menu.value(Choice::Vsync), Some("Off"));
+        assert!(!menu.settings().vsync);
         // What it changed goes into the settings, and nothing else.
         let mut settings = Settings::default();
         menu.settings().apply(&mut settings);
@@ -1944,6 +1959,7 @@ mod tests {
             simple_ui_size: LARGE,
             swap_ab_xy: true,
             skip_frames: true,
+            vsync: false,
             ..Settings::default()
         };
         assert_eq!(settings, changed);

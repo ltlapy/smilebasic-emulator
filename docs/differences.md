@@ -269,9 +269,10 @@ before.
   vsync comes back a whole frame later. The frames before such a drawing run
   one after the other, up to four of them ahead of their time, so that the
   drawing ends before the next vsync. The program reads its input for those
-  frames up to that much early. Turn View > "Wait for vsync" off, for a game
-  where the timing of input matters, and each frame waits for its own time
-  instead; the window may then tear.
+  frames up to that much early. Turn View > "Wait for vsync" off (the pause
+  menu has it with the Simple UI on), for a game where the timing of input
+  matters, and each frame waits for its own time instead; the window may
+  then tear.
 - The emulator's own screens, a paused or stopped program, a dialog, the
   editor, the debugger and a subprogram are drawn every frame.
 
