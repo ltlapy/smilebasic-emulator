@@ -111,6 +111,17 @@ The menu needs the mouse or keys.
 | B | Go back |
 | Left stick | D-pad |
 
+## Gamepad as the mouse
+
+The right stick moves the mouse pointer while no program runs, and in a
+program that shows the mouse cursor, as on SmileBASIC 4. File > Settings >
+Input > *Right stick moves the mouse* turns it off.
+
+| Key | Action |
+|---|---|
+| Right stick | Move the mouse pointer |
+| R3 (press the right stick) | Left mouse button, which touches the screen |
+
 ## Simple UI
 
 The Simple UI is for a gamepad without a keyboard, as on a Linux handheld:

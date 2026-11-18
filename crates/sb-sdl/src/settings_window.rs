@@ -239,6 +239,14 @@ const PAGES: &[Page] = &[
                 |s| s.keep_mouse_cursor,
                 |s| s.keep_mouse_cursor ^= true,
             ),
+            check(
+                "Right stick moves the mouse",
+                "The right stick moves the mouse pointer, and pressing it (R3) is the \
+                 left button, as on SmileBASIC 4: in DIRECT mode, the editor and programs \
+                 that show the cursor. On by default.",
+                |s| s.right_stick_mouse,
+                |s| s.right_stick_mouse ^= true,
+            ),
         ],
     },
     Page {

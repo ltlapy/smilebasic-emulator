@@ -1144,6 +1144,40 @@ TEST76K on a docked Switch 2 (4.4.9) with a USB mouse:
   three down from there 0, -120 and -240.
 - `MBUTTON` gives 1 for the left button, 2 for the right and 4 for the middle.
 
+Seen on a Switch 2 (4.4.9), handheld and docked alike: in a program that sets
+`SYSPARAM "MOUSECURSOR",1` and reads `TOUCH`, the right stick moves the cursor,
+and pressing it (R3) touches the screen.
+
+The right stick as the mouse:
+
+- The option "Set the mouse emulation status with the R Stick" is on by
+  default. It works while no program runs (DIRECT mode, the editor, the menus)
+  or while the main program or a `SUBRUN` one has `MOUSECURSOR` at 1: the same
+  rule that shows the cursor. Handheld or docked and a USB mouse make no
+  difference. A USB mouse moves the pointer whatever the rule says.
+- Each frame the pointer moves by a step per axis, in pixels of the 1280x720
+  display, by the stick's tilt m (the length of X and Y): over 0.85,
+  `INT(ABS(A)*16+0.5)` for each axis A; over 0.7, `*8`; over 0.4, `*4`; over
+  0.3, `*3`, so at most 1; else nothing. The stick does not speed up while
+  held, no button changes the speed, and the mouse sensitivity setting is not
+  used.
+- An axis moves left or up only from -0.1 (left) or 0.1 (up); any reading
+  short of that moves right or down. A stick held fully right that drifts
+  0.03 to 0.1 either way moves down 1 pixel a frame.
+- The position is a whole display pixel, 0 to 1280 and 0 to 720.
+  `MOUSE OUT` maps it to the screen and keeps it within the screen's last
+  pixel, so 1280 reads as 639 on a 640x360 screen.
+- R3 is mouse button 1 while the rule holds, in place of the USB mouse's
+  buttons, not added to them. `MBUTTON` and `TOUCH` see it as the left
+  button; `BUTTON` still sees R3 and `STICK 1` the right stick.
+- The mouse is touch 0 whenever no finger is on the screen, with or without
+  the cursor shown.
+- The cursor is a 32x32 picture (`MOUSE.png`) drawn with its top left corner
+  at the pointer, 32x32 on the display whatever the screen's size, over the
+  screen and the dialogs. It fades out over 0.7 seconds after about 5
+  seconds without moving, and comes back when the pointer moves or the
+  cursor is shown again.
+
 ### `PUSHKEY` and the key buffers
 
 - `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`). Codes from

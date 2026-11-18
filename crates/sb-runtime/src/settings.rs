@@ -221,6 +221,11 @@ pub struct Settings {
     /// SYSPARAM "MOUSECURSOR", and stays where it is when a program moves
     /// it with MOUSE X,Y. (The key keeps its old name.)
     pub keep_mouse_cursor: bool,
+    /// The right stick moves the mouse pointer and R3 is its left button,
+    /// as SmileBASIC 4's option for the R Stick does, while no program
+    /// runs or the program shows the cursor; and with Select held
+    /// whatever the program does.
+    pub right_stick_mouse: bool,
     /// What only #SYS's programs may do works in any program: so far,
     /// HELPINFO OUT reading the editor's cursor.
     pub helpinfo_cursor: bool,
@@ -323,6 +328,7 @@ impl Default for Settings {
             localized_errors: false,
             ui_font: UiFont::Large,
             keep_mouse_cursor: false,
+            right_stick_mouse: true,
             helpinfo_cursor: false,
             help_text_size: 2,
             complete_direct: true,
@@ -391,6 +397,7 @@ impl Settings {
             localized_errors: false,
             ui_font: UiFont::Large,
             keep_mouse_cursor: false,
+            right_stick_mouse: true,
             helpinfo_cursor: false,
             help_text_size: 2,
             complete_direct: true,
@@ -572,6 +579,7 @@ impl Settings {
                 "swap_ab_xy" => &mut s.swap_ab_xy,
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
                 "keep_mouse_cursor" => &mut s.keep_mouse_cursor,
+                "right_stick_mouse" => &mut s.right_stick_mouse,
                 "skip_frames" => &mut s.skip_frames,
                 "slow_hint" => &mut s.slow_hint,
                 "helpinfo_cursor" => &mut s.helpinfo_cursor,
@@ -771,6 +779,7 @@ impl Settings {
              localized_errors={}\n\
              ui_font={}\n\
              keep_mouse_cursor={}\n\
+             right_stick_mouse={}\n\
              helpinfo_cursor={}\n\
              help_text_size={}\n\
              complete_direct={}\n\
@@ -826,6 +835,7 @@ impl Settings {
             self.localized_errors,
             choice_name(&UI_FONT, &self.ui_font),
             self.keep_mouse_cursor,
+            self.right_stick_mouse,
             self.helpinfo_cursor,
             self.help_text_size,
             self.complete_direct,
@@ -898,6 +908,7 @@ mod tests {
             localized_errors: true,
             ui_font: UiFont::Smooth,
             keep_mouse_cursor: true,
+            right_stick_mouse: false,
             helpinfo_cursor: true,
             write_system_projects: true,
             complete_all_slots: true,

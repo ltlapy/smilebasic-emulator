@@ -163,8 +163,9 @@ SDL_VIDEO_DRIVER=kmsdrm SDL_RENDER_DRIVER=opengles2 ./smilebasic --simple-ui
 It opens a list of the projects, scales its text by whole factors of 640x480, and fits the
 program's screen to the display. [shortcuts.md](shortcuts.md#simple-ui) lists the buttons.
 
-KMSDRM shows no mouse cursor, so the emulator draws its own there. `SB_CURSOR=system` leaves
-the cursor to SDL instead, and `SB_CURSOR=drawn` draws the emulator's own under any driver.
+KMSDRM shows no mouse cursor, so the emulator draws its own there. The right stick moves it
+([shortcuts.md](shortcuts.md#gamepad-as-the-mouse)). `SB_CURSOR=system` leaves the cursor to
+SDL instead, and `SB_CURSOR=drawn` draws the emulator's own under any driver.
 
 ## Build without root
 

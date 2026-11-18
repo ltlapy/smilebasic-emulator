@@ -227,6 +227,16 @@ apart from the macro hang below.
   still for 5 seconds, and comes back when it moves. The arrow is the
   emulator's own drawing, not SmileBASIC 4's. `SB_CURSOR=drawn` draws it on
   any system, and `SB_CURSOR=system` leaves the cursor to the system.
+- Right stick as the mouse: as with SmileBASIC 4's option for the R Stick,
+  the right stick moves the pointer and R3 is the left mouse button, while
+  no program runs or the running program shows the cursor. It moves as far
+  across the screen as on SmileBASIC 4, and the program still sees the stick
+  in `STICK` and R3 in `BUTTON`. File > Settings > Input > "Right stick moves
+  the mouse" turns it off. Unlike SmileBASIC 4's:
+  - R3 clicks for the program only: `MBUTTON` and `TOUCH`. The emulator's own
+    menus, dialogs and editor take clicks from a mouse.
+  - The pointer stops at the display's last pixel, 1279 for `MOUSE 1 OUT X`,
+    where SmileBASIC 4's goes to 1280.
 
 ### Pasting and Tab
 

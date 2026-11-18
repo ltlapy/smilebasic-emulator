@@ -1614,18 +1614,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             match event {
                 Event::MouseMotion { x, y, .. } if !from_editor => {
-                    let (sx, sy) = to_screen(x, y);
-                    let (w, h) = (mode.width as i32, mode.height as i32);
-                    let (dx, dy) = to_display(x, y);
+                    let size = (mode.width as i32, mode.height as i32);
+                    let display_size = (display_w as i32, display_h as i32);
                     let m = &mut controls.mouse;
-                    // The program reads a pointer past the screen's edges
-                    // as at them.
-                    (m.x, m.y) = (sx.clamp(0, w - 1), sy.clamp(0, h - 1));
-                    m.display = (
-                        dx.clamp(0, display_w as i32 - 1),
-                        dy.clamp(0, display_h as i32 - 1),
-                    );
-                    m.on_screen = (0..w).contains(&sx) && (0..h).contains(&sy);
+                    controls::place_mouse(m, to_screen(x, y), size, to_display(x, y), display_size);
                 }
                 Event::MouseWheel { y, .. } if manager.is_none() && !on_editor && !from_editor => {
                     controls.mouse.wheel += y.round() as i32;
@@ -2960,11 +2952,26 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let waiting = machine.home_waiting() && program_dialog.is_none();
         let beside = side_direct && side_focus && side.is_some();
         controls.swap = machine.rt.settings.swap_ab_xy;
-        let held = controls.state(
+        controls.stick_mouse.on = machine.rt.settings.right_stick_mouse;
+        let mut held = controls.state(
             &events.keyboard_state(),
             events.mouse_state(),
             machine.rt.settings.keyboard_buttons,
         );
+        // The right stick moves the main window's pointer, but not while
+        // the editor's own window has the keys.
+        let cursor_allowed = !machine.is_running() || machine.rt.mouse_cursor();
+        let stick_display = (display_w, display_h);
+        if !(apart && editor_focused)
+            && let Some(at) = controls.stick_pointer(&mut held, cursor_allowed, stick_display)
+        {
+            let px = out_w as f32 / win_w.max(1) as f32;
+            let (x, y) = pointer::display_to_window(at, display, display_w, px);
+            let size = (mode.width as i32, mode.height as i32);
+            let display_size = (display_w as i32, display_h as i32);
+            controls.place_pointer(&mut held, main_map.to_screen(x, y), size, at, display_size);
+            mouse.warp_mouse_in_window(canvas.window(), x, y);
+        }
         typing.hold(&held);
         typing.upper_case = machine.rt.settings.upper_case_letters;
         let screen = modal || paused || editor_keys || waiting || beside;
