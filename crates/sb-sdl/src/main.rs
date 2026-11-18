@@ -70,7 +70,7 @@ use overlays::Overlays;
 use placement::{Mapping, display_rect, editor_filter, from_corner, screen_place, windows_rect};
 use popup::Popup;
 use program_dialog::ProgramView;
-use projects::{Memory, Outcome, ProjectManager, Transfer};
+use projects::{Memory, ProjectManager, Transfer};
 use recovery::{OwnedCreator, Recovery, RendererWatch, SuspendWatch};
 use sb_profiles::Profile;
 use sb_runtime::confirm::Confirm;
@@ -1688,24 +1688,26 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } if !screens.any() => inputs.plus_down = Some(Instant::now()),
                 _ => {}
             }
+            // What each of the emulator's screens is given with the event.
+            macro_rules! cx {
+                () => {
+                    events::Ctx {
+                        machine: &mut *machine,
+                        toasts: &mut toasts,
+                        quit: &mut quit,
+                        size: (display_w, display_h),
+                    }
+                };
+            }
             if screens.dialog.is_some() {
                 let list = &mut ran_from_list;
-                let taken = events::dialog(
-                    &event,
-                    &mut screens,
-                    machine,
-                    &mut toasts,
-                    list,
-                    &mut quit,
-                    to_display,
-                );
-                if taken == Taken::Quit {
+                if events::dialog(&event, &mut screens, list, cx!(), to_display) == Taken::Quit {
                     break 'running;
                 }
                 continue;
             }
             if screens.welcome.is_some() {
-                events::welcome(&event, &mut screens, machine, &mut quit);
+                events::welcome(&event, &mut screens, cx!());
                 continue;
             }
             if let (Some(open), false) = (&mut program_dialog, from_editor) {
@@ -1874,167 +1876,25 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     | Event::MouseButtonDown { .. }
                     | Event::GamepadButtonDown { .. }
             );
-            if let Some(open) = &mut screens.game_list {
-                let storage = &machine.rt.storage;
-                let outcome = match event {
-                    Event::Quit { .. } => {
-                        quit = true;
-                        simple_ui::Outcome::Stay
-                    }
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } => open.key(key, storage),
-                    Event::GamepadButtonDown { button, .. } => open.pad(button, storage),
-                    _ => simple_ui::Outcome::Stay,
-                };
-                match outcome {
-                    simple_ui::Outcome::Stay => {}
-                    simple_ui::Outcome::Notice(text) => toasts.push(text),
-                    simple_ui::Outcome::Run { project, file } => {
-                        list_memory = open.memory();
-                        let unsaved = machine.unsaved_slots();
-                        if !unsaved.is_empty() {
-                            let label = sb_runtime::confirm::project_label(&project);
-                            let mut lines = vec![format!("Run {file} of {label}."), String::new()];
-                            lines.extend(sb_runtime::confirm::unsaved_lines(&unsaved));
-                            let size = (display_w, display_h);
-                            let ask = Dialog::new("Unsaved programs", lines, "Run", size);
-                            screens.dialog = Some((ask, Asking::Run(project, file)));
-                        } else if run_from_list(machine, &project, &file, &mut toasts) {
-                            (screens.game_list, ran_from_list) = (None, Some(file));
-                        }
-                    }
-                }
+            if screens.game_list.is_some() {
+                let (memory, ran) = (&mut list_memory, &mut ran_from_list);
+                events::game_list(&event, &mut screens, memory, ran, cx!());
                 // Nothing else goes past it, as typing would reach the
                 // prompt under it.
                 continue;
             }
-            if let Some(open) = &mut screens.manager {
-                let unsaved = machine.unsaved_slots();
-                let storage = &mut machine.rt.storage;
-                let outcome = match event {
-                    Event::Quit { .. } => {
-                        quit = true;
-                        Outcome::Stay
-                    }
-                    Event::MouseMotion { x, y, .. } => {
-                        open.mouse_move(to_display(x, y));
-                        Outcome::Stay
-                    }
-                    Event::MouseButtonDown {
-                        mouse_btn: MouseButton::Left,
-                        clicks,
-                        x,
-                        y,
-                        ..
-                    } => match clicks {
-                        2.. => open.double_click(to_display(x, y), storage, &unsaved),
-                        _ => open.click(to_display(x, y), storage, &unsaved),
-                    },
-                    Event::MouseButtonDown {
-                        mouse_btn: MouseButton::Right,
-                        x,
-                        y,
-                        ..
-                    } => {
-                        open.right_click(to_display(x, y), storage);
-                        Outcome::Stay
-                    }
-                    Event::MouseButtonUp {
-                        mouse_btn: MouseButton::Left,
-                        x,
-                        y,
-                        ..
-                    } => {
-                        open.release(to_display(x, y), storage);
-                        Outcome::Stay
-                    }
-                    Event::MouseWheel { y, .. } => {
-                        open.wheel(-y.round() as i32);
-                        Outcome::Stay
-                    }
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } => open.key(key, storage, &unsaved),
-                    Event::GamepadButtonDown { button, .. } => open.pad(button, storage, &unsaved),
-                    Event::TextInput { text, .. } => {
-                        open.text(&text);
-                        Outcome::Stay
-                    }
-                    _ => Outcome::Stay,
-                };
-                match outcome {
-                    Outcome::Stay => {}
-                    Outcome::Close => screens.manager = None,
-                    Outcome::Switched(name) => {
-                        toasts.push(format!("Switched to project {name}"));
-                        screens.manager = None;
-                    }
-                    Outcome::Open { switched, open } => {
-                        if let Some(name) = switched {
-                            toasts.push(format!("Switched to project {name}"));
-                        }
-                        if let (true, Some(m)) = (open.home, &screens.manager) {
-                            home_memory = m.memory();
-                        }
-                        let done = match (open.run, open.home) {
-                            (true, true) => machine.run_home(&open.file),
-                            (true, false) => machine.run_file(&open.file),
-                            (false, _) => machine.load_slot(open.slot, &open.file),
-                        };
-                        match done {
-                            Ok(()) if !open.run => {
-                                toasts.push(format!("Loaded {} into PRG{}", open.file, open.slot))
-                            }
-                            Ok(()) => {}
-                            Err(e) => toasts.push(format!("Could not load {}: {e}", open.file)),
-                        }
-                        screens.manager = None;
-                    }
-                    Outcome::ChooseFile(transfer, start) => {
-                        let send = chosen_folder.clone();
-                        let filters = [
-                            sdl3::dialog::DialogFileFilter {
-                                name: "Images",
-                                pattern: "png;jpg;jpeg",
-                            },
-                            sdl3::dialog::DialogFileFilter {
-                                name: "All files (GRP too)",
-                                pattern: "*",
-                            },
-                        ];
-                        let shown = sdl3::dialog::show_open_file_dialog(
-                            &filters,
-                            start.as_deref(),
-                            false,
-                            canvas.window(),
-                            Box::new(move |chosen, _| {
-                                if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
-                                    let _ = send.send((path, transfer.clone()));
-                                }
-                            }),
-                        );
-                        if let Err(e) = shown {
-                            toasts.push(format!("Could not open a file dialog: {e}"));
-                        }
-                    }
-                    Outcome::ChooseFolder(transfer) => {
-                        let send = chosen_folder.clone();
-                        sdl3::dialog::show_open_folder_dialog(
-                            None::<&Path>,
-                            false,
-                            canvas.window(),
-                            Box::new(move |chosen, _| {
-                                if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
-                                    let _ = send.send((path, transfer.clone()));
-                                }
-                            }),
-                        );
-                    }
-                }
-                if let (true, Some(open)) = (input, &mut screens.manager) {
-                    open.reread(&machine.rt.storage, false);
-                }
+            if screens.manager.is_some() {
+                let (memory, send) = (&mut home_memory, &chosen_folder);
+                let window = canvas.window();
+                events::manager(
+                    &event,
+                    &mut screens,
+                    memory,
+                    send,
+                    window,
+                    cx!(),
+                    to_display,
+                );
                 continue;
             }
             if let Some(open) = &mut screens.file_dialog {
