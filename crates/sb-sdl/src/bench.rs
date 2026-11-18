@@ -31,9 +31,9 @@
 //!   running them; then MAINCNT, and the frames so far that the program
 //!   missed part of its trip in, by why, as the report's missed line says; then 1
 //!   if the trip drew the window and 0 if it left the drawing out;
-//! - `menu`, `file-menu`, `view-menu`, `help`, `about`, `colors`, `settings`,
-//!   `toast`: shows the menu bar (as F8 does), the bar with its File menu
-//!   open or its View menu at Window size, the help beside the editor, the About dialog, the editor colors window,
+//! - `menu`, `file-menu`, `view-menu`, `size-menu`, `help`, `about`, `colors`,
+//!   `settings`, `toast`: shows the menu bar (as F8 does), the bar with its File menu
+//!   open or its View menu at Window size or at Size, the help beside the editor, the About dialog, the editor colors window,
 //!   the settings window at its Editor page, or a notice, once the rest is
 //!   set up;
 //! - `cpu-smart`: scales XSCREEN's mode 1 on the CPU, the fallback for a
@@ -290,8 +290,8 @@ impl Bench {
                     "vblank" => bench.vblank = true,
                     "occluded" => bench.occluded = true,
                     "cpu-smart" => bench.cpu_smart = true,
-                    "menu" | "file-menu" | "view-menu" | "help" | "about" | "colors"
-                    | "settings" | "toast" => bench.extras.push(part.to_string()),
+                    "menu" | "file-menu" | "view-menu" | "size-menu" | "help" | "about"
+                    | "colors" | "settings" | "toast" => bench.extras.push(part.to_string()),
                     "" => {}
                     _ => eprintln!("SB_UI_BENCH: unknown part {part:?}"),
                 },

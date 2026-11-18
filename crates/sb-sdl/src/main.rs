@@ -952,6 +952,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if b.opens("view-menu") {
                 menu.open_menu(2, "Window size");
             }
+            if b.opens("size-menu") {
+                menu.open_menu(2, "Size (F2)");
+            }
             if b.opens("settings") {
                 let mut window = SettingsWindow::new(size);
                 window.show_page("Editor");
@@ -1085,6 +1088,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             menu: menus_apart.map(|place| place.at),
         };
         let ui_scale = bench.as_ref().and_then(|b| b.ui_scale);
+        // The window the editor shows in, whose zooms F2 and View > Size
+        // go by: its width and the height of SmileBASIC 4's display there.
+        // The Simple UI keeps SmileBASIC 4's frame, which each size changes.
+        let mut editor_room = (!simple_ui).then_some((out_w, display.h));
         // The editor's window has the UI in pixels of its own, and the
         // emulator's windows laid out on the display as on the main window.
         let (editor_map, windows_map, editor_ui) = match editor_gfx.get().filter(|_| apart) {
@@ -1094,6 +1101,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 let editor_canvas = gfx.canvas.borrow();
                 let (out_w, out_h) = drawing!(editor_canvas.output_size());
                 let (win_w, _) = editor_canvas.window().size();
+                editor_room = Some((out_w, (display_h * layout.ui) as f32));
                 let map = Mapping {
                     px: out_w as f32 / win_w.max(1) as f32,
                     display: from_corner(layout.ui_pixels()),
@@ -2404,7 +2412,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } => match if ui_window && !simple_ui {
                     let open = menu.is_open().then_some(profile_display);
-                    menu.click(to_menu(x, y), menu_context(machine, canvas.window(), open))
+                    menu.click(
+                        to_menu(x, y),
+                        menu_context(machine, canvas.window(), open, editor_room),
+                    )
                 } else {
                     Click::Ignored
                 } {
@@ -2744,7 +2755,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 Event::KeyDown {
                     keycode: Some(Keycode::F2),
                     ..
-                } if on_editor => next_editor_size(machine),
+                } if on_editor => next_editor_size(machine, editor_room),
                 // F1 shows the help for the command at the cursor, in the
                 // editor or on the line typed in direct mode.
                 Event::KeyDown {
@@ -2791,7 +2802,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } if on_editor && ctrl(keymod) => match key {
                     Keycode::W => Action::ToggleWrap.toggle(&mut machine.rt.settings),
-                    Keycode::B => next_editor_size(machine),
+                    Keycode::B => next_editor_size(machine, editor_room),
                     Keycode::Home => machine.edit().file_top(),
                     Keycode::End => machine.edit().file_end(),
                     Keycode::A => machine.edit().select_all(),
@@ -3644,7 +3655,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         ui::set_bundled_glyphs(machine.rt.settings.bundled_glyphs16);
         let cursor_on = (blink / 25).is_multiple_of(2);
         let open = menu.is_open().then_some(profile_display);
-        let context = menu_context(machine, canvas.window(), open);
+        let context = menu_context(machine, canvas.window(), open, editor_room);
         let settings = &machine.rt.settings;
         let editor_creator = editor_gfx
             .get()
@@ -4611,8 +4622,14 @@ fn choose_extra_font(window: &Window, send: std::sync::mpsc::Sender<PathBuf>, to
 
 /// What the menu bar's items need of the emulator and the main window.
 /// `display`, the profile's, is given while a menu is open: View > Window
-/// size then asks the system for the window's display.
-fn menu_context(machine: &Machine, main: &Window, display: Option<(u32, u32)>) -> Context {
+/// size then asks the system for the window's display. `editor_room` is
+/// the window the editor shows in, as [`next_editor_size`] takes it.
+fn menu_context(
+    machine: &Machine,
+    main: &Window,
+    display: Option<(u32, u32)>,
+    editor_room: Option<(u32, f32)>,
+) -> Context {
     let fullscreen = main.fullscreen_state() != FullscreenType::Off;
     let (window_size, window_fits) = match display {
         Some(display) => {
@@ -4627,6 +4644,14 @@ fn menu_context(machine: &Machine, main: &Window, display: Option<(u32, u32)>) -
         }
         None => (None, 0),
     };
+    let settings = &machine.rt.settings;
+    let distinct = editor_room.map_or([true; 4], |(width, display_h)| {
+        let (font, size) = (settings.editor_font, settings.editor_size);
+        editor_layout::distinct_sizes(width, display_h, font, size)
+    });
+    let same_sizes = (0..distinct.len())
+        .filter(|&i| !distinct[i])
+        .fold(0, |bits, i| bits | 1 << i);
     Context {
         running: machine.is_running(),
         editing: machine.is_editing(),
@@ -4636,6 +4661,7 @@ fn menu_context(machine: &Machine, main: &Window, display: Option<(u32, u32)>) -
         fullscreen,
         window_size,
         window_fits,
+        same_sizes,
     }
 }
 
@@ -5608,10 +5634,16 @@ fn editor_filter(rect: FRect, (_, h): (u32, u32), filter: Filter) -> Filter {
 }
 
 /// Makes the editor's characters a size smaller, back to the largest
-/// after the smallest, as F2 and Ctrl+B do.
-fn next_editor_size(machine: &mut Machine) {
-    let size = &mut machine.rt.settings.editor_size;
-    *size = size.next();
+/// after the smallest, as F2 and Ctrl+B do. In the window `room` gives,
+/// as [`editor_layout::next_size`] takes it, sizes that look the same as
+/// the one chosen are skipped.
+fn next_editor_size(machine: &mut Machine, room: Option<(u32, f32)>) {
+    let settings = &mut machine.rt.settings;
+    let (font, size) = (settings.editor_font, settings.editor_size);
+    settings.editor_size = match room {
+        Some((width, display_h)) => editor_layout::next_size(width, display_h, font, size),
+        None => size.next(),
+    };
 }
 
 /// Reads editor colors from a file; returns what to tell the user.

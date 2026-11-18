@@ -12,6 +12,7 @@ use sb_runtime::palette::PRESETS;
 use sb_runtime::runtime::Settings;
 use sb_runtime::screen::Filter;
 
+use crate::editor_layout::SIZES;
 use crate::ui::{
     BACKGROUND, BORDER, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, outline, text_width,
 };
@@ -118,6 +119,10 @@ pub struct Context {
     pub window_size: Option<usize>,
     /// The items of View > Window size that fit the display, as bits.
     pub window_fits: u32,
+    /// The items of View > Size that look the same as another in the
+    /// window the editor shows in, as bits (see
+    /// [`crate::editor_layout::distinct_sizes`]). They show disabled.
+    pub same_sizes: u32,
 }
 
 impl Action {
@@ -220,6 +225,10 @@ impl Action {
                 !context.running
             }
             Action::WindowSize(i) => context.window_fits >> i & 1 != 0,
+            Action::EditorSize(size) => {
+                let i = SIZES.iter().position(|&s| s == size).unwrap_or(0);
+                context.same_sizes >> i & 1 == 0
+            }
             _ => true,
         }
     }
@@ -975,6 +984,7 @@ mod tests {
         fullscreen: false,
         window_size: None,
         window_fits: 0,
+        same_sizes: 0,
     };
     const RUNNING: Context = Context {
         running: true,
@@ -1454,5 +1464,31 @@ mod tests {
         assert_eq!(Action::ColorPreset(0).mark(&settings, IDLE), "( )");
         Action::EditorSize(EditorSize::Small).toggle(&mut settings);
         assert_eq!(settings.editor_size, EditorSize::Small);
+    }
+
+    #[test]
+    fn sizes_that_look_the_same_are_disabled() {
+        // Small and Tiny look like Medium.
+        let same = Context {
+            same_sizes: 0b1100,
+            ..IDLE
+        };
+        let enabled = SIZES.map(|size| Action::EditorSize(size).enabled(same));
+        assert_eq!(enabled, [true, true, false, false]);
+        assert!(SIZES.iter().all(|&s| Action::EditorSize(s).enabled(IDLE)));
+        // The list follows F2's order, which the bits go by.
+        let view = menu("View");
+        let listed: Vec<_> = (MENUS[view].items.iter())
+            .filter_map(|item| match item.entry {
+                Entry::Sub(sub) => Some(sub),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|item| match item.entry {
+                Entry::Do(Action::EditorSize(size)) => Some(size),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(listed, SIZES);
     }
 }

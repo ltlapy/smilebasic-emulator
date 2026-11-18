@@ -517,6 +517,12 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
     only Large (2x) differs. The 8-pixel font gives four sizes there (4x, 3x,
     2x and 1x). On 2560x1440 and 3840x2160 each size differs with either
     font.
+  - F2 and Ctrl+B skip the sizes that look the same as the current one in
+    the window the editor shows in, so each press changes the zoom, and do
+    nothing where every size looks the same. View > Size shows such sizes
+    disabled: of the sizes at one zoom, only the current one, or else the
+    first listed, can be chosen. The setting keeps the size picked, which
+    can differ in another window.
   - The Simple UI keeps SmileBASIC 4's frame, scaled to where the screen
     goes.
 - View > Window size sets the main window to 0.5, 1, 1.5, 2, 2.5 or 3 times
@@ -860,7 +866,8 @@ SmileBASIC 4 the editor replaces the screen and no program runs while it shows.
   character size on a 720-pixel-high display at the desktop's scale, lowered
   where it would leave fewer than 40 columns, as in the main window. With the
   16-pixel font at 100% scaling, Medium, Small and Tiny all draw it at its own
-  size.
+  size. F2 and View > Size go by this window's zooms, not the main window's,
+  and skip or disable the sizes that look the same there.
 - The menu bar, the debugger's panel, the help and the index follow the
   desktop's scaling setting, rounded to a whole number: 150% draws them at
   twice their size. They follow a change at once, as when you move the window

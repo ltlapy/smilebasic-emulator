@@ -47,6 +47,48 @@ pub fn zoom(width: u32, display_h: f32, (font, size): (FontSize, EditorSize)) ->
         .unwrap_or(1)
 }
 
+/// F2's sizes, in the order it steps through them and View > Size lists
+/// them.
+pub const SIZES: [EditorSize; 4] = [
+    EditorSize::Large,
+    EditorSize::Medium,
+    EditorSize::Small,
+    EditorSize::Tiny,
+];
+
+/// Which of [`SIZES`] show the editor differently in a window `width`
+/// pixels across in which SmileBASIC 4's display is `display_h` pixels
+/// high, with the editor's `font` and `current` the size chosen. Sizes
+/// at the same [`zoom`] show the same; of each such group one counts:
+/// `current` if it is in the group, or else the first listed.
+pub fn distinct_sizes(
+    width: u32,
+    display_h: f32,
+    font: FontSize,
+    current: EditorSize,
+) -> [bool; 4] {
+    let zooms = SIZES.map(|size| zoom(width, display_h, (font, size)));
+    let now = zoom(width, display_h, (font, current));
+    std::array::from_fn(|i| match zooms[i] == now {
+        true => SIZES[i] == current,
+        false => !zooms[..i].contains(&zooms[i]),
+    })
+}
+
+/// The size F2 goes to from `current` in the window [`distinct_sizes`]
+/// takes: the next in its order that shows the editor at another zoom,
+/// so that each press changes what is seen, or `current` if every size
+/// shows it at the same zoom.
+pub fn next_size(width: u32, display_h: f32, font: FontSize, current: EditorSize) -> EditorSize {
+    let zoom_of = |size| zoom(width, display_h, (font, size));
+    let now = zoom_of(current);
+    let mut size = current.next();
+    while size != current && zoom_of(size) == now {
+        size = size.next();
+    }
+    size
+}
+
 /// The editor's frame at `zoom` in a window of `pixels`, under a menu
 /// bar `bar` window pixels high: as many pixels as cover the window,
 /// past its right and bottom edges by less than one, and the ones the
@@ -209,6 +251,117 @@ mod tests {
         assert_eq!(zooms(FontSize::Small), [4, 3, 2, 1]);
         // The 16-pixel font cannot be drawn smaller than its pixels.
         assert_eq!(zooms(FontSize::Large), [2, 1, 1, 1]);
+    }
+
+    /// The main window's sizes the steps are checked at, with SmileBASIC
+    /// 4's display fitted into each, and a tall one.
+    const WINDOWS: [(u32, u32); 5] = [
+        (1280, 720),
+        (640, 480),
+        (1920, 1080),
+        (640, 360),
+        (720, 1280),
+    ];
+    const FONTS: [FontSize; 2] = [FontSize::Large, FontSize::Small];
+
+    fn display_h((w, h): (u32, u32)) -> f32 {
+        (w as f32 / 1280.0).min(h as f32 / 720.0) * 720.0
+    }
+
+    fn zooms(window: (u32, u32), font: FontSize) -> [u32; 4] {
+        SIZES.map(|size| zoom(window.0, display_h(window), (font, size)))
+    }
+
+    fn index(size: EditorSize) -> usize {
+        SIZES.iter().position(|&s| s == size).expect("listed")
+    }
+
+    #[test]
+    fn sizes_at_the_same_zoom_count_once() {
+        use EditorSize::{Large, Medium, Small, Tiny};
+        let (y, n) = (true, false);
+        // The window, the font, each size's zoom, and which sizes count
+        // with Medium, the default, chosen.
+        let table = [
+            ((1280, 720), FontSize::Large, [2, 1, 1, 1], [y, y, n, n]),
+            ((1280, 720), FontSize::Small, [4, 3, 2, 1], [y, y, y, y]),
+            ((640, 480), FontSize::Large, [1, 1, 1, 1], [n, y, n, n]),
+            ((640, 480), FontSize::Small, [2, 1, 1, 1], [y, y, n, n]),
+            ((1920, 1080), FontSize::Large, [3, 2, 1, 1], [y, y, y, n]),
+            ((1920, 1080), FontSize::Small, [6, 4, 3, 2], [y, y, y, y]),
+            ((640, 360), FontSize::Large, [1, 1, 1, 1], [n, y, n, n]),
+            ((640, 360), FontSize::Small, [2, 1, 1, 1], [y, y, n, n]),
+            ((720, 1280), FontSize::Large, [1, 1, 1, 1], [n, y, n, n]),
+            ((720, 1280), FontSize::Small, [2, 2, 1, 1], [n, y, y, n]),
+        ];
+        for (window, font, want_zooms, want) in table {
+            let got = distinct_sizes(window.0, display_h(window), font, Medium);
+            assert_eq!(zooms(window, font), want_zooms, "{window:?} {font:?}");
+            assert_eq!(got, want, "{window:?} {font:?}");
+        }
+        // The size chosen stands for its group; another group keeps its
+        // first listed size.
+        let at = |current| distinct_sizes(1280, 720.0, FontSize::Large, current);
+        assert_eq!(at(Tiny), [y, n, n, y]);
+        assert_eq!(at(Large), [y, y, n, n]);
+        assert_eq!(at(Small), [y, n, y, n]);
+    }
+
+    #[test]
+    fn one_size_counts_for_each_zoom() {
+        for window in WINDOWS {
+            for font in FONTS {
+                let zooms = zooms(window, font);
+                for current in SIZES {
+                    let shown = distinct_sizes(window.0, display_h(window), font, current);
+                    assert!(shown[index(current)], "the chosen size is never dimmed");
+                    for zoom in zooms {
+                        let counted = (0..4).filter(|&i| shown[i] && zooms[i] == zoom).count();
+                        assert_eq!(counted, 1, "{window:?} {font:?} {current:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn f2_skips_sizes_that_look_the_same() {
+        use EditorSize::{Large, Medium, Small, Tiny};
+        let next = |window: (u32, u32), font, current| {
+            next_size(window.0, display_h(window), font, current)
+        };
+        let big = FontSize::Large;
+        assert_eq!(next((1280, 720), big, Large), Medium);
+        assert_eq!(next((1280, 720), big, Medium), Large);
+        assert_eq!(next((1280, 720), big, Tiny), Large);
+        assert_eq!(next((1920, 1080), big, Small), Large);
+        assert_eq!(next((720, 1280), FontSize::Small, Large), Small);
+        // Where every size looks the same, F2 changes nothing.
+        assert_eq!(next((640, 360), big, Medium), Medium);
+        // Each press changes the zoom and lands on a size that counts in
+        // View > Size, and the presses go round every zoom there is.
+        for window in WINDOWS {
+            for font in FONTS {
+                let zooms = zooms(window, font);
+                let groups = (0..4).filter(|&i| !zooms[..i].contains(&zooms[i])).count();
+                for start in SIZES {
+                    let (mut size, mut seen) = (start, vec![]);
+                    for _ in 0..groups {
+                        let after = next(window, font, size);
+                        if groups > 1 {
+                            assert_ne!(zooms[index(after)], zooms[index(size)]);
+                        }
+                        let shown = distinct_sizes(window.0, display_h(window), font, size);
+                        assert!(shown[index(after)], "{window:?} {font:?} {size:?}");
+                        seen.push(zooms[index(after)]);
+                        size = after;
+                    }
+                    seen.sort_unstable();
+                    seen.dedup();
+                    assert_eq!(seen.len(), groups, "{window:?} {font:?} from {start:?}");
+                }
+            }
+        }
     }
 
     #[test]
