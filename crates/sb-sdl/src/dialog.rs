@@ -36,6 +36,8 @@ pub struct Dialog {
     focus: usize,
     /// What has been typed, for a question with a field to type in.
     field: Option<String>,
+    /// The button under the mouse, which a click chooses.
+    hover: Option<usize>,
 }
 
 /// Characters of a field shown.
@@ -61,6 +63,7 @@ impl Dialog {
             size,
             focus: 1,
             field: None,
+            hover: None,
         }
     }
 
@@ -102,6 +105,7 @@ impl Dialog {
             size,
             focus: 0,
             field: None,
+            hover: None,
         }
     }
 
@@ -171,10 +175,10 @@ impl Dialog {
         }
     }
 
+    /// The mouse shows which button a click chooses; it leaves the focus,
+    /// which Enter and A choose, where it is.
     pub fn mouse_move(&mut self, at: (i32, i32)) {
-        if let Some(i) = (0..self.labels.len()).find(|&i| self.button(i).contains(at)) {
-            self.focus = i;
-        }
+        self.hover = (0..self.labels.len()).find(|&i| self.button(i).contains(at));
     }
 
     pub fn click(&mut self, at: (i32, i32)) -> Option<Answer> {
@@ -259,7 +263,7 @@ impl Dialog {
         }
         for (i, label) in self.labels.iter().enumerate() {
             let r = self.button(i);
-            focus_face(fb, r, i == self.focus);
+            focus_face(fb, r, i == self.focus, self.hover == Some(i));
             let x = r.x + (r.w - text_width(label)) / 2;
             draw_text(fb, font, x, r.y + 4, label, TEXT);
         }
@@ -397,6 +401,6 @@ mod tests {
         assert_eq!(d.click(centre(cancel)), Some(Answer::Cancel));
         assert_eq!(d.click((0, 0)), None);
         d.mouse_move(centre(quit));
-        assert_eq!(d.focus, 0);
+        assert_eq!((d.hover, d.focus), (Some(0), 1), "hovered, not focused");
     }
 }

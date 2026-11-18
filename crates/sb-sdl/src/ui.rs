@@ -24,6 +24,12 @@ pub const HIGHLIGHT: u32 = 0xFF2F_5FAF;
 pub const TEXT: u32 = 0xFFFF_FFFF;
 pub const DISABLED: u32 = 0xFF80_8080;
 pub const BORDER: u32 = 0xFF80_8080;
+/// The face of a dialog's button with the focus: a lighter blue than
+/// [`HIGHLIGHT`], the title bar's.
+pub const FOCUS: u32 = 0xFF4A_88E0;
+/// The face of a dialog's button under the mouse without the focus: a
+/// lighter gray than [`BORDER`], so that it never looks like the focus.
+const DIALOG_HOVER: u32 = 0xFF9C_9C9C;
 /// The face of a button that cannot be pressed.
 const DISABLED_FACE: u32 = 0xFF40_4040;
 /// The face of a button that starts something, like Run, and its face
@@ -227,11 +233,17 @@ pub fn outline(fb: &mut Framebuffer, r: Rect, color: u32) {
     }
 }
 
-/// The face of a dialog's button, framed when it has the focus that A,
-/// Enter and the D-pad move. All of a dialog's buttons have one color, so
-/// that the frame reads as the selection.
-pub fn focus_face(fb: &mut Framebuffer, r: Rect, focused: bool) {
-    fill(fb, r, BORDER);
+/// The face of a dialog's button: [`FOCUS`] and framed when it has the
+/// focus that A, Enter and the D-pad move, and gray otherwise, lighter
+/// under the mouse. Other buttons turn [`HIGHLIGHT`] under the mouse, but
+/// here that blue would look like the focus.
+pub fn focus_face(fb: &mut Framebuffer, r: Rect, focused: bool, hovered: bool) {
+    let face = match (focused, hovered) {
+        (true, _) => FOCUS,
+        (false, true) => DIALOG_HOVER,
+        (false, false) => BORDER,
+    };
+    fill(fb, r, face);
     if focused {
         outline(fb, r, TEXT);
     }

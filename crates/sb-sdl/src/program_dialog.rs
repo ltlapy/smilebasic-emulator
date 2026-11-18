@@ -29,6 +29,8 @@ pub struct ProgramView {
     focus: usize,
     /// What has been typed, for a file name.
     name: String,
+    /// The button under the mouse, which a click chooses.
+    hover: Option<usize>,
 }
 
 impl ProgramView {
@@ -43,6 +45,7 @@ impl ProgramView {
             size: (0, 0),
             focus: 0,
             name,
+            hover: None,
         };
         view.set_size(size);
         view.focus = view.labels().len().saturating_sub(1);
@@ -170,10 +173,10 @@ impl ProgramView {
         self.frame().contains(at)
     }
 
+    /// The mouse shows which button a click chooses; it leaves the focus,
+    /// which A and Enter choose, where it is.
     pub fn mouse_move(&mut self, at: (i32, i32)) {
-        if let Some(i) = (0..self.labels().len()).find(|&i| self.button(i).contains(at)) {
-            self.focus = i;
-        }
+        self.hover = (0..self.labels().len()).find(|&i| self.button(i).contains(at));
     }
 
     pub fn click(&mut self, at: (i32, i32)) -> Option<DialogAnswer> {
@@ -272,7 +275,7 @@ impl ProgramView {
         }
         for (i, label) in self.labels().iter().enumerate() {
             let r = self.button(i);
-            focus_face(fb, r, i == self.focus);
+            focus_face(fb, r, i == self.focus, self.hover == Some(i));
             let x = r.x + (r.w - text_width(label)) / 2;
             draw_text(fb, font, x, r.y + 4, label, TEXT);
         }
@@ -459,6 +462,17 @@ mod tests {
         assert_eq!(v.key(Keycode::Return), Some(Some(DialogAnswer::Choice(1))));
         v.follow(Some(7));
         assert_eq!(v.focus(), 1);
+    }
+
+    /// The mouse over a button leaves the focus where it is.
+    #[test]
+    fn the_mouse_hovers_without_moving_the_focus() {
+        let kind = DialogKind::Choice(vec!["No", "Yes"]);
+        let mut v = ProgramView::new(&dialog(kind), (1280, 720));
+        v.mouse_move(centre(v.button(0)));
+        assert_eq!((v.hover, v.focus()), (Some(0), 1));
+        v.mouse_move((0, 0));
+        assert_eq!(v.hover, None);
     }
 
     #[test]

@@ -108,7 +108,8 @@ A `DIALOG` with two buttons starts with the focus on the right one.
 | A, Enter | Choose the button with the focus |
 | B, Esc | Choose the left button: No, Back or Cancel |
 
-A and B choose when released.
+A and B choose when released. A click chooses the button under the mouse,
+which leaves the focus where it is until then.
 
 ## Gamepad in the projects
 
