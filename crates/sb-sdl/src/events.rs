@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
+use sb_runtime::editor::Mode;
 use sb_runtime::help::Help;
 use sb_runtime::machine::Machine;
 use sb_runtime::sound::bank::Bank;
@@ -32,10 +33,10 @@ use crate::window::{self, KeepShape};
 use crate::{
     Asking, Beside, Choice, Debugger, FileDialog, Screens, Side, about_lines, choose,
     choose_extra_font, choose_sound_font, colors, condition_dialog, copy_selection, debug_action,
-    debug_view, file_dialogs, help, index, load_edited, main_room, open_file_dialog, open_folder,
-    open_help, open_index, paste, run_from_list, save_edited, set_value, set_window_scale,
-    settings_window, shape_free, shortcuts, side_outcome, simple_ui_leave, toggle_fullscreen,
-    use_instruments,
+    debug_view, file_dialogs, help, index, load_edited, main_room, next_editor_size,
+    open_file_dialog, open_folder, open_help, open_index, paste, run_from_list, save_edited,
+    set_value, set_window_scale, settings_window, shape_free, shortcuts, side_outcome,
+    simple_ui_leave, toggle_fullscreen, use_instruments,
 };
 
 /// What the loop does once a screen has taken an event.
@@ -1133,6 +1134,60 @@ pub fn panel_click(
                 size,
             );
         }
+        _ => {}
+    }
+}
+
+/// A key with Ctrl in the editor: `keys` are the key and whether Shift is
+/// held, and `room` the window the editor shows in, for its sizes.
+pub fn editor_ctrl_key(
+    keys: (Keycode, bool),
+    room: Option<(u32, f32)>,
+    side: &mut Beside,
+    tools: Tools,
+    cx: Ctx,
+) {
+    let Ctx {
+        machine,
+        toasts,
+        size,
+        ..
+    } = cx;
+    let (key, shift) = keys;
+    match key {
+        Keycode::W => Action::ToggleWrap.toggle(&mut machine.rt.settings),
+        Keycode::B => next_editor_size(machine, room),
+        Keycode::Home => machine.edit().file_top(),
+        Keycode::End => machine.edit().file_end(),
+        Keycode::A => machine.edit().select_all(),
+        Keycode::C | Keycode::X => {
+            copy_selection(machine, tools.clipboard, toasts, key == Keycode::X)
+        }
+        Keycode::V => paste(machine, tools.clipboard, toasts),
+        Keycode::Z if shift => machine.edit().redo(),
+        Keycode::Z => machine.edit().undo(),
+        Keycode::Y => machine.edit().redo(),
+        Keycode::K if shift => machine.edit().uncomment(),
+        Keycode::K => machine.edit().comment(),
+        Keycode::Return | Keycode::KpEnter => {
+            let editor = machine.edit();
+            match editor.mode() {
+                Mode::Replace => editor.replace_all(),
+                _ => editor.insert_line(),
+            }
+        }
+        Keycode::G => machine.edit().go_to_line(),
+        Keycode::Slash | Keycode::KpDivide => machine.toggle_split(),
+        Keycode::_0 | Keycode::Kp0 => machine.toggle_editor(),
+        Keycode::Tab => machine.switch_side(),
+        Keycode::J => {
+            side.open = Some(open_index(machine, size));
+            side.focus = true;
+        }
+        Keycode::F => machine.edit().start_find(false),
+        Keycode::H => machine.edit().start_find(true),
+        Keycode::Backspace => machine.edit().delete_line(),
+        Keycode::Delete => machine.edit().delete_to_end(),
         _ => {}
     }
 }

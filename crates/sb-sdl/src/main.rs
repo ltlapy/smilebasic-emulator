@@ -1990,42 +1990,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     keycode: Some(key),
                     keymod,
                     ..
-                } if on_editor && ctrl(keymod) => match key {
-                    Keycode::W => Action::ToggleWrap.toggle(&mut machine.rt.settings),
-                    Keycode::B => next_editor_size(machine, editor_room),
-                    Keycode::Home => machine.edit().file_top(),
-                    Keycode::End => machine.edit().file_end(),
-                    Keycode::A => machine.edit().select_all(),
-                    Keycode::C | Keycode::X => {
-                        copy_selection(machine, &clipboard, &mut toasts, key == Keycode::X)
-                    }
-                    Keycode::V => paste(machine, &clipboard, &mut toasts),
-                    Keycode::Z if shift(keymod) => machine.edit().redo(),
-                    Keycode::Z => machine.edit().undo(),
-                    Keycode::Y => machine.edit().redo(),
-                    Keycode::K if shift(keymod) => machine.edit().uncomment(),
-                    Keycode::K => machine.edit().comment(),
-                    Keycode::Return | Keycode::KpEnter => {
-                        let editor = machine.edit();
-                        match editor.mode() {
-                            Mode::Replace => editor.replace_all(),
-                            _ => editor.insert_line(),
-                        }
-                    }
-                    Keycode::G => machine.edit().go_to_line(),
-                    Keycode::Slash | Keycode::KpDivide => machine.toggle_split(),
-                    Keycode::_0 | Keycode::Kp0 => machine.toggle_editor(),
-                    Keycode::Tab => machine.switch_side(),
-                    Keycode::J => {
-                        side_panel.open = Some(open_index(machine, (display_w, display_h)));
-                        side_panel.focus = true;
-                    }
-                    Keycode::F => machine.edit().start_find(false),
-                    Keycode::H => machine.edit().start_find(true),
-                    Keycode::Backspace => machine.edit().delete_line(),
-                    Keycode::Delete => machine.edit().delete_to_end(),
-                    _ => {}
-                },
+                } if on_editor && ctrl(keymod) => {
+                    let tools = events::Tools {
+                        clipboard: &clipboard,
+                        help: help.as_deref(),
+                        drawn_by: &paths.drawn_by,
+                    };
+                    let (keys, side) = ((key, shift(keymod)), &mut side_panel);
+                    events::editor_ctrl_key(keys, editor_room, side, tools, cx!());
+                }
                 // Esc, which the editor's text does not use, closes a panel.
                 Event::KeyDown {
                     keycode: Some(Keycode::Escape),
