@@ -227,6 +227,16 @@ pub fn outline(fb: &mut Framebuffer, r: Rect, color: u32) {
     }
 }
 
+/// The face of a dialog's button, framed when it has the focus that A,
+/// Enter and the D-pad move. All of a dialog's buttons have one color, so
+/// that the frame reads as the selection.
+pub fn focus_face(fb: &mut Framebuffer, r: Rect, focused: bool) {
+    fill(fb, r, BORDER);
+    if focused {
+        outline(fb, r, TEXT);
+    }
+}
+
 /// Draws text in `color`, keeping the background's alpha. Half-width
 /// characters are drawn half as wide as the rest, as the emulator's own
 /// windows are not SmileBASIC's.

@@ -1,21 +1,29 @@
 //! The window of a program's DIALOG, drawn over the screen. Clicks, Enter
 //! and typing answer it here; controller buttons and the timeout are the
-//! runtime's.
+//! runtime's, and so is the focus of a choice, which the keys here move
+//! too.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::dialog::{DialogAnswer, DialogKind, ProgramDialog, name_char};
 use sb_runtime::font::Font;
 use sdl3::keyboard::Keycode;
 
+use crate::simple_ui::{CAP_HEIGHT, Cap, cap_width, draw_cap};
 use crate::ui::{
     BACKGROUND, BORDER, CHAR, HIGHLIGHT, LINE, PAD, Rect, TEXT, char_width, draw_text, fill,
-    text_width,
+    focus_face, text_width,
 };
 
 /// The narrowest the window gets, so that short messages still look like
 /// a dialog.
 const MIN_WIDTH: u32 = 320;
 const NAME_BUTTONS: [&str; 2] = ["Cancel", "OK"];
+/// The controller's buttons a choice's marks name: A chooses the button
+/// with the focus, and B the left of two.
+const A_MARK: Cap = Cap::Name("A");
+const B_MARK: Cap = Cap::Name("B");
+/// Between a mark and what is next to it.
+const MARK_GAP: u32 = 2;
 
 pub struct ProgramView {
     dialog: ProgramDialog,
@@ -24,13 +32,17 @@ pub struct ProgramView {
     /// Display size the window is centered in.
     size: (u32, u32),
     /// Index of the chosen button: the right one at first, as A chooses.
+    /// For a choice, the runtime's, which [`ProgramView::follow`] brings.
     focus: usize,
     /// What has been typed, for a file name.
     name: String,
+    /// Whether a choice's buttons show which of the controller's buttons
+    /// choose them, as in the Simple UI.
+    marks: bool,
 }
 
 impl ProgramView {
-    pub fn new(dialog: &ProgramDialog, size: (u32, u32)) -> ProgramView {
+    pub fn new(dialog: &ProgramDialog, size: (u32, u32), marks: bool) -> ProgramView {
         let name = match &dialog.kind {
             DialogKind::Name { initial, .. } => initial.clone(),
             _ => String::new(),
@@ -41,6 +53,7 @@ impl ProgramView {
             size: (0, 0),
             focus: 0,
             name,
+            marks: marks && matches!(dialog.kind, DialogKind::Choice(_)),
         };
         view.set_size(size);
         view.focus = view.labels().len().saturating_sub(1);
@@ -60,6 +73,19 @@ impl ProgramView {
         let body = size.1.saturating_sub(2 * LINE + 6 * PAD) / LINE;
         self.lines = wrap_lines(&self.dialog.lines, room, body as usize);
         self.size = size;
+    }
+
+    /// Takes the focus of a choice from the runtime, which the controller
+    /// moves; other dialogs keep their own.
+    pub fn follow(&mut self, focus: Option<usize>) {
+        if let Some(i) = focus {
+            self.focus = i.min(self.labels().len().saturating_sub(1));
+        }
+    }
+
+    /// The button with the focus, for the runtime to take.
+    pub fn focus(&self) -> usize {
+        self.focus
     }
 
     /// Whether this shows `dialog`, rather than one before it.
@@ -84,12 +110,18 @@ impl ProgramView {
     }
 
     fn button_width(&self) -> u32 {
-        self.labels()
-            .iter()
-            .map(|l| text_width(l))
-            .max()
-            .unwrap_or(0)
-            + 4 * PAD
+        let label = self.labels().iter().map(|l| text_width(l)).max();
+        label.unwrap_or(0) + self.marks_width() + 4 * PAD
+    }
+
+    /// Room on a button for the marks of both of the controller's
+    /// buttons, left of the label, so that the label stays where it is as
+    /// the focus moves.
+    fn marks_width(&self) -> u32 {
+        match self.marks {
+            true => cap_width(B_MARK) + MARK_GAP + cap_width(A_MARK) + PAD / 2,
+            false => 0,
+        }
     }
 
     fn buttons_width(&self) -> u32 {
@@ -171,14 +203,24 @@ impl ProgramView {
             .map(|i| self.choose(i))
     }
 
-    /// Left, Right and Tab move between the buttons, Enter chooses, Esc
+    /// Left, Right and Tab move between the buttons, Tab going round from
+    /// the last to the first, Enter chooses, Esc
     /// chooses the left of two as B does, and Backspace deletes from a
     /// name. Returns `None` for keys it leaves
     /// alone, and `Some(None)` for keys it took without an answer.
     pub fn key(&mut self, key: Keycode) -> Option<Option<DialogAnswer>> {
         let n = self.labels().len();
         match key {
-            Keycode::Left | Keycode::Right | Keycode::Tab if n > 1 => {
+            // As the D-pad does, stopping at the ends.
+            Keycode::Left if n > 1 => {
+                self.focus = self.focus.saturating_sub(1);
+                Some(None)
+            }
+            Keycode::Right if n > 1 => {
+                self.focus = (self.focus + 1).min(n - 1);
+                Some(None)
+            }
+            Keycode::Tab if n > 1 => {
                 self.focus = (self.focus + 1) % n;
                 Some(None)
             }
@@ -249,11 +291,35 @@ impl ProgramView {
                 }
             }
         }
-        for (i, label) in self.labels().iter().enumerate() {
+        let labels = self.labels();
+        for (i, label) in labels.iter().enumerate() {
             let r = self.button(i);
-            fill(fb, r, if i == self.focus { HIGHLIGHT } else { BORDER });
-            let x = r.x + (r.w - text_width(label)) / 2;
+            focus_face(fb, r, i == self.focus);
+            let marks = self.marks_width();
+            let x = r.x + marks + (r.w - marks - text_width(label)) / 2;
             draw_text(fb, font, x, r.y + 4, label, TEXT);
+            if self.marks {
+                // B nearest the edge and A nearest the label.
+                let mark_y = r.y + (r.h - CAP_HEIGHT) / 2;
+                let b_x = r.x + 2 * PAD;
+                let a_x = b_x + cap_width(B_MARK) + MARK_GAP;
+                let mut mark = |x, cap| {
+                    let w = cap_width(cap);
+                    let at = Rect {
+                        x,
+                        y: mark_y,
+                        w,
+                        h: CAP_HEIGHT,
+                    };
+                    draw_cap(fb, font, at, cap);
+                };
+                if labels.len() == 2 && i == 0 {
+                    mark(b_x, B_MARK);
+                }
+                if i == self.focus {
+                    mark(a_x, A_MARK);
+                }
+            }
         }
     }
 }
@@ -328,7 +394,7 @@ mod tests {
 
     #[test]
     fn esc_is_the_left_of_two_buttons_and_cancels_a_name() {
-        let key = |kind| ProgramView::new(&dialog(kind), (1280, 720)).key(Keycode::Escape);
+        let key = |kind| ProgramView::new(&dialog(kind), (1280, 720), false).key(Keycode::Escape);
         let two = key(DialogKind::Choice(vec!["No", "Yes"]));
         assert_eq!(two, Some(Some(DialogAnswer::Choice(0))));
         assert_eq!(key(DialogKind::Choice(vec!["OK"])), None);
@@ -349,7 +415,7 @@ mod tests {
         assert_eq!(wrap("あいAう", 3 * CHAR), ["あいA", "う"]);
         let mut d = dialog(DialogKind::Choice(vec!["OK"]));
         d.lines = vec!["W ".repeat(200)];
-        let v = ProgramView::new(&d, (1280, 720));
+        let v = ProgramView::new(&d, (1280, 720), false);
         assert!(v.lines.len() > 1);
         assert!(v.frame().w <= 1280);
     }
@@ -367,8 +433,10 @@ mod tests {
             max: 32,
         });
         name.caption = "C".repeat(39);
-        for d in [long, name] {
-            let v = ProgramView::new(&d, size);
+        let execute = dialog(DialogKind::Choice(vec!["Cancel", "Execute"]));
+        let all = [long, name, execute];
+        for (d, marks) in all.iter().flat_map(|d| [(d, false), (d, true)]) {
+            let v = ProgramView::new(d, size, marks);
             let f = v.frame();
             assert!(f.x + f.w <= size.0 && f.y + f.h <= size.1, "{f:?}");
             for i in 0..v.labels().len() {
@@ -388,7 +456,11 @@ mod tests {
 
     #[test]
     fn choices_answer_by_index() {
-        let mut v = ProgramView::new(&dialog(DialogKind::Choice(vec!["No", "Yes"])), (1280, 720));
+        let mut v = ProgramView::new(
+            &dialog(DialogKind::Choice(vec!["No", "Yes"])),
+            (1280, 720),
+            false,
+        );
         let (no, yes) = (v.button(0), v.button(1));
         assert!(no.x + no.w < yes.x);
         assert_eq!(v.click(centre(no)), Some(DialogAnswer::Choice(0)));
@@ -398,7 +470,7 @@ mod tests {
             "the right one is chosen at first"
         );
         assert_eq!(v.key(Keycode::Z), None);
-        let v = ProgramView::new(&dialog(DialogKind::Buttons(1)), (1280, 720));
+        let v = ProgramView::new(&dialog(DialogKind::Buttons(1)), (1280, 720), false);
         assert!(v.labels().is_empty());
     }
 
@@ -407,7 +479,7 @@ mod tests {
     #[test]
     fn a_new_size_centers_the_window_and_keeps_the_choice() {
         let kind = DialogKind::Choice(vec!["No", "Yes"]);
-        let mut v = ProgramView::new(&dialog(kind), (1280, 720));
+        let mut v = ProgramView::new(&dialog(kind), (1280, 720), false);
         v.key(Keycode::Left);
         let (focus, at) = (v.focus, v.frame());
         v.set_size((1280, 960));
@@ -417,13 +489,52 @@ mod tests {
         assert_eq!(v.focus, focus);
     }
 
+    /// Left and Right stop at the ends, as the D-pad does; Tab goes round.
+    #[test]
+    fn keys_move_the_focus() {
+        let kind = DialogKind::Choice(vec!["No", "Yes"]);
+        let mut v = ProgramView::new(&dialog(kind), (1280, 720), true);
+        assert_eq!(v.focus(), 1);
+        v.key(Keycode::Right);
+        assert_eq!(v.focus(), 1);
+        v.key(Keycode::Left);
+        v.key(Keycode::Left);
+        assert_eq!(v.focus(), 0);
+        v.key(Keycode::Tab);
+        v.key(Keycode::Tab);
+        assert_eq!(v.focus(), 0);
+        // The runtime's focus, as the controller moved it.
+        v.follow(Some(1));
+        assert_eq!(v.key(Keycode::Return), Some(Some(DialogAnswer::Choice(1))));
+        v.follow(Some(7));
+        assert_eq!(v.focus(), 1);
+    }
+
+    /// The marks leave the label where it is: a mark never covers it.
+    #[test]
+    fn marks_sit_left_of_the_label() {
+        let kind = DialogKind::Choice(vec!["Cancel", "Execute"]);
+        let v = ProgramView::new(&dialog(kind), (1280, 720), true);
+        let r = v.button(0);
+        let marks_end = r.x + 2 * PAD + v.marks_width() - PAD / 2;
+        let label_x = r.x + v.marks_width() + (r.w - v.marks_width() - text_width("Execute")) / 2;
+        assert!(marks_end < label_x);
+        let plain = ProgramView::new(&dialog(DialogKind::Choice(vec!["OK"])), (1280, 720), false);
+        assert_eq!(plain.marks_width(), 0);
+        let name = DialogKind::Name {
+            initial: String::new(),
+            max: 8,
+        };
+        assert!(!ProgramView::new(&dialog(name), (1280, 720), true).marks);
+    }
+
     #[test]
     fn names_take_file_name_characters() {
         let kind = DialogKind::Name {
             initial: "AB".to_string(),
             max: 4,
         };
-        let mut v = ProgramView::new(&dialog(kind), (1280, 720));
+        let mut v = ProgramView::new(&dialog(kind), (1280, 720), false);
         assert!(v.text("c d/ef"));
         assert_eq!(v.name, "ABCD");
         v.key(Keycode::Backspace);

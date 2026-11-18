@@ -1796,6 +1796,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Event::TextInput { ref text, .. } => (open.text(text), None),
                     _ => (false, None),
                 };
+                machine.set_dialog_focus(open.focus());
                 if let Some(answer) = answer {
                     machine.answer_dialog(answer);
                 }
@@ -3157,9 +3158,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         match (&mut program_dialog, machine.program_dialog()) {
             (Some(open), Some(shown)) if open.shows(shown) => open.set_size((display_w, main_ui_h)),
             (_, Some(shown)) => {
-                program_dialog = Some(ProgramView::new(shown, (display_w, main_ui_h)));
+                program_dialog = Some(ProgramView::new(shown, (display_w, main_ui_h), simple_ui));
             }
             (_, None) => program_dialog = None,
+        }
+        if let Some(open) = &mut program_dialog {
+            open.follow(machine.dialog_focus());
         }
         blink = blink.wrapping_add(1);
 

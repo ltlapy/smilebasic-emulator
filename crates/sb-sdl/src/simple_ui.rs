@@ -821,7 +821,7 @@ impl Welcome {
 
 /// What a hint shows for a button: its name, or an arrow for the D-pad.
 #[derive(Clone, Copy)]
-enum Cap {
+pub(crate) enum Cap {
     Name(&'static str),
     Left,
     Right,
@@ -831,7 +831,7 @@ enum Cap {
 type Hint = (&'static [Cap], &'static str);
 
 /// A cap is this high, inside a bar a [`LINE`] high.
-const CAP_HEIGHT: u32 = 20;
+pub(crate) const CAP_HEIGHT: u32 = 20;
 /// Between a hint's caps, and after its last cap.
 const CAP_GAP: u32 = 2;
 /// Between hints.
@@ -839,7 +839,7 @@ const HINT_GAP: u32 = 16;
 /// Behind everything: the Simple UI's screens cover the program's.
 const BACKDROP: u32 = BACKGROUND | 0xFF00_0000;
 
-fn cap_width(cap: Cap) -> u32 {
+pub(crate) fn cap_width(cap: Cap) -> u32 {
     match cap {
         Cap::Name(name) => (text_width(name) + 10).max(CAP_HEIGHT),
         Cap::Left | Cap::Right => CAP_HEIGHT,
@@ -917,7 +917,7 @@ fn draw_hint_bar(fb: &mut Framebuffer, font: &Font, (w, h): (u32, u32), hints: &
 }
 
 /// A button's name in a rounded outline, as on the controller.
-fn draw_cap(fb: &mut Framebuffer, font: &Font, r: Rect, cap: Cap) {
+pub(crate) fn draw_cap(fb: &mut Framebuffer, font: &Font, r: Rect, cap: Cap) {
     pill(fb, r, BUTTON_TEXT, PANEL);
     let arrow = Rect {
         x: r.x + 2,
