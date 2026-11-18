@@ -687,7 +687,10 @@ For a subprogram's screen, see `FADE` under
 
 - `DIALOG` is drawn as the emulator's own window, in English, and leaves the
   screen visible around it where SmileBASIC 4's covers the whole screen. Besides
-  the controller's A and B, it answers clicks and Enter.
+  the controller's A and B, it answers clicks and Enter, and Left, Right and
+  Tab move its focus as the D-pad does. In the Simple UI its buttons are marked
+  with the controller buttons that choose them, A on the one with the focus
+  and B on the left of two; SmileBASIC 4 has no such marks.
 - Error messages add detail in parentheses, such as which argument was out of
   range. It comes after SmileBASIC 4's own naming of the command, as in
   `Wrong number of arguments in 1:28(LOADV) (TXT in the command form)`.

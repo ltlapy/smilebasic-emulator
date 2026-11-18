@@ -932,6 +932,13 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   that go on with the press (TEST71).
 - An A held before a `DIALOG` opens never answers it: an OK dialog with a
   time of 600 frames ran out with `RESULT` 0, A still held (TEST71).
+- In a `DIALOG` with two buttons (No and Yes, Back and Next, Cancel and OK,
+  Cancel and Execute), Left and Right on the D-pad or the left stick move the
+  focus between the buttons. The focus starts on the right button, and A
+  chooses the button with the focus. B chooses the left button wherever the
+  focus is. (From a user who knows the console; not yet tested. Unknown: how
+  far the stick must go, whether the focus wraps at the ends, and whether a
+  held direction repeats.)
 - The A that closes a `DIALOG` is gone for the program after it (TEST64):
   - With OK or Yes and No, `BUTTON` shows no release of it.
   - With a wait for A, `BUTTON(0)` shows it held, `BUTTON(0,-1,2)` no press,

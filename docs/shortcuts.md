@@ -97,6 +97,20 @@ left button touches the screen.
 | Q, W | L, R |
 | 1, 2 | ZL, ZR |
 
+## A program's DIALOG
+
+A `DIALOG` with two buttons starts with the focus on the right one.
+
+| Key | Action |
+|---|---|
+| D-pad, left stick, Left, Right | Move between the buttons |
+| Tab | Next button, from the last back to the first |
+| A, Enter | Choose the button with the focus |
+| B, Esc | Choose the left button: No, Back or Cancel |
+
+A and B choose when released. In the Simple UI each button shows A or B
+when that controller button chooses it.
+
 ## Gamepad in the projects
 
 The menu needs the mouse or keys.
