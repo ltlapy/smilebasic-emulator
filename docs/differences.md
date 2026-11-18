@@ -233,6 +233,11 @@ apart from the macro hang below.
   across the screen as on SmileBASIC 4, and the program still sees the stick
   in `STICK` and R3 in `BUTTON`. File > Settings > Input > "Right stick moves
   the mouse" turns it off. Unlike SmileBASIC 4's:
+  - Holding − (Select), which SmileBASIC 4 does not have, gives the right stick and R3 to the pointer in any
+    program and shows the cursor. The program then sees the stick centered
+    and R3 released, until both are let go.
+  - − (Select) opens the projects in DIRECT mode when it is released, and only
+    if nothing else was pressed or moved while it was held.
   - R3 clicks for the program only: `MBUTTON` and `TOUCH`. The emulator's own
     menus, dialogs and editor take clicks from a mouse.
   - The pointer stops at the display's last pixel, 1279 for `MOUSE 1 OUT X`,

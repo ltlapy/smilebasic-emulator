@@ -243,7 +243,8 @@ const PAGES: &[Page] = &[
                 "Right stick moves the mouse",
                 "The right stick moves the mouse pointer, and pressing it (R3) is the \
                  left button, as on SmileBASIC 4: in DIRECT mode, the editor and programs \
-                 that show the cursor. On by default.",
+                 that show the cursor. Hold − (Select) to use it in any program; the \
+                 program then does not see the right stick or R3. On by default.",
                 |s| s.right_stick_mouse,
                 |s| s.right_stick_mouse ^= true,
             ),

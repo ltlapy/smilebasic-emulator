@@ -1187,6 +1187,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // on, for every screen and the program, even after a
                 // change an event before made.
                 controls.swap = machine.rt.settings.swap_ab_xy;
+                controls.stick_mouse.on = machine.rt.settings.right_stick_mouse;
                 controls.event(&mut event);
                 // A press and its release can both come between two
                 // frames, which what is held then would miss. One of the
@@ -2716,12 +2717,24 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     manager = Some(ProjectManager::new(&machine.rt.storage, size));
                 }
                 // A controller's Select (-) opens them in direct mode, so
-                // that a game can be picked with the pad alone. Programs
-                // never see this button: BUTTON has no bit for it.
+                // that a game can be picked with the pad alone, when it is
+                // released with nothing else pressed or moved meanwhile:
+                // held, it is for the right-stick mouse. Programs never see
+                // this button: BUTTON has no bit for it.
                 Event::GamepadButtonDown {
                     button: Button::Back,
                     ..
                 } if !machine.is_running() && !on_editor && !simple_ui => {
+                    controls.stick_mouse.select.arm()
+                }
+                Event::GamepadButtonUp {
+                    button: Button::Back,
+                    ..
+                } if controls.stick_mouse.select.alone()
+                    && !machine.is_running()
+                    && !on_editor
+                    && !simple_ui =>
+                {
                     let size = (display_w, display_h);
                     manager = Some(ProjectManager::new(&machine.rt.storage, size));
                 }
@@ -3537,8 +3550,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let dims = dialog.is_some() || manager.is_some() || pause_menu.is_some();
         // A running program shows the mouse cursor only if it asks to,
         // unless the emulator's own screens or the editor's window need
-        // it. Where the system shows no cursor, the emulator draws its
-        // own.
+        // it, or Select has the right stick for the pointer. Where the
+        // system shows no cursor, the emulator draws its own.
         let show_cursor = !machine.is_running()
             || modal
             || dims
@@ -3546,7 +3559,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             || menu.visible()
             || apart && pointer_in_editor
             || machine.rt.settings.keep_mouse_cursor
-            || machine.rt.mouse_cursor();
+            || machine.rt.mouse_cursor()
+            || controls.stick_mouse.select_points();
         let system_cursor = show_cursor && !drawn_cursor.on();
         if system_cursor != cursor_shown {
             cursor_shown = system_cursor;

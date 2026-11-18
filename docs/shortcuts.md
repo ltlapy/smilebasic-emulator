@@ -103,7 +103,7 @@ The menu needs the mouse or keys.
 
 | Key | Action |
 |---|---|
-| − (Select) | Open the projects, in DIRECT mode |
+| − (Select), alone | Open the projects, in DIRECT mode |
 | A | Run MAIN.PRG or the selected file |
 | X | Switch between projects and files |
 | L, R | Move a page |
@@ -115,12 +115,15 @@ The menu needs the mouse or keys.
 
 The right stick moves the mouse pointer while no program runs, and in a
 program that shows the mouse cursor, as on SmileBASIC 4. File > Settings >
-Input > *Right stick moves the mouse* turns it off.
+Input > *Right stick moves the mouse* turns it off. Holding − (Select) makes
+it work in any program; the program then does not see the right stick or R3.
 
 | Key | Action |
 |---|---|
 | Right stick | Move the mouse pointer |
 | R3 (press the right stick) | Left mouse button, which touches the screen |
+| − (Select) and right stick | Move the pointer in any program |
+| − (Select) and R3 | Left mouse button in any program |
 
 ## Simple UI
 

@@ -617,6 +617,80 @@ pub fn place_mouse(
     m.on_screen = (0..w).contains(&sx) && (0..h).contains(&sy);
 }
 
+/// Select (SDL's Back, the − button) as the right-stick mouse and the
+/// projects see it.
+#[derive(Debug, Default)]
+pub struct Select {
+    held: bool,
+    /// Another button went down while it was held, or the pointer moved.
+    used: bool,
+    /// Its press may open the projects at its release: see
+    /// [`Select::arm`].
+    armed: bool,
+}
+
+impl Select {
+    fn event(&mut self, event: &Event) {
+        match *event {
+            Event::GamepadButtonDown {
+                button: Button::Back,
+                ..
+            } => {
+                *self = Select {
+                    held: true,
+                    ..Select::default()
+                }
+            }
+            Event::GamepadButtonUp {
+                button: Button::Back,
+                ..
+            } => self.held = false,
+            Event::GamepadButtonDown { .. } => self.used |= self.held,
+            _ => {}
+        }
+    }
+
+    /// The press of Select now is one that opens the projects if it is
+    /// released with nothing else done meanwhile.
+    pub fn arm(&mut self) {
+        self.armed = self.held;
+    }
+
+    /// At Select's release: whether it was pressed alone, after an
+    /// [`Select::arm`] at its press. Only once for each press.
+    pub fn alone(&mut self) -> bool {
+        std::mem::take(&mut self.armed) && !self.used
+    }
+}
+
+/// The right stick and R3 as the program does not see them: while Select
+/// moves the pointer, and after that until they are released.
+#[derive(Debug, Default)]
+struct HeldBack {
+    r3: [bool; PADS],
+    stick: [bool; PADS],
+}
+
+impl HeldBack {
+    /// Holds back what Select's pointer took this frame, with `select`
+    /// held, from `state`, as the program will see it.
+    fn apply(&mut self, state: &mut State, select: bool) {
+        for (i, pad) in state.pads.iter_mut().enumerate() {
+            let r3 = pad.buttons & R3 != 0;
+            let (x, y) = pad.sticks[1];
+            let tilted = x.abs() > CARRIED_STICK || y.abs() > CARRIED_STICK;
+            self.r3[i] = r3 && (select || self.r3[i]);
+            self.stick[i] = select || tilted && self.stick[i];
+            if self.r3[i] {
+                pad.buttons &= !R3;
+            }
+            if self.stick[i] {
+                pad.sticks[1] = (0.0, 0.0);
+            }
+        }
+    }
+}
+
 /// The pointer's place in SmileBASIC 4's display pixels, finer than the
 /// display's own where that is smaller, so that the right stick moves it
 /// as far across as on SmileBASIC 4.
@@ -665,20 +739,31 @@ fn right_stick(state: &State) -> ((f64, f64), bool) {
         })
 }
 
-/// SmileBASIC 4's right-stick mouse.
+/// SmileBASIC 4's right-stick mouse, and Select's use of it.
 #[derive(Debug, Default)]
 pub struct StickMouse {
-    /// The setting Right stick moves the mouse, for the next frame.
+    /// The setting Right stick moves the mouse, for the next event and
+    /// frame.
     pub on: bool,
+    pub select: Select,
+    held_back: HeldBack,
     pointer: StickPointer,
 }
 
 impl StickMouse {
+    /// Whether controller `pad`'s `tap` is R3 while the program does not
+    /// see it, as [`StickMouse::frame`] keeps it.
+    fn holds_back(&self, pad: usize, tap: Tap) -> bool {
+        self.on && tap == Tap::Buttons(pad, R3) && (self.select.held || self.held_back.r3[pad])
+    }
+
     /// The right-stick mouse in a frame, on `state` as the program is to
     /// see it: R3 is the left mouse button, and the right stick moves the
     /// pointer from the display pixel `from` to the one this returns, on
     /// a display `size` big. `shown`: no program runs, or the program
-    /// shows the mouse cursor, as SmileBASIC 4 needs.
+    /// shows the mouse cursor, as SmileBASIC 4 needs. With Select held it
+    /// works whatever the program does, which then sees neither the right
+    /// stick nor R3.
     pub fn frame(
         &mut self,
         state: &mut State,
@@ -686,10 +771,16 @@ impl StickMouse {
         from: (i32, i32),
         size: (u32, u32),
     ) -> Option<(i32, i32)> {
-        if !self.on || !shown {
+        if !self.on {
+            self.held_back = HeldBack::default();
             return None;
         }
+        let select = self.select.held;
         let ((x, y), r3) = right_stick(state);
+        self.held_back.apply(state, select);
+        if !shown && !select {
+            return None;
+        }
         // It takes the place of the mouse's buttons, as on SmileBASIC 4.
         if r3 {
             state.mouse.buttons = 1;
@@ -698,7 +789,14 @@ impl StickMouse {
         if step == (0, 0) {
             return None;
         }
+        self.select.used |= select;
         Some(self.pointer.moved(from, step, size))
+    }
+
+    /// Whether Select has the right stick for the pointer now, which
+    /// shows the cursor whatever the program says.
+    pub fn select_points(&self) -> bool {
+        self.on && self.select.held
     }
 }
 
@@ -763,6 +861,7 @@ impl Controls {
     /// for every event the system gives.
     pub fn event(&mut self, event: &mut Event) {
         swap_event(event, self.swap);
+        self.stick_mouse.select.event(event);
         match *event {
             Event::GamepadAdded { which, .. } if self.pads.len() < PADS => {
                 match self.subsystem.open(which) {
@@ -798,7 +897,13 @@ impl Controls {
             false => (self.pads.iter()).position(|p| p.id().is_ok_and(|id| id == which)),
         };
         match pad {
-            Some(pad) => [pad_tap(event, pad, &mut self.triggers[pad]), None],
+            Some(pad) => {
+                let tap = pad_tap(event, pad, &mut self.triggers[pad]);
+                [
+                    tap.filter(|&(tap, _)| !self.stick_mouse.holds_back(pad, tap)),
+                    None,
+                ]
+            }
             None => [None; 2],
         }
     }
@@ -1779,6 +1884,7 @@ mod tests {
         // In place of the mouse's own buttons, and BUTTON still sees it.
         assert_eq!(state.mouse.buttons, 1);
         assert_eq!(state.pads[1].buttons, R3);
+        assert!(!stick.holds_back(1, Tap::Buttons(1, R3)));
         let mut state = pressed();
         stick.frame(&mut state, false, (10, 10), DISPLAY);
         assert_eq!(state.mouse.buttons, 0b110);
@@ -1801,5 +1907,81 @@ mod tests {
         assert_eq!(stick.frame(&mut state, false, (10, 100), DISPLAY), None);
         stick.on = false;
         assert_eq!(stick.frame(&mut state, true, (10, 100), DISPLAY), None);
+    }
+
+    #[test]
+    fn select_points_in_any_program_and_keeps_the_stick_and_r3_from_it() {
+        let mut stick = stick_mouse();
+        let tilted = |buttons| {
+            let mut state = holding(buttons | 1 << 1);
+            state.pads[0].sticks = [(0.5, 0.0), (0.0, -1.0)];
+            state
+        };
+        stick.select.event(&pad_event(Button::Back, true));
+        assert!(stick.select_points());
+        let mut state = tilted(R3);
+        assert_eq!(
+            stick.frame(&mut state, false, (10, 100), DISPLAY),
+            Some((10, 84))
+        );
+        assert_eq!(state.pads[0].sticks, [(0.5, 0.0), (0.0, 0.0)]);
+        assert_eq!(state.pads[0].buttons, 1 << 1);
+        assert_eq!(state.mouse.buttons, 1);
+        assert!(stick.holds_back(0, Tap::Buttons(0, R3)));
+        assert!(!stick.holds_back(0, Tap::Buttons(0, 1 << 1)));
+        // Let go of Select first: the stick and R3 stay the pointer's until
+        // they are released.
+        stick.select.event(&pad_event(Button::Back, false));
+        assert!(!stick.select_points());
+        let mut state = tilted(R3);
+        assert_eq!(stick.frame(&mut state, false, (10, 84), DISPLAY), None);
+        assert_eq!(state.pads[0].sticks[1], (0.0, 0.0));
+        assert_eq!(state.pads[0].buttons, 1 << 1);
+        assert!(stick.holds_back(0, Tap::Buttons(0, R3)));
+        let mut state = holding(0);
+        stick.frame(&mut state, false, (10, 84), DISPLAY);
+        let mut state = tilted(R3);
+        stick.frame(&mut state, false, (10, 84), DISPLAY);
+        assert_eq!(state.pads[0].sticks[1], (0.0, -1.0));
+        assert_eq!(state.pads[0].buttons, R3 | 1 << 1);
+        assert!(!stick.holds_back(0, Tap::Buttons(0, R3)));
+    }
+
+    #[test]
+    fn select_opens_the_projects_only_when_pressed_alone() {
+        let mut stick = stick_mouse();
+        let select =
+            |stick: &mut StickMouse, down| stick.select.event(&pad_event(Button::Back, down));
+        select(&mut stick, true);
+        stick.select.arm();
+        select(&mut stick, false);
+        assert!(stick.select.alone());
+        assert!(!stick.select.alone());
+        // Not with another button pressed meanwhile...
+        select(&mut stick, true);
+        stick.select.arm();
+        stick.select.event(&pad_event(Button::South, true));
+        select(&mut stick, false);
+        assert!(!stick.select.alone());
+        // ...or the pointer moved...
+        select(&mut stick, true);
+        stick.select.arm();
+        let mut state = holding(0);
+        state.pads[0].sticks[1] = (1.0, 0.0);
+        stick.frame(&mut state, false, (0, 0), DISPLAY);
+        select(&mut stick, false);
+        assert!(!stick.select.alone());
+        // ...or a press that was not one to open them.
+        select(&mut stick, true);
+        select(&mut stick, false);
+        assert!(!stick.select.alone());
+        // A stick tilted too little to move the pointer does not count.
+        select(&mut stick, true);
+        stick.select.arm();
+        let mut state = holding(0);
+        state.pads[0].sticks[1] = (0.2, 0.0);
+        stick.frame(&mut state, false, (0, 0), DISPLAY);
+        select(&mut stick, false);
+        assert!(stick.select.alone());
     }
 }
