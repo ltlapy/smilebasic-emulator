@@ -19,6 +19,7 @@ mod index;
 mod keyhint;
 mod layer;
 mod menu;
+mod overlays;
 mod pacing;
 mod pad_repeat;
 mod placement;
@@ -62,6 +63,7 @@ use index::IndexPanel;
 use keyhint::KeyHint;
 use layer::Layer;
 use menu::{Action, Click, Context, MenuBar};
+use overlays::Overlays;
 use placement::{Mapping, display_rect, editor_filter, from_corner, screen_place, windows_rect};
 use popup::Popup;
 use program_dialog::ProgramView;
@@ -514,19 +516,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // The frame's size and filter, which the texture is made for.
     let mut texture_kind = (mode.frame(), filter);
     let mut texture = frame_texture(&canvas, texture_creator, texture_kind)?;
-    // The revision of the editor's frame the texture holds, if it holds
-    // one; and the same for the editor's window.
-    let mut texture_holds = None;
-    let mut editor_holds = None;
-    let mut smart = SmartFrame::default();
-    // The screens in the debugger's panel, drawn at the window's
-    // resolution, with their size and filter.
-    let mut panel_screens: Option<(Texture, TextureKind)> = None;
-    // The page the panel's GRP tab shows, in this window and the
-    // editor's.
-    let mut grp_texture = PageTexture::default();
-    // The subprogram's screen, over the main one.
-    let mut sub_texture: Option<(Texture, TextureKind)> = None;
+    // The other textures, and what the frames' textures hold.
+    let mut textures = Held::default();
     // The pixels that mouse positions are given in: the screen's, or the
     // editor's frame.
     let mut pointer_space = (mode.width, mode.height);
@@ -542,24 +533,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // from the screen and hidden while it is closed, with its frame's
     // texture and the pixels its pointer positions are given in.
     let mut editor_gfx: OnceCell<EditorWindow> = OnceCell::new();
-    // The emulator's UI over the screens or the editor, drawn at display
-    // resolution, in each window: the debugger's panel, the menu bar, and
-    // everything else, each drawn and uploaded only as it changes.
-    let mut panel_layers: [Layer; 2] = Default::default();
-    let mut bar_layers: [Layer; 2] = Default::default();
-    let mut overlay_layers: [Layer; 2] = Default::default();
-    // The main window's open menus and context menu, where they go apart
-    // from its display at 1x (see `placement::menu_place`).
-    let mut menu_layer = Layer::default();
-    // The emulator's windows on the editor's window, at the display's size.
-    let mut windows_layer = Layer::default();
-    // The Simple UI's notices in the bottom right corner, at a scale of
-    // their own (see `simple_ui::notice_place`).
-    let mut notice_layer = Layer::default();
-    // The cursor drawn where the system shows none.
+    // The emulator's UI over the screens or the editor, with the cursor
+    // drawn where the system shows none.
     let cursor_var = std::env::var(pointer::CURSOR_VAR).ok();
     let draws_cursor = pointer::draws_own(video.current_video_driver(), cursor_var.as_deref());
-    let mut drawn_cursor = pointer::DrawnCursor::new(draws_cursor);
+    let mut overlays = Overlays::new(pointer::DrawnCursor::new(draws_cursor));
     // View > "Keep 16:9 when resizing": what puts the main window's shape
     // right where the system ignores the shape asked for, and whether
     // that shape is asked for now.
@@ -568,8 +546,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut shape_asked = false;
     // The console without a desktop, whose one window is the display.
     let kms = video.current_video_driver() == "kmsdrm";
-    let mut editor_texture: Option<(Texture, TextureKind)> = None;
-    let mut editor_grp = PageTexture::default();
     let mut editor_space = (1, 1);
     let mut editor_shown = false;
     // Whether it has the keys, and the pointer.
@@ -718,16 +694,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             eprintln!("the renderer failed: {why}");
             // All that lives on the renderers goes before they do.
             paths.forget();
-            smart = SmartFrame::default();
-            (panel_screens, sub_texture, editor_texture) = (None, None, None);
-            (grp_texture, editor_grp) = (PageTexture::default(), PageTexture::default());
-            let layers = panel_layers.iter_mut().chain(&mut bar_layers);
-            layers.chain(&mut overlay_layers).for_each(Layer::forget);
-            windows_layer.forget();
-            menu_layer.forget();
-            notice_layer.forget();
-            drawn_cursor.forget();
-            (texture_holds, editor_holds) = (None, None);
+            textures.forget_device();
+            textures.forget_targets();
+            overlays.forget();
             machine.rt.touch();
             machine.touch_sub();
             if !watch.failed(&canvas.renderer_name) {
@@ -1304,13 +1273,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 event,
                 Event::RenderTargetsReset { .. } | Event::RenderDeviceReset { .. }
             ) {
-                (texture_holds, editor_holds) = (None, None);
-                let layers = panel_layers.iter_mut().chain(&mut bar_layers);
-                layers.chain(&mut overlay_layers).for_each(Layer::forget);
-                windows_layer.forget();
-                menu_layer.forget();
-                notice_layer.forget();
-                drawn_cursor.forget();
+                textures.forget_targets();
+                overlays.forget();
                 // A target comes back empty, and the frames are drawn again.
                 machine.touch_sub();
             }
@@ -1318,9 +1282,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // on those still held; a page sent to the GPU has to go again too.
             if let Event::RenderDeviceReset { .. } = event {
                 paths.forget();
-                smart = SmartFrame::default();
-                (panel_screens, sub_texture, editor_texture) = (None, None, None);
-                (grp_texture, editor_grp) = (PageTexture::default(), PageTexture::default());
+                textures.forget_device();
                 texture = drawing!(frame_texture(&canvas, texture_creator, texture_kind));
             }
             // It cannot come back, and SDL says to make a new renderer.
@@ -3288,19 +3250,19 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if kind != texture_kind {
             texture_kind = kind;
             texture = drawing!(frame_texture(&canvas, texture_creator, kind));
-            texture_holds = None;
+            textures.main_holds = None;
         }
         let gpu_view = (paths.main.as_mut())
             .filter(|_| on_gpu)
             .and_then(|gpu| gpu.view(kind.1 == Filter::Bilinear));
-        if Some(revision) != texture_holds && !on_gpu {
+        if Some(revision) != textures.main_holds && !on_gpu {
             bench::uploaded(fb.pixels().len() * 4);
             drawing!(texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize));
         }
         if smart_frame {
             let cpu = bench.cpu_smart;
-            let changed = Some(revision) != texture_holds;
-            drawing!(smart.prepare(
+            let changed = Some(revision) != textures.main_holds;
+            drawing!(textures.smart.prepare(
                 &mut canvas,
                 texture_creator,
                 gpu_view.as_deref().unwrap_or(&texture),
@@ -3311,14 +3273,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             ));
             // Scaling on the CPU needs the frame on the CPU, from now on: this
             // one is drawn again next time round, once there is no GPU path.
-            if on_gpu && smart.on_cpu() {
+            if on_gpu && textures.smart.on_cpu() {
                 eprintln!("SB_GPU: the doubled frame was refused; staying on the CPU");
                 paths.turn_off("CPU (doubled frame refused by the driver)");
             }
         } else {
-            smart.release();
+            textures.smart.release();
         }
-        texture_holds = Some(revision);
+        textures.main_holds = Some(revision);
         bench.lap(Stage::Screen);
         // The editor in its own window, where the debugger's panel goes
         // too: where its frame and the UI are there, and the UI's size.
@@ -3339,17 +3301,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             editor_space = frame;
             // Each of its pixels is a whole number of the window's.
             let kind = (frame, Filter::Nearest);
-            if editor_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
+            if textures.editor.as_ref().is_none_or(|(_, k)| *k != kind) {
                 let made = drawing!(frame_texture(&editor_canvas, gfx.creator.get(), kind));
-                editor_texture = Some((made, kind));
-                editor_holds = None;
+                textures.editor = Some((made, kind));
+                textures.editor_holds = None;
             }
-            if let Some((tex, _)) = &mut editor_texture
-                && revision != editor_holds
+            if let Some((tex, _)) = &mut textures.editor
+                && revision != textures.editor_holds
             {
                 bench::uploaded(fb.pixels().len() * 4);
                 drawing!(tex.update(None, as_bytes(fb.pixels()), (frame.0 * 4) as usize));
-                editor_holds = revision;
+                textures.editor_holds = revision;
             }
             let (rect, ui) = (layout.frame_pixels(), layout.ui_pixels());
             editor_place = (from_corner(rect), frame, from_corner(ui), layout.ui_size);
@@ -3378,7 +3340,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // The screens change only while a step runs. Beside the
             // editor's own window, they show in the main one.
             let screens = !apart && machine.panel_screens();
-            if screens && (fresh || machine.is_running() || panel_screens.is_none()) {
+            if screens && (fresh || machine.is_running() || textures.panel_screens.is_none()) {
                 let screens = machine.render_screens();
                 let size = (screens.width(), screens.height());
                 let shown = DebugPanel::screen_place(place, size);
@@ -3386,20 +3348,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     true => Filter::Nearest,
                     false => Filter::Bilinear,
                 };
-                if panel_screens
+                if textures
+                    .panel_screens
                     .as_ref()
                     .is_none_or(|(_, kind)| *kind != (size, filter))
                 {
                     let made = drawing!(frame_texture(&canvas, texture_creator, (size, filter)));
-                    panel_screens = Some((made, (size, filter)));
+                    textures.panel_screens = Some((made, (size, filter)));
                 }
-                if let Some((tex, _)) = &mut panel_screens {
+                if let Some((tex, _)) = &mut textures.panel_screens {
                     let pixels = as_bytes(screens.pixels());
                     bench::uploaded(pixels.len());
                     drawing!(tex.update(None, pixels, (size.0 * 4) as usize));
                 }
             }
-            let size = panel_screens
+            let size = textures
+                .panel_screens
                 .as_ref()
                 .map_or((1, 1), |(_, (size, _))| *size);
             let view = debug_view(machine, &debug_panel);
@@ -3409,7 +3373,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         bench.lap(Stage::Gather);
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        let screen = smart.texture().or(gpu_view.as_deref()).unwrap_or(&texture);
+        let screen = textures
+            .smart
+            .texture()
+            .or(gpu_view.as_deref())
+            .unwrap_or(&texture);
         drawing!(canvas.copy(screen, None, rect));
         // The subprogram's screen goes where XSUBSCREEN puts it on the
         // 1280x720 display, over the editor too.
@@ -3445,13 +3413,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 .and_then(gpu::Gpu::premultiplied_view);
             if let Some(view) = &sub_view {
                 drawing!(canvas.copy(view, None, on_window(sub.quad)));
-            } else if sub_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
+            } else if textures.sub.as_ref().is_none_or(|(_, k)| *k != kind) {
                 let made = drawing!(frame_texture(&canvas, texture_creator, kind));
                 // SAFETY: the texture is valid while `made` lives.
                 unsafe { SDL_SetTextureBlendMode(made.raw(), SDL_BLENDMODE_BLEND_PREMULTIPLIED) };
-                sub_texture = Some((made, kind));
+                textures.sub = Some((made, kind));
             }
-            if let (None, Some((tex, _))) = (&sub_view, &mut sub_texture) {
+            if let (None, Some((tex, _))) = (&sub_view, &mut textures.sub) {
                 bench::uploaded(fb.pixels().len() * 4);
                 drawing!(tex.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize));
                 drawing!(canvas.copy(tex, None, on_window(sub.quad)));
@@ -3485,7 +3453,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             canvas.set_blend_mode(BlendMode::None);
         }
         // The debugger's panel leaves the screens' place clear.
-        if let (Some((place, _, Some(size))), Some((tex, _))) = (&debug, &panel_screens) {
+        if let (Some((place, _, Some(size))), Some((tex, _))) = (&debug, &textures.panel_screens) {
             let s = DebugPanel::screen_place(*place, *size);
             let scale = display.w / display_w as f32;
             let at = |v: u32| v as f32 * scale;
@@ -3494,7 +3462,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
         match (&debug, apart) {
-            (Some(_), false) => drawing!(grp_texture.draw(
+            (Some(_), false) => drawing!(textures.grp.draw(
                 &mut canvas,
                 texture_creator,
                 grp,
@@ -3502,10 +3470,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 display,
                 display_w,
             )),
-            _ => grp_texture.release(),
+            _ => textures.grp.release(),
         }
         if debug.is_none() || !apart {
-            editor_grp.release();
+            textures.editor_grp.release();
         }
         // The colors window leaves the editor behind it bright, to show
         // its colors.
@@ -3528,7 +3496,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 || machine.rt.settings.keep_mouse_cursor
                 || machine.rt.mouse_cursor()
                 || controls.stick_mouse.select_points());
-        let system_cursor = show_cursor && !drawn_cursor.on();
+        let system_cursor = show_cursor && !overlays.cursor.on();
         if system_cursor != cursor_shown {
             cursor_shown = system_cursor;
             mouse.show_cursor(system_cursor);
@@ -3602,11 +3570,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         match &debug {
             Some((_, view, _)) => {
                 debug_panel.advance(view);
-                panel_layers[1 - ed].release();
+                overlays.panel[1 - ed].release();
             }
             None => {
                 debug_panel.hide();
-                panel_layers.iter_mut().for_each(Layer::release);
+                overlays.panel.iter_mut().for_each(Layer::release);
             }
         }
         // Whether the panel is drawn with the rest of the window's UI
@@ -3623,7 +3591,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 let bar = if i == ui { &menu } else { &closed_bar };
                 let width = menus_apart.map_or(size.0, |place| place.size.0);
                 drawing!(
-                    bar_layers[i].update(creator, (width, MenuBar::HEIGHT), |fb| {
+                    overlays.bar[i].update(creator, (width, MenuBar::HEIGHT), |fb| {
                         bar.draw_bar(fb, font)
                     })
                 );
@@ -3736,31 +3704,35 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // What is partly see-through over the panel shows what is
                 // under the panel, as it always did, if drawn with it.
                 let probe =
-                    overlay_layers[i].dry_run(size, |fb| parts(fb, &mut debug_panel, false));
+                    overlays.overlay[i].dry_run(size, |fb| parts(fb, &mut debug_panel, false));
                 inside.set(probe.translucent.is_some_and(|t| t.overlaps(place)));
                 panel_inside[i] = inside.get();
                 if !inside.get() {
-                    drawing!(panel_layers[i].update(creator, (place.w, place.h), |fb| {
+                    drawing!(overlays.panel[i].update(creator, (place.w, place.h), |fb| {
                         debug_panel.draw(fb, font, place, *screens, view, scale)
                     }));
                 }
             }
             let under = |fb: &mut Framebuffer| parts(fb, &mut debug_panel, false);
-            drawing!(overlay_layers[i].update(creator, size, under));
+            drawing!(overlays.overlay[i].update(creator, size, under));
             if windows_on_layer {
                 let over = |fb: &mut Framebuffer| parts(fb, &mut debug_panel, true);
-                drawing!(windows_layer.update(creator, (display_w, display_h), over));
+                drawing!(
+                    overlays
+                        .windows
+                        .update(creator, (display_w, display_h), over)
+                );
             }
         }
         if !windows_apart {
-            windows_layer.release();
+            overlays.windows.release();
         }
         // The main window's open menus and context menu, apart at 1x.
         let lists = ui == 0 && bar_shown[0] && screens.dialog.is_none() && menu.is_open();
         let popup = (debug_menu.as_ref()).filter(|_| ed == 0);
         match menus_apart {
             Some(place) if lists || popup.is_some() => {
-                drawing!(menu_layer.update(texture_creator, place.size, |fb| {
+                drawing!(overlays.menu.update(texture_creator, place.size, |fb| {
                     if lists {
                         menu.draw_lists(fb, font, settings, context);
                     }
@@ -3769,10 +3741,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                 }));
             }
-            _ => menu_layer.release(),
+            _ => overlays.menu.release(),
         }
         if let (0, Some((place, ..)), false) = (ed, &debug, panel_inside[0]) {
-            drawing!(panel_layers[0].copy(&mut canvas, (place.x, place.y), display, display_w));
+            drawing!(overlays.panel[0].copy(&mut canvas, (place.x, place.y), display, display_w));
         }
         // The Simple UI's notices, under the rest of its UI as on the
         // desktop. Neither shows with the pause menu or the game list, so
@@ -3782,29 +3754,33 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if simple_ui && notice && !paused && !modal {
             let size = settings.simple_ui_size;
             let (ui, place) = simple_ui::notice_place((out_w, out_h), size);
-            drawing!(notice_layer.update(texture_creator, ui, |fb| {
+            drawing!(overlays.notice.update(texture_creator, ui, |fb| {
                 corner::draw(fb, font, &key_hint, &slow_hint, true);
             }));
-            drawing!(notice_layer.copy(&mut canvas, (0, 0), place, ui.0));
+            drawing!(overlays.notice.copy(&mut canvas, (0, 0), place, ui.0));
         } else {
-            notice_layer.release();
+            overlays.notice.release();
         }
-        drawing!(overlay_layers[0].copy(&mut canvas, (0, 0), display, display_w));
+        drawing!(overlays.overlay[0].copy(&mut canvas, (0, 0), display, display_w));
         match (bar_shown[0], menus_apart) {
             (true, Some(place)) => {
                 let at = place.rect();
-                drawing!(bar_layers[0].copy(&mut canvas, (0, 0), at, place.size.0));
+                drawing!(overlays.bar[0].copy(&mut canvas, (0, 0), at, place.size.0));
             }
             (true, None) => {
-                drawing!(bar_layers[0].copy(&mut canvas, (0, 0), display, display_w));
+                drawing!(overlays.bar[0].copy(&mut canvas, (0, 0), display, display_w));
             }
             (false, _) => {}
         }
         if let Some(place) = menus_apart {
-            drawing!(menu_layer.copy(&mut canvas, (0, 0), place.rect(), place.size.0));
+            drawing!(
+                overlays
+                    .menu
+                    .copy(&mut canvas, (0, 0), place.rect(), place.size.0)
+            );
         }
         let (at, lcd) = (controls.mouse.display, main_map.lcd(simple_ui));
-        drawing!(drawn_cursor.draw(
+        drawing!(overlays.cursor.draw(
             &mut canvas,
             texture_creator,
             show_cursor,
@@ -3825,7 +3801,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let mut editor_canvas = gfx.canvas.borrow_mut();
             editor_canvas.set_draw_color(Color::BLACK);
             editor_canvas.clear();
-            if let Some((tex, _)) = &editor_texture {
+            if let Some((tex, _)) = &textures.editor {
                 drawing!(editor_canvas.copy(tex, None, editor_place.0));
             }
             let (display, ui_w) = (editor_place.2, editor_place.3.0);
@@ -3833,17 +3809,25 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if let Some((place, ..)) = &debug {
                 let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
                 let creator = gfx.creator.get();
-                drawing!(editor_grp.draw(canvas, creator, grp, panel_grp, display, ui_w));
+                drawing!(
+                    textures
+                        .editor_grp
+                        .draw(canvas, creator, grp, panel_grp, display, ui_w)
+                );
                 if !panel_inside[1] {
-                    drawing!(panel_layers[1].copy(canvas, (place.x, place.y), display, ui_w));
+                    drawing!(overlays.panel[1].copy(canvas, (place.x, place.y), display, ui_w));
                 }
             }
-            drawing!(overlay_layers[1].copy(canvas, (0, 0), display, ui_w));
+            drawing!(overlays.overlay[1].copy(canvas, (0, 0), display, ui_w));
             if bar_shown[1] {
-                drawing!(bar_layers[1].copy(canvas, (0, 0), display, ui_w));
+                drawing!(overlays.bar[1].copy(canvas, (0, 0), display, ui_w));
             }
             if windows_apart {
-                drawing!(windows_layer.copy(canvas, (0, 0), windows_place, display_w));
+                drawing!(
+                    overlays
+                        .windows
+                        .copy(canvas, (0, 0), windows_place, display_w)
+                );
             }
             bench.lap(Stage::Overlays);
             bench.shoot(&editor_canvas, "editor");
@@ -5398,6 +5382,45 @@ fn frame_texture<'a>(
     bench::made();
     gpu::texture_fits(canvas.raw(), w, h)?;
     Ok(creator.create_texture_streaming(PixelFormat::ARGB8888, w, h)?)
+}
+
+/// The textures frontend() keeps besides the main frame's, and what the
+/// frames' textures hold.
+#[derive(Default)]
+struct Held<'a> {
+    /// What the main window's texture holds, if anything: whether it is
+    /// the editor's frame, and the frame's revision. For the editor's own
+    /// window, the revision of the editor's frame its texture holds.
+    main_holds: Option<(bool, u64)>,
+    editor_holds: Option<u64>,
+    smart: SmartFrame<'a>,
+    /// The screens in the debugger's panel, drawn at the window's
+    /// resolution, with their size and filter.
+    panel_screens: Option<(Texture<'a>, TextureKind)>,
+    /// The subprogram's screen, over the main one.
+    sub: Option<(Texture<'a>, TextureKind)>,
+    /// The editor's frame in its own window.
+    editor: Option<(Texture<'a>, TextureKind)>,
+    /// The page the panel's GRP tab shows, in the main window and the
+    /// editor's.
+    grp: PageTexture<'a>,
+    editor_grp: PageTexture<'a>,
+}
+
+impl Held<'_> {
+    /// The renderer's targets came back empty: the frames go to their
+    /// textures again.
+    fn forget_targets(&mut self) {
+        (self.main_holds, self.editor_holds) = (None, None);
+    }
+
+    /// The renderer let go of every texture: these are made again when
+    /// they are next wanted.
+    fn forget_device(&mut self) {
+        self.smart = SmartFrame::default();
+        (self.panel_screens, self.sub, self.editor) = (None, None, None);
+        (self.grp, self.editor_grp) = (PageTexture::default(), PageTexture::default());
+    }
 }
 
 /// XSCREEN's composite mode 1 on its way to the window. Its mix between
