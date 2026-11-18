@@ -27,17 +27,6 @@ pub fn draws_own(driver: &str, var: Option<&str>) -> bool {
     }
 }
 
-/// The window coordinates of the middle of the display's pixel `at`, the
-/// display being `display` on the canvas and `display_w` pixels wide, and
-/// `px` the canvas's pixels to a window coordinate.
-pub fn display_to_window(at: (i32, i32), display: FRect, display_w: u32, px: f32) -> (f32, f32) {
-    let scale = display.w / display_w.max(1) as f32;
-    (
-        (display.x + (at.0 as f32 + 0.5) * scale) / px,
-        (display.y + (at.1 as f32 + 0.5) * scale) / px,
-    )
-}
-
 /// The arrow's side, and its size on SmileBASIC 4's 1280x720 display.
 const SIDE: u32 = 32;
 /// The height of SmileBASIC 4's display, which the cursor is a

@@ -2974,8 +2974,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if !(apart && editor_focused)
             && let Some(at) = controls.stick_pointer(&mut held, cursor_allowed, stick_display)
         {
-            let px = out_w as f32 / win_w.max(1) as f32;
-            let (x, y) = pointer::display_to_window(at, display, display_w, px);
+            let (x, y) = main_map.display_to_window(at);
             let size = (mode.width as i32, mode.height as i32);
             let display_size = (display_w as i32, display_h as i32);
             controls.place_pointer(&mut held, main_map.to_screen(x, y), size, at, display_size);
@@ -3074,11 +3073,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             && !machine.editor_has_keys()
             && !machine.rt.settings.keep_mouse_cursor;
         if fed && (sent.x, sent.y, sent.display) != (now.x, now.y, now.display) {
-            let px = out_w as f32 / win_w.max(1) as f32;
             let (x, y) = if (sent.x, sent.y) != (now.x, now.y) {
                 main_map.screen_to_window(now.x, now.y)
             } else {
-                pointer::display_to_window(now.display, display, display_w, px)
+                main_map.display_to_window(now.display)
             };
             mouse.warp_mouse_in_window(canvas.window(), x, y);
             (sent.x, sent.y, sent.display) = (now.x, now.y, now.display);

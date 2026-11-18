@@ -55,6 +55,16 @@ impl Mapping {
         )
     }
 
+    /// The window coordinates of the middle of the display's pixel `at`,
+    /// which [`Mapping::to_display`] maps back.
+    pub fn display_to_window(self, at: (i32, i32)) -> (f32, f32) {
+        let scale = self.display.w / self.display_w.max(1) as f32;
+        (
+            (self.display.x + (at.0 as f32 + 0.5) * scale) / self.px,
+            (self.display.y + (at.1 as f32 + 0.5) * scale) / self.px,
+        )
+    }
+
     /// The window coordinates of the middle of the screen's or the
     /// editor's pixel (x, y), which [`Mapping::to_screen`] maps back.
     pub fn screen_to_window(self, x: i32, y: i32) -> (f32, f32) {
@@ -888,6 +898,10 @@ mod tests {
                                 let (wx, wy) = map.screen_to_window(x as i32, y as i32);
                                 let back = map.to_screen(wx, wy);
                                 assert_eq!(back, (x as i32, y as i32), "{out:?} {w}x{h} {frame:?}");
+                            }
+                            for at in [(0, 0), (1279, 719), (640, 360)] {
+                                let (wx, wy) = map.display_to_window(at);
+                                assert_eq!(map.to_display(wx, wy), at, "{out:?} {px}");
                             }
                             // Just past the picture's edges, off it.
                             let (left, top) = ((shown.x - 1.0) / px, (shown.y - 1.0) / px);
