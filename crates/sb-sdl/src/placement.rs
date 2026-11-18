@@ -332,14 +332,31 @@ pub fn editor_fill(
     Fill { zoom, area }
 }
 
-/// The rectangle [`ui_height`] makes of the focus border's `rect` on the
-/// display, which is `display` UI pixels large: the whole display, the
-/// main interpreter's, goes down to `ui_h`, where the screen goes too; a
-/// subprogram's screen stays where XSUBSCREEN put it on the display.
-pub fn border_rect(rect: [i32; 4], display: (u32, u32), ui_h: u32) -> [i32; 4] {
-    match rect == [0, 0, display.0 as i32, display.1 as i32] {
-        true => [0, 0, display.0 as i32, ui_h as i32],
-        false => rect,
+/// Where the focus border's `rect`, in [`SB4_DISPLAY`] pixels, goes: the
+/// rectangle, and the window position and scale that place its units. The
+/// whole display, the main interpreter's, covers `main`'s display, which is
+/// `display_h` UI pixels high, down to `ui_h`, where the screen goes too
+/// (see [`ui_height`]); a subprogram's screen goes where it is drawn, on
+/// SmileBASIC 4's display (`lcd`, see [`Mapping::lcd`]).
+pub fn border_place(
+    rect: [i32; 4],
+    main: Mapping,
+    lcd: Mapping,
+    display_h: u32,
+    ui_h: u32,
+) -> ([i32; 4], (f32, f32), (f32, f32)) {
+    let (w, h) = (SB4_DISPLAY.0 as i32, SB4_DISPLAY.1 as i32);
+    let at = |m: Mapping| (m.display.x, m.display.y);
+    match rect == [0, 0, w, h] {
+        true => {
+            let d = main.display;
+            let scale = (d.w / main.display_w as f32, d.h / display_h as f32);
+            ([0, 0, main.display_w as i32, ui_h as i32], at(main), scale)
+        }
+        false => {
+            let s = lcd.display.w / lcd.display_w as f32;
+            (rect, at(lcd), (s, s))
+        }
     }
 }
 
@@ -619,14 +636,6 @@ mod tests {
         assert_eq!(at((2560, 1080)), 720);
         // A minimized window, or one with no height.
         assert_eq!(ui_height(display((0, 0)), 720, 0), 720);
-        // The main interpreter's focus border goes down with it; a
-        // subprogram's stays where XSUBSCREEN put it.
-        assert_eq!(
-            border_rect([0, 0, 1280, 720], (1280, 720), 960),
-            [0, 0, 1280, 960]
-        );
-        let sub = [640, 0, 640, 360];
-        assert_eq!(border_rect(sub, (1280, 720), 960), sub);
     }
 
     /// The main window's editor in a window of `out` pixels under a menu
@@ -989,6 +998,48 @@ mod tests {
             space: (mode.width, mode.height),
             menu: None,
         }
+    }
+
+    #[test]
+    fn the_focus_border_covers_the_display_or_the_subprograms_screen() {
+        // On the desktop the main interpreter's goes down to the UI's
+        // height, and a subprogram's stays where XSUBSCREEN put it.
+        let out = (1280, 720);
+        let mode = ScreenMode::new(400, 240);
+        let map = Mapping {
+            px: 1.0,
+            display: display(out),
+            display_w: 1280,
+            shown: desktop_screen_place(&mode, &with(NEAREST), out, display(out)).0,
+            space: (400, 240),
+            menu: None,
+        };
+        let lcd = map.lcd(false);
+        let whole = border_place([0, 0, 1280, 720], map, lcd, 720, 960);
+        assert_eq!(whole, ([0, 0, 1280, 960], (0.0, 0.0), (1.0, 1.0)));
+        let sub = [640, 0, 640, 360];
+        assert_eq!(border_place(sub, map, lcd, 720, 960).0, sub);
+        // In the Simple UI a subprogram's goes on SmileBASIC 4's display,
+        // where its screen is drawn, whatever the UI's own display.
+        let mode = ScreenMode::new(640, 360);
+        let map = simple_map((640, 480), &mode);
+        let lcd = map.lcd(true);
+        let (r, (ox, oy), (sx, sy)) = border_place(sub, map, lcd, 480, 480);
+        let shown = map.shown;
+        let got = (
+            ox + r[0] as f32 * sx,
+            oy + r[1] as f32 * sy,
+            r[2] as f32 * sx,
+        );
+        let want = (shown.x + shown.w / 2.0, shown.y, shown.w / 2.0);
+        assert!((got.0 - want.0).abs() < 0.01, "{got:?} {want:?}");
+        assert!((got.1 - want.1).abs() < 0.01, "{got:?} {want:?}");
+        assert!((got.2 - want.2).abs() < 0.01, "{got:?} {want:?}");
+        // The main interpreter's covers the UI's display.
+        let (r, origin, (sx, _)) = border_place([0, 0, 1280, 720], map, lcd, 480, 480);
+        assert_eq!(r, [0, 0, map.display_w as i32, 480]);
+        assert_eq!(origin, (map.display.x, map.display.y));
+        assert_eq!(sx, map.display.w / map.display_w as f32);
     }
 
     #[test]

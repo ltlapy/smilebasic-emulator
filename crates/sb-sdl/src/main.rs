@@ -3461,16 +3461,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // pixel out and two in, then a dark band two pixels wide, fading
         // out together.
         if let Some((rect, alpha)) = machine.focus_border() {
-            let [x, y, w, h] = placement::border_rect(rect, (display_w, display_h), main_ui_h);
-            let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
+            let lcd = main_map.lcd(simple_ui);
+            let ([x, y, w, h], (ox, oy), (sx, sy)) =
+                placement::border_place(rect, main_map, lcd, display_h, main_ui_h);
             let place = |x: i32, y: i32, w: i32, h: i32| {
                 let at = |v: i32, s: f32| v as f32 * s;
-                FRect::new(
-                    display.x + at(x, sx),
-                    display.y + at(y, sy),
-                    at(w, sx),
-                    at(h, sy),
-                )
+                FRect::new(ox + at(x, sx), oy + at(y, sy), at(w, sx), at(h, sy))
             };
             canvas.set_blend_mode(BlendMode::Blend);
             for (inset, width, color) in [
