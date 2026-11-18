@@ -8,6 +8,7 @@ mod corner;
 mod debug_panel;
 mod dialog;
 mod editor_layout;
+mod events;
 mod file_dialogs;
 mod file_view;
 mod gpu;
@@ -55,8 +56,9 @@ use bench::Stage;
 use colors::ColorWindow;
 use controls::Controls;
 use debug_panel::{DebugPanel, Hit, Tab, Typed, View, value_text};
-use dialog::{Answer, Dialog};
+use dialog::Dialog;
 use editor_layout::Layout;
+use events::Taken;
 use file_dialogs::{FilePicker, SaveDialog};
 use grp_view::PageTexture;
 use help::HelpViewer;
@@ -107,7 +109,7 @@ use sdl3::sys::surface::SDL_ScaleMode;
 use sdl3::video::{FullscreenType, Window, WindowBuilder, WindowContext, WindowPos};
 use settings_window::SettingsWindow;
 use shortcuts::ShortcutsWindow;
-use simple_ui::{GameList, MenuSettings, PauseMenu, Welcome, Welcomed};
+use simple_ui::{GameList, MenuSettings, PauseMenu, Welcome};
 use toast::Toasts;
 use window::Which;
 
@@ -1686,93 +1688,24 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } if !screens.any() => inputs.plus_down = Some(Instant::now()),
                 _ => {}
             }
-            if let Some((open, asking)) = &mut screens.dialog {
-                let answer = match event {
-                    Event::Quit { .. } if *asking == Asking::Quit => break 'running,
-                    Event::Quit { .. } => {
-                        quit = true;
-                        None
-                    }
-                    Event::MouseMotion { x, y, .. } => {
-                        open.mouse_move(to_display(x, y));
-                        None
-                    }
-                    Event::MouseButtonDown {
-                        mouse_btn: MouseButton::Left,
-                        x,
-                        y,
-                        ..
-                    } => open.click(to_display(x, y)),
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } => open.key(key),
-                    Event::GamepadButtonDown { button, .. } => open.pad(button),
-                    Event::TextInput { ref text, .. } => {
-                        open.text(text);
-                        None
-                    }
-                    _ => None,
-                };
-                match (answer, asking.clone()) {
-                    (Some(Answer::Accept), Asking::Quit) => break 'running,
-                    (Some(answer), Asking::Command(_)) => {
-                        machine.answer(answer == Answer::Accept);
-                        screens.dialog = None;
-                    }
-                    (Some(Answer::Accept), Asking::Overwrite(name)) => {
-                        save_edited(machine, &name, &mut toasts);
-                        screens.dialog = None;
-                    }
-                    (Some(Answer::Accept), Asking::Discard(name)) => {
-                        load_edited(machine, &name, &mut toasts);
-                        screens.dialog = None;
-                    }
-                    (Some(Answer::Accept), Asking::Run(project, file)) => {
-                        screens.dialog = None;
-                        if run_from_list(machine, &project, &file, &mut toasts) {
-                            (screens.game_list, ran_from_list) = (None, Some(file));
-                        }
-                    }
-                    (Some(Answer::Accept), Asking::Condition(slot, line)) => {
-                        match machine.set_condition(slot, line, open.field()) {
-                            Ok(()) => screens.dialog = None,
-                            Err(e) => toasts.push(format!("Condition: {e}")),
-                        }
-                    }
-                    (Some(_), Asking::Notice) | (Some(Answer::Cancel), _) => screens.dialog = None,
-                    (None, _) => {}
+            if screens.dialog.is_some() {
+                let list = &mut ran_from_list;
+                let taken = events::dialog(
+                    &event,
+                    &mut screens,
+                    machine,
+                    &mut toasts,
+                    list,
+                    &mut quit,
+                    to_display,
+                );
+                if taken == Taken::Quit {
+                    break 'running;
                 }
                 continue;
             }
-            // The welcome screen takes the button pressed for A as A, by
-            // its place, and keeps that and that it was shown.
-            if let Some(open) = &mut screens.welcome {
-                let swap = machine.rt.settings.swap_ab_xy;
-                let welcomed = match event {
-                    Event::Quit { .. } => {
-                        quit = true;
-                        Welcomed::Stay
-                    }
-                    Event::KeyDown {
-                        keycode: Some(key),
-                        repeat: false,
-                        ..
-                    } => open.key(key),
-                    Event::GamepadButtonDown { button, .. } => {
-                        open.pad_down(button, swap);
-                        Welcomed::Stay
-                    }
-                    Event::GamepadButtonUp { button, .. } => open.pad_up(button, swap),
-                    _ => Welcomed::Stay,
-                };
-                if let Welcomed::Continue(chosen) = welcomed {
-                    screens.welcome = None;
-                    let settings = &mut machine.rt.settings;
-                    settings.simple_ui_welcome_shown = true;
-                    if let Some(swap) = chosen {
-                        settings.swap_ab_xy = swap;
-                    }
-                }
+            if screens.welcome.is_some() {
+                events::welcome(&event, &mut screens, machine, &mut quit);
                 continue;
             }
             if let (Some(open), false) = (&mut program_dialog, from_editor) {
