@@ -1509,6 +1509,29 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 }
                 continue;
             }
+            // What each of the emulator's screens is given with the event.
+            macro_rules! cx {
+                () => {
+                    events::Ctx {
+                        machine: &mut *machine,
+                        toasts: &mut toasts,
+                        quit: &mut quit,
+                        size: (display_w, display_h),
+                    }
+                };
+            }
+            // The system's file dialogs, for the screens that open them.
+            macro_rules! choosers {
+                () => {
+                    events::Choosers {
+                        window: canvas.window(),
+                        font: &chosen_font,
+                        extra_font: &chosen_extra_font,
+                        colors: &chosen_colors,
+                        folder: &chosen_folder,
+                    }
+                };
+            }
             // Select+A, or F8, opens and closes the Simple UI's pause menu,
             // over a dialog too; that A goes nowhere else. Select+Start
             // quits as the menu's Quit does, and the release of that Start
@@ -1558,51 +1581,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             {
                 continue;
             }
-            if let Some(open) = &mut screens.pause_menu {
-                let chosen = match event {
-                    Event::Quit { .. } => Some(simple_ui::Choice::Quit),
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } => open.key(key),
-                    Event::GamepadButtonDown { button, .. } => open.pad(button),
-                    _ => None,
-                };
-                // Shown at once, behind the menu, and kept. A button held
-                // as the swap changes reads as the other from the next
-                // event on, and the program sees neither: the menu has
-                // the controls.
-                let settings = open.settings();
-                match chosen {
-                    Some(simple_ui::Choice::Resume) => screens.pause_menu = None,
-                    Some(
-                        simple_ui::Choice::Filter
-                        | simple_ui::Choice::UiSize
-                        | simple_ui::Choice::Swap
-                        | simple_ui::Choice::FrameSkip
-                        | simple_ui::Choice::Vsync,
-                    ) => settings.apply(&mut machine.rt.settings),
-                    Some(simple_ui::Choice::Restart) => {
-                        screens.pause_menu = None;
-                        if let Some(file) = &ran_from_list {
-                            simple_ui_leave(machine);
-                            if let Err(e) = machine.run_home(file) {
-                                toasts.push(format!("Could not load {file}: {e}"));
-                            }
-                        }
-                    }
-                    Some(simple_ui::Choice::List) => {
-                        screens.pause_menu = None;
-                        simple_ui_leave(machine);
-                        let size = (display_w, display_h);
-                        screens.game_list =
-                            Some(GameList::new(&machine.rt.storage, size, &list_memory));
-                    }
-                    Some(simple_ui::Choice::Quit) => {
-                        screens.pause_menu = None;
-                        quit = true;
-                    }
-                    None => {}
-                }
+            if screens.pause_menu.is_some() {
+                let (memory, ran) = (&list_memory, &ran_from_list);
+                events::pause_menu(event, &mut screens, memory, ran, cx!());
                 continue;
             }
             // After an error of the program that Projects ran, only A or
@@ -1687,17 +1668,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } if !screens.any() => inputs.plus_down = Some(Instant::now()),
                 _ => {}
-            }
-            // What each of the emulator's screens is given with the event.
-            macro_rules! cx {
-                () => {
-                    events::Ctx {
-                        machine: &mut *machine,
-                        toasts: &mut toasts,
-                        quit: &mut quit,
-                        size: (display_w, display_h),
-                    }
-                };
             }
             if screens.dialog.is_some() {
                 let list = &mut ran_from_list;
@@ -1868,14 +1838,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     continue;
                 }
             }
-            // After a key, a click or a button, the lists show what other
-            // programs changed meanwhile, for the next one to act on.
-            let input = matches!(
-                event,
-                Event::KeyDown { .. }
-                    | Event::MouseButtonDown { .. }
-                    | Event::GamepadButtonDown { .. }
-            );
             if screens.game_list.is_some() {
                 let (memory, ran) = (&mut list_memory, &mut ran_from_list);
                 events::game_list(&event, &mut screens, memory, ran, cx!());
@@ -1884,265 +1846,25 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 continue;
             }
             if screens.manager.is_some() {
-                let (memory, send) = (&mut home_memory, &chosen_folder);
-                let window = canvas.window();
-                events::manager(
-                    &event,
-                    &mut screens,
-                    memory,
-                    send,
-                    window,
-                    cx!(),
-                    to_display,
-                );
+                let memory = &mut home_memory;
+                events::manager(&event, &mut screens, memory, choosers!(), cx!(), to_display);
                 continue;
             }
-            if let Some(open) = &mut screens.file_dialog {
-                let storage = &machine.rt.storage;
-                let outcome = match (open, event) {
-                    (_, Event::Quit { .. }) => {
-                        quit = true;
-                        file_dialogs::Outcome::Stay
-                    }
-                    (FileDialog::Load(picker), Event::MouseMotion { x, y, .. }) => {
-                        picker.mouse_move(to_display(x, y));
-                        file_dialogs::Outcome::Stay
-                    }
-                    (FileDialog::Load(picker), Event::MouseWheel { y, .. }) => {
-                        picker.wheel(-y.round() as i32);
-                        file_dialogs::Outcome::Stay
-                    }
-                    (
-                        open,
-                        Event::MouseButtonDown {
-                            mouse_btn: MouseButton::Left,
-                            x,
-                            y,
-                            ..
-                        },
-                    ) => match open {
-                        FileDialog::Save(d) => d.click(to_display(x, y)),
-                        FileDialog::Load(p) => p.click(to_display(x, y), storage),
-                    },
-                    (
-                        open,
-                        Event::KeyDown {
-                            keycode: Some(key), ..
-                        },
-                    ) => match open {
-                        FileDialog::Save(d) => d.key(key),
-                        FileDialog::Load(p) => p.key(key, storage),
-                    },
-                    (FileDialog::Save(d), Event::TextInput { text, .. }) => {
-                        d.text(&text);
-                        file_dialogs::Outcome::Stay
-                    }
-                    (FileDialog::Load(p), Event::TextInput { text, .. }) => {
-                        p.text(&text);
-                        file_dialogs::Outcome::Stay
-                    }
-                    _ => file_dialogs::Outcome::Stay,
-                };
-                let slot = machine.edited_slot();
-                let size = (display_w, display_h);
-                match outcome {
-                    file_dialogs::Outcome::Stay => {}
-                    file_dialogs::Outcome::Close => screens.file_dialog = None,
-                    file_dialogs::Outcome::Save(name) => {
-                        screens.file_dialog = None;
-                        let own = machine.rt.slot_names[slot] == name;
-                        // A file of the folder the program was run from
-                        // asks the first time, even when it is the slot's.
-                        let originals = machine.rt.original_txt(&name);
-                        if (!own && machine.rt.txt_exists(&name)) || !originals.is_empty() {
-                            let mut lines = vec![
-                                format!("Save slot {slot} as {name}."),
-                                "The file there now will be replaced.".to_string(),
-                            ];
-                            if !originals.is_empty() {
-                                lines.push(String::new());
-                                lines.extend(sb_runtime::confirm::original_lines(&originals));
-                            }
-                            let open = Dialog::new("Save file", lines, "Save", size);
-                            screens.dialog = Some((open, Asking::Overwrite(name)));
-                        } else {
-                            save_edited(machine, &name, &mut toasts);
-                        }
-                    }
-                    // Only the projects window copies.
-                    file_dialogs::Outcome::Copy { .. } => screens.file_dialog = None,
-                    file_dialogs::Outcome::Tool(n, file) => {
-                        screens.file_dialog = None;
-                        machine.rt.settings.tools[n] = file;
-                    }
-                    file_dialogs::Outcome::Load(spec) => {
-                        screens.file_dialog = None;
-                        if machine.unsaved_slots().contains(&slot) {
-                            let lines = vec![
-                                format!("Load {spec} into slot {slot}."),
-                                "Its unsaved changes will be lost.".to_string(),
-                            ];
-                            let open = Dialog::new("Load file", lines, "Load", size);
-                            screens.dialog = Some((open, Asking::Discard(spec)));
-                        } else {
-                            load_edited(machine, &spec, &mut toasts);
-                        }
-                    }
-                }
-                if let (true, Some(FileDialog::Load(picker))) = (input, &mut screens.file_dialog) {
-                    picker.reread(&machine.rt.storage, false);
-                }
+            if screens.file_dialog.is_some() {
+                events::file_dialog(event, &mut screens, cx!(), to_display);
                 continue;
             }
-            if let Some(open) = &mut screens.shortcuts_window {
-                let outcome = match event {
-                    Event::Quit { .. } => {
-                        quit = true;
-                        shortcuts::Outcome::Stay
-                    }
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } => open.key(key),
-                    Event::MouseWheel { y, .. } => {
-                        open.wheel(-y.round() as i32);
-                        shortcuts::Outcome::Stay
-                    }
-                    Event::MouseButtonDown {
-                        mouse_btn: MouseButton::Left,
-                        x,
-                        y,
-                        ..
-                    } => open.click(to_display(x, y)),
-                    _ => shortcuts::Outcome::Stay,
-                };
-                if outcome == shortcuts::Outcome::Close {
-                    screens.shortcuts_window = None;
-                }
+            if screens.shortcuts_window.is_some() {
+                events::shortcuts_window(event, &mut screens, cx!(), to_display);
                 continue;
             }
-            if let Some(open) = &mut screens.settings_window {
-                let settings = &mut machine.rt.settings;
-                let outcome = match event {
-                    Event::Quit { .. } => {
-                        quit = true;
-                        settings_window::Outcome::Stay
-                    }
-                    Event::MouseMotion { x, y, .. } => {
-                        open.mouse_move(to_display(x, y));
-                        settings_window::Outcome::Stay
-                    }
-                    Event::MouseButtonDown {
-                        mouse_btn: MouseButton::Left,
-                        x,
-                        y,
-                        ..
-                    } => open.click(to_display(x, y), settings),
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } => open.key(key, settings),
-                    _ => settings_window::Outcome::Stay,
-                };
-                match outcome {
-                    settings_window::Outcome::Stay => {}
-                    settings_window::Outcome::Close => screens.settings_window = None,
-                    settings_window::Outcome::Instruments => {
-                        if machine.rt.settings.smilebasic_instruments && bank.is_none() {
-                            toasts.push(
-                                "SmileBASIC 4's instruments are not imported \
-                                 (see smilebasic-import)"
-                                    .into(),
-                            );
-                        }
-                        use_instruments(machine, bank.as_ref(), &mut toasts);
-                    }
-                    settings_window::Outcome::ChooseSoundFont => {
-                        choose_sound_font(canvas.window(), chosen_font.clone(), &mut toasts);
-                    }
-                    settings_window::Outcome::ExtraFont => {
-                        if let Err(e) = machine.rt.load_extra_font() {
-                            toasts.push(e);
-                        }
-                    }
-                    settings_window::Outcome::ProgramFont => machine.rt.apply_program_font(),
-                    settings_window::Outcome::BundledGlyphs => machine.apply_bundled_glyphs(),
-                    settings_window::Outcome::ChooseExtraFont => {
-                        let send = chosen_extra_font.clone();
-                        choose_extra_font(canvas.window(), send, &mut toasts);
-                    }
-                    // The picker goes over the settings, which stay open.
-                    settings_window::Outcome::ChooseTool(n) => {
-                        let storage = &machine.rt.storage;
-                        let now = &machine.rt.settings.tools[n];
-                        let size = (display_w, display_h);
-                        let picker = FilePicker::tool(size, n, now, storage);
-                        screens.file_dialog = Some(FileDialog::Load(picker));
-                    }
-                }
+            if screens.settings_window.is_some() {
+                let bank = bank.as_ref();
+                events::settings_window(event, &mut screens, bank, choosers!(), cx!(), to_display);
                 continue;
             }
-            if let Some(open) = &mut screens.color_window {
-                let palette = &mut machine.rt.settings.editor_colors;
-                let outcome = match event {
-                    Event::Quit { .. } => {
-                        quit = true;
-                        colors::Outcome::Stay
-                    }
-                    Event::MouseMotion { x, y, .. } => {
-                        open.mouse_move(to_display(x, y));
-                        colors::Outcome::Stay
-                    }
-                    Event::MouseButtonDown {
-                        mouse_btn: MouseButton::Left,
-                        x,
-                        y,
-                        ..
-                    } => open.click(to_display(x, y), palette),
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } => open.key(key),
-                    Event::TextInput { text, .. } => {
-                        open.text(&text, palette);
-                        colors::Outcome::Stay
-                    }
-                    _ => colors::Outcome::Stay,
-                };
-                match outcome {
-                    colors::Outcome::Stay => {}
-                    colors::Outcome::Close => screens.color_window = None,
-                    colors::Outcome::Import | colors::Outcome::Export => {
-                        let save = outcome == colors::Outcome::Export;
-                        let send = chosen_colors.clone();
-                        let filters = [sdl3::dialog::DialogFileFilter {
-                            name: "Editor colors",
-                            pattern: "txt",
-                        }];
-                        let callback: sdl3::dialog::DialogCallback = Box::new(move |chosen, _| {
-                            if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
-                                let _ = send.send((path, save));
-                            }
-                        });
-                        let window = canvas.window();
-                        let shown = if save {
-                            sdl3::dialog::show_save_file_dialog(
-                                &filters,
-                                Some("editor-colors.txt"),
-                                window,
-                                callback,
-                            )
-                        } else {
-                            sdl3::dialog::show_open_file_dialog(
-                                &filters,
-                                None::<&Path>,
-                                false,
-                                window,
-                                callback,
-                            )
-                        };
-                        if let Err(e) = shown {
-                            toasts.push(format!("Could not open a file dialog: {e}"));
-                        }
-                    }
-                }
+            if screens.color_window.is_some() {
+                events::color_window(event, &mut screens, choosers!(), cx!(), to_display);
                 continue;
             }
             match event {
