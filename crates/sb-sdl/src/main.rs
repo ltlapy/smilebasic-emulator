@@ -17,6 +17,7 @@ mod gpu_project;
 mod grp_view;
 mod help;
 mod index;
+mod inputs;
 mod keyhint;
 mod layer;
 mod menu;
@@ -49,8 +50,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::pad_repeat::{Dir, PadRepeat};
-
 use audio::Audio;
 use bench::Stage;
 use colors::ColorWindow;
@@ -63,6 +62,7 @@ use file_dialogs::{FilePicker, SaveDialog};
 use grp_view::PageTexture;
 use help::HelpViewer;
 use index::IndexPanel;
+use inputs::Inputs;
 use keyhint::KeyHint;
 use layer::Layer;
 use menu::{Action, Click, Context, MenuBar};
@@ -92,7 +92,7 @@ use sdl3::VideoSubsystem;
 use sdl3::clipboard::ClipboardUtil;
 use sdl3::event::Event;
 use sdl3::event::WindowEvent;
-use sdl3::gamepad::{Axis, Button};
+use sdl3::gamepad::Button;
 use sdl3::keyboard::{Keycode, Mod, Scancode};
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
@@ -380,49 +380,6 @@ fn failure_message(why: &str, saved: Option<Vec<String>>) -> String {
     match saved {
         Some(lines) => format!("{why}\n\n{}", lines.join("\n")),
         None => why.to_string(),
-    }
-}
-
-/// What frontend() keeps of the keys, the mouse and the controllers
-/// between events.
-struct Inputs {
-    controls: Controls,
-    typing: controls::Typing,
-    /// Select, for the Simple UI's menu and quitting.
-    hotkeys: simple_ui::Hotkeys,
-    /// Holding the pad's up or down repeats in the projects, and the left
-    /// stick works as the pad there. `pad_screen` is the screen it was
-    /// last ticked for, `pad_tick` when.
-    pad_repeat: PadRepeat,
-    pad_screen: usize,
-    pad_tick: Instant,
-    /// The left button went down on the editor and is still held.
-    dragging: bool,
-    /// When the + button, F5 or a controller's, went down, while it is
-    /// held.
-    plus_down: Option<Instant>,
-    /// The text of a key that something else took: the space some systems
-    /// type for Ctrl+Space, or a digit that chose a slot in a window that
-    /// then closed, which would otherwise reach the program or the editor.
-    eat_text: bool,
-    /// A USB key that reads as down for a frame, for the bench.
-    bench_usb: Option<u8>,
-}
-
-impl Inputs {
-    fn new(controls: Controls) -> Inputs {
-        Inputs {
-            controls,
-            typing: controls::Typing::default(),
-            hotkeys: simple_ui::Hotkeys::default(),
-            pad_repeat: PadRepeat::default(),
-            pad_screen: 0,
-            pad_tick: Instant::now(),
-            dragging: false,
-            plus_down: None,
-            eat_text: false,
-            bench_usb: None,
-        }
     }
 }
 
@@ -1165,27 +1122,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             screens.manager.as_ref().map(ProjectManager::mode_id),
             screens.game_list.as_ref().map(GameList::mode_id),
         );
-        let pad_dt = inputs.pad_tick.elapsed().min(Duration::from_millis(100));
-        inputs.pad_tick = Instant::now();
-        if screen != inputs.pad_screen {
-            inputs.pad_screen = screen;
-            inputs.pad_repeat.reset();
-        }
-        let mut repeats = Vec::new();
-        if screen >= 2
-            && let Some((dir, n)) = inputs.pad_repeat.tick(pad_dt)
-        {
-            let (timestamp, which) = (0, 0.into());
-            let button = dir.button();
-            repeats.resize(
-                n as usize,
-                Event::GamepadButtonDown {
-                    timestamp,
-                    which,
-                    button,
-                },
-            );
-        }
+        let repeats = inputs.repeats(screen);
         // Pumping the events is what can hold the loop up for seconds.
         let ((), held) = standby.hold(lend!(), || {
             while let Some(event) = events.poll_event() {
@@ -1244,47 +1181,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     _ => {}
                 }
             }
-            // The pad's up and down are held, and the left stick is the
-            // pad, on the emulator's own screens.
-            let event = match event {
-                Event::GamepadButtonDown { button, .. } if !repeated => {
-                    match button {
-                        Button::DPadUp => inputs.pad_repeat.down(Dir::Up),
-                        Button::DPadDown => inputs.pad_repeat.down(Dir::Down),
-                        _ => {}
-                    }
-                    event
-                }
-                Event::GamepadButtonUp { button, .. } => {
-                    match button {
-                        Button::DPadUp => inputs.pad_repeat.up(Dir::Up),
-                        Button::DPadDown => inputs.pad_repeat.up(Dir::Down),
-                        _ => {}
-                    }
-                    event
-                }
-                Event::GamepadAxisMotion {
-                    timestamp,
-                    which,
-                    axis,
-                    value,
-                } => {
-                    let pushed = match axis {
-                        Axis::LeftX => inputs.pad_repeat.stick_x(value),
-                        Axis::LeftY => inputs.pad_repeat.stick_y(value),
-                        _ => None,
-                    };
-                    match pushed {
-                        Some(dir) if screen != 0 => Event::GamepadButtonDown {
-                            timestamp,
-                            which,
-                            button: dir.button(),
-                        },
-                        _ => event,
-                    }
-                }
-                event => event,
-            };
+            let event = inputs.pad_event(event, repeated, screen);
             // Whatever the event does may show on the screens.
             machine.rt.touch();
             // Some renderers lose what textures held, which then has to be
