@@ -288,6 +288,206 @@ impl Clock {
     }
 }
 
+/// What the program is at once its frame has run, for a drawing that
+/// would end after the frame's time; see [`Scene`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Late {
+    /// The drawing is wanted whatever it costs: the window is not shown,
+    /// so nothing is presented anyway, or the bench saves this frame.
+    pub wanted: bool,
+    /// As [`Scene::mid_loop`] and [`Scene::fits`].
+    pub mid_loop: bool,
+    pub fits: bool,
+    /// How long the program's next trip is taken to run.
+    pub run: Duration,
+}
+
+/// A trip round the loop that drew the window, for [`Pacer::drew`].
+#[derive(Clone, Copy, Debug)]
+pub struct Drew {
+    /// When the trip began, and how long it took up to now.
+    pub trip_began: Instant,
+    pub trip: Duration,
+    /// How long the program's frames ran, and when they had run.
+    pub ran: Duration,
+    pub drawn_from: Instant,
+    /// When the main window's present began and how long it took.
+    pub present_began: Instant,
+    pub present_took: Duration,
+    /// The present was made and waited for vsync.
+    pub waited: bool,
+    /// Vsync is still on after it: the present was not held back.
+    pub vsync: bool,
+}
+
+/// The loop's pacing: the frames' clock, what a drawing and the rest of a
+/// trip cost, and the drawings left out. A trip round the loop asks it for
+/// [`Pacer::frame_time`], runs the program's frame, asks
+/// [`Pacer::drawing`] whether to draw the window, and ends with
+/// [`Pacer::drew`] and [`Pacer::end`], or with [`Pacer::skipped`] if it
+/// did not draw.
+pub struct Pacer {
+    clock: Clock,
+    /// The time the frames give the program, sized to what the drawing
+    /// leaves.
+    run_time: RunTime,
+    draw_time: DrawTime,
+    /// Frames in a row left undrawn.
+    undrawn: u32,
+    /// The last trip showed something that every frame is drawn for.
+    had_to_draw: bool,
+    /// Whether the last present waited for the vsync of a display at
+    /// 60 Hz, and when such a present last came back.
+    was_locked: bool,
+    vsync_at: Instant,
+    /// Whether the display shows about 60 frames a second.
+    at_60_hz: bool,
+}
+
+impl Pacer {
+    pub fn new(now: Instant) -> Pacer {
+        Pacer {
+            clock: Clock::new(now),
+            run_time: RunTime::default(),
+            draw_time: DrawTime::default(),
+            undrawn: 0,
+            had_to_draw: true,
+            was_locked: false,
+            vsync_at: now,
+            at_60_hz: false,
+        }
+    }
+
+    /// Starts the frames' clock again at `now`, as after the renderer was
+    /// replaced.
+    pub fn restart(&mut self, now: Instant) {
+        self.clock = Clock::new(now);
+    }
+
+    /// The frames' clock, for the standby thread to run frames by.
+    pub fn clock(&mut self) -> &mut Clock {
+        &mut self.clock
+    }
+
+    /// Notes whether the display refreshes at about 60 Hz.
+    pub fn display(&mut self, at_60_hz: bool) {
+        self.at_60_hz = at_60_hz;
+    }
+
+    /// What the next drawing is taken to cost.
+    pub fn draw_cost(&self) -> Duration {
+        self.draw_time.cost()
+    }
+
+    /// The time a frame gives a program that does not wait for the next
+    /// one. A program whose trip round its main loop `fits` a frame gets
+    /// the most, whatever the drawing takes: the drawing is what is then
+    /// left out.
+    pub fn frame_time(&self, fits: bool) -> Duration {
+        match fits {
+            true => MOST_RUN_TIME,
+            false => self.run_time.limit(),
+        }
+    }
+
+    /// Whether the frame after the one being run is due, for the loop to
+    /// run it at once.
+    pub fn behind(&self, now: Instant) -> bool {
+        self.clock.behind(now)
+    }
+
+    /// Counts a frame run to catch up, which went undrawn.
+    pub fn caught_up(&mut self) {
+        self.clock.caught_up();
+        self.undrawn += 1;
+    }
+
+    /// Counts `frames` that the standby thread ran, which went undrawn.
+    pub fn kept(&mut self, frames: u32) {
+        self.undrawn += frames;
+    }
+
+    /// Whether to draw the window, at `now`, when the program's frames
+    /// have run. What the window shows besides the program's screens
+    /// `must` be drawn every frame, and so is the frame after it went. A
+    /// drawing that would end after the frame's time is left out if the
+    /// program is still making the scene, or if it would cost the program
+    /// its next frame; `late` is asked for then. See [`Scene::drawing`].
+    pub fn drawing(&mut self, now: Instant, must: bool, late: impl FnOnce() -> Late) -> Drawing {
+        let (left, cost) = (self.clock.left(now), self.draw_time.cost());
+        let drawing = if must || self.had_to_draw || cost <= left {
+            // A drawing that ends in the frame needs no more looking into.
+            Drawing::Draw
+        } else {
+            let late = late();
+            let scene = Scene {
+                must: late.wanted,
+                undrawn: self.undrawn,
+                mid_loop: late.mid_loop,
+                fits: late.fits,
+                locked: self.was_locked,
+                left,
+                late: self.clock.late(now),
+                to_vsync: to_vsync(self.vsync_at, now),
+                draw: cost,
+                run: late.run,
+            };
+            scene.drawing()
+        };
+        self.had_to_draw = must;
+        match drawing {
+            Drawing::Draw => self.undrawn = 0,
+            Drawing::Wait | Drawing::RunOn => self.undrawn += 1,
+        }
+        drawing
+    }
+
+    /// Ends at `now` a trip that left the drawing out. Gives how long to
+    /// wait for the next frame.
+    pub fn skipped(&mut self, now: Instant) -> Duration {
+        self.clock.end(now, false)
+    }
+
+    /// Notes a trip that drew the window: what the drawing and the rest
+    /// of the trip took, and whether the frames follow the display.
+    pub fn drew(&mut self, drew: Drew) {
+        // The frames follow the vsync of a display at about 60 Hz, when
+        // the present waited for it and was not so slow that vsync was
+        // dropped; otherwise they go by the clock.
+        self.was_locked = drew.waited && drew.vsync && self.at_60_hz;
+        if self.was_locked {
+            self.vsync_at = drew.present_began + drew.present_took;
+        }
+        // The drawing began when the program's frames had run. With a
+        // present that waited for the vsync of a display at 60 Hz it ends
+        // where the present began: the wait is no cost, as the frame ends
+        // there anyway. At another rate the wait holds the loop up.
+        let in_step = drew.waited && self.at_60_hz;
+        let drawn_to = match in_step {
+            true => drew.present_began,
+            false => drew.trip_began + drew.trip,
+        };
+        let took = drawn_to.saturating_duration_since(drew.drawn_from);
+        self.draw_time.drew(took, in_step);
+        // A present that waits for vsync waits for as long as the drawing
+        // left, which is not part of the drawing's time; on a display at
+        // another rate it can hold the loop up for one of the display's
+        // frames besides.
+        let rest = drew.trip.saturating_sub(drew.ran);
+        self.run_time.drew(match (drew.waited, self.at_60_hz) {
+            (false, _) => Some(rest),
+            (true, true) => Some(rest.saturating_sub(drew.present_took)),
+            (true, false) => None,
+        });
+    }
+
+    /// Ends at `now` a trip that drew the window, after [`Pacer::drew`].
+    /// Gives how long to wait for the next frame.
+    pub fn end(&mut self, now: Instant) -> Duration {
+        self.clock.end(now, self.was_locked)
+    }
+}
+
 /// Waits `time` more precisely than `std::thread::sleep`, which on older
 /// Windows wakes on a coarse timer tick.
 pub fn delay(time: Duration) {
@@ -696,8 +896,8 @@ mod tests {
         gap: u32,
     }
 
-    /// Runs the loop's frames as the window does for a program that fits
-    /// its frame, whose
+    /// Runs the loop's frames through a [`Pacer`], as the window does, for a
+    /// program that fits its frame, whose
     /// trips take `run` and a drawing that takes `draw` (the tenth one
     /// `slow` instead, if given), with presents that come back at the next
     /// sixtieth of a second if `vsync`, for `secs` seconds; the first
@@ -705,7 +905,8 @@ mod tests {
     fn play(run: f64, draw: f64, slow: Option<f64>, vsync: bool, secs: u64) -> Played {
         let (run, draw) = (ms(run), ms(draw));
         let start = Instant::now();
-        let (mut now, mut clock) = (start, Clock::new(start));
+        let (mut now, mut pacer) = (start, Pacer::new(start));
+        pacer.display(vsync);
         let mut played = Played {
             ran: 0,
             drawn: 0,
@@ -713,58 +914,51 @@ mod tests {
             last: 0.0,
             gap: 0,
         };
-        let (mut undrawn, mut drawings) = (0, 0);
-        let mut cost = DrawTime::default();
-        let (mut locked, mut vsync_at) = (false, start);
+        let mut drawings = 0;
         let counts = |now: Instant| now - start >= Duration::from_secs(1);
         while now - start < Duration::from_secs(secs + 1) {
-            let frame = |now: &mut Instant, clock: &Clock, played: &mut Played| {
-                *now += run;
-                if counts(*now) {
-                    played.ran += 1;
-                    let late = now.saturating_duration_since(clock.due());
-                    played.last = late.as_secs_f64() * 1000.0;
-                    played.latest = played.latest.max(played.last);
-                }
-            };
-            frame(&mut now, &clock, &mut played);
-            let scene = Scene {
+            let trip_began = now;
+            now += run;
+            if counts(now) {
+                played.ran += 1;
+                let late = now.saturating_duration_since(pacer.clock.due());
+                played.last = late.as_secs_f64() * 1000.0;
+                played.latest = played.latest.max(played.last);
+            }
+            let (drawn_from, undrawn) = (now, pacer.undrawn);
+            let late = || Late {
                 fits: true,
-                locked,
-                undrawn,
-                left: clock.left(now),
-                late: clock.late(now),
-                to_vsync: to_vsync(vsync_at, now),
-                draw: cost.cost(),
                 run,
-                ..Scene::default()
+                ..Late::default()
             };
-            match scene.drawing() {
+            match pacer.drawing(now, false, late) {
                 Drawing::Draw => {
-                    let began = now;
                     drawings += 1;
                     now += slow.filter(|_| drawings == 10).map_or(draw, ms);
-                    cost.drew(now - began, vsync);
+                    let present_began = now;
                     if vsync {
                         let frames = (now - start).as_nanos() / FRAME.as_nanos() + 1;
                         now = start + FRAME * frames as u32;
-                        vsync_at = now;
                     }
                     if counts(now) {
                         played.drawn += 1;
                         played.gap = played.gap.max(undrawn);
                     }
-                    undrawn = 0;
-                    locked = vsync;
-                    now += clock.end(now, vsync);
+                    pacer.drew(Drew {
+                        trip_began,
+                        trip: now - trip_began,
+                        ran: run,
+                        drawn_from,
+                        present_began,
+                        present_took: now - present_began,
+                        waited: vsync,
+                        vsync,
+                    });
+                    now += pacer.end(now);
                 }
-                Drawing::Wait => {
-                    undrawn += 1;
-                    now += clock.end(now, false);
-                }
+                Drawing::Wait => now += pacer.skipped(now),
                 Drawing::RunOn => {
-                    undrawn += 1;
-                    clock.end(now, false);
+                    pacer.skipped(now);
                 }
             }
         }
