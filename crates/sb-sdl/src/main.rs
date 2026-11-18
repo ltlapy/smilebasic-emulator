@@ -34,6 +34,7 @@ mod shortcuts;
 mod simple_ui;
 mod slow_hint;
 mod standby;
+mod stick_mouse;
 mod text_field;
 mod toast;
 mod ui;
@@ -671,7 +672,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // emulator's screens.
     macro_rules! stick_role {
         () => {
-            controls::Where {
+            stick_mouse::Where {
                 simple_ui,
                 running: machine.is_running(),
                 screen: screens.any()
@@ -3527,7 +3528,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 || dims
                 || program_dialog.is_some()
                 || menu.visible()
-                || stick == controls::StickRole::Screens
+                || stick == stick_mouse::StickRole::Screens
                 || apart && pointer_in_editor
                 || machine.rt.settings.keep_mouse_cursor
                 || machine.rt.mouse_cursor()
