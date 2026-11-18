@@ -666,6 +666,24 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             (menu.shown || pause_menu.is_some() || welcome.is_some()) && machine.is_running()
         };
     }
+    // Who the right stick and R3 are for now: the program or the
+    // emulator's screens.
+    macro_rules! stick_role {
+        () => {
+            controls::Where {
+                simple_ui,
+                running: machine.is_running(),
+                screen: modal_shown!()
+                    || program_paused!()
+                    || menu.is_open()
+                    || machine.editor_has_keys() && machine.program_dialog().is_none(),
+                program_dialog: machine.program_dialog().is_some(),
+                cursor: machine.rt.mouse_cursor(),
+                editor_window: machine.is_detached() && machine.is_editing() && editor_focused,
+            }
+            .role()
+        };
+    }
     // Lends the machine for a call that may hold the loop up, unless the
     // program is paused.
     macro_rules! lend {
@@ -1202,6 +1220,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 controls.swap = machine.rt.settings.swap_ab_xy;
                 controls.stick_mouse.on = machine.rt.settings.right_stick_mouse;
                 controls.event(&mut event);
+                // R3 clicks on the emulator's screens as the mouse does.
+                let main_id = canvas.window().id();
+                controls.stick_click(&mut event, stick_role!(), main_id, main_map);
                 // A press and its release can both come between two
                 // frames, which what is held then would miss. One of the
                 // emulator's screens takes them back below.
@@ -2969,11 +2990,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         );
         // The right stick moves the main window's pointer, but not while
         // the editor's own window has the keys.
-        let cursor_allowed = !machine.is_running() || machine.rt.mouse_cursor();
         let stick_display = (display_w, display_h);
-        if !(apart && editor_focused)
-            && let Some(at) = controls.stick_pointer(&mut held, cursor_allowed, stick_display)
-        {
+        if let Some(at) = controls.stick_pointer(&mut held, stick_role!(), stick_display) {
             let (x, y) = main_map.display_to_window(at);
             let size = (mode.width as i32, mode.height as i32);
             let display_size = (display_w as i32, display_h as i32);
@@ -3484,17 +3502,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let dims = dialog.is_some() || manager.is_some() || pause_menu.is_some();
         // A running program shows the mouse cursor only if it asks to,
         // unless the emulator's own screens or the editor's window need
-        // it, or Select has the right stick for the pointer. Where the
-        // system shows no cursor, the emulator draws its own.
-        let show_cursor = !machine.is_running()
-            || modal
-            || dims
-            || program_dialog.is_some()
-            || menu.visible()
-            || apart && pointer_in_editor
-            || machine.rt.settings.keep_mouse_cursor
-            || machine.rt.mouse_cursor()
-            || controls.stick_mouse.select_points();
+        // it, or Select has the right stick for the pointer. The Simple
+        // UI's own screens have none. Where the system shows no cursor,
+        // the emulator draws its own.
+        let stick = stick_role!();
+        let show_cursor = !stick.hides_cursor()
+            && (!machine.is_running()
+                || modal
+                || dims
+                || program_dialog.is_some()
+                || menu.visible()
+                || stick == controls::StickRole::Screens
+                || apart && pointer_in_editor
+                || machine.rt.settings.keep_mouse_cursor
+                || machine.rt.mouse_cursor()
+                || controls.stick_mouse.select_points());
         let system_cursor = show_cursor && !drawn_cursor.on();
         if system_cursor != cursor_shown {
             cursor_shown = system_cursor;

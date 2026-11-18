@@ -219,7 +219,9 @@ apart from the macro hang below.
   over the window, until the menu bar shows. `MOUSE X,Y` moves the computer's
   pointer too. File > Settings > Input > "Ignore mouse cursor commands" keeps
   the cursor shown and where it is; the program then sees the move until the
-  next frame. The Simple UI follows the same rules.
+  next frame. The Simple UI follows the same rules while a program runs, but
+  shows no cursor on its own screens, such as the game list and the pause
+  menu, or while a program's `DIALOG` is open.
 - Drawn cursor: where the system shows no cursor, as under KMSDRM on a
   handheld, the emulator draws its own arrow, about as large as SmileBASIC 4's
   on the display, with its tip at the pointer and over everything else. Like
@@ -238,8 +240,15 @@ apart from the macro hang below.
     and R3 released, until both are let go.
   - − (Select) opens the projects in DIRECT mode when it is released, and only
     if nothing else was pressed or moved while it was held.
-  - R3 clicks for the program only: `MBUTTON` and `TOUCH`. The emulator's own
-    menus, dialogs and editor take clicks from a mouse.
+  - On the desktop, R3 clicks the emulator's own screens as the left mouse
+    button does: the menu bar and its menus, the emulator's windows and
+    dialogs, Projects, and the editor. Holding R3 while tilting the stick
+    drags. While one of these screens is open over a running program, the
+    stick and R3 work there whatever `MOUSECURSOR` says, and the program sees
+    neither until both are let go.
+  - The Simple UI's own screens go by the buttons alone. There, and while a
+    program's `DIALOG` is open, the right stick and R3 do nothing as a mouse
+    and no cursor shows.
   - The pointer stops at the display's last pixel, 1279 for `MOUSE 1 OUT X`,
     where SmileBASIC 4's goes to 1280.
 

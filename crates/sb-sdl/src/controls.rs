@@ -6,8 +6,11 @@ use sb_runtime::input::{
 };
 use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
+use sdl3::joystick::JoystickId;
 use sdl3::keyboard::{KeyboardState, Mod, Scancode};
-use sdl3::mouse::MouseState;
+use sdl3::mouse::{MouseButton, MouseState};
+
+use crate::placement::Mapping;
 use sdl3::{GamepadSubsystem, Sdl};
 
 /// The bit in BUTTON's value of one of SDL's buttons, for the bench.
@@ -672,15 +675,16 @@ struct HeldBack {
 }
 
 impl HeldBack {
-    /// Holds back what Select's pointer took this frame, with `select`
-    /// held, from `state`, as the program will see it.
-    fn apply(&mut self, state: &mut State, select: bool) {
+    /// Holds back from `state`, as the program will see it, what the
+    /// pointer took this frame, `taken` while Select is held or one of
+    /// the emulator's screens has the controls.
+    fn apply(&mut self, state: &mut State, taken: bool) {
         for (i, pad) in state.pads.iter_mut().enumerate() {
             let r3 = pad.buttons & R3 != 0;
             let (x, y) = pad.sticks[1];
             let tilted = x.abs() > CARRIED_STICK || y.abs() > CARRIED_STICK;
-            self.r3[i] = r3 && (select || self.r3[i]);
-            self.stick[i] = select || tilted && self.stick[i];
+            self.r3[i] = r3 && (taken || self.r3[i]);
+            self.stick[i] = taken || tilted && self.stick[i];
             if self.r3[i] {
                 pad.buttons &= !R3;
             }
@@ -741,6 +745,172 @@ fn right_stick(state: &State) -> ((f64, f64), bool) {
         })
 }
 
+/// Who the right stick and R3 are for, by what is open: see
+/// [`Where::role`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StickRole {
+    /// Neither the program nor the emulator's screens, as while the
+    /// editor's own window has the keys: they are no mouse, and the
+    /// program sees them as ever.
+    Off,
+    /// The program's, as SmileBASIC 4's option has them: the right stick
+    /// moves the pointer and R3 is the left mouse button while `cursor`
+    /// (the program may show the mouse cursor) or Select is held.
+    Program { cursor: bool },
+    /// One of the emulator's own screens on the desktop has them: the
+    /// right stick moves the pointer, and R3 clicks with the left button.
+    Screens,
+    /// One of the Simple UI's own screens has them, which go by the pad
+    /// alone: they are no mouse, and no cursor shows.
+    Hidden,
+}
+
+impl StickRole {
+    /// Whether the mouse cursor stays hidden, whatever else wants it.
+    pub fn hides_cursor(self) -> bool {
+        self == StickRole::Hidden
+    }
+}
+
+/// What is open, for [`Where::role`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Where {
+    pub simple_ui: bool,
+    /// A program runs.
+    pub running: bool,
+    /// One of the emulator's screens has the controls: a window or dialog
+    /// of its own, the menu bar paused on the program, an open menu, or
+    /// the editor.
+    pub screen: bool,
+    /// The program's DIALOG is open.
+    pub program_dialog: bool,
+    /// The running program shows the mouse cursor (`MOUSECURSOR`).
+    pub cursor: bool,
+    /// The editor's own window has the keys, away from the main window's
+    /// pointer.
+    pub editor_window: bool,
+}
+
+impl Where {
+    /// Who the right stick and R3 are for. On the desktop the emulator's
+    /// screens take them, and with no program running so does everything
+    /// else there is: DIRECT mode, the menu bar, the editor. The Simple
+    /// UI's screens are for the pad, and so is a program's DIALOG there.
+    /// Otherwise the program has them.
+    pub fn role(self) -> StickRole {
+        let ours = !self.running || self.screen;
+        match self.simple_ui {
+            _ if self.editor_window => StickRole::Off,
+            true if ours || self.program_dialog => StickRole::Hidden,
+            false if ours => StickRole::Screens,
+            _ => StickRole::Program {
+                cursor: self.cursor,
+            },
+        }
+    }
+}
+
+/// The mouse that R3's clicks come from, in [`StickClick`]'s events: not
+/// one SDL gives, nor its ids for touches and pens.
+pub const STICK_MOUSE: u32 = u32::MAX - 2;
+
+/// Two presses of R3 within this time, in SDL's nanoseconds, and within
+/// [`DOUBLE_CLICK_RADIUS`] in window coordinates, make a double click, as
+/// SDL counts a mouse's by default.
+const DOUBLE_CLICK_TIME: u64 = 500_000_000;
+const DOUBLE_CLICK_RADIUS: f32 = 32.0;
+
+/// R3 as the left mouse button of the emulator's own screens: its press
+/// and release become the mouse's, at the pointer, which go where a
+/// mouse's go.
+#[derive(Debug, Default)]
+struct StickClick {
+    /// The controller whose R3 holds the button down, and the window the
+    /// press went to.
+    down: Option<(JoystickId, u32)>,
+    /// The last press: when, where, and its count of clicks.
+    last: Option<(u64, (f32, f32), u8)>,
+}
+
+impl StickClick {
+    /// The clicks a press at `timestamp` and `at` counts: 2 for a double
+    /// click.
+    fn count(&mut self, timestamp: u64, at: (f32, f32)) -> u8 {
+        let near = |(x, y): (f32, f32)| {
+            (at.0 - x).abs() <= DOUBLE_CLICK_RADIUS && (at.1 - y).abs() <= DOUBLE_CLICK_RADIUS
+        };
+        let clicks = match self.last {
+            Some((then, place, n))
+                if timestamp.saturating_sub(then) < DOUBLE_CLICK_TIME && near(place) =>
+            {
+                n.saturating_add(1)
+            }
+            _ => 1,
+        };
+        self.last = Some((timestamp, at, clicks));
+        clicks
+    }
+
+    /// Makes `event` the left mouse button's: a press of R3 while the
+    /// emulator's screens have it (`role`), at window coordinates `at` of
+    /// window `window`, and the release of that R3 whatever has it by
+    /// then. Meanwhile the mouse's moves have the left button held, so
+    /// that tilting the stick drags.
+    fn event(&mut self, event: &mut Event, role: StickRole, window: u32, at: (f32, f32)) {
+        let mouse_btn = MouseButton::Left;
+        let (x, y) = at;
+        match *event {
+            Event::GamepadButtonDown {
+                timestamp,
+                which,
+                button: Button::RightStick,
+            } if role == StickRole::Screens && self.down.is_none() => {
+                let clicks = self.count(timestamp, at);
+                self.down = Some((which, window));
+                *event = Event::MouseButtonDown {
+                    timestamp,
+                    window_id: window,
+                    which: STICK_MOUSE,
+                    mouse_btn,
+                    clicks,
+                    x,
+                    y,
+                };
+            }
+            Event::GamepadButtonUp {
+                timestamp,
+                which,
+                button: Button::RightStick,
+            } if self.down.is_some_and(|(pad, _)| pad == which) => {
+                let window_id = self.down.take().map_or(window, |(_, window)| window);
+                let clicks = self.last.map_or(1, |(_, _, n)| n);
+                *event = Event::MouseButtonUp {
+                    timestamp,
+                    window_id,
+                    which: STICK_MOUSE,
+                    mouse_btn,
+                    clicks,
+                    x,
+                    y,
+                };
+            }
+            Event::MouseMotion {
+                ref mut mousestate, ..
+            } if self.down.is_some() => {
+                let left = MouseState::from_sdl_state(1).to_sdl_state();
+                *mousestate = MouseState::from_sdl_state(mousestate.to_sdl_state() | left);
+            }
+            // Its release will not come.
+            Event::GamepadRemoved { which, .. }
+                if self.down.is_some_and(|(pad, _)| pad == which) =>
+            {
+                self.down = None;
+            }
+            _ => {}
+        }
+    }
+}
+
 /// SmileBASIC 4's right-stick mouse, and Select's use of it.
 #[derive(Debug, Default)]
 pub struct StickMouse {
@@ -750,6 +920,7 @@ pub struct StickMouse {
     pub select: Select,
     held_back: HeldBack,
     pointer: StickPointer,
+    click: StickClick,
 }
 
 impl StickMouse {
@@ -760,16 +931,16 @@ impl StickMouse {
     }
 
     /// The right-stick mouse in a frame, on `state` as the program is to
-    /// see it: R3 is the left mouse button, and the right stick moves the
-    /// pointer from the display pixel `from` to the one this returns, on
-    /// a display `size` big. `shown`: no program runs, or the program
-    /// shows the mouse cursor, as SmileBASIC 4 needs. With Select held it
-    /// works whatever the program does, which then sees neither the right
-    /// stick nor R3.
+    /// see it: the right stick moves the pointer from the display pixel
+    /// `from` to the one this returns, on a display `size` big, as `role`
+    /// says. For the program R3 is the left mouse button, and with Select
+    /// held this works whatever the program does, which then sees neither
+    /// the right stick nor R3. Nor does it see them while the emulator's
+    /// screens have them.
     pub fn frame(
         &mut self,
         state: &mut State,
-        shown: bool,
+        role: StickRole,
         from: (i32, i32),
         size: (u32, u32),
     ) -> Option<(i32, i32)> {
@@ -778,13 +949,20 @@ impl StickMouse {
             return None;
         }
         let select = self.select.held;
+        let (moves, ours) = match role {
+            StickRole::Off => return None,
+            StickRole::Program { cursor } => (cursor || select, false),
+            StickRole::Screens => (true, true),
+            StickRole::Hidden => (false, true),
+        };
         let ((x, y), r3) = right_stick(state);
-        self.held_back.apply(state, select);
-        if !shown && !select {
+        self.held_back.apply(state, select || ours);
+        if !moves {
             return None;
         }
         // It takes the place of the mouse's buttons, as on SmileBASIC 4.
-        if r3 {
+        // The emulator's screens have its clicks from `click` instead.
+        if r3 && !ours {
             state.mouse.buttons = 1;
         }
         let step = stick_step(x, y);
@@ -799,6 +977,15 @@ impl StickMouse {
     /// shows the cursor whatever the program says.
     pub fn select_points(&self) -> bool {
         self.on && self.select.held
+    }
+
+    /// Makes `event` the left mouse button's where it is R3 for the
+    /// emulator's screens, as [`StickClick::event`] says.
+    fn click(&mut self, event: &mut Event, role: StickRole, window: u32, at: (f32, f32)) {
+        // A press made before the setting went off still gets its release.
+        if self.on || self.click.down.is_some() {
+            self.click.event(event, role, window, at);
+        }
     }
 }
 
@@ -915,10 +1102,19 @@ impl Controls {
     pub fn stick_pointer(
         &mut self,
         state: &mut State,
-        shown: bool,
+        role: StickRole,
         size: (u32, u32),
     ) -> Option<(i32, i32)> {
-        (self.stick_mouse).frame(state, shown, self.mouse.display, size)
+        (self.stick_mouse).frame(state, role, self.mouse.display, size)
+    }
+
+    /// Makes `event` a click of the left mouse button where R3 clicks for
+    /// the emulator's screens (`role`), at the pointer on `window`, whose
+    /// coordinates `map` has. Goes after [`Controls::event`] and before
+    /// [`Controls::taps`], so that the program has no tap of that R3.
+    pub fn stick_click(&mut self, event: &mut Event, role: StickRole, window: u32, map: Mapping) {
+        let at = map.display_to_window(self.mouse.display);
+        self.stick_mouse.click(event, role, window, at);
     }
 
     /// Puts the pointer where [`Controls::stick_pointer`] moved it, in
@@ -1871,6 +2067,9 @@ mod tests {
     }
 
     const DISPLAY: (u32, u32) = (1280, 720);
+    /// A running program that shows the mouse cursor, and one that hides it.
+    const CURSOR: StickRole = StickRole::Program { cursor: true };
+    const NO_CURSOR: StickRole = StickRole::Program { cursor: false };
 
     #[test]
     fn r3_is_the_left_mouse_button_while_the_cursor_may_show() {
@@ -1882,17 +2081,17 @@ mod tests {
         };
         let mut stick = stick_mouse();
         let mut state = pressed();
-        assert_eq!(stick.frame(&mut state, true, (10, 10), DISPLAY), None);
+        assert_eq!(stick.frame(&mut state, CURSOR, (10, 10), DISPLAY), None);
         // In place of the mouse's own buttons, and BUTTON still sees it.
         assert_eq!(state.mouse.buttons, 1);
         assert_eq!(state.pads[1].buttons, R3);
         assert!(!stick.holds_back(1, Tap::Buttons(1, R3)));
         let mut state = pressed();
-        stick.frame(&mut state, false, (10, 10), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (10, 10), DISPLAY);
         assert_eq!(state.mouse.buttons, 0b110);
         let mut state = pressed();
         stick.on = false;
-        stick.frame(&mut state, true, (10, 10), DISPLAY);
+        stick.frame(&mut state, CURSOR, (10, 10), DISPLAY);
         assert_eq!(state.mouse.buttons, 0b110);
     }
 
@@ -1903,12 +2102,12 @@ mod tests {
         state.pads[2].sticks[1] = (1.0, 0.0);
         state.pads[0].sticks[1] = (0.2, -0.9);
         // Each axis from the controller tilted furthest along it.
-        let moved = stick.frame(&mut state, true, (10, 100), DISPLAY);
+        let moved = stick.frame(&mut state, CURSOR, (10, 100), DISPLAY);
         assert_eq!(moved, Some((26, 86)));
         assert_eq!(state.pads[2].sticks[1], (1.0, 0.0));
-        assert_eq!(stick.frame(&mut state, false, (10, 100), DISPLAY), None);
+        assert_eq!(stick.frame(&mut state, NO_CURSOR, (10, 100), DISPLAY), None);
         stick.on = false;
-        assert_eq!(stick.frame(&mut state, true, (10, 100), DISPLAY), None);
+        assert_eq!(stick.frame(&mut state, CURSOR, (10, 100), DISPLAY), None);
     }
 
     #[test]
@@ -1923,7 +2122,7 @@ mod tests {
         assert!(stick.select_points());
         let mut state = tilted(R3);
         assert_eq!(
-            stick.frame(&mut state, false, (10, 100), DISPLAY),
+            stick.frame(&mut state, NO_CURSOR, (10, 100), DISPLAY),
             Some((10, 84))
         );
         assert_eq!(state.pads[0].sticks, [(0.5, 0.0), (0.0, 0.0)]);
@@ -1936,14 +2135,14 @@ mod tests {
         stick.select.event(&pad_event(Button::Back, false));
         assert!(!stick.select_points());
         let mut state = tilted(R3);
-        assert_eq!(stick.frame(&mut state, false, (10, 84), DISPLAY), None);
+        assert_eq!(stick.frame(&mut state, NO_CURSOR, (10, 84), DISPLAY), None);
         assert_eq!(state.pads[0].sticks[1], (0.0, 0.0));
         assert_eq!(state.pads[0].buttons, 1 << 1);
         assert!(stick.holds_back(0, Tap::Buttons(0, R3)));
         let mut state = holding(0);
-        stick.frame(&mut state, false, (10, 84), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (10, 84), DISPLAY);
         let mut state = tilted(R3);
-        stick.frame(&mut state, false, (10, 84), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (10, 84), DISPLAY);
         assert_eq!(state.pads[0].sticks[1], (0.0, -1.0));
         assert_eq!(state.pads[0].buttons, R3 | 1 << 1);
         assert!(!stick.holds_back(0, Tap::Buttons(0, R3)));
@@ -1970,7 +2169,7 @@ mod tests {
         stick.select.arm();
         let mut state = holding(0);
         state.pads[0].sticks[1] = (1.0, 0.0);
-        stick.frame(&mut state, false, (0, 0), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (0, 0), DISPLAY);
         select(&mut stick, false);
         assert!(!stick.select.alone());
         // ...or a press that was not one to open them.
@@ -1982,8 +2181,276 @@ mod tests {
         stick.select.arm();
         let mut state = holding(0);
         state.pads[0].sticks[1] = (0.2, 0.0);
-        stick.frame(&mut state, false, (0, 0), DISPLAY);
+        stick.frame(&mut state, NO_CURSOR, (0, 0), DISPLAY);
         select(&mut stick, false);
         assert!(stick.select.alone());
+    }
+
+    #[test]
+    fn the_emulators_screens_take_the_stick_on_the_desktop_and_hide_it_in_the_simple_ui() {
+        let program = Where {
+            running: true,
+            cursor: true,
+            ..Where::default()
+        };
+        assert_eq!(program.role(), CURSOR);
+        let hidden = Where {
+            cursor: false,
+            ..program
+        };
+        assert_eq!(hidden.role(), NO_CURSOR);
+        // A window over the program, whatever MOUSECURSOR says, and with
+        // no program running.
+        let screen = Where {
+            screen: true,
+            ..hidden
+        };
+        assert_eq!(screen.role(), StickRole::Screens);
+        let direct = Where::default();
+        assert_eq!(direct.role(), StickRole::Screens);
+        // The program's DIALOG is the program's on the desktop.
+        let dialog = Where {
+            program_dialog: true,
+            ..program
+        };
+        assert_eq!(dialog.role(), CURSOR);
+        // The Simple UI's screens, and a program's DIALOG there, have no
+        // mouse.
+        let simple = |at: Where| Where {
+            simple_ui: true,
+            ..at
+        };
+        assert_eq!(simple(program).role(), CURSOR);
+        for at in [screen, direct, dialog] {
+            assert_eq!(simple(at).role(), StickRole::Hidden);
+            assert!(simple(at).role().hides_cursor());
+        }
+        assert!(!screen.role().hides_cursor());
+        // The editor's own window is away from the pointer.
+        let editor = Where {
+            editor_window: true,
+            ..screen
+        };
+        assert_eq!(editor.role(), StickRole::Off);
+    }
+
+    #[test]
+    fn the_emulators_screens_move_the_pointer_and_keep_the_stick_and_r3_from_the_program() {
+        let mut stick = stick_mouse();
+        let tilted = || {
+            let mut state = holding(R3);
+            state.pads[0].sticks[1] = (1.0, 0.0);
+            state
+        };
+        let mut state = tilted();
+        let moved = stick.frame(&mut state, StickRole::Screens, (10, 10), DISPLAY);
+        assert_eq!(moved, Some((26, 10)));
+        // R3 clicks there by its events, not as the program's button.
+        assert_eq!(state.mouse.buttons, 0);
+        assert_eq!(
+            (state.pads[0].buttons, state.pads[0].sticks[1]),
+            (0, (0.0, 0.0))
+        );
+        assert!(stick.holds_back(0, Tap::Buttons(0, R3)));
+        // The Simple UI's screens: no pointer, and nothing for the program.
+        let mut stick = stick_mouse();
+        let mut state = tilted();
+        assert_eq!(
+            stick.frame(&mut state, StickRole::Hidden, (10, 10), DISPLAY),
+            None
+        );
+        assert_eq!(
+            (state.pads[0].buttons, state.pads[0].sticks[1]),
+            (0, (0.0, 0.0))
+        );
+        // Select does not make a mouse of them there.
+        stick.select.event(&pad_event(Button::Back, true));
+        let mut state = tilted();
+        assert_eq!(
+            stick.frame(&mut state, StickRole::Hidden, (10, 10), DISPLAY),
+            None
+        );
+        // Off: as if there were no right-stick mouse.
+        let mut stick = stick_mouse();
+        let mut state = tilted();
+        assert_eq!(
+            stick.frame(&mut state, StickRole::Off, (10, 10), DISPLAY),
+            None
+        );
+        assert_eq!(state.pads[0].buttons, R3);
+    }
+
+    const MAIN: u32 = 3;
+
+    /// `event` as R3's clicks for `role` make it, with the pointer at
+    /// `at` in window `MAIN`.
+    fn clicked(stick: &mut StickMouse, mut event: Event, role: StickRole, at: (f32, f32)) -> Event {
+        stick.click(&mut event, role, MAIN, at);
+        event
+    }
+
+    fn r3_at(down: bool, timestamp: u64) -> Event {
+        match pad_event(Button::RightStick, down) {
+            Event::GamepadButtonDown { which, button, .. } => Event::GamepadButtonDown {
+                timestamp,
+                which,
+                button,
+            },
+            Event::GamepadButtonUp { which, button, .. } => Event::GamepadButtonUp {
+                timestamp,
+                which,
+                button,
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    /// A mouse button event's kind (down or up), button, clicks, window
+    /// and place.
+    type Click = (bool, MouseButton, u8, u32, (f32, f32));
+
+    fn mouse_button(event: &Event) -> Option<Click> {
+        match *event {
+            Event::MouseButtonDown {
+                window_id,
+                mouse_btn,
+                clicks,
+                x,
+                y,
+                which: STICK_MOUSE,
+                ..
+            } => Some((true, mouse_btn, clicks, window_id, (x, y))),
+            Event::MouseButtonUp {
+                window_id,
+                mouse_btn,
+                clicks,
+                x,
+                y,
+                which: STICK_MOUSE,
+                ..
+            } => Some((false, mouse_btn, clicks, window_id, (x, y))),
+            _ => None,
+        }
+    }
+
+    fn motion(left: bool) -> Event {
+        Event::MouseMotion {
+            timestamp: 0,
+            window_id: MAIN,
+            which: 1,
+            mousestate: MouseState::from_sdl_state(u32::from(left)),
+            x: 5.0,
+            y: 5.0,
+            xrel: 1.0,
+            yrel: 0.0,
+        }
+    }
+
+    fn left_held(event: &Event) -> bool {
+        matches!(event, Event::MouseMotion { mousestate, .. } if mousestate.left())
+    }
+
+    #[test]
+    fn r3_clicks_for_the_emulators_screens_and_drags() {
+        let mut stick = stick_mouse();
+        let left = MouseButton::Left;
+        let down = clicked(&mut stick, r3_at(true, 0), StickRole::Screens, (10.0, 20.0));
+        assert_eq!(
+            mouse_button(&down),
+            Some((true, left, 1, MAIN, (10.0, 20.0)))
+        );
+        // The pointer moves with the button held...
+        assert!(left_held(&clicked(
+            &mut stick,
+            motion(false),
+            StickRole::Screens,
+            (0.0, 0.0)
+        )));
+        // ...and its release goes where the press went, wherever the
+        // pointer is and whatever has the stick by then.
+        let up = clicked(&mut stick, r3_at(false, 0), NO_CURSOR, (40.0, 20.0));
+        assert_eq!(
+            mouse_button(&up),
+            Some((false, left, 1, MAIN, (40.0, 20.0)))
+        );
+        assert!(!left_held(&clicked(
+            &mut stick,
+            motion(false),
+            StickRole::Screens,
+            (0.0, 0.0)
+        )));
+        // The program's R3 stays the program's, and its release too.
+        let mut stick = stick_mouse();
+        for role in [CURSOR, NO_CURSOR, StickRole::Hidden, StickRole::Off] {
+            let down = clicked(&mut stick, r3_at(true, 0), role, (0.0, 0.0));
+            assert!(matches!(down, Event::GamepadButtonDown { .. }), "{role:?}");
+            let up = clicked(&mut stick, r3_at(false, 0), StickRole::Screens, (0.0, 0.0));
+            assert!(matches!(up, Event::GamepadButtonUp { .. }), "{role:?}");
+        }
+        // Other buttons are left alone.
+        let a = clicked(
+            &mut stick,
+            pad_event(Button::South, true),
+            StickRole::Screens,
+            (0.0, 0.0),
+        );
+        assert!(matches!(
+            a,
+            Event::GamepadButtonDown {
+                button: Button::South,
+                ..
+            }
+        ));
+        // With the setting off, R3 clicks nothing, but a press made
+        // before still gets its release.
+        stick.on = false;
+        let down = clicked(&mut stick, r3_at(true, 0), StickRole::Screens, (0.0, 0.0));
+        assert!(matches!(down, Event::GamepadButtonDown { .. }));
+        let mut stick = stick_mouse();
+        clicked(&mut stick, r3_at(true, 0), StickRole::Screens, (0.0, 0.0));
+        stick.on = false;
+        let up = clicked(&mut stick, r3_at(false, 0), StickRole::Screens, (0.0, 0.0));
+        assert!(mouse_button(&up).is_some_and(|(down, ..)| !down));
+    }
+
+    #[test]
+    fn two_quick_presses_of_r3_in_one_place_double_click() {
+        let mut stick = stick_mouse();
+        let ms = 1_000_000;
+        let mut press = |t: u64, at: (f32, f32)| {
+            let down = clicked(&mut stick, r3_at(true, t), StickRole::Screens, at);
+            clicked(
+                &mut stick,
+                r3_at(false, t + 50 * ms),
+                StickRole::Screens,
+                at,
+            );
+            mouse_button(&down).map(|(_, _, clicks, ..)| clicks)
+        };
+        assert_eq!(press(1000 * ms, (100.0, 100.0)), Some(1));
+        assert_eq!(press(1300 * ms, (110.0, 90.0)), Some(2));
+        assert_eq!(press(1600 * ms, (110.0, 90.0)), Some(3));
+        // Too late, or too far.
+        assert_eq!(press(2200 * ms, (110.0, 90.0)), Some(1));
+        assert_eq!(press(2300 * ms, (150.0, 90.0)), Some(1));
+    }
+
+    #[test]
+    fn a_controller_gone_with_r3_down_lets_go_of_the_button() {
+        let mut stick = stick_mouse();
+        clicked(&mut stick, r3_at(true, 0), StickRole::Screens, (0.0, 0.0));
+        let gone = Event::GamepadRemoved {
+            timestamp: 0,
+            which: 7.into(),
+        };
+        clicked(&mut stick, gone, StickRole::Screens, (0.0, 0.0));
+        assert!(!left_held(&clicked(
+            &mut stick,
+            motion(false),
+            StickRole::Screens,
+            (0.0, 0.0)
+        )));
+        let down = clicked(&mut stick, r3_at(true, 0), StickRole::Screens, (0.0, 0.0));
+        assert!(mouse_button(&down).is_some());
     }
 }

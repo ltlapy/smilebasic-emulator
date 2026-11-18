@@ -114,14 +114,21 @@ The menu needs the mouse or keys.
 ## Gamepad as the mouse
 
 The right stick moves the mouse pointer while no program runs, and in a
-program that shows the mouse cursor, as on SmileBASIC 4. File > Settings >
-Input > *Right stick moves the mouse* turns it off. Holding − (Select) makes
-it work in any program; the program then does not see the right stick or R3.
+program that shows the mouse cursor, as on SmileBASIC 4. It also works on
+the menu bar, the emulator's windows and dialogs, and Projects while they are
+open over a program; the program then does not see the right stick or R3.
+Holding − (Select) makes it work in any program, which then does not see the
+right stick or R3 either. File > Settings > Input > *Right stick moves the
+mouse* turns it off.
+
+In the Simple UI the right stick is no mouse on the game list, the pause
+menu and the other screens of the Simple UI, or in a program's `DIALOG`.
 
 | Key | Action |
 |---|---|
 | Right stick | Move the mouse pointer |
-| R3 (press the right stick) | Left mouse button, which touches the screen |
+| R3 (press the right stick) | Left mouse button: clicks the emulator's menus and windows, or touches the program's screen |
+| R3 held and right stick | Drag |
 | − (Select) and right stick | Move the pointer in any program |
 | − (Select) and R3 | Left mouse button in any program |
 
