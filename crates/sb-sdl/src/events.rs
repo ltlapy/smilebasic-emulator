@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
+use sb_runtime::help::Help;
 use sb_runtime::machine::Machine;
 use sb_runtime::sound::bank::Bank;
 use sdl3::clipboard::ClipboardUtil;
@@ -16,17 +17,24 @@ use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
 use sdl3::video::Window;
 
-use crate::debug_panel::Typed;
+use crate::colors::ColorWindow;
+use crate::debug_panel::{DebugPanel, Hit, Typed};
 use crate::dialog::{Answer, Dialog};
 use crate::file_dialogs::FilePicker;
+use crate::menu::{Action, MenuBar};
 use crate::program_dialog::ProgramView;
-use crate::projects::{Memory, Outcome, Transfer};
+use crate::projects::{Memory, Outcome, ProjectManager, Transfer};
+use crate::settings_window::SettingsWindow;
+use crate::shortcuts::ShortcutsWindow;
 use crate::simple_ui::{self, GameList, Welcomed};
 use crate::toast::Toasts;
+use crate::window::{self, KeepShape};
 use crate::{
-    Asking, Beside, Debugger, FileDialog, Screens, Side, choose, choose_extra_font,
-    choose_sound_font, colors, debug_view, file_dialogs, help, index, load_edited, run_from_list,
-    save_edited, set_value, settings_window, shortcuts, side_outcome, simple_ui_leave,
+    Asking, Beside, Choice, Debugger, FileDialog, Screens, Side, about_lines, choose,
+    choose_extra_font, choose_sound_font, colors, condition_dialog, copy_selection, debug_action,
+    debug_view, file_dialogs, help, index, load_edited, main_room, open_file_dialog, open_folder,
+    open_help, open_index, paste, run_from_list, save_edited, set_value, set_window_scale,
+    settings_window, shape_free, shortcuts, side_outcome, simple_ui_leave, toggle_fullscreen,
     use_instruments,
 };
 
@@ -932,4 +940,199 @@ pub fn side_keys(event: &Event, side: &mut Beside, machine: &mut Machine) -> boo
     };
     side_outcome(&mut side.open, &mut side.focus, machine, outcome);
     taken
+}
+
+/// The clipboard, the help and who draws, for what the menu bar starts.
+pub struct Tools<'a> {
+    pub clipboard: &'a ClipboardUtil,
+    pub help: Option<&'a Help>,
+    /// As About says it.
+    pub drawn_by: &'a str,
+}
+
+/// The main window, for the View menu's items: the profile's display,
+/// what keeps the window's shape, and whether the window is the display
+/// of a console without a desktop.
+pub struct MainWindow<'a> {
+    pub window: &'a mut Window,
+    pub display: (u32, u32),
+    pub keep_shape: &'a mut KeepShape,
+    pub kms: bool,
+}
+
+/// Does what an item of the menu bar says.
+pub fn menu_action(
+    action: Action,
+    screens: &mut Screens,
+    side: &mut Beside,
+    bar: &mut MenuBar,
+    tools: Tools,
+    main: MainWindow,
+    cx: Ctx,
+) {
+    let Ctx {
+        machine,
+        toasts,
+        quit,
+        size,
+    } = cx;
+    match action {
+        Action::Quit => *quit = true,
+        action @ (Action::SaveSlot | Action::LoadSlot) => {
+            let save = action == Action::SaveSlot;
+            match open_file_dialog(machine, save, size) {
+                Ok(open) => screens.file_dialog = Some(open),
+                Err(refused) => screens.dialog = Some((*refused, Asking::Notice)),
+            }
+        }
+        Action::Undo => machine.edit().undo(),
+        Action::Redo => machine.edit().redo(),
+        action @ (Action::Cut | Action::Copy) => {
+            copy_selection(machine, tools.clipboard, toasts, action == Action::Cut)
+        }
+        Action::Paste => paste(machine, tools.clipboard, toasts),
+        Action::SelectAll => machine.edit().select_all(),
+        Action::Comment => machine.edit().comment(),
+        Action::Uncomment => machine.edit().uncomment(),
+        Action::Run => machine.sysreq(),
+        action @ (Action::Continue
+        | Action::StepInto
+        | Action::StepOver
+        | Action::StepOut
+        | Action::RunToCursor
+        | Action::JumpToCursor
+        | Action::ToggleBreakpoint
+        | Action::BreakpointCondition
+        | Action::ClearBreakpoints
+        | Action::Restart
+        | Action::DebugPanel) => {
+            let asks = debug_action(machine, action, toasts, size);
+            if asks.is_some() {
+                screens.dialog = asks;
+            }
+        }
+        Action::Help => {
+            if !machine.is_editing() {
+                machine.toggle_editor();
+            }
+            if let Some(panel) = open_help(machine, tools.help, toasts, size) {
+                side.open = Some(panel);
+                side.focus = true;
+                side.direct = false;
+            }
+        }
+        Action::Shortcuts => {
+            screens.shortcuts_window = Some(ShortcutsWindow::new(size));
+        }
+        Action::About => {
+            let lines = about_lines(tools.drawn_by);
+            let about = Dialog::notice("About", lines, size);
+            screens.dialog = Some((about, Asking::Notice));
+        }
+        Action::Projects => {
+            screens.manager = Some(ProjectManager::new(&machine.rt.storage, size));
+        }
+        Action::OpenFolder => open_folder(&machine.rt.storage, toasts),
+        Action::Stop => machine.stop(),
+        Action::SwitchFocus => {
+            machine.focus_sub(!machine.sub_has_focus());
+        }
+        Action::StopSub => machine.stop_sub(),
+        Action::Pause => bar.shown = !bar.shown,
+        Action::ToggleEditor => machine.toggle_editor(),
+        Action::EditSlot(slot) => machine.edit_slot(slot),
+        Action::Split => machine.toggle_split(),
+        Action::Index => {
+            if !machine.is_editing() {
+                machine.toggle_editor();
+            }
+            side.open = Some(open_index(machine, size));
+            side.focus = true;
+        }
+        command @ (Action::GoToLine | Action::Find | Action::Replace) => {
+            if !machine.is_editing() {
+                machine.toggle_editor();
+            }
+            let editor = machine.edit();
+            match command {
+                Action::GoToLine => editor.go_to_line(),
+                Action::Find => editor.start_find(false),
+                _ => editor.start_find(true),
+            }
+        }
+        Action::Settings => {
+            screens.settings_window = Some(SettingsWindow::new(size));
+        }
+        Action::EditColors => {
+            screens.color_window = Some(ColorWindow::new(size));
+        }
+        Action::ToggleFullscreen => {
+            toggle_fullscreen(main.window, &mut machine.rt.settings);
+        }
+        Action::WindowSize(i) => {
+            let settings = &mut machine.rt.settings;
+            set_window_scale(main.window, settings, main.display, window::SCALES[i].1);
+        }
+        Action::ToggleKeepShape => {
+            let on = !machine.rt.settings.keep_16_9;
+            machine.rt.settings.keep_16_9 = on;
+            // Put right at once where the window is not 16:9.
+            let free = !on || main.kms || shape_free(main.window);
+            let room = main_room(main.window);
+            if let Some((w, h)) = main
+                .keep_shape
+                .now(main.window.size(), free, main.display, room)
+            {
+                let _ = main.window.set_size(w, h);
+            }
+        }
+        toggle => toggle.toggle(&mut machine.rt.settings),
+    }
+}
+
+/// A click at `at` on the debugger's panel, the second of a double click
+/// if `double`.
+pub fn panel_click(
+    at: (i32, i32),
+    double: bool,
+    panel: &mut DebugPanel,
+    screens: &mut Screens,
+    clipboard: &ClipboardUtil,
+    cx: Ctx,
+) {
+    let Ctx {
+        machine,
+        toasts,
+        size,
+        ..
+    } = cx;
+    match panel.click(at, double) {
+        Some(Hit::Call(i)) => {
+            if let Some(call) = machine.calls().get(i) {
+                machine.show_line(call.slot, call.line);
+            }
+        }
+        Some(Hit::Close) => machine.show_panel(false),
+        // A breakpoint shows its line; a double click
+        // asks for its condition.
+        Some(Hit::Breakpoint(i)) => {
+            if let Some(&(slot, line, _)) = machine.all_breakpoints().get(i) {
+                machine.show_line(slot, line);
+                if double {
+                    screens.dialog = Some(condition_dialog(machine, slot, line, size));
+                }
+            }
+        }
+        Some(Hit::Variable(i)) if double => {
+            let _ = choose(
+                Choice::ChangeValue(i),
+                machine,
+                panel,
+                clipboard,
+                toasts,
+                size,
+            );
+        }
+        _ => {}
+    }
 }

@@ -1720,126 +1720,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } else {
                     Click::Ignored
                 } {
-                    Click::Chosen(Action::Quit) => quit = true,
-                    Click::Chosen(action @ (Action::SaveSlot | Action::LoadSlot)) => {
-                        let size = (display_w, display_h);
-                        let save = action == Action::SaveSlot;
-                        match open_file_dialog(machine, save, size) {
-                            Ok(open) => screens.file_dialog = Some(open),
-                            Err(refused) => screens.dialog = Some((*refused, Asking::Notice)),
-                        }
+                    Click::Chosen(action) => {
+                        let tools = events::Tools {
+                            clipboard: &clipboard,
+                            help: help.as_deref(),
+                            drawn_by: &paths.drawn_by,
+                        };
+                        let main = events::MainWindow {
+                            window: canvas.window_mut(),
+                            display: profile_display,
+                            keep_shape: &mut keep_shape,
+                            kms,
+                        };
+                        let (side, bar) = (&mut side_panel, &mut menu);
+                        events::menu_action(action, &mut screens, side, bar, tools, main, cx!());
                     }
-                    Click::Chosen(Action::Undo) => machine.edit().undo(),
-                    Click::Chosen(Action::Redo) => machine.edit().redo(),
-                    Click::Chosen(action @ (Action::Cut | Action::Copy)) => {
-                        copy_selection(machine, &clipboard, &mut toasts, action == Action::Cut)
-                    }
-                    Click::Chosen(Action::Paste) => paste(machine, &clipboard, &mut toasts),
-                    Click::Chosen(Action::SelectAll) => machine.edit().select_all(),
-                    Click::Chosen(Action::Comment) => machine.edit().comment(),
-                    Click::Chosen(Action::Uncomment) => machine.edit().uncomment(),
-                    Click::Chosen(Action::Run) => machine.sysreq(),
-                    Click::Chosen(
-                        action @ (Action::Continue
-                        | Action::StepInto
-                        | Action::StepOver
-                        | Action::StepOut
-                        | Action::RunToCursor
-                        | Action::JumpToCursor
-                        | Action::ToggleBreakpoint
-                        | Action::BreakpointCondition
-                        | Action::ClearBreakpoints
-                        | Action::Restart
-                        | Action::DebugPanel),
-                    ) => {
-                        let size = (display_w, display_h);
-                        screens.dialog =
-                            debug_action(machine, action, &mut toasts, size).or(screens.dialog);
-                    }
-                    Click::Chosen(Action::Help) => {
-                        if !machine.is_editing() {
-                            machine.toggle_editor();
-                        }
-                        let size = (display_w, display_h);
-                        if let Some(panel) = open_help(machine, help.as_deref(), &mut toasts, size)
-                        {
-                            side_panel.open = Some(panel);
-                            side_panel.focus = true;
-                            side_panel.direct = false;
-                        }
-                    }
-                    Click::Chosen(Action::Shortcuts) => {
-                        screens.shortcuts_window =
-                            Some(ShortcutsWindow::new((display_w, display_h)));
-                    }
-                    Click::Chosen(Action::About) => {
-                        let lines = about_lines(&paths.drawn_by);
-                        let about = Dialog::notice("About", lines, (display_w, display_h));
-                        screens.dialog = Some((about, Asking::Notice));
-                    }
-                    Click::Chosen(Action::Projects) => {
-                        let size = (display_w, display_h);
-                        screens.manager = Some(ProjectManager::new(&machine.rt.storage, size));
-                    }
-                    Click::Chosen(Action::OpenFolder) => {
-                        open_folder(&machine.rt.storage, &mut toasts)
-                    }
-                    Click::Chosen(Action::Stop) => machine.stop(),
-                    Click::Chosen(Action::SwitchFocus) => {
-                        machine.focus_sub(!machine.sub_has_focus());
-                    }
-                    Click::Chosen(Action::StopSub) => machine.stop_sub(),
-                    Click::Chosen(Action::Pause) => menu.shown = !menu.shown,
-                    Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
-                    Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
-                    Click::Chosen(Action::Split) => machine.toggle_split(),
-                    Click::Chosen(Action::Index) => {
-                        if !machine.is_editing() {
-                            machine.toggle_editor();
-                        }
-                        side_panel.open = Some(open_index(machine, (display_w, display_h)));
-                        side_panel.focus = true;
-                    }
-                    Click::Chosen(
-                        command @ (Action::GoToLine | Action::Find | Action::Replace),
-                    ) => {
-                        if !machine.is_editing() {
-                            machine.toggle_editor();
-                        }
-                        let editor = machine.edit();
-                        match command {
-                            Action::GoToLine => editor.go_to_line(),
-                            Action::Find => editor.start_find(false),
-                            _ => editor.start_find(true),
-                        }
-                    }
-                    Click::Chosen(Action::Settings) => {
-                        screens.settings_window = Some(SettingsWindow::new((display_w, display_h)));
-                    }
-                    Click::Chosen(Action::EditColors) => {
-                        screens.color_window = Some(ColorWindow::new((display_w, display_h)));
-                    }
-                    Click::Chosen(Action::ToggleFullscreen) => {
-                        toggle_fullscreen(canvas.window_mut(), &mut machine.rt.settings);
-                    }
-                    Click::Chosen(Action::WindowSize(i)) => {
-                        let (main, settings) = (canvas.window_mut(), &mut machine.rt.settings);
-                        set_window_scale(main, settings, profile_display, window::SCALES[i].1);
-                    }
-                    Click::Chosen(Action::ToggleKeepShape) => {
-                        let on = !machine.rt.settings.keep_16_9;
-                        machine.rt.settings.keep_16_9 = on;
-                        // Put right at once where the window is not 16:9.
-                        let main = canvas.window_mut();
-                        let free = !on || kms || shape_free(main);
-                        let room = main_room(main);
-                        if let Some((w, h)) =
-                            keep_shape.now(main.size(), free, profile_display, room)
-                        {
-                            let _ = main.set_size(w, h);
-                        }
-                    }
-                    Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Ignored
                         if let Some(open) = &mut side_panel.open
                             && editor_window
@@ -1857,38 +1752,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                     }
                     Click::Ignored if on_editor && debugger.panel.contains(to_display(x, y)) => {
-                        match debugger.panel.click(to_display(x, y), clicks == 2) {
-                            Some(Hit::Call(i)) => {
-                                if let Some(call) = machine.calls().get(i) {
-                                    machine.show_line(call.slot, call.line);
-                                }
-                            }
-                            Some(Hit::Close) => machine.show_panel(false),
-                            // A breakpoint shows its line; a double click
-                            // asks for its condition.
-                            Some(Hit::Breakpoint(i)) => {
-                                if let Some(&(slot, line, _)) = machine.all_breakpoints().get(i) {
-                                    machine.show_line(slot, line);
-                                    if clicks == 2 {
-                                        let size = (display_w, display_h);
-                                        screens.dialog =
-                                            Some(condition_dialog(machine, slot, line, size));
-                                    }
-                                }
-                            }
-                            Some(Hit::Variable(i)) if clicks == 2 => {
-                                let panel = &mut debugger.panel;
-                                let _ = choose(
-                                    Choice::ChangeValue(i),
-                                    machine,
-                                    panel,
-                                    &clipboard,
-                                    &mut toasts,
-                                    (display_w, display_h),
-                                );
-                            }
-                            _ => {}
-                        }
+                        let (at, double) = (to_display(x, y), clicks == 2);
+                        let panel = &mut debugger.panel;
+                        events::panel_click(at, double, panel, &mut screens, &clipboard, cx!());
                     }
                     Click::Ignored if on_editor => {
                         side_panel.focus = false;
