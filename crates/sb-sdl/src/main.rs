@@ -20,6 +20,7 @@ mod layer;
 mod menu;
 mod pacing;
 mod pad_repeat;
+mod placement;
 mod pointer;
 mod popup;
 mod preview;
@@ -60,6 +61,7 @@ use index::IndexPanel;
 use keyhint::KeyHint;
 use layer::Layer;
 use menu::{Action, Click, Context, MenuBar};
+use placement::{Mapping, display_rect, editor_filter, from_corner, screen_place, windows_rect};
 use popup::Popup;
 use program_dialog::ProgramView;
 use projects::{Memory, Outcome, ProjectManager, Transfer};
@@ -485,7 +487,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut pointer_space = (mode.width, mode.height);
     // Where the editor's frame was drawn, if that frame was the
     // editor's laid out for the main window's room (see
-    // `window::editor_fill`), where the pointer maps through it: always
+    // `placement::editor_fill`), where the pointer maps through it: always
     // but in the Simple UI.
     let mut filled_editor: Option<FRect> = None;
     let mut menu = MenuBar::default();
@@ -502,7 +504,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut bar_layers: [Layer; 2] = Default::default();
     let mut overlay_layers: [Layer; 2] = Default::default();
     // The main window's open menus and context menu, where they go apart
-    // from its display at 1x (see `window::menu_place`).
+    // from its display at 1x (see `placement::menu_place`).
     let mut menu_layer = Layer::default();
     // The emulator's windows on the editor's window, at the display's size.
     let mut windows_layer = Layer::default();
@@ -1056,17 +1058,19 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let screen_h = display.h.min(out_h as f32);
         let main_ui_h = match simple_ui {
             true => display_h,
-            false => window::ui_height(display, display_h, out_h),
+            false => placement::ui_height(display, display_h, out_h),
         };
         let (shown, _) = match (simple_ui, filled_editor) {
             (true, _) => screen_place(&mode, settings, true, out_w, screen_h),
             (false, Some(rect)) => (rect, filter),
-            (false, None) => window::screen_place(&mode, settings, (out_w, out_h), display),
+            (false, None) => {
+                placement::desktop_screen_place(&mode, settings, (out_w, out_h), display)
+            }
         };
         // The main window's menus at 1x where its display is scaled below.
         let menus_apart = match simple_ui {
             true => None,
-            false => window::menu_place(display, display_w, (out_w, out_h)),
+            false => placement::menu_place(display, display_w, (out_w, out_h)),
         };
         let main_map = Mapping {
             px: out_w as f32 / win_w.max(1) as f32,
@@ -3232,17 +3236,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let rect;
         (rect, filter) = match simple_ui {
             true => screen_place(&mode, settings, true, out_w, screen_h),
-            false => window::screen_place(&mode, settings, (out_w, out_h), display),
+            false => placement::desktop_screen_place(&mode, settings, (out_w, out_h), display),
         };
         let editing = machine.is_editing() && !machine.is_detached();
         // The main window's editor laid out for the room it has, under the
         // menu bar as the window shows it. The Simple UI keeps SmileBASIC
         // 4's frame, scaled to where the screen goes.
         let fill = (!simple_ui).then(|| {
-            let scale = window::menu_scale(display, display_w, (out_w, out_h));
+            let scale = placement::menu_scale(display, display_w, (out_w, out_h));
             let bar = (MenuBar::HEIGHT as f32 * scale).ceil() as u32;
             let look = (settings.editor_font, settings.editor_size);
-            window::editor_fill(display, (out_w, out_h), look, bar)
+            placement::editor_fill(display, (out_w, out_h), look, bar)
         });
         if !apart {
             machine.set_editor_area(fill.map(|fill| fill.area));
@@ -3486,7 +3490,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // pixel out and two in, then a dark band two pixels wide, fading
         // out together.
         if let Some((rect, alpha)) = machine.focus_border() {
-            let [x, y, w, h] = window::border_rect(rect, (display_w, display_h), main_ui_h);
+            let [x, y, w, h] = placement::border_rect(rect, (display_w, display_h), main_ui_h);
             let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
             let place = |x: i32, y: i32, w: i32, h: i32| {
                 let at = |v: i32, s: f32| v as f32 * s;
@@ -4244,62 +4248,6 @@ fn window_place(window: &Window) -> [i32; 4] {
 fn on_a_display([x, y, w, h]: [i32; 4], displays: &[Rect]) -> bool {
     let place = Rect::new(x, y, w.max(1) as u32, h.max(1) as u32);
     displays.iter().any(|d| d.contains_rect(place))
-}
-
-/// How a window's pointer positions map to the display's pixels and to
-/// those of the frame shown in `shown`, which has `space` pixels.
-#[derive(Clone, Copy)]
-struct Mapping {
-    /// Pixels to a window coordinate.
-    px: f32,
-    display: FRect,
-    display_w: u32,
-    shown: FRect,
-    space: (u32, u32),
-    /// The menus' top left corner in the window's pixels, where they go
-    /// apart at 1x (see [`window::menu_place`]); `None` where they are on
-    /// the display.
-    menu: Option<(f32, f32)>,
-}
-
-impl Mapping {
-    /// The menu bar's pixel under a window position: the display's, or
-    /// the 1x one of menus apart.
-    fn to_menu(self, x: f32, y: f32) -> (i32, i32) {
-        match self.menu {
-            Some((mx, my)) => (
-                (x * self.px - mx).floor() as i32,
-                (y * self.px - my).floor() as i32,
-            ),
-            None => self.to_display(x, y),
-        }
-    }
-
-    fn to_display(self, x: f32, y: f32) -> (i32, i32) {
-        let scale = self.display.w / self.display_w as f32;
-        (
-            ((x * self.px - self.display.x) / scale) as i32,
-            ((y * self.px - self.display.y) / scale) as i32,
-        )
-    }
-
-    fn to_screen(self, x: f32, y: f32) -> (i32, i32) {
-        let (shown, (w, h)) = (self.shown, self.space);
-        (
-            ((x * self.px - shown.x) * w as f32 / shown.w).floor() as i32,
-            ((y * self.px - shown.y) * h as f32 / shown.h).floor() as i32,
-        )
-    }
-
-    /// The window coordinates of the middle of the screen's or the
-    /// editor's pixel (x, y), which [`Mapping::to_screen`] maps back.
-    fn screen_to_window(self, x: i32, y: i32) -> (f32, f32) {
-        let (shown, (w, h)) = (self.shown, self.space);
-        (
-            (shown.x + (x as f32 + 0.5) * shown.w / w as f32) / self.px,
-            (shown.y + (y as f32 + 0.5) * shown.h / h as f32) / self.px,
-        )
-    }
 }
 
 /// Plays with SmileBASIC 4's instruments when they are imported and
@@ -5362,34 +5310,6 @@ fn load_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
     }
 }
 
-/// Where the display (emulator UI coordinates) goes in a window of
-/// `out_w` x `out_h` pixels: scaled to fit, centered across and at the
-/// top, so the menu bar stays at the window's top in a narrow window.
-fn display_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> FRect {
-    let scale = (out_w as f32 / width as f32).min(out_h as f32 / height as f32);
-    let (w, h) = (width as f32 * scale, height as f32 * scale);
-    FRect::new((out_w as f32 - w) / 2.0, 0.0, w, h)
-}
-
-/// Where the display goes on the editor's own window for the emulator's
-/// windows over it: centered, at the UI's scale `ui` or the largest whole
-/// number below it that fits, or else scaled down to fit.
-fn windows_rect((w, h): (u32, u32), (out_w, out_h): (u32, u32), ui: u32) -> FRect {
-    let fits = (out_w / w.max(1)).min(out_h / h.max(1)).min(ui);
-    let scale = match fits {
-        0 => (out_w as f32 / w as f32).min(out_h as f32 / h as f32),
-        n => n as f32,
-    };
-    let (sw, sh) = (w as f32 * scale, h as f32 * scale);
-    let at = |out: u32, size: f32| ((out as f32 - size) / 2.0).floor();
-    FRect::new(at(out_w, sw), at(out_h, sh), sw, sh)
-}
-
-/// A rectangle of `w` x `h` pixels from a window's top left corner.
-fn from_corner((w, h): (u32, u32)) -> FRect {
-    FRect::new(0.0, 0.0, w as f32, h as f32)
-}
-
 /// The size of a texture's frames and how they are scaled.
 type TextureKind = ((u32, u32), Filter);
 
@@ -5517,64 +5437,6 @@ impl<'a> SmartFrame<'a> {
     }
 }
 
-/// Where the screen goes in a window `out_w` pixels wide whose display
-/// is `out_h` high: centered in the display, at XSCREEN's aspect ratio,
-/// and scaled to fit, in every composite mode. The sharp choice in View >
-/// Screen filter, `screen_filter`'s own Nearest, keeps to whole factors,
-/// which SmileBASIC 4 does not do, where the screen fits once; in a
-/// smaller window it is scaled down to fit, as the other choices are.
-fn screen_rect(mode: &ScreenMode, screen_filter: Option<Filter>, out_w: u32, out_h: f32) -> FRect {
-    let height = mode.height as f32;
-    let width = height * mode.aspect() as f32;
-    let fit = (out_w as f32 / width).min(out_h / height);
-    let scale = match screen_filter {
-        Some(Filter::Nearest) if fit >= 1.0 => fit.floor(),
-        _ => fit,
-    };
-    let (w, h) = (width * scale, height * scale);
-    FRect::new((out_w as f32 - w) / 2.0, (out_h - h) / 2.0, w, h)
-}
-
-/// Where the screen goes, as [`screen_rect`] says, and the filter it is
-/// scaled with: View > Screen filter's on the desktop. The Simple UI
-/// always fits the screen to the display and has a filter setting of its
-/// own, as its display seldom holds the screen a whole number of times.
-fn screen_place(
-    mode: &ScreenMode,
-    settings: &Settings,
-    simple_ui: bool,
-    out_w: u32,
-    out_h: f32,
-) -> (FRect, Filter) {
-    if simple_ui {
-        let rect = screen_rect(mode, None, out_w, out_h);
-        let filter = simple_ui::screen_filter(settings.simple_ui_filter, mode, (rect.w, rect.h));
-        return (rect, filter);
-    }
-    let chosen = settings.screen_filter;
-    let rect = screen_rect(mode, chosen, out_w, out_h);
-    // Nearest would leave out whole rows and columns of a screen shrunk
-    // to fit a small window.
-    match chosen.unwrap_or(mode.filter) {
-        Filter::Nearest if rect.h < mode.height as f32 => (rect, Filter::Bilinear),
-        filter => (rect, filter),
-    }
-}
-
-/// How the Simple UI's editor frame, SmileBASIC 4's, is scaled into
-/// `rect`: sharp when it fits a whole number of times, and otherwise with
-/// the pixel art filter, unless the screen is filtered smoothly.
-fn editor_filter(rect: FRect, (_, h): (u32, u32), filter: Filter) -> Filter {
-    let scale = rect.h / h as f32;
-    if (scale - scale.round()).abs() < 0.001 {
-        Filter::Nearest
-    } else if filter == Filter::Bilinear {
-        Filter::Bilinear
-    } else {
-        Filter::SmartNearest
-    }
-}
-
 /// Makes the editor's characters a size smaller, back to the largest
 /// after the smallest, as F2 and Ctrl+B do. In the window `room` gives,
 /// as [`editor_layout::next_size`] takes it, sizes that look the same as
@@ -5684,118 +5546,6 @@ fn as_bytes(pixels: &[u32]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn the_screen_fits_the_display_in_every_mode() {
-        let mode = |width, height, aspect| ScreenMode {
-            aspect,
-            ..ScreenMode::new(width, height)
-        };
-        let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
-        let show = |m: &ScreenMode| box_of(screen_rect(m, None, 1280, 720.0));
-        assert_eq!(show(&mode(400, 240, None)), (40.0, 0.0, 1200.0, 720.0));
-        assert_eq!(show(&mode(1000, 600, None)), (40.0, 0.0, 1200.0, 720.0));
-        assert_eq!(show(&mode(400, 240, Some(1.0))), (280.0, 0.0, 720.0, 720.0));
-        // At other window sizes too.
-        let tall = box_of(screen_rect(&mode(400, 240, None), None, 800, 900.0));
-        assert_eq!(tall, (0.0, 210.0, 800.0, 480.0));
-        // The menu's sharp choice keeps to whole factors.
-        let sharp = screen_rect(&mode(1000, 600, None), Some(Filter::Nearest), 1280, 720.0);
-        assert_eq!(box_of(sharp), (140.0, 60.0, 1000.0, 600.0));
-        let sharp = screen_rect(&mode(400, 240, None), Some(Filter::Bilinear), 1000, 720.0);
-        assert_eq!(box_of(sharp), (0.0, 60.0, 1000.0, 600.0));
-        // A screen larger than the window is scaled down to fit it, as on
-        // a 640x480 output, where the display is 640x360.
-        let large = |w, h| screen_rect(&mode(w, h, None), Some(Filter::Nearest), 640, 360.0);
-        assert_eq!(box_of(large(640, 480)), (80.0, 0.0, 480.0, 360.0));
-        assert_eq!(box_of(large(1280, 720)), (0.0, 0.0, 640.0, 360.0));
-        assert_eq!(box_of(large(400, 240)), (120.0, 60.0, 400.0, 240.0));
-    }
-
-    #[test]
-    fn a_simple_ui_screen_fills_the_output() {
-        use sb_runtime::settings::{SimpleUiFilter, SimpleUiSize};
-        let mode = ScreenMode::new(400, 240);
-        let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
-        let out = (640, 480);
-        let ui = simple_ui::ui_size(out, SimpleUiSize::Normal);
-        let display = simple_ui::display_rect(ui, out, SimpleUiSize::Normal);
-        let settings = |simple_ui_filter| Settings {
-            screen_filter: Some(Filter::Nearest),
-            simple_ui_filter,
-            ..Settings::default()
-        };
-        let place = |mode: &ScreenMode, chosen, simple_ui| {
-            let (rect, filter) = screen_place(mode, &settings(chosen), simple_ui, out.0, display.h);
-            (box_of(rect), filter)
-        };
-        // Whatever the filter, it fits at 1.6 times.
-        for chosen in SimpleUiFilter::ALL {
-            assert_eq!(place(&mode, chosen, true).0, (0.0, 48.0, 640.0, 384.0));
-        }
-        assert_eq!(
-            place(&mode, SimpleUiFilter::Auto, true).1,
-            Filter::SmartNearest
-        );
-        assert_eq!(
-            place(&mode, SimpleUiFilter::Nearest, true).1,
-            Filter::Nearest
-        );
-        assert_eq!(
-            place(&mode, SimpleUiFilter::Xscreen, true).1,
-            Filter::Bilinear
-        );
-        // On the desktop the sharp choice keeps to whole factors, and the
-        // Simple UI's setting is not looked at.
-        let desktop = ((120.0, 120.0, 400.0, 240.0), Filter::Nearest);
-        for chosen in SimpleUiFilter::ALL {
-            assert_eq!(place(&mode, chosen, false), desktop);
-        }
-        // On the desktop at 640x480 the display is 640x360, and a screen
-        // shrunk to fit it is scaled smoothly, as Nearest would leave rows
-        // out.
-        let tall = ScreenMode::new(640, 480);
-        let (rect, filter) =
-            screen_place(&tall, &settings(SimpleUiFilter::Auto), false, 640, 360.0);
-        assert_eq!(
-            (box_of(rect), filter),
-            ((80.0, 0.0, 480.0, 360.0), Filter::Bilinear)
-        );
-        let (rect, filter) =
-            screen_place(&mode, &settings(SimpleUiFilter::Auto), false, 640, 360.0);
-        assert_eq!(
-            (box_of(rect), filter),
-            ((120.0, 60.0, 400.0, 240.0), Filter::Nearest)
-        );
-        // A 4:3 mode fills the screen, at a whole factor; XSCREEN's
-        // largest is half its size.
-        let square = ScreenMode::new(320, 240);
-        let full = ((0.0, 0.0, 640.0, 480.0), Filter::Nearest);
-        assert_eq!(place(&square, SimpleUiFilter::Auto, true), full);
-        let large = ScreenMode::new(1280, 720);
-        let half = ((0.0, 60.0, 640.0, 360.0), Filter::Bilinear);
-        assert_eq!(place(&large, SimpleUiFilter::Auto, true), half);
-        // The UI's size leaves the program's screen as it is.
-        let large_ui = simple_ui::ui_size(out, SimpleUiSize::Large);
-        assert_eq!(large_ui, (320, 240));
-        let large_display = simple_ui::display_rect(large_ui, out, SimpleUiSize::Large);
-        assert_eq!(box_of(large_display), box_of(display));
-        // Medium's UI goes past the output by part of a pixel, and the
-        // screen stays on the output, where Normal puts it.
-        for out in [(640, 480), (1280, 720), (1280, 800)] {
-            let at = |size| {
-                let display = simple_ui::display_rect(simple_ui::ui_size(out, size), out, size);
-                let screen_h = display.h.min(out.1 as f32);
-                let (rect, _) = screen_place(&mode, &Settings::default(), true, out.0, screen_h);
-                box_of(rect)
-            };
-            assert_eq!(
-                at(SimpleUiSize::Medium),
-                at(SimpleUiSize::Normal),
-                "{out:?}"
-            );
-        }
-    }
-
-    #[test]
     fn the_command_line_takes_simple_ui_and_a_program() {
         let args = |list: &[&str]| list.iter().map(|a| a.to_string()).collect::<Vec<_>>();
         assert_eq!(parse_args(&args(&[])), Some((None, false)));
@@ -5837,19 +5587,6 @@ mod tests {
         assert_eq!(input_screen(false, false, Some(3), None), 5);
         // Each tells the pad's repeat a new screen started.
         assert_ne!(input_screen(false, false, None, Some(0)), 2);
-    }
-
-    #[test]
-    fn windows_over_the_editor_keep_whole_pixels_where_they_fit() {
-        let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
-        let place = |out, ui| box_of(windows_rect((1280, 720), out, ui));
-        assert_eq!(place((1500, 850), 1), (110.0, 65.0, 1280.0, 720.0));
-        // No larger than the UI's scale, however large the window.
-        assert_eq!(place((3000, 2000), 1), (860.0, 640.0, 1280.0, 720.0));
-        assert_eq!(place((3000, 2000), 2), (220.0, 280.0, 2560.0, 1440.0));
-        assert_eq!(place((2000, 1440), 3), (360.0, 360.0, 1280.0, 720.0));
-        // Smaller than the display, they are scaled down to fit.
-        assert_eq!(place((640, 720), 2), (0.0, 180.0, 640.0, 360.0));
     }
 
     use super::*;

@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn desktop_windows() {
         let at = |out: (u32, u32)| {
-            let display = crate::display_rect(1280, 720, out.0, out.1);
+            let display = crate::placement::display_rect(1280, 720, out.0, out.1);
             sampling(display.w / 1280.0)
         };
         assert_eq!(at((1280, 720)), Sampling::Nearest);
