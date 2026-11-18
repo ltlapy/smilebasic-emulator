@@ -637,18 +637,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // Where the list was left, and the program it ran last, for Restart.
     let mut list_memory = simple_ui::Memory::default();
     let mut ran_from_list = restart;
-    // The debugger's panel below the editor, and the stop it last showed.
-    let mut debug_panel = DebugPanel::default();
-    let mut shown_stop = None;
-    // Whether the panel showed in the last frame.
-    let mut panel_was_shown = false;
-    // The menu a right click opens on the editor or the debugger's panel.
-    let mut debug_menu: Option<Popup<Choice>> = None;
-    // A panel beside the editor, and whether it takes the keys.
-    let mut side: Option<Side> = None;
-    let mut side_focus = false;
-    // The help was opened in direct mode, over the screen.
-    let mut side_direct = false;
+    // The debugger's panel below the editor, and the help or the index
+    // beside it.
+    let mut debugger = Debugger::default();
+    let mut side_panel = Beside::default();
 
     let mut events = sdl.event_pump()?;
     let mut pacer = pacing::Pacer::new(Instant::now());
@@ -969,7 +961,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let size = (display_w, display_h);
             menu.shown |= bench.opens("menu");
             if bench.opens("help") {
-                side = open_help(machine, help.as_deref(), &mut toasts, size);
+                side_panel.open = open_help(machine, help.as_deref(), &mut toasts, size);
             }
             if bench.opens("about") {
                 let lines = about_lines(&paths.drawn_by);
@@ -1437,8 +1429,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if matches!(event, Event::KeyDown { .. }) {
                 inputs.eat_text = screens.any()
                     || program_dialog.is_some()
-                    || debug_panel.typing()
-                    || (side.is_some() && side_focus);
+                    || debugger.panel.typing()
+                    || (side_panel.open.is_some() && side_panel.focus);
             }
             // Only the main window's pointer reaches the program, and only
             // the window with the emulator's windows takes theirs.
@@ -1472,8 +1464,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     machine.rt.settings.fullscreen = desktop;
                     let _ = window.set_fullscreen(true);
                     // What needs a keyboard or a mouse closes.
-                    (screens.manager, screens.file_dialog, side, debug_menu) =
-                        (None, None, None, None);
+                    (
+                        screens.manager,
+                        screens.file_dialog,
+                        side_panel.open,
+                        debugger.menu,
+                    ) = (None, None, None, None);
                     (
                         screens.settings_window,
                         screens.shortcuts_window,
@@ -1650,7 +1646,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     mouse_btn: MouseButton::Left,
                     ..
                 } => {
-                    debug_panel.release();
+                    debugger.panel.release();
                     inputs.dragging = false;
                 }
                 // The + button acts when let go, unless it was held until
@@ -1709,7 +1705,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     continue;
                 }
             }
-            let side_window = if side_direct {
+            let side_window = if side_panel.direct {
                 !from_editor
             } else {
                 editor_window
@@ -1726,7 +1722,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             {
                 continue;
             }
-            if let (Some(open), true) = (&mut side, side_window) {
+            if let (Some(open), true) = (&mut side_panel.open, side_window) {
                 match event {
                     Event::MouseWheel {
                         y,
@@ -1749,13 +1745,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 ..
             } = event
                 && editor_window
-                && debug_panel.contains(to_display(mouse_x, mouse_y))
+                && debugger.panel.contains(to_display(mouse_x, mouse_y))
             {
-                let shown = debug_view(machine, &debug_panel).scrolled();
-                debug_panel.wheel(-y.round() as i32, shown);
+                let shown = debug_view(machine, &debugger.panel).scrolled();
+                debugger.panel.wheel(-y.round() as i32, shown);
                 continue;
             }
-            if let (Some(open), true) = (&mut debug_menu, editor_window) {
+            if let (Some(open), true) = (&mut debugger.menu, editor_window) {
                 match event {
                     Event::MouseMotion { x, y, .. } => open.hover(to_menu(x, y)),
                     Event::MouseButtonDown {
@@ -1764,9 +1760,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         let chosen = (mouse_btn == MouseButton::Left)
                             .then(|| open.click(to_menu(x, y)))
                             .flatten();
-                        debug_menu = None;
+                        debugger.menu = None;
                         if let Some(choice) = chosen {
-                            let panel = &mut debug_panel;
+                            let panel = &mut debugger.panel;
                             let size = (display_w, display_h);
                             let asks =
                                 choose(choice, machine, panel, &clipboard, &mut toasts, size);
@@ -1775,30 +1771,30 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         continue;
                     }
                     Event::KeyDown { .. } => {
-                        debug_menu = None;
+                        debugger.menu = None;
                         continue;
                     }
                     _ => {}
                 }
             }
-            if debug_panel.typing() && editor_window {
+            if debugger.panel.typing() && editor_window {
                 match event {
                     Event::KeyDown {
                         keycode: Some(key), ..
                     } => {
-                        if let Typed::Value(name, text) = debug_panel.key(key) {
-                            set_value(machine, &debug_panel, &name, &text, &mut toasts);
+                        if let Typed::Value(name, text) = debugger.panel.key(key) {
+                            set_value(machine, &debugger.panel, &name, &text, &mut toasts);
                         }
                         continue;
                     }
                     Event::TextInput { text, .. } => {
-                        debug_panel.text(&text);
+                        debugger.panel.text(&text);
                         continue;
                     }
                     _ => {}
                 }
             }
-            if let (Some(open), true) = (&mut side, side_focus && side_window) {
+            if let (Some(open), true) = (&mut side_panel.open, side_panel.focus && side_window) {
                 let (taken, outcome) = match (open, &event) {
                     (
                         Side::Help(help),
@@ -1833,7 +1829,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     (_, Event::TextInput { .. }) => (true, index::Outcome::Stay),
                     _ => (false, index::Outcome::Stay),
                 };
-                side_outcome(&mut side, &mut side_focus, machine, outcome);
+                side_outcome(
+                    &mut side_panel.open,
+                    &mut side_panel.focus,
+                    machine,
+                    outcome,
+                );
                 if taken {
                     continue;
                 }
@@ -1883,7 +1884,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         menu.mouse_move(Some(to_menu(x, y)));
                     }
                     if editor_window {
-                        debug_panel.motion(to_display(x, y), mousestate.left());
+                        debugger.panel.motion(to_display(x, y), mousestate.left());
                     }
                     // A button let go where this loop did not see it ends
                     // the selection too.
@@ -1901,7 +1902,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         menu.mouse_move(None);
                     }
                     if editor_window {
-                        debug_panel.leave();
+                        debugger.panel.leave();
                     }
                 }
                 // A right click on the editor or the debugger's panel opens a
@@ -1912,13 +1913,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     y,
                     ..
                 } if on_editor
-                    && !side
+                    && !side_panel
+                        .open
                         .as_ref()
                         .is_some_and(|s| s.frame().contains(to_display(x, y))) =>
                 {
                     let at = to_display(x, y);
-                    let items = if debug_panel.contains(at) {
-                        panel_menu(machine, &debug_panel, at)
+                    let items = if debugger.panel.contains(at) {
+                        panel_menu(machine, &debugger.panel, at)
                     } else {
                         let (x, y) = to_screen(x, y);
                         if !machine.editor().has_selection() {
@@ -1929,7 +1931,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     // In the menus' pixels, which may be apart from the
                     // display's.
                     let room = popup_room[usize::from(apart)];
-                    debug_menu = Some(Popup::new(to_menu(x, y), items, room));
+                    debugger.menu = Some(Popup::new(to_menu(x, y), items, room));
                 }
                 Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
@@ -1989,9 +1991,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         let size = (display_w, display_h);
                         if let Some(panel) = open_help(machine, help.as_deref(), &mut toasts, size)
                         {
-                            side = Some(panel);
-                            side_focus = true;
-                            side_direct = false;
+                            side_panel.open = Some(panel);
+                            side_panel.focus = true;
+                            side_panel.direct = false;
                         }
                     }
                     Click::Chosen(Action::Shortcuts) => {
@@ -2023,8 +2025,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         if !machine.is_editing() {
                             machine.toggle_editor();
                         }
-                        side = Some(open_index(machine, (display_w, display_h)));
-                        side_focus = true;
+                        side_panel.open = Some(open_index(machine, (display_w, display_h)));
+                        side_panel.focus = true;
                     }
                     Click::Chosen(
                         command @ (Action::GoToLine | Action::Find | Action::Replace),
@@ -2067,18 +2069,23 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Ignored
-                        if let Some(open) = &mut side
+                        if let Some(open) = &mut side_panel.open
                             && editor_window
                             && open.frame().contains(to_display(x, y)) =>
                     {
-                        side_focus = true;
+                        side_panel.focus = true;
                         if let Side::Index(index, _) = open {
                             let outcome = index.click(to_display(x, y));
-                            side_outcome(&mut side, &mut side_focus, machine, outcome);
+                            side_outcome(
+                                &mut side_panel.open,
+                                &mut side_panel.focus,
+                                machine,
+                                outcome,
+                            );
                         }
                     }
-                    Click::Ignored if on_editor && debug_panel.contains(to_display(x, y)) => {
-                        match debug_panel.click(to_display(x, y), clicks == 2) {
+                    Click::Ignored if on_editor && debugger.panel.contains(to_display(x, y)) => {
+                        match debugger.panel.click(to_display(x, y), clicks == 2) {
                             Some(Hit::Call(i)) => {
                                 if let Some(call) = machine.calls().get(i) {
                                     machine.show_line(call.slot, call.line);
@@ -2098,7 +2105,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                                 }
                             }
                             Some(Hit::Variable(i)) if clicks == 2 => {
-                                let panel = &mut debug_panel;
+                                let panel = &mut debugger.panel;
                                 let _ = choose(
                                     Choice::ChangeValue(i),
                                     machine,
@@ -2112,7 +2119,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                     }
                     Click::Ignored if on_editor => {
-                        side_focus = false;
+                        side_panel.focus = false;
                         let (x, y) = to_screen(x, y);
                         if !machine.editor_margin_click(x, y) {
                             let extend = shift(keyboard.mod_state());
@@ -2314,9 +2321,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 {
                     let size = (display_w, display_h);
                     if let Some(panel) = open_help(machine, help.as_deref(), &mut toasts, size) {
-                        side = Some(panel);
-                        side_focus = true;
-                        side_direct = !on_editor;
+                        side_panel.open = Some(panel);
+                        side_panel.focus = true;
+                        side_panel.direct = !on_editor;
                     }
                 }
                 // Simple save and load, as SmileBASIC 4 has them.
@@ -2372,8 +2379,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Keycode::_0 | Keycode::Kp0 => machine.toggle_editor(),
                     Keycode::Tab => machine.switch_side(),
                     Keycode::J => {
-                        side = Some(open_index(machine, (display_w, display_h)));
-                        side_focus = true;
+                        side_panel.open = Some(open_index(machine, (display_w, display_h)));
+                        side_panel.focus = true;
                     }
                     Keycode::F => machine.edit().start_find(false),
                     Keycode::H => machine.edit().start_find(true),
@@ -2385,8 +2392,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 Event::KeyDown {
                     keycode: Some(Keycode::Escape),
                     ..
-                } if side.is_some() && on_editor && machine.edit().mode() == Mode::Edit => {
-                    side = None;
+                } if side_panel.open.is_some()
+                    && on_editor
+                    && machine.edit().mode() == Mode::Edit =>
+                {
+                    side_panel.open = None;
                 }
                 Event::MouseWheel { y, .. } if on_editor => {
                     machine.edit().wheel(-3 * y.round() as i32);
@@ -2492,16 +2502,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let modal = screens.any();
         // The help opened in direct mode closes when the editor opens or
         // a program runs; the editor's panels close with the editor.
-        if side_direct && (machine.is_editing() || machine.is_running())
-            || !side_direct && !machine.is_editing()
+        if side_panel.direct && (machine.is_editing() || machine.is_running())
+            || !side_panel.direct && !machine.is_editing()
         {
-            side = None;
+            side_panel.open = None;
         }
-        if side.is_none() {
-            side_direct = false;
+        if side_panel.open.is_none() {
+            side_panel.direct = false;
         }
         // Panels go on the side away from the code being edited.
-        if let Some(open) = &mut side {
+        if let Some(open) = &mut side_panel.open {
             let right_side = !machine.is_split_rows() && machine.active_side() == 1;
             open.set_left(machine.is_split() && right_side);
         }
@@ -2517,7 +2527,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // The help beside direct mode has the keys and the prompt is left
         // alone, and after a Projects run's error only its A goes anywhere.
         let waiting = machine.home_waiting() && program_dialog.is_none();
-        let beside = side_direct && side_focus && side.is_some();
+        let beside = side_panel.direct && side_panel.focus && side_panel.open.is_some();
         inputs.controls.swap = machine.rt.settings.swap_ab_xy;
         inputs.controls.stick_mouse.on = machine.rt.settings.right_stick_mouse;
         let mut held = inputs.controls.state(
@@ -2580,7 +2590,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 load_colors(palette, &path)
             });
         }
-        machine.set_changes(&debug_panel.change_watches());
+        machine.set_changes(&debugger.panel.change_watches());
         bench.lap(Stage::Events);
         // Each frame reads the setting, whichever screen or reload changed it;
         // a subprogram, a tool among them, runs on the same machine.
@@ -2763,7 +2773,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             false => {
                 match &mut paths.main {
                     // The debugger's panel wants the frame on the CPU.
-                    Some(gpu) if !panel_was_shown => machine.render_screens_with(gpu),
+                    Some(gpu) if !debugger.was_shown => machine.render_screens_with(gpu),
                     _ => {
                         machine.render();
                     }
@@ -2884,10 +2894,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 h: bottom - top,
             };
             // A stop, though at the same place, shows the panel anew.
-            let fresh = machine.paused_at() != shown_stop || !panel_was_shown;
+            let fresh = machine.paused_at() != debugger.shown_stop || !debugger.was_shown;
             if fresh {
-                shown_stop = machine.paused_at();
-                debug_panel.reset();
+                debugger.shown_stop = machine.paused_at();
+                debugger.panel.reset();
             }
             // The screens change only while a step runs. Beside the
             // editor's own window, they show in the main one.
@@ -2918,10 +2928,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 .panel_screens
                 .as_ref()
                 .map_or((1, 1), |(_, (size, _))| *size);
-            let view = debug_view(machine, &debug_panel);
+            let view = debug_view(machine, &debugger.panel);
             debug = Some((place, view, screens.then_some(size)));
         }
-        panel_was_shown = debug.is_some();
+        debugger.was_shown = debug.is_some();
         bench.lap(Stage::Gather);
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
@@ -2937,7 +2947,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             paths.sub = paths.main.as_ref().and_then(gpu::Gpu::for_sub);
         }
         let sub_backend = (paths.sub.as_mut())
-            .filter(|_| !panel_was_shown)
+            .filter(|_| !debugger.was_shown)
             .map(|g| g as &mut dyn SceneBackend);
         if let Some(sub) = machine.sub_screen_with(sub_backend) {
             let fb = sub.frame;
@@ -3012,7 +3022,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let dst = FRect::new(display.x + at(s.x), display.y + at(s.y), at(s.w), at(s.h));
             drawing!(canvas.copy(tex, None, dst));
         }
-        let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
+        let (grp, panel_grp) = (&machine.rt.grp, &debugger.panel.grp);
         match (&debug, apart) {
             (Some(_), false) => drawing!(textures.grp.draw(
                 &mut canvas,
@@ -3058,7 +3068,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // editor's panels and menu with the editor.
         let ui = usize::from(ui_editor);
         let ed = usize::from(apart);
-        let side_on = if side_direct { 0 } else { ed };
+        let side_on = if side_panel.direct { 0 } else { ed };
         // Beside the editor's own window, the chosen sprite is outlined
         // on the main one's screen, and a subprogram's always on its own,
         // where the panel leaves it.
@@ -3097,7 +3107,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // display, where the screen goes too.
         let ui_sizes = [(display_w, main_ui_h), editor_place.3];
         let windows_apart = apart && ui == 1 && screens.any();
-        if let Some(open) = &mut side {
+        if let Some(open) = &mut side_panel.open {
             open.set_size(ui_sizes[side_on]);
         }
         // The menu bar shows over everything in the window with the keys,
@@ -3121,11 +3131,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let scale = settings.debug_text_size;
         match &debug {
             Some((_, view, _)) => {
-                debug_panel.advance(view);
+                debugger.panel.advance(view);
                 overlays.panel[1 - ed].release();
             }
             None => {
-                debug_panel.hide();
+                debugger.panel.hide();
                 overlays.panel.iter_mut().for_each(Layer::release);
             }
         }
@@ -3194,10 +3204,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 if i == 0 && !paused && !modal && !simple_ui {
                     corner::draw(fb, font, &key_hint, &slow_hint, false);
                 }
-                match &side {
+                match &side_panel.open {
                     _ if i != side_on || !under => {}
-                    Some(Side::Help(help)) => help.draw(fb, font, side_focus),
-                    Some(Side::Index(index, _)) => index.draw(fb, font, side_focus),
+                    Some(Side::Help(help)) => help.draw(fb, font, side_panel.focus),
+                    Some(Side::Index(index, _)) => index.draw(fb, font, side_panel.focus),
                     None => {}
                 }
                 // Windows over the editor go over its panels too.
@@ -3229,7 +3239,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         None => {}
                     }
                 }
-                if let (true, None, Some(open)) = (i == ed && under, menus_apart, &debug_menu) {
+                if let (true, None, Some(open)) = (i == ed && under, menus_apart, &debugger.menu) {
                     open.draw(fb, font);
                 }
                 if i == ui && under {
@@ -3256,19 +3266,19 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // What is partly see-through over the panel shows what is
                 // under the panel, as it always did, if drawn with it.
                 let probe =
-                    overlays.overlay[i].dry_run(size, |fb| parts(fb, &mut debug_panel, false));
+                    overlays.overlay[i].dry_run(size, |fb| parts(fb, &mut debugger.panel, false));
                 inside.set(probe.translucent.is_some_and(|t| t.overlaps(place)));
                 panel_inside[i] = inside.get();
                 if !inside.get() {
                     drawing!(overlays.panel[i].update(creator, (place.w, place.h), |fb| {
-                        debug_panel.draw(fb, font, place, *screens, view, scale)
+                        debugger.panel.draw(fb, font, place, *screens, view, scale)
                     }));
                 }
             }
-            let under = |fb: &mut Framebuffer| parts(fb, &mut debug_panel, false);
+            let under = |fb: &mut Framebuffer| parts(fb, &mut debugger.panel, false);
             drawing!(overlays.overlay[i].update(creator, size, under));
             if windows_on_layer {
-                let over = |fb: &mut Framebuffer| parts(fb, &mut debug_panel, true);
+                let over = |fb: &mut Framebuffer| parts(fb, &mut debugger.panel, true);
                 drawing!(
                     overlays
                         .windows
@@ -3281,7 +3291,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         // The main window's open menus and context menu, apart at 1x.
         let lists = ui == 0 && bar_shown[0] && screens.dialog.is_none() && menu.is_open();
-        let popup = (debug_menu.as_ref()).filter(|_| ed == 0);
+        let popup = (debugger.menu.as_ref()).filter(|_| ed == 0);
         match menus_apart {
             Some(place) if lists || popup.is_some() => {
                 drawing!(overlays.menu.update(texture_creator, place.size, |fb| {
@@ -3359,7 +3369,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let (display, ui_w) = (editor_place.2, editor_place.3.0);
             let canvas = &mut *editor_canvas;
             if let Some((place, ..)) = &debug {
-                let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
+                let (grp, panel_grp) = (&machine.rt.grp, &debugger.panel.grp);
                 let creator = gfx.creator.get();
                 drawing!(
                     textures
@@ -3872,6 +3882,29 @@ fn file_url(path: &Path) -> String {
 enum FileDialog {
     Save(SaveDialog),
     Load(FilePicker),
+}
+
+/// The debugger's part of the window.
+#[derive(Default)]
+struct Debugger {
+    /// The panel below the editor.
+    panel: DebugPanel,
+    /// The stop the panel last showed, by slot and line.
+    shown_stop: Option<(usize, u32)>,
+    /// Whether the panel showed in the last frame.
+    was_shown: bool,
+    /// The menu a right click opens on the editor or the panel.
+    menu: Option<Popup<Choice>>,
+}
+
+/// The help or the index beside the editor.
+#[derive(Default)]
+struct Beside {
+    open: Option<Side>,
+    /// Whether it takes the keys.
+    focus: bool,
+    /// The help was opened in direct mode, over the screen.
+    direct: bool,
 }
 
 /// A panel beside the editor.
