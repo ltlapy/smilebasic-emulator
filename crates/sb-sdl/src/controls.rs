@@ -597,10 +597,13 @@ pub struct Controls {
 fn stick(pad: &Gamepad, x: Axis, y: Axis) -> (f64, f64) {
     let read = |a| (f64::from(pad.axis(a)) / f64::from(i16::MAX)).clamp(-1.0, 1.0);
     let (x, y) = (read(x), read(y));
-    if x.hypot(y) < DEAD_ZONE {
-        (0.0, 0.0)
-    } else {
-        (x, y)
+    // A Switch stick stays within a circle of radius 1, and programs index
+    // arrays by its length; gamepads that reach the corners of a square
+    // are brought into that circle.
+    match x.hypot(y) {
+        len if len < DEAD_ZONE => (0.0, 0.0),
+        len if len > 1.0 => (x / len, y / len),
+        _ => (x, y),
     }
 }
 
