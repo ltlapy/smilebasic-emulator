@@ -739,6 +739,10 @@ The keys and the report call a trip a frame.
 | `editor-key:NAME` | The same in the editor's own window, once it is open |
 | `usb:USAGE` | Has `KEYBOARD` read that key as down for a frame, which `key` does not |
 | `pad:NAME`, `padup:NAME` | Presses or releases the first controller's button SDL calls NAME, as both the event and what is held. `b` is the right face button, as SDL goes by Xbox labels. Both at one frame make a press shorter than a frame, which the program sees held for one frame |
+| `click:X:Y`, `rclick:X:Y`, `dclick:X:Y` | Moves the pointer to X, Y in window coordinates, then presses and releases the left button, the right one, or the left one as a double click's second press. The emulator's menus, dialogs and windows and the editor take it as the system's mouse; a program's touch and `MOUSE` read the mouse's state and do not see it |
+| `press:X:Y`, `drag:X:Y`, `release:X:Y` | A drag in steps: presses the left button there, moves with it held, releases it |
+| `move:X:Y`, `wheel:X:Y:N` | Moves the pointer with no button held; turns the wheel N notches up there, down if N is negative |
+| `editor-click:X:Y` and the others above with `editor-` | The same in the editor's own window, once it is open |
 | `editor-focus` | Gives the editor's own window the keys |
 | `main-focus` | Takes the keys from the editor's own window, back to the main one |
 | `menu`, `file-menu`, `view-menu`, `size-menu`, `help`, `about`, `colors`, `settings`, `toast` | Shows that part of the UI then, as the parts of the same names do once the rest is set up |

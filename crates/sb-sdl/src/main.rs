@@ -908,6 +908,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     suspend.pretend(time);
                     None
                 }
+                _ if bench::pointer_events(what.trim_start_matches("editor-"), 0).is_some() => {
+                    let window_id = match (what.starts_with("editor-"), editor_gfx.get()) {
+                        (true, Some(gfx)) => gfx.id,
+                        _ => canvas.window().id(),
+                    };
+                    let what = what.trim_start_matches("editor-");
+                    for event in bench::pointer_events(what, window_id).into_iter().flatten() {
+                        let _ = sdl.event().and_then(|e| e.push_event(event));
+                    }
+                    None
+                }
                 _ => {
                     let (editor, size) = match what.strip_prefix("editor-") {
                         Some(what) => (true, what),

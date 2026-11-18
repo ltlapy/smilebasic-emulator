@@ -71,7 +71,8 @@
 //!   key as down for a frame, which `key` does not, and `pad:NAME` and `padup:NAME`
 //!   to press and let go the first controller's button SDL calls NAME, such as
 //!   `b` for the right face button (SDL goes by Xbox labels), as both the event
-//!   and what is held, `editor-focus` to give the editor's own window the keys,
+//!   and what is held, the mouse's `click:X:Y` and the others [`pointer_events`]
+//!   lists, with `editor-` before them for the editor's own window, `editor-focus` to give the editor's own window the keys,
 //!   and the UI parts above, such as `settings`, to show that part then.
 //!
 //! Besides the stages, it reports the program frames run per second of
@@ -90,7 +91,9 @@ use std::time::{Duration, Instant};
 use sb_runtime::machine::{Machine, Missed};
 use sb_runtime::sound::RATE;
 use sb_runtime::sound::output::Stats;
+use sdl3::event::Event;
 use sdl3::keyboard::Mod;
+use sdl3::mouse::{MouseButton, MouseState, MouseWheelDirection};
 use sdl3::render::Canvas;
 use sdl3::video::Window;
 
@@ -115,6 +118,86 @@ pub fn key_mods(mut name: &str) -> (Mod, &str) {
         keymod |= held;
         name = rest;
     }
+}
+
+/// The mouse events an `at=` part stands for, in the window `window_id`,
+/// or `None` if `what` is none of these. X and Y are window coordinates,
+/// as SDL gives a pointer's:
+///
+/// - `click:X:Y`, `rclick:X:Y`, `dclick:X:Y`: moves the pointer there,
+///   then presses and releases the left button, the right one, or the
+///   left one as the second press of a double click;
+/// - `press:X:Y`, `release:X:Y`: moves there and presses or releases the
+///   left button, for a drag;
+/// - `drag:X:Y`: moves there with the left button held;
+/// - `move:X:Y`: moves there with no button held;
+/// - `wheel:X:Y:N`: turns the wheel N notches up there, down if negative.
+///
+/// The events go the way the system's do. What reads the mouse's state
+/// and not its events, as the program's touch does, sees none of it.
+pub fn pointer_events(what: &str, window_id: u32) -> Option<Vec<Event>> {
+    let mut parts = what.split(':');
+    let kind = parts.next()?;
+    let mut number = || parts.next()?.parse::<f32>().ok();
+    let (x, y) = (number()?, number()?);
+    let (timestamp, which) = (0, 0);
+    let motion = |held: bool| Event::MouseMotion {
+        timestamp,
+        window_id,
+        which,
+        mousestate: MouseState::from_sdl_state(u32::from(held)),
+        x,
+        y,
+        xrel: 0.0,
+        yrel: 0.0,
+    };
+    let down = |mouse_btn, clicks| Event::MouseButtonDown {
+        timestamp,
+        window_id,
+        which,
+        mouse_btn,
+        clicks,
+        x,
+        y,
+    };
+    let up = |mouse_btn| Event::MouseButtonUp {
+        timestamp,
+        window_id,
+        which,
+        mouse_btn,
+        clicks: 1,
+        x,
+        y,
+    };
+    let (left, right) = (MouseButton::Left, MouseButton::Right);
+    Some(match kind {
+        "click" => vec![motion(false), down(left, 1), up(left)],
+        "rclick" => vec![motion(false), down(right, 1), up(right)],
+        "dclick" => vec![motion(false), down(left, 2), up(left)],
+        "press" => vec![motion(false), down(left, 1)],
+        "release" => vec![motion(true), up(left)],
+        "drag" => vec![motion(true)],
+        "move" => vec![motion(false)],
+        "wheel" => {
+            let notches = number()?;
+            vec![
+                motion(false),
+                Event::MouseWheel {
+                    timestamp,
+                    window_id,
+                    which,
+                    x: 0.0,
+                    y: notches,
+                    direction: MouseWheelDirection::Normal,
+                    integer_x: 0,
+                    integer_y: notches as i32,
+                    mouse_x: x,
+                    mouse_y: y,
+                },
+            ]
+        }
+        _ => return None,
+    })
 }
 
 /// Whether presents are to wait for vsync: not if `SB_UI_BENCH` says so.
@@ -726,6 +809,61 @@ mod tests {
         assert_eq!((keymod, name), (Mod::LCTRLMOD | Mod::LSHIFTMOD, "F12"));
         // The key itself may be a plus.
         assert_eq!(key_mods("shift++"), (Mod::LSHIFTMOD, "+"));
+    }
+
+    #[test]
+    fn a_click_is_a_move_a_press_and_a_release() {
+        let events = pointer_events("click:120:40.5", 7).expect("a click");
+        let at = |e: &Event| match *e {
+            Event::MouseMotion {
+                window_id, x, y, ..
+            }
+            | Event::MouseButtonDown {
+                window_id, x, y, ..
+            }
+            | Event::MouseButtonUp {
+                window_id, x, y, ..
+            } => (window_id, x, y),
+            _ => panic!("{e:?}"),
+        };
+        assert_eq!(events.len(), 3);
+        assert!(events.iter().all(|e| at(e) == (7, 120.0, 40.5)));
+        assert!(matches!(
+            events[1],
+            Event::MouseButtonDown { clicks: 1, .. }
+        ));
+        let double = pointer_events("dclick:1:2", 7).expect("a double click");
+        assert!(matches!(
+            double[1],
+            Event::MouseButtonDown { clicks: 2, .. }
+        ));
+        // A drag holds the left button from its press to its release.
+        let held = |what| match pointer_events(what, 7).expect("a move")[0] {
+            Event::MouseMotion { mousestate, .. } => mousestate.left(),
+            ref e => panic!("{e:?}"),
+        };
+        assert!(!held("press:1:2") && held("drag:3:4") && held("release:5:6"));
+        assert!(!held("move:1:2"));
+        let wheel = pointer_events("wheel:10:20:-3", 7).expect("a wheel");
+        assert!(matches!(
+            wheel[1],
+            Event::MouseWheel {
+                integer_y: -3,
+                mouse_x: 10.0,
+                mouse_y: 20.0,
+                ..
+            }
+        ));
+        // Other parts, and ones short of a number, are not the mouse's.
+        for what in [
+            "key:Escape",
+            "click:1",
+            "click:a:b",
+            "wheel:1:2",
+            "resize:640:360",
+        ] {
+            assert!(pointer_events(what, 7).is_none(), "{what}");
+        }
     }
 
     #[test]
