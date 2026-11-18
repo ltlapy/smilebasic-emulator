@@ -1177,6 +1177,12 @@ impl Runtime {
             (Command::Mouse, Want::Outs(0), 2..=3) => {
                 let (x, y) = (int(&args[0])?, int(&args[1])?);
                 let lcd = opt_in_range("flag", args.get(2), 0..=1, 0)? == 1;
+                // The pointer stays on the screen, or on the display.
+                let (w, h) = match lcd {
+                    true => (1280, 720),
+                    false => (self.mode.width as i32, self.mode.height as i32),
+                };
+                let (x, y) = (x.clamp(0, w - 1), y.clamp(0, h - 1));
                 // The pointer stays where it is; the program sees it moved
                 // until it moves again.
                 for m in [&mut input.live.mouse, &mut input.now.mouse] {

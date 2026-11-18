@@ -1626,10 +1626,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             match event {
                 Event::MouseMotion { x, y, .. } if !from_editor => {
                     let (sx, sy) = to_screen(x, y);
+                    let (w, h) = (mode.width as i32, mode.height as i32);
+                    let (dx, dy) = to_display(x, y);
                     let m = &mut controls.mouse;
-                    (m.x, m.y, m.display) = (sx, sy, to_display(x, y));
-                    m.on_screen = (0..mode.width as i32).contains(&sx)
-                        && (0..mode.height as i32).contains(&sy);
+                    // The program reads a pointer past the screen's edges
+                    // as at them.
+                    (m.x, m.y) = (sx.clamp(0, w - 1), sy.clamp(0, h - 1));
+                    m.display = (
+                        dx.clamp(0, display_w as i32 - 1),
+                        dy.clamp(0, display_h as i32 - 1),
+                    );
+                    m.on_screen = (0..w).contains(&sx) && (0..h).contains(&sy);
                 }
                 Event::MouseWheel { y, .. } if manager.is_none() && !on_editor && !from_editor => {
                     controls.mouse.wheel += y.round() as i32;

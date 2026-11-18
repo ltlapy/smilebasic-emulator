@@ -275,6 +275,11 @@ fn mouse_and_touch() {
         "01"
     );
     assert_eq!(run(&[s], "MOUSE 5,6:MOUSE OUT X,Y:?X;Y").unwrap(), "56");
+    // MOUSE keeps the pointer on the screen, or on the display with flag 1.
+    let past = "XSCREEN 640,360:MOUSE -5,400:MOUSE OUT X,Y:?X;Y;:\
+                MOUSE 700,-1:MOUSE OUT X,Y:?X;Y;:\
+                MOUSE 2000,800,1:MOUSE 1 OUT X,Y:?X;Y";
+    assert_eq!(run(&[s], past).unwrap(), "035963901279719");
 }
 
 #[test]
