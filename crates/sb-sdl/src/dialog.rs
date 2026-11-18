@@ -9,7 +9,7 @@ use sdl3::keyboard::Keycode;
 
 use crate::program_dialog::{fitted, wrap_lines};
 use crate::ui::{
-    BACKGROUND, BORDER, CHAR, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, text_width,
+    BACKGROUND, BORDER, CHAR, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, focus_face, text_width,
 };
 
 const LINE: u32 = 24;
@@ -259,7 +259,7 @@ impl Dialog {
         }
         for (i, label) in self.labels.iter().enumerate() {
             let r = self.button(i);
-            fill(fb, r, if i == self.focus { HIGHLIGHT } else { BORDER });
+            focus_face(fb, r, i == self.focus);
             let x = r.x + (r.w - text_width(label)) / 2;
             draw_text(fb, font, x, r.y + 4, label, TEXT);
         }
