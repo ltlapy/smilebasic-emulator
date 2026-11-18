@@ -194,6 +194,10 @@ pub struct Settings {
     /// View > "Keep 16:9 when resizing": the main window keeps the
     /// display's shape while it is resized, out of fullscreen.
     pub keep_16_9: bool,
+    /// View > "Wait for vsync": the main window's presents wait for the
+    /// display's refresh, which paces the frames on a 60 Hz display.
+    /// Off, the frames go by the clock.
+    pub vsync: bool,
     /// Who draws the screens.
     pub renderer: Renderer,
     /// Keys also press the first controller's buttons.
@@ -309,6 +313,7 @@ impl Default for Settings {
             fullscreen: false,
             window_size: None,
             keep_16_9: true,
+            vsync: true,
             renderer: Renderer::DEFAULT,
             keyboard_buttons: true,
             swap_ab_xy: false,
@@ -376,6 +381,7 @@ impl Settings {
             fullscreen: false,
             window_size: None,
             keep_16_9: true,
+            vsync: true,
             renderer: Renderer::Auto,
             keyboard_buttons: true,
             swap_ab_xy: false,
@@ -582,6 +588,7 @@ impl Settings {
                 "simple_ui_welcome_shown" => &mut s.simple_ui_welcome_shown,
                 "fullscreen" => &mut s.fullscreen,
                 "keep_16_9" => &mut s.keep_16_9,
+                "vsync" => &mut s.vsync,
                 "complete_after" => {
                     if let Some(n) = value.parse().ok().filter(|n| COMPLETE_AFTER.contains(n)) {
                         s.complete_after = n;
@@ -754,6 +761,7 @@ impl Settings {
              fullscreen={}\n\
              window_size={}\n\
              keep_16_9={}\n\
+             vsync={}\n\
              {renderer}\
              keyboard_buttons={}\n\
              swap_ab_xy={}\n\
@@ -809,6 +817,7 @@ impl Settings {
             self.fullscreen,
             (self.window_size).map_or(String::new(), |[w, h]| format!("{w},{h}")),
             self.keep_16_9,
+            self.vsync,
             self.keyboard_buttons,
             self.swap_ab_xy,
             self.smilebasic_instruments,
@@ -874,6 +883,7 @@ mod tests {
             fullscreen: true,
             window_size: Some([2560, 1440]),
             keep_16_9: false,
+            vsync: false,
             renderer: Renderer::DEFAULT.other(),
             keyboard_buttons: false,
             smilebasic_instruments: false,
@@ -938,6 +948,9 @@ mod tests {
         // The main window keeps 16:9 unless told not to.
         assert!(Settings::default().keep_16_9 && text.contains("keep_16_9=true\n"));
         assert!(!Settings::from_text("keep_16_9=false\n").keep_16_9);
+        // Presents wait for vsync unless told not to.
+        assert!(Settings::default().vsync && text.contains("vsync=true\n"));
+        assert!(!Settings::from_text("vsync=false\n").vsync);
     }
 
     #[test]

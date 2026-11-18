@@ -76,6 +76,8 @@ pub enum Action {
     WindowSize(usize),
     /// The main window keeps 16:9 while it is resized.
     ToggleKeepShape,
+    /// The main window's presents wait for vsync.
+    ToggleVsync,
     /// The debugger's commands, for a stopped program.
     Continue,
     StepInto,
@@ -136,6 +138,7 @@ impl Action {
             Action::WindowSize(i) if context.window_size == Some(i) => "(*)",
             Action::WindowSize(_) => "( )",
             Action::ToggleKeepShape => check(settings.keep_16_9),
+            Action::ToggleVsync => check(settings.vsync),
             Action::ToggleUpperCase => check(settings.upper_case_letters),
             Action::ToggleEditorWindow => check(settings.editor_window),
             Action::ToggleTidyOnEnd => check(settings.tidy_on_end),
@@ -162,6 +165,7 @@ impl Action {
             Action::ToggleUpperCase => &mut settings.upper_case_letters,
             Action::ToggleEditorWindow => &mut settings.editor_window,
             Action::ToggleTidyOnEnd => &mut settings.tidy_on_end,
+            Action::ToggleVsync => &mut settings.vsync,
             Action::ToggleWrap => &mut settings.editor_wrap,
             Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
             Action::ToggleMap => &mut settings.editor_map,
@@ -396,6 +400,7 @@ const MENUS: &[Menu] = &[
             sub("Window size", &WINDOW_SIZES),
             item("Keep 16:9 when resizing", Action::ToggleKeepShape),
             keyed("Fullscreen", "Ctrl+Shift+F11", Action::ToggleFullscreen),
+            item("Wait for vsync", Action::ToggleVsync),
         ],
     },
     Menu {
@@ -1423,6 +1428,26 @@ mod tests {
         assert_eq!(Action::ToggleKeepShape.mark(&settings, IDLE), "[x]");
         settings.keep_16_9 = false;
         assert_eq!(Action::ToggleKeepShape.mark(&settings, IDLE), "[ ]");
+    }
+
+    #[test]
+    fn vsync_is_a_check_item_of_view() {
+        let view = menu("View");
+        let items = MENUS[view].items;
+        let i = (items.iter())
+            .position(|i| i.label == "Wait for vsync")
+            .unwrap();
+        let mut bar = MenuBar::default();
+        bar.open_menu(view, "");
+        assert_eq!(
+            bar.click(at(item_rect(view, i)), RUNNING),
+            Click::Chosen(Action::ToggleVsync)
+        );
+        let mut settings = Settings::default();
+        assert_eq!(Action::ToggleVsync.mark(&settings, IDLE), "[x]");
+        Action::ToggleVsync.toggle(&mut settings);
+        assert!(!settings.vsync);
+        assert_eq!(Action::ToggleVsync.mark(&settings, IDLE), "[ ]");
     }
 
     #[test]

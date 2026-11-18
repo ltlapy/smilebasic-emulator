@@ -269,7 +269,9 @@ before.
   vsync comes back a whole frame later. The frames before such a drawing run
   one after the other, up to four of them ahead of their time, so that the
   drawing ends before the next vsync. The program reads its input for those
-  frames up to that much early.
+  frames up to that much early. Turn View > "Wait for vsync" off, for a game
+  where the timing of input matters, and each frame waits for its own time
+  instead; the window may then tear.
 - The emulator's own screens, a paused or stopped program, a dialog, the
   editor, the debugger and a subprogram are drawn every frame.
 
@@ -550,6 +552,12 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   editor in its own window can take any shape. With the item off, or in
   fullscreen or maximized on a display of another shape, the window is not
   16:9 and the screen and editor are placed as described above.
+- View > "Wait for vsync", on by default (`vsync` in `settings.txt`), has
+  the main window's presents wait for the display's refresh, which paces
+  the frames on a display at 60 Hz. Off, the frames go by the clock at 60 a
+  second, as they always do on displays at other rates and while the window
+  is covered or minimized. The change takes effect at once. The editor's
+  own window never waits for vsync.
 - With the Simple UI on, the screen fills the display at its aspect ratio, and
   the filter is the pause menu's Screen filter (`simple_ui_filter` in
   `settings.txt`), not View > Screen filter. A 640x480 display seldom holds

@@ -694,7 +694,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `run=PROJECT/PROGRAM` | Runs a program of a project from the start. `PROGRAM` defaults to `MAIN.PRG` |
 | `load=PROJECT/PROGRAM` | Loads a program of a project into PRG0 without running it |
 | `end` | Stops timing when the program ends, however many frames it was |
-| `novsync` | Presents without waiting for vsync |
+| `novsync` | Presents without waiting for vsync, whatever View > "Wait for vsync" says |
 | `stop` | Stops the program, as the Break key does, a second in |
 | `type=TEXT` | Half a second after `stop`, or after the start without it, types TEXT, which can hold no commas |
 | `editor` | Opens the editor |

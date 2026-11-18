@@ -367,6 +367,16 @@ impl Presents {
         self.excused = RESIZE_GRACE;
     }
 
+    /// Follows View > "Wait for vsync": off, presents never wait; on,
+    /// they wait as they did from the start, until the window is held
+    /// back.
+    pub fn want(&mut self, canvas: &Canvas<Window>, wanted: bool) {
+        if wanted != self.wanted {
+            self.wanted = wanted;
+            self.set_vsync(canvas, wanted);
+        }
+    }
+
     /// Tries vsync again, as when the window is shown again after it was
     /// held back.
     pub fn retry(&mut self, canvas: &Canvas<Window>) {

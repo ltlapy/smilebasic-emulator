@@ -448,8 +448,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         (display_w, display_h) = simple_ui::ui_size(canvas.output_size()?, size);
     }
     // Vsync paces frames on a 60 Hz display; on others, without vsync,
-    // or while the window is not shown, the loop goes by the clock.
-    let mut main_presents = pacing::Presents::new(&canvas, bench::wants_vsync());
+    // or while the window is not shown, the loop goes by the clock. The
+    // bench's novsync turns it off whatever the setting says.
+    let bench_vsync = bench::wants_vsync();
+    let wants_vsync = |settings: &Settings| bench_vsync && settings.vsync;
+    let mut main_presents = pacing::Presents::new(&canvas, wants_vsync(&machine.rt.settings));
     let mut editor_presents = None;
     // Whether the display shows about 60 frames a second, checked now
     // and then as the window can move to another.
@@ -736,7 +739,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             };
             (canvas, creator, texture) = made;
             texture_creator = creator.get();
-            main_presents = pacing::Presents::new(&canvas, bench::wants_vsync());
+            main_presents = pacing::Presents::new(&canvas, wants_vsync(&machine.rt.settings));
             clock = pacing::Clock::new(Instant::now());
             suspend = SuspendWatch::new();
             toasts.push("The renderer failed and was restarted.".to_string());
@@ -3882,6 +3885,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             b.shoot(&canvas, "main");
             b.measure(&canvas);
         }
+        main_presents.want(&canvas, wants_vsync(&machine.rt.settings));
         let vsync = main_presents.vsync();
         let present_began = Instant::now();
         let presented = main_presents.present(&mut canvas, bench.as_ref());
