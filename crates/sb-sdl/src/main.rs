@@ -3031,79 +3031,19 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // Each frame reads the setting, whichever screen or reload changed it;
         // a subprogram, a tool among them, runs on the same machine.
         apply_frame_setting(machine);
-        let run_began = Instant::now();
-        // What the program's frames did this trip, for the notice when it
-        // runs slower than real time.
-        let (count_before, mut calls) = (machine.rt.main_count(), 0u32);
-        if !paused {
-            machine.time_limit = Some(frame_time(machine, &pacer));
-            frame_guard.run(machine, &mut toasts, Machine::frame);
-            calls += 1;
-            bench.ran_frame();
-        }
-        audio.play(&machine.take_samples());
-        // Behind by a frame or more, as when drawing takes too long or the
-        // compositor held a present back before vsync was dropped: the
-        // program and its sound catch up, and only the last of these
-        // frames is drawn, so that the game and its music keep time.
-        // Those frames run code briefly, so that catching up does not
-        // fall further behind.
-        //
-        // A program at its VSYNC runs a whole trip round its main loop if
-        // two trips and a drawing fit in two frames, so that it keeps
-        // time, and otherwise stays there: a part of a trip would only
-        // make the frame drawn next show a half-made scene. That trip
-        // has the time a frame gives, or a trip that a frame holds would
-        // be cut short here.
-        //
-        // A program whose trips fit a frame catches up a trip round this
-        // loop at a time instead, which leaves drawings out for it.
-        let mut skipped = 0;
-        while !paused
-            && skipped < MOST_SKIPPED
-            && pacer.behind(Instant::now())
-            && !fits_frame(machine, pacer.draw_cost())
+        let frames = run_frames(
+            machine,
+            &mut frame_guard,
+            &mut toasts,
+            &mut pacer,
+            &audio,
+            &mut bench,
+            paused,
+        );
+        let (run_began, ran) = (frames.began, frames.took);
         {
-            let whole = 2 * machine.loop_time() + pacer.draw_cost() <= 2 * FRAME;
-            machine.time_limit = Some(if whole && machine.at_sync() {
-                pacer.frame_time(false)
-            } else {
-                CATCH_UP_RUN_TIME
-            });
-            machine.hold_at_sync = !whole;
-            frame_guard.run(machine, &mut toasts, Machine::frame);
-            calls += 1;
-            machine.hold_at_sync = false;
-            bench.ran_frame();
-            audio.play(&machine.take_samples());
-            // A frame run to catch up goes undrawn too.
-            pacer.caught_up();
-            skipped += 1;
-        }
-        let ran = run_began.elapsed();
-        {
-            // A call that went on with a kept frame started none.
-            let started = machine
-                .rt
-                .main_count()
-                .wrapping_sub(count_before)
-                .min(calls);
-            let settings = &machine.rt.settings;
             let shown = !pacing::hidden(canvas.window()) && !bench.occluded();
-            let counts = !paused
-                && machine.keep_frames
-                && settings.slow_hint
-                && settings.speed == sb_runtime::speed::Speed::Unlimited
-                && machine.program_dialog().is_none()
-                && !machine.is_editing()
-                && !machine.sub_running()
-                && shown;
-            let trip = slow_hint::Trip {
-                started,
-                kept: calls - started,
-                counts,
-                ..Default::default()
-            };
+            let trip = frames.trip(machine, !paused && shown);
             let project = machine.rt.storage.project();
             let program =
                 (machine.is_running()).then(|| (project, machine.rt.slot_names[0].as_str()));
@@ -5149,6 +5089,110 @@ fn close_bar_on_start(menu: &mut MenuBar, was_running: &mut bool, running: bool)
         menu.shown = false;
     }
     *was_running = running;
+}
+
+/// What a trip round the loop ran of the program: see [`run_frames`].
+struct Frames {
+    /// When the frames began, and how long they took.
+    began: Instant,
+    took: Duration,
+    /// Program frames that started: how far `MAINCNT` went.
+    started: u32,
+    /// Calls of `Machine::frame` that started none, because the program's
+    /// trip under way kept its frame.
+    kept: u32,
+}
+
+impl Frames {
+    /// The trip as the notice for a program slower than real time takes
+    /// it; `watched` is whether the program is not paused and the window
+    /// is shown.
+    fn trip(&self, machine: &Machine, watched: bool) -> slow_hint::Trip {
+        let settings = &machine.rt.settings;
+        let counts = watched
+            && machine.keep_frames
+            && settings.slow_hint
+            && settings.speed == sb_runtime::speed::Speed::Unlimited
+            && machine.program_dialog().is_none()
+            && !machine.is_editing()
+            && !machine.sub_running();
+        slow_hint::Trip {
+            started: self.started,
+            kept: self.kept,
+            counts,
+            ..Default::default()
+        }
+    }
+}
+
+/// Runs a trip's frames of the program and plays their sound: one frame
+/// unless `paused`, and more if the loop is behind.
+///
+/// Behind by a frame or more, as when drawing takes too long or the
+/// compositor held a present back before vsync was dropped, the program
+/// and its sound catch up, and only the last of these frames is drawn, so
+/// that the game and its music keep time. Those frames run code briefly,
+/// so that catching up does not fall further behind.
+///
+/// A program at its VSYNC runs a whole trip round its main loop if two
+/// trips and a drawing fit in two frames, so that it keeps time, and
+/// otherwise stays there: a part of a trip would only make the frame
+/// drawn next show a half-made scene. That trip has the time a frame
+/// gives, or a trip that a frame holds would be cut short here.
+///
+/// A program whose trips fit a frame catches up a trip round the loop at
+/// a time instead, which leaves drawings out for it.
+fn run_frames(
+    machine: &mut Machine,
+    guard: &mut FrameGuard,
+    toasts: &mut Toasts,
+    pacer: &mut pacing::Pacer,
+    audio: &Audio,
+    bench: &mut bench::Bench,
+    paused: bool,
+) -> Frames {
+    let began = Instant::now();
+    let (count_before, mut calls) = (machine.rt.main_count(), 0u32);
+    if !paused {
+        machine.time_limit = Some(frame_time(machine, pacer));
+        guard.run(machine, toasts, Machine::frame);
+        calls += 1;
+        bench.ran_frame();
+    }
+    audio.play(&machine.take_samples());
+    let mut skipped = 0;
+    while !paused
+        && skipped < MOST_SKIPPED
+        && pacer.behind(Instant::now())
+        && !fits_frame(machine, pacer.draw_cost())
+    {
+        let whole = 2 * machine.loop_time() + pacer.draw_cost() <= 2 * FRAME;
+        machine.time_limit = Some(if whole && machine.at_sync() {
+            pacer.frame_time(false)
+        } else {
+            CATCH_UP_RUN_TIME
+        });
+        machine.hold_at_sync = !whole;
+        guard.run(machine, toasts, Machine::frame);
+        calls += 1;
+        machine.hold_at_sync = false;
+        bench.ran_frame();
+        audio.play(&machine.take_samples());
+        // A frame run to catch up goes undrawn too.
+        pacer.caught_up();
+        skipped += 1;
+    }
+    let took = began.elapsed();
+    // A call that went on with a kept frame started none.
+    let started = (machine.rt.main_count())
+        .wrapping_sub(count_before)
+        .min(calls);
+    Frames {
+        began,
+        took,
+        started,
+        kept: calls - started,
+    }
 }
 
 /// Whether the program waits at its VSYNC and its last trip round its main
