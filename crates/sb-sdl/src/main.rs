@@ -46,6 +46,7 @@ use std::time::{Duration, Instant};
 use crate::pad_repeat::{Dir, PadRepeat};
 
 use audio::Audio;
+use bench::Stage;
 use colors::ColorWindow;
 use controls::Controls;
 use debug_panel::{DebugPanel, Hit, Tab, Typed, View, value_text};
@@ -650,14 +651,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
         };
     }
-    // A stage of the frame's drawing ends, for the bench.
-    macro_rules! lap {
-        ($stage:ident) => {
-            if let Some(b) = &mut bench {
-                b.lap(bench::Stage::$stage);
-            }
-        };
-    }
     'running: loop {
         let trip_began = Instant::now();
         // A renderer that failed ends the frame here, to be replaced above it.
@@ -731,21 +724,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         // After a suspend a GL context may have lost its textures without a word.
         if suspend.woke() {
-            if bench.is_some() {
+            if bench.on() {
                 eprintln!("woke from a suspend: giving the renderer all again");
             }
             let reset = Event::RenderDeviceReset { timestamp: 0 };
             let _ = sdl.event().and_then(|e| e.push_event(reset));
         }
-        if let Some(b) = &mut bench {
-            b.sound(audio.stats());
-        }
+        bench.sound(audio.stats());
         // Frames the standby thread ran this trip.
         let mut kept = standby::Kept::default();
-        if let Some(b) = &mut bench
-            && b.step(machine)
-        {
-            b.report(&canvas.renderer_name);
+        if bench.step(machine) {
+            bench.report(&canvas.renderer_name);
             println!("drawn by  {drawn_by}");
             if let Some(gpu) = &gpu {
                 gpu.report("gpu");
@@ -755,7 +744,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             break 'running;
         }
-        for what in bench.iter().flat_map(bench::Bench::due) {
+        for what in bench.due() {
             let pushed = match what {
                 "targets" => {
                     if let Some(gpu) = gpu.iter_mut().chain(&mut sub_gpu).next() {
@@ -921,34 +910,34 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // Made again at the new size, from the machine's, below.
             program_dialog = None;
         }
-        if let Some(b) = &bench {
+        if bench.on() {
             let size = (display_w, display_h);
-            menu.shown |= b.opens("menu");
-            if b.opens("help") {
+            menu.shown |= bench.opens("menu");
+            if bench.opens("help") {
                 side = open_help(machine, help.as_deref(), &mut toasts, size);
             }
-            if b.opens("about") {
+            if bench.opens("about") {
                 let lines = about_lines(&drawn_by);
                 dialog = Some((Dialog::notice("About", lines, size), Asking::Notice));
             }
-            if b.opens("colors") {
+            if bench.opens("colors") {
                 color_window = Some(ColorWindow::new(size));
             }
-            if b.opens("file-menu") {
+            if bench.opens("file-menu") {
                 menu.open_menu(0, "");
             }
-            if b.opens("view-menu") {
+            if bench.opens("view-menu") {
                 menu.open_menu(2, "Window size");
             }
-            if b.opens("size-menu") {
+            if bench.opens("size-menu") {
                 menu.open_menu(2, "Size (F2)");
             }
-            if b.opens("settings") {
+            if bench.opens("settings") {
                 let mut window = SettingsWindow::new(size);
                 window.show_page("Editor");
                 settings_window = Some(window);
             }
-            if b.opens("toast") {
+            if bench.opens("toast") {
                 toasts.push("A notice".to_string());
             }
         }
@@ -1035,9 +1024,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         let mut ui_editor = apart && ui_on_editor;
         let (out_w, out_h) = drawing!(canvas.output_size());
-        if let Some(b) = &mut bench {
-            b.window_size((out_w, out_h));
-        }
+        bench.window_size((out_w, out_h));
         let (win_w, _) = canvas.window().size();
         let display = match simple_ui {
             true => simple_ui::display_rect(
@@ -1075,7 +1062,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             space: pointer_space,
             menu: menus_apart.map(|place| place.at),
         };
-        let ui_scale = bench.as_ref().and_then(|b| b.ui_scale);
+        let ui_scale = bench.ui_scale;
         // The window the editor shows in, whose zooms F2 and View > Size
         // go by: its width and the height of SmileBASIC 4's display there.
         // The Simple UI keeps SmileBASIC 4's frame, which each size changes.
@@ -1174,9 +1161,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // Frames the standby thread ran went undrawn.
             pacer.kept(kept.frames);
             machine.rt.clipboard.settle();
-            if let Some(b) = &mut bench {
-                b.kept(kept);
-            }
+            bench.kept(kept);
         }
         for (repeated, mut event) in
             (repeats.into_iter().map(|e| (true, e))).chain(polled.drain(..).map(|e| (false, e)))
@@ -3019,7 +3004,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             });
         }
         machine.set_changes(&debug_panel.change_watches());
-        lap!(Events);
+        bench.lap(Stage::Events);
         // Each frame reads the setting, whichever screen or reload changed it;
         // a subprogram, a tool among them, runs on the same machine.
         apply_frame_setting(machine);
@@ -3031,9 +3016,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             machine.time_limit = Some(frame_time(machine, &pacer));
             frame_guard.run(machine, &mut toasts, Machine::frame);
             calls += 1;
-            if let Some(b) = &mut bench {
-                b.ran_frame();
-            }
+            bench.ran_frame();
         }
         audio.play(&machine.take_samples());
         // Behind by a frame or more, as when drawing takes too long or the
@@ -3068,9 +3051,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             frame_guard.run(machine, &mut toasts, Machine::frame);
             calls += 1;
             machine.hold_at_sync = false;
-            if let Some(b) = &mut bench {
-                b.ran_frame();
-            }
+            bench.ran_frame();
             audio.play(&machine.take_samples());
             // A frame run to catch up goes undrawn too.
             pacer.caught_up();
@@ -3085,8 +3066,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 .wrapping_sub(count_before)
                 .min(calls);
             let settings = &machine.rt.settings;
-            let shown = !pacing::hidden(canvas.window())
-                && !bench.as_ref().is_some_and(bench::Bench::occluded);
+            let shown = !pacing::hidden(canvas.window()) && !bench.occluded();
             let counts = !paused
                 && machine.keep_frames
                 && settings.slow_hint
@@ -3106,7 +3086,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 (machine.is_running()).then(|| (project, machine.rt.slot_names[0].as_str()));
             slow_hint.trip(run_began, trip, program);
         }
-        lap!(Run);
+        bench.lap(Stage::Run);
         // A step that waits for input needs the keys on the screen, and
         // the editor takes them back at the stop, unless the user has
         // gone to another window meanwhile.
@@ -3149,7 +3129,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         menu.running = machine.is_running();
         // Settings change through the menu, keys and questions; keep each
         // change at once so that nothing is lost if the emulator crashes.
-        if machine.rt.settings != saved_settings && bench.is_none() {
+        if machine.rt.settings != saved_settings && !bench.on() {
             saved_settings = machine.rt.settings.clone();
             save_settings(&settings_path, &saved_settings);
         }
@@ -3171,8 +3151,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         slow_hint.follow(&machine.rt.settings);
         let was_shown = slow_hint.visible();
         slow_hint.tick(key_hint.visible());
-        if let (false, true, Some(b)) = (was_shown, slow_hint.visible(), &mut bench) {
-            b.slow_hint_shown();
+        if !was_shown && slow_hint.visible() {
+            bench.slow_hint_shown();
         }
         for notice in machine.take_notices() {
             toasts.push(notice);
@@ -3216,28 +3196,23 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let drawing = pacer.drawing(drawn_from, must, || pacing::Late {
             // A window that is not shown is not presented anyway, and the
             // bench's shot is of this frame.
-            wanted: pacing::hidden(canvas.window())
-                || bench.as_ref().is_some_and(|b| b.occluded() || b.shoots()),
+            wanted: pacing::hidden(canvas.window()) || bench.occluded() || bench.shoots(),
             mid_loop: machine.mid_loop(),
             fits: fits_frame(machine, cost),
             run: machine.loop_time(),
         });
         if drawing != pacing::Drawing::Draw {
-            if let Some(b) = &mut bench {
-                b.undrawn();
-            }
+            bench.undrawn();
             let wait = pacer.skipped(Instant::now());
             if drawing == pacing::Drawing::Wait {
                 pacing::delay(wait);
             }
-            lap!(Wait);
+            bench.lap(Stage::Wait);
             continue;
         }
 
-        if let Some(b) = &mut bench {
-            b.skip();
-            b.burn();
-        }
+        bench.skip();
+        bench.burn();
         mode = machine.screen_mode();
         let settings = &machine.rt.settings;
         let rect;
@@ -3333,7 +3308,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             drawing!(texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize));
         }
         if smart_frame {
-            let cpu = bench.as_ref().is_some_and(|b| b.cpu_smart);
+            let cpu = bench.cpu_smart;
             let changed = Some(revision) != texture_holds;
             drawing!(smart.prepare(
                 &mut canvas,
@@ -3355,7 +3330,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             smart.release();
         }
         texture_holds = Some(revision);
-        lap!(Screen);
+        bench.lap(Stage::Screen);
         // The editor in its own window, where the debugger's panel goes
         // too: where its frame and the UI are there, and the UI's size.
         let mut editor_place = (rect, frame, display, (display_w, display_h));
@@ -3390,7 +3365,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let (rect, ui) = (layout.frame_pixels(), layout.ui_pixels());
             editor_place = (from_corner(rect), frame, from_corner(ui), layout.ui_size);
         }
-        lap!(Editor);
+        bench.lap(Stage::Editor);
         // The debugger's panel fills the room the editor leaves below.
         let mut debug = None;
         if let Some(at) = machine.panel_at() {
@@ -3442,7 +3417,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             debug = Some((place, view, screens.then_some(size)));
         }
         panel_was_shown = debug.is_some();
-        lap!(Gather);
+        bench.lap(Stage::Gather);
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
         let screen = smart.texture().or(gpu_view.as_deref()).unwrap_or(&texture);
@@ -3847,17 +3822,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if let Some(place) = menus_apart {
             drawing!(menu_layer.copy(&mut canvas, (0, 0), place.rect(), place.size.0));
         }
-        lap!(Overlays);
-        if let Some(b) = &mut bench {
-            b.shoot(&canvas, "main");
-            b.measure(&canvas);
-        }
+        bench.lap(Stage::Overlays);
+        bench.shoot(&canvas, "main");
+        bench.measure(&canvas);
         main_presents.want(&canvas, wants_vsync(&machine.rt.settings));
         let vsync = main_presents.vsync();
         let present_began = Instant::now();
-        let presented = main_presents.present(&mut canvas, bench.as_ref());
+        let presented = main_presents.present(&mut canvas, Some(&bench));
         let present_took = present_began.elapsed();
-        lap!(Present);
+        bench.lap(Stage::Present);
         if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
             let mut editor_canvas = gfx.canvas.borrow_mut();
             editor_canvas.set_draw_color(Color::BLACK);
@@ -3882,21 +3855,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if windows_apart {
                 drawing!(windows_layer.copy(canvas, (0, 0), windows_place, display_w));
             }
-            lap!(Overlays);
-            if let Some(b) = &bench {
-                b.shoot(&editor_canvas, "editor");
-            }
+            bench.lap(Stage::Overlays);
+            bench.shoot(&editor_canvas, "editor");
             let presents =
                 editor_presents.get_or_insert_with(|| pacing::Presents::new(&editor_canvas, false));
             presents.present(&mut editor_canvas, None);
-            lap!(Present);
+            bench.lap(Stage::Present);
         }
         if iterations.is_multiple_of(60) {
             // The window can move to another display.
-            pacer.display(
-                pacing::at_60_hz(canvas.window())
-                    || bench.as_ref().is_some_and(bench::Bench::vblank),
-            );
+            pacer.display(pacing::at_60_hz(canvas.window()) || bench.vblank());
         }
         iterations = iterations.wrapping_add(1);
         pacer.drew(pacing::Drew {
@@ -3910,7 +3878,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             vsync: main_presents.vsync(),
         });
         pacing::delay(pacer.end(Instant::now()));
-        lap!(Wait);
+        bench.lap(Stage::Wait);
         watch.frame_shown();
     }
     // The editor's window, shown when quitting, opens there next time.
@@ -3932,7 +3900,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     }
     // A bench run leaves the settings as they were, as it does above, so
     // that runs in one data directory start alike.
-    if machine.rt.settings != saved_settings && bench.is_none() {
+    if machine.rt.settings != saved_settings && !bench.on() {
         save_settings(&settings_path, &machine.rt.settings);
     }
     Ok(())

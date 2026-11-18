@@ -180,8 +180,14 @@ fn single_frame_dips(lumas: &[f32], least: f32) -> Vec<(usize, f32)> {
         .collect()
 }
 
+/// The bench, there whether `SB_UI_BENCH` is set or not, so that the loop
+/// calls it without asking. Without the variable it is off: it sets
+/// nothing up, times nothing and stands for nothing, as its fields then
+/// say, and [`Bench::step`] never ends the run.
 #[derive(Default)]
 pub struct Bench {
+    /// `SB_UI_BENCH` is set.
+    on: bool,
     /// Trips timed, and trips before the timing begins, as `frames=` and
     /// `settle=` say.
     trips: u32,
@@ -250,10 +256,13 @@ pub struct Bench {
 }
 
 impl Bench {
-    /// The bench `SB_UI_BENCH` asks for, if any.
-    pub fn from_env() -> Option<Bench> {
-        let spec = std::env::var("SB_UI_BENCH").ok()?;
+    /// The bench `SB_UI_BENCH` asks for, or one that is off.
+    pub fn from_env() -> Bench {
+        let Ok(spec) = std::env::var("SB_UI_BENCH") else {
+            return Bench::default();
+        };
         let mut bench = Bench {
+            on: true,
             trips: 600,
             settle: SETTLE,
             ..Bench::default()
@@ -304,12 +313,20 @@ impl Bench {
                 },
             }
         }
-        Some(bench)
+        bench
+    }
+
+    /// Whether `SB_UI_BENCH` is set.
+    pub fn on(&self) -> bool {
+        self.on
     }
 
     /// Sets the emulator up a step at a time, at the start of each trip
     /// round the loop, and starts timing it. True once the trips are timed.
     pub fn step(&mut self, machine: &mut Machine) -> bool {
+        if !self.on {
+            return false;
+        }
         let stop_at = if self.stop { SETTLE } else { 0 };
         let set_up = stop_at + 1;
         match self.trip {
