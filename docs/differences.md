@@ -219,7 +219,14 @@ apart from the macro hang below.
   over the window, until the menu bar shows. `MOUSE X,Y` moves the computer's
   pointer too. File > Settings > Input > "Ignore mouse cursor commands" keeps
   the cursor shown and where it is; the program then sees the move until the
-  next frame.
+  next frame. The Simple UI follows the same rules.
+- Drawn cursor: where the system shows no cursor, as under KMSDRM on a
+  handheld, the emulator draws its own arrow, about as large as SmileBASIC 4's
+  on the display, with its tip at the pointer and over everything else. Like
+  SmileBASIC 4's, it fades out over 0.7 seconds once the pointer has stayed
+  still for 5 seconds, and comes back when it moves. The arrow is the
+  emulator's own drawing, not SmileBASIC 4's. `SB_CURSOR=drawn` draws it on
+  any system, and `SB_CURSOR=system` leaves the cursor to the system.
 
 ### Pasting and Tab
 

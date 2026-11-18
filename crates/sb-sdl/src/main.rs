@@ -20,6 +20,7 @@ mod layer;
 mod menu;
 mod pacing;
 mod pad_repeat;
+mod pointer;
 mod popup;
 mod preview;
 mod program_dialog;
@@ -508,6 +509,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // The Simple UI's notices in the bottom right corner, at a scale of
     // their own (see `simple_ui::notice_place`).
     let mut notice_layer = Layer::default();
+    // The cursor drawn where the system shows none.
+    let cursor_var = std::env::var(pointer::CURSOR_VAR).ok();
+    let draws_cursor = pointer::draws_own(video.current_video_driver(), cursor_var.as_deref());
+    let mut drawn_cursor = pointer::DrawnCursor::new(draws_cursor);
     // View > "Keep 16:9 when resizing": what puts the main window's shape
     // right where the system ignores the shape asked for, and whether
     // that shape is asked for now.
@@ -678,6 +683,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             windows_layer.forget();
             menu_layer.forget();
             notice_layer.forget();
+            drawn_cursor.forget();
             (texture_holds, editor_holds) = (None, None);
             machine.rt.touch();
             machine.touch_sub();
@@ -1256,6 +1262,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 windows_layer.forget();
                 menu_layer.forget();
                 notice_layer.forget();
+                drawn_cursor.forget();
                 // A target comes back empty, and the frames are drawn again.
                 machine.touch_sub();
             }
@@ -3115,11 +3122,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let (x, y) = if (sent.x, sent.y) != (now.x, now.y) {
                 main_map.screen_to_window(now.x, now.y)
             } else {
-                let scale = display.w / display_w as f32;
-                (
-                    (display.x + (now.display.0 as f32 + 0.5) * scale) / px,
-                    (display.y + (now.display.1 as f32 + 0.5) * scale) / px,
-                )
+                pointer::display_to_window(now.display, display, display_w, px)
             };
             mouse.warp_mouse_in_window(canvas.window(), x, y);
             (sent.x, sent.y, sent.display) = (now.x, now.y, now.display);
@@ -3527,20 +3530,20 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let dims = dialog.is_some() || manager.is_some() || pause_menu.is_some();
         // A running program shows the mouse cursor only if it asks to,
         // unless the emulator's own screens or the editor's window need
-        // it.
-        // The Simple UI has no mouse.
-        let show_cursor = !simple_ui
-            && (!machine.is_running()
-                || modal
-                || dims
-                || program_dialog.is_some()
-                || menu.visible()
-                || apart && pointer_in_editor
-                || machine.rt.settings.keep_mouse_cursor
-                || machine.rt.mouse_cursor());
-        if show_cursor != cursor_shown {
-            cursor_shown = show_cursor;
-            mouse.show_cursor(show_cursor);
+        // it. Where the system shows no cursor, the emulator draws its
+        // own.
+        let show_cursor = !machine.is_running()
+            || modal
+            || dims
+            || program_dialog.is_some()
+            || menu.visible()
+            || apart && pointer_in_editor
+            || machine.rt.settings.keep_mouse_cursor
+            || machine.rt.mouse_cursor();
+        let system_cursor = show_cursor && !drawn_cursor.on();
+        if system_cursor != cursor_shown {
+            cursor_shown = system_cursor;
+            mouse.show_cursor(system_cursor);
         }
         // Which window each part goes on: the main one, or the editor's.
         // The menu bar and the emulator's windows go with the keys, the
@@ -3822,6 +3825,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if let Some(place) = menus_apart {
             drawing!(menu_layer.copy(&mut canvas, (0, 0), place.rect(), place.size.0));
         }
+        let at = controls.mouse.display;
+        drawing!(drawn_cursor.draw(
+            &mut canvas,
+            texture_creator,
+            show_cursor,
+            at,
+            display,
+            display_w
+        ));
         bench.lap(Stage::Overlays);
         bench.shoot(&canvas, "main");
         bench.measure(&canvas);
