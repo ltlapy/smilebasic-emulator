@@ -2740,6 +2740,59 @@ impl Drop for Gpu {
     }
 }
 
+/// The frontend's GPU paths: the one for the main screens, the one for a
+/// subprogram's, which has its own pages and frame, and who draws, as
+/// About says it.
+#[derive(Default)]
+pub struct Paths {
+    pub main: Option<Gpu>,
+    pub sub: Option<Gpu>,
+    /// The paths are to be dropped, for frames on the CPU from now on.
+    off: bool,
+    /// The setting the paths were last started by.
+    applied: Option<Renderer>,
+    pub drawn_by: String,
+}
+
+impl Paths {
+    /// Drops the paths, as all that lives on a renderer must go before it
+    /// does. The next [`Paths::follow`] starts them again.
+    pub fn forget(&mut self) {
+        (self.main, self.sub, self.off) = (None, None, false);
+        self.applied = None;
+    }
+
+    /// Starts the main path again when the `renderer` setting is not the
+    /// one it was started by, and drops the paths if they were turned off
+    /// or the renderer has refused too many frames. True if it started
+    /// the path: the screens are then to be drawn again.
+    pub fn follow(&mut self, canvas: &Canvas<Window>, renderer: Renderer) -> bool {
+        let started = self.applied != Some(renderer);
+        if started {
+            self.applied = Some(renderer);
+            drop(self.main.take());
+            (self.sub, self.off) = (None, false);
+            (self.main, self.drawn_by) = Gpu::start(canvas, renderer);
+        }
+        let refused = self.main.iter().chain(&self.sub).any(Gpu::given_up);
+        if refused {
+            eprintln!("SB_GPU: the renderer refused frames; staying on the CPU");
+            self.drawn_by = "CPU (frames refused by the driver)".to_string();
+        }
+        if self.off || refused {
+            (self.main, self.sub, self.off) = (None, None, false);
+        }
+        started
+    }
+
+    /// Has the next [`Paths::follow`] drop the paths, with `drawn_by` as
+    /// who draws from then on.
+    pub fn turn_off(&mut self, drawn_by: &str) {
+        self.drawn_by = drawn_by.to_string();
+        self.off = true;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

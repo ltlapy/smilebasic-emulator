@@ -657,13 +657,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let passed = gpu_golden::report(canvas.raw());
         std::process::exit(if passed { 0 } else { 1 });
     }
-    let mut gpu: Option<gpu::Gpu> = None;
-    // A subprogram's screens have their own pages and frame.
-    let mut sub_gpu: Option<gpu::Gpu> = None;
-    let mut gpu_off = false;
-    // The setting the path was last started by, and who draws, as About says.
-    let mut renderer_applied = None;
-    let mut drawn_by = String::new();
+    let mut paths = gpu::Paths::default();
     // Why the renderer has to be replaced, from where it was found out.
     let mut renderer_failed: Option<String> = None;
     let mut watch = RendererWatch::default();
@@ -723,8 +717,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if let Some(why) = renderer_failed.take() {
             eprintln!("the renderer failed: {why}");
             // All that lives on the renderers goes before they do.
-            (gpu, sub_gpu, gpu_off) = (None, None, false);
-            renderer_applied = None;
+            paths.forget();
             smart = SmartFrame::default();
             (panel_screens, sub_texture, editor_texture) = (None, None, None);
             (grp_texture, editor_grp) = (PageTexture::default(), PageTexture::default());
@@ -791,11 +784,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let mut kept = standby::Kept::default();
         if bench.step(machine) {
             bench.report(&canvas.renderer_name);
-            println!("drawn by  {drawn_by}");
-            if let Some(gpu) = &gpu {
+            println!("drawn by  {}", paths.drawn_by);
+            if let Some(gpu) = &paths.main {
                 gpu.report("gpu");
             }
-            if let Some(gpu) = &sub_gpu {
+            if let Some(gpu) = &paths.sub {
                 gpu.report("sub");
             }
             break 'running;
@@ -803,7 +796,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         for what in bench.due() {
             let pushed = match what {
                 "targets" => {
-                    if let Some(gpu) = gpu.iter_mut().chain(&mut sub_gpu).next() {
+                    if let Some(gpu) = paths.main.iter_mut().chain(&mut paths.sub).next() {
                         gpu.scribble();
                     }
                     Some(Event::RenderTargetsReset { timestamp: 0 })
@@ -984,7 +977,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 side = open_help(machine, help.as_deref(), &mut toasts, size);
             }
             if bench.opens("about") {
-                let lines = about_lines(&drawn_by);
+                let lines = about_lines(&paths.drawn_by);
                 screens.dialog = Some((Dialog::notice("About", lines, size), Asking::Notice));
             }
             if bench.opens("colors") {
@@ -1324,8 +1317,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // Direct3D 11 and 12 and Vulkan have let go of every texture, and fail
             // on those still held; a page sent to the GPU has to go again too.
             if let Event::RenderDeviceReset { .. } = event {
-                (gpu, sub_gpu, gpu_off) = (None, None, false);
-                renderer_applied = None;
+                paths.forget();
                 smart = SmartFrame::default();
                 (panel_screens, sub_texture, editor_texture) = (None, None, None);
                 (grp_texture, editor_grp) = (PageTexture::default(), PageTexture::default());
@@ -2502,7 +2494,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             Some(ShortcutsWindow::new((display_w, display_h)));
                     }
                     Click::Chosen(Action::About) => {
-                        let lines = about_lines(&drawn_by);
+                        let lines = about_lines(&paths.drawn_by);
                         let about = Dialog::notice("About", lines, (display_w, display_h));
                         screens.dialog = Some((about, Asking::Notice));
                     }
@@ -3244,20 +3236,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             machine.set_editor_area(fill.map(|fill| fill.area));
         }
         let renderer = machine.rt.settings.renderer;
-        if renderer_applied != Some(renderer) {
-            renderer_applied = Some(renderer);
-            drop(gpu.take());
-            (sub_gpu, gpu_off) = (None, false);
-            (gpu, drawn_by) = gpu::Gpu::start(&canvas, renderer);
+        if paths.follow(&canvas, renderer) {
             machine.rt.touch();
-        }
-        let refused = gpu.iter().chain(&sub_gpu).any(gpu::Gpu::given_up);
-        if refused {
-            eprintln!("SB_GPU: the renderer refused frames; staying on the CPU");
-            drawn_by = "CPU (frames refused by the driver)".to_string();
-        }
-        if gpu_off || refused {
-            (gpu, sub_gpu, gpu_off) = (None, None, false);
         }
         // The editor's frame, and the screens', stay as they are while
         // their revision does.
@@ -3267,7 +3247,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 (true, machine.editor_revision())
             }
             false => {
-                match &mut gpu {
+                match &mut paths.main {
                     // The debugger's panel wants the frame on the CPU.
                     Some(gpu) if !panel_was_shown => machine.render_screens_with(gpu),
                     _ => {
@@ -3310,7 +3290,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             texture = drawing!(frame_texture(&canvas, texture_creator, kind));
             texture_holds = None;
         }
-        let gpu_view = (gpu.as_mut())
+        let gpu_view = (paths.main.as_mut())
             .filter(|_| on_gpu)
             .and_then(|gpu| gpu.view(kind.1 == Filter::Bilinear));
         if Some(revision) != texture_holds && !on_gpu {
@@ -3333,8 +3313,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // one is drawn again next time round, once there is no GPU path.
             if on_gpu && smart.on_cpu() {
                 eprintln!("SB_GPU: the doubled frame was refused; staying on the CPU");
-                drawn_by = "CPU (doubled frame refused by the driver)".to_string();
-                gpu_off = true;
+                paths.turn_off("CPU (doubled frame refused by the driver)");
             }
         } else {
             smart.release();
@@ -3434,10 +3413,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         drawing!(canvas.copy(screen, None, rect));
         // The subprogram's screen goes where XSUBSCREEN puts it on the
         // 1280x720 display, over the editor too.
-        if sub_gpu.is_none() && machine.sub_shows() {
-            sub_gpu = gpu.as_ref().and_then(gpu::Gpu::for_sub);
+        if paths.sub.is_none() && machine.sub_shows() {
+            paths.sub = paths.main.as_ref().and_then(gpu::Gpu::for_sub);
         }
-        let sub_backend = (sub_gpu.as_mut())
+        let sub_backend = (paths.sub.as_mut())
             .filter(|_| !panel_was_shown)
             .map(|g| g as &mut dyn SceneBackend);
         if let Some(sub) = machine.sub_screen_with(sub_backend) {
@@ -3461,7 +3440,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             // Whatever XSCREEN's mode, as a screen in mode 0 is.
             let kind = ((fb.width(), fb.height()), Filter::Bilinear);
-            let sub_view = (sub_gpu.as_mut())
+            let sub_view = (paths.sub.as_mut())
                 .filter(|_| sub.on_backend)
                 .and_then(gpu::Gpu::premultiplied_view);
             if let Some(view) = &sub_view {
