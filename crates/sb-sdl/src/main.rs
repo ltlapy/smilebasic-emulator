@@ -3158,7 +3158,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         match (&mut program_dialog, machine.program_dialog()) {
             (Some(open), Some(shown)) if open.shows(shown) => open.set_size((display_w, main_ui_h)),
             (_, Some(shown)) => {
-                program_dialog = Some(ProgramView::new(shown, (display_w, main_ui_h), simple_ui));
+                program_dialog = Some(ProgramView::new(shown, (display_w, main_ui_h)));
             }
             (_, None) => program_dialog = None,
         }

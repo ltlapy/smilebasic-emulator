@@ -108,8 +108,7 @@ A `DIALOG` with two buttons starts with the focus on the right one.
 | A, Enter | Choose the button with the focus |
 | B, Esc | Choose the left button: No, Back or Cancel |
 
-A and B choose when released. In the Simple UI each button shows A or B
-when that controller button chooses it.
+A and B choose when released.
 
 ## Gamepad in the projects
 
