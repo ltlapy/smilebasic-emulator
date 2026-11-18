@@ -7,7 +7,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
-use crate::input::{A, B};
+use crate::input::{A, B, Input, LEFT, RIGHT};
 use crate::runtime::{Command, Runtime, checking, illegal, opt_int};
 use crate::storage;
 
@@ -24,6 +24,10 @@ const ANY_BITS: u32 = 0b111 << 14;
 /// Every button DIALOG can wait for, the touch screen's bit included.
 const BUTTON_BITS: i32 = (TOUCH_BIT << 1) as i32 - 1;
 const FRAMES_PER_SECOND: i32 = 60;
+/// How far the left stick goes over before it moves the focus between a
+/// dialog's buttons.
+// UNVERIFIED: the distance, and that each push moves it once.
+const FOCUS_STICK: f64 = 0.5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogKind {
@@ -61,6 +65,13 @@ pub(crate) struct Waiting {
     frames_left: Option<u32>,
     /// Buttons pressed since it opened, which choose when let go.
     pressed: u32,
+    /// The button of a choice that A chooses, which the D-pad, the left
+    /// stick and the frontend move.
+    focus: usize,
+    /// Which way the left stick was over last frame (-1, 0 or 1), or
+    /// `None` before the first frame, so that a stick held over as the
+    /// dialog opens moves nothing.
+    stick: Option<i8>,
     /// For the dialog that says a file command failed: what the command
     /// returns once it is closed.
     failure: Option<Vec<Value>>,
@@ -76,14 +87,58 @@ pub(crate) struct Waiting {
 
 impl Waiting {
     fn new(dialog: ProgramDialog, frames_left: Option<u32>, failure: Option<Vec<Value>>) -> Self {
+        // The right (or only) button has the focus at first.
+        let focus = match &dialog.kind {
+            DialogKind::Choice(labels) => labels.len().saturating_sub(1),
+            _ => 0,
+        };
         Waiting {
             dialog,
             frames_left,
             pressed: 0,
+            focus,
+            stick: None,
             failure,
             fresh: true,
             own: None,
             passive: false,
+        }
+    }
+
+    /// The buttons of a choice, if it is one.
+    fn choices(&self) -> Option<usize> {
+        match &self.dialog.kind {
+            DialogKind::Choice(labels) => Some(labels.len()),
+            _ => None,
+        }
+    }
+
+    /// Moves the focus of a choice by the D-pad's Left and Right going
+    /// down and by the left stick going over, one button each, stopping
+    /// at the ends.
+    // UNVERIFIED: that it stops at the ends rather than going round, and
+    // that Up and Down do nothing.
+    fn steer(&mut self, input: &Input) {
+        let Some(n) = self.choices() else {
+            return;
+        };
+        let x = input.left_stick().0;
+        let over = match x {
+            x if x < -FOCUS_STICK => -1,
+            x if x > FOCUS_STICK => 1,
+            _ => 0,
+        };
+        let pushed = match self.stick.replace(over) {
+            Some(was) if was != over => over,
+            _ => 0,
+        };
+        let pressed = input.pressed();
+        let left = pressed & 1 << LEFT != 0 || pushed < 0;
+        let right = pressed & 1 << RIGHT != 0 || pushed > 0;
+        match (left, right) {
+            (true, false) => self.focus = self.focus.saturating_sub(1),
+            (false, true) => self.focus = (self.focus + 1).min(n - 1),
+            _ => {}
         }
     }
 }
@@ -171,6 +226,24 @@ impl Runtime {
     /// The dialog the program waits on, if any.
     pub fn program_dialog(&self) -> Option<&ProgramDialog> {
         self.dialog.as_ref().map(|w| &w.dialog)
+    }
+
+    /// The button of the program's dialog that A and Enter choose, for a
+    /// dialog with buttons to choose from.
+    pub fn dialog_focus(&self) -> Option<usize> {
+        let waiting = self.dialog.as_ref()?;
+        waiting.choices().map(|_| waiting.focus)
+    }
+
+    /// Moves the focus of the program's dialog to button `i`, as the
+    /// frontend's keys and mouse do; a dialog without buttons to choose
+    /// from keeps none.
+    pub fn set_dialog_focus(&mut self, i: usize) {
+        if let Some(waiting) = self.dialog.as_mut()
+            && let Some(n) = waiting.choices()
+        {
+            waiting.focus = i.min(n.saturating_sub(1));
+        }
     }
 
     /// Closes the program's dialog with an answer.
@@ -394,7 +467,9 @@ impl Runtime {
             return None;
         }
         waiting.pressed |= self.input.pressed();
-        let answer = (self.input).dialog_answer(&waiting.dialog.kind, waiting.pressed);
+        waiting.steer(&self.input);
+        let since = waiting.pressed;
+        let answer = (self.input).dialog_answer(&waiting.dialog.kind, since, waiting.focus);
         match &mut waiting.frames_left {
             _ if answer.is_some() => answer,
             // Timing out answers 0, for a choice as for buttons.
@@ -446,6 +521,8 @@ fn link(from: &mut Runtime, to: &mut Runtime, to_is_sub: bool) {
             old.dialog.clone_from(&new.dialog);
             old.frames_left = new.frames_left;
             old.pressed = new.pressed;
+            old.focus = new.focus;
+            old.stick = new.stick;
             old.fresh = false;
             old.passive = to_is_sub;
         }
@@ -462,15 +539,20 @@ fn link(from: &mut Runtime, to: &mut Runtime, to_is_sub: bool) {
 
 impl crate::input::Input {
     /// What the controllers and touch screen answer a dialog with this
-    /// frame: A chooses the right (or only) button and B the left of two,
-    /// when let go after being pressed with the dialog open (checked on
-    /// hardware for A); a wait for buttons ends on
-    /// any of them going down.
-    pub(crate) fn dialog_answer(&self, kind: &DialogKind, since: u32) -> Option<DialogAnswer> {
+    /// frame: A chooses the button with the focus and B the left of two,
+    /// whatever the focus, when let go after being pressed with the dialog
+    /// open (checked on hardware for A); a wait for buttons ends on any of
+    /// them going down.
+    pub(crate) fn dialog_answer(
+        &self,
+        kind: &DialogKind,
+        since: u32,
+        focus: usize,
+    ) -> Option<DialogAnswer> {
         let released = self.released() & since;
         match kind {
             DialogKind::Choice(labels) if released & 1 << A != 0 => {
-                Some(DialogAnswer::Choice(labels.len() - 1))
+                Some(DialogAnswer::Choice(focus.min(labels.len() - 1)))
             }
             DialogKind::Choice(labels) if labels.len() == 2 && released & 1 << B != 0 => {
                 Some(DialogAnswer::Choice(0))

@@ -19,6 +19,9 @@ pub const BUTTONS: usize = 14;
 /// The A and B buttons' ids (#B_RRIGHT and #B_RDOWN).
 pub const A: u32 = 3;
 pub const B: u32 = 1;
+/// The D-pad's Left and Right (#B_LLEFT and #B_LRIGHT).
+pub const LEFT: u32 = 6;
+pub const RIGHT: u32 = 7;
 /// #B_RANY, #B_LANY and #B_ANY come after the buttons themselves.
 const BUTTON_IDS: usize = 17;
 const RANY: u32 = 0b1111;
@@ -783,6 +786,11 @@ impl Input {
 
     pub(crate) fn released(&self) -> u32 {
         self.buttons(0, 3)
+    }
+
+    /// Controller 0's left stick this frame, as STICK reads it.
+    pub(crate) fn left_stick(&self) -> (f64, f64) {
+        self.now.stick(0)
     }
 
     /// Whether the touch screen was touched this frame.

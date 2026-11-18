@@ -995,6 +995,36 @@ fn the_earlier_dialog_takes_the_answer_to_the_buttons_shown() {
     assert_eq!(main, sub);
 }
 
+/// The focus of the one dialog moves on both sides: Left on the D-pad and
+/// then A choose the left button for both.
+#[test]
+fn the_focus_of_the_one_dialog_moves_for_both_sides() {
+    let (_dir, mut m) = two_dialogs(
+        "focus-both",
+        ("DIALOG \"MAIN\",0", 1),
+        ("DIALOG \"SUB\",1", 40),
+    );
+    frames(&mut m, 44);
+    assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+    assert_eq!(m.dialog_focus(), Some(1));
+    let left = 1 << sb_runtime::input::LEFT;
+    for buttons in [left, 0] {
+        m.rt.input.live.pads[0].buttons = buttons;
+        m.frame();
+    }
+    assert_eq!(m.dialog_focus(), Some(0));
+    m.set_dialog_focus(1);
+    assert_eq!(m.dialog_focus(), Some(1));
+    m.set_dialog_focus(0);
+    press_a(&mut m);
+    let (main, sub) = answered(&m);
+    assert!(
+        main.as_deref().is_some_and(|r| r.starts_with("-1 ")),
+        "{main:?}"
+    );
+    assert_eq!(main, sub);
+}
+
 /// The timeout of the later call closes both, in one frame.
 #[test]
 fn the_later_dialogs_timeout_closes_both() {

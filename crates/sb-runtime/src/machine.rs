@@ -3042,6 +3042,23 @@ impl Machine {
         self.rt.answer_dialog(answer);
     }
 
+    /// The button of [`Machine::program_dialog`] that A and Enter choose.
+    pub fn dialog_focus(&self) -> Option<usize> {
+        match self.rt.program_dialog() {
+            Some(_) => self.rt.dialog_focus(),
+            None => self.sub.as_ref().and_then(|s| s.rt.dialog_focus()),
+        }
+    }
+
+    /// Moves the focus of the dialog, in both interpreters, as both watch
+    /// the controls on it.
+    pub fn set_dialog_focus(&mut self, i: usize) {
+        if let Some(sub) = &mut self.sub {
+            sub.rt.set_dialog_focus(i);
+        }
+        self.rt.set_dialog_focus(i);
+    }
+
     /// Whether the main program and the subprogram both wait on the one
     /// dialog.
     fn both_in_dialog(&self) -> bool {

@@ -1261,3 +1261,153 @@ fn a_key_held_at_the_prompt_repeats_into_the_program_it_runs() {
     let at: Vec<&str> = rows.iter().filter_map(|r| r.strip_prefix('K')).collect();
     assert_eq!(at, ["18", "21", "24", "27"], "{rows:?}");
 }
+
+/// Runs `source`, which opens a dialog, with `input` giving what is held
+/// in each frame, counted from 0, and the dialog's focus as each frame
+/// ends. Returns the first row printed and the focus by frame.
+fn dialog_frames(source: &str, input: impl Fn(usize) -> State) -> (String, Vec<Option<usize>>) {
+    let mut rt = Runtime::for_tests(Font::blank());
+    let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
+    let mut focus = Vec::new();
+    for frame in 0.. {
+        rt.input.live = input(frame);
+        rt.begin_frame();
+        assert!(frame < 200, "the dialog was not answered");
+        let ended = vm.run(&mut rt, 100_000).unwrap() == Status::Ended;
+        focus.push(rt.dialog_focus());
+        if ended {
+            break;
+        }
+    }
+    let row: String = (0..20)
+        .map(|x| char::from_u32(u32::from(rt.text[4].cell(x, 0).code)).unwrap_or(' '))
+        .collect();
+    (row.trim_end_matches(['\0', ' ']).to_string(), focus)
+}
+
+/// Holds the buttons of `at` in the frames given with them.
+fn pad_at(frame: usize, at: &[(std::ops::Range<usize>, u32)]) -> State {
+    let held = at.iter().filter(|(r, _)| r.contains(&frame));
+    pressed(held.fold(0, |bits, (_, b)| bits | b))
+}
+
+const LEFT: u32 = 1 << 6;
+const RIGHT: u32 = 1 << 7;
+const A_BUTTON: u32 = 1 << 3;
+const B_BUTTON: u32 = 1 << 1;
+
+/// The focus starts on the right button of two, and A chooses it.
+#[test]
+fn a_chooses_the_right_button_at_first() {
+    let (row, focus) = dialog_frames("DIALOG \"Q\",1:?RESULT()", |f| {
+        pad_at(f, &[(3..5, A_BUTTON)])
+    });
+    assert_eq!(row, "1");
+    assert_eq!(focus[1], Some(1));
+}
+
+/// The D-pad's Left and Right move the focus, one button a press and no
+/// further than the ends, and A chooses the button with the focus.
+#[test]
+fn the_d_pad_moves_the_focus_that_a_chooses() {
+    let presses = [
+        (2..4, LEFT),
+        (5..7, LEFT),
+        (8..10, RIGHT),
+        (11..13, LEFT),
+        (14..16, A_BUTTON),
+    ];
+    let (row, focus) = dialog_frames("DIALOG \"Q\",3:?RESULT()", |f| pad_at(f, &presses));
+    assert_eq!(row, "-1");
+    let at = |f: usize| focus[f];
+    assert_eq!(
+        (at(1), at(2), at(5), at(8), at(11)),
+        (Some(1), Some(0), Some(0), Some(1), Some(0))
+    );
+    // Held, Left moves no more.
+    assert_eq!(at(3), Some(0));
+}
+
+/// B chooses the left button of two wherever the focus is.
+#[test]
+fn b_chooses_the_left_button_whatever_the_focus() {
+    let source = "DIALOG \"Q\",2:?RESULT()";
+    let (row, _) = dialog_frames(source, |f| pad_at(f, &[(3..5, B_BUTTON)]));
+    assert_eq!(row, "-1");
+    let (row, _) = dialog_frames(source, |f| pad_at(f, &[(2..3, LEFT), (5..7, B_BUTTON)]));
+    assert_eq!(row, "-1");
+}
+
+/// The left stick moves the focus once each time it goes past halfway,
+/// and not at all if it was over when the dialog opened.
+#[test]
+fn the_left_stick_moves_the_focus() {
+    let stick = |x: f64| {
+        let mut s = State::default();
+        s.pads[0].sticks[0] = (x, 0.0);
+        s
+    };
+    let source = "DIALOG \"Q\",4:?RESULT()";
+    let (row, focus) = dialog_frames(source, |f| match f {
+        3 => stick(-0.4),
+        4..=6 => stick(-0.8),
+        8..=9 => stick(0.9),
+        10..=11 => stick(-0.6),
+        13..=14 => pad_at(f, &[(13..15, A_BUTTON)]),
+        _ => State::default(),
+    });
+    assert_eq!(row, "-1");
+    assert_eq!(
+        (focus[3], focus[4], focus[8], focus[10]),
+        (Some(1), Some(0), Some(1), Some(0))
+    );
+
+    // Over to the left from before the dialog, it moves nothing.
+    let (row, _) = dialog_frames(source, |f| match f {
+        0..=9 => stick(-1.0),
+        10..=11 => pad_at(f, &[(10..12, A_BUTTON)]),
+        _ => State::default(),
+    });
+    assert_eq!(row, "1");
+}
+
+/// A dialog with one button keeps the focus on it, and one that waits for
+/// buttons has none.
+#[test]
+fn only_a_choice_of_two_moves_its_focus() {
+    let (row, focus) = dialog_frames("DIALOG \"Q\",5:?RESULT()", |f| {
+        pad_at(f, &[(2..3, LEFT), (4..5, RIGHT), (6..8, A_BUTTON)])
+    });
+    assert_eq!(row, "1");
+    let open = &focus[..focus.len() - 1];
+    assert!(open.iter().all(|&f| f == Some(0)), "{focus:?}");
+    let (_, focus) = dialog_frames("?DIALOG(\"Q\",8)", |f| {
+        pad_at(f, &[(2..3, LEFT), (4..6, A_BUTTON)])
+    });
+    assert!(focus.iter().all(Option::is_none), "{focus:?}");
+}
+
+/// The frontend's keys move the same focus, no further than the last
+/// button.
+#[test]
+fn the_frontend_sets_the_focus() {
+    let mut rt = Runtime::for_tests(Font::blank());
+    let mut vm = Vm::new(sb_core::compile("DIALOG \"Q\",1:?RESULT()", &rt).unwrap());
+    vm.run(&mut rt, 100_000).unwrap();
+    assert_eq!(rt.dialog_focus(), Some(1));
+    rt.set_dialog_focus(0);
+    assert_eq!(rt.dialog_focus(), Some(0));
+    rt.set_dialog_focus(5);
+    assert_eq!(rt.dialog_focus(), Some(1));
+}
+
+/// The D-pad presses that move the focus are no presses for BUTTON or
+/// INKEY$ after the dialog closes.
+#[test]
+fn moving_the_focus_leaves_nothing_for_the_program() {
+    let source = "DIALOG \"Q\",1:P=BUTTON(0,-1,2):N=0:REPEAT:VSYNC:INC N:UNTIL N==30\n\
+                  K$=INKEY$():?RESULT();\" \";P;\" \";LEN(K$)";
+    // Left is still held as A closes the dialog, and let go after it.
+    let (row, _) = dialog_frames(source, |f| pad_at(f, &[(2..8, LEFT), (5..7, A_BUTTON)]));
+    assert_eq!(row, "-1 0 0");
+}
