@@ -380,6 +380,49 @@ fn failure_message(why: &str, saved: Option<Vec<String>>) -> String {
     }
 }
 
+/// What frontend() keeps of the keys, the mouse and the controllers
+/// between events.
+struct Inputs {
+    controls: Controls,
+    typing: controls::Typing,
+    /// Select, for the Simple UI's menu and quitting.
+    hotkeys: simple_ui::Hotkeys,
+    /// Holding the pad's up or down repeats in the projects, and the left
+    /// stick works as the pad there. `pad_screen` is the screen it was
+    /// last ticked for, `pad_tick` when.
+    pad_repeat: PadRepeat,
+    pad_screen: usize,
+    pad_tick: Instant,
+    /// The left button went down on the editor and is still held.
+    dragging: bool,
+    /// When the + button, F5 or a controller's, went down, while it is
+    /// held.
+    plus_down: Option<Instant>,
+    /// The text of a key that something else took: the space some systems
+    /// type for Ctrl+Space, or a digit that chose a slot in a window that
+    /// then closed, which would otherwise reach the program or the editor.
+    eat_text: bool,
+    /// A USB key that reads as down for a frame, for the bench.
+    bench_usb: Option<u8>,
+}
+
+impl Inputs {
+    fn new(controls: Controls) -> Inputs {
+        Inputs {
+            controls,
+            typing: controls::Typing::default(),
+            hotkeys: simple_ui::Hotkeys::default(),
+            pad_repeat: PadRepeat::default(),
+            pad_screen: 0,
+            pad_tick: Instant::now(),
+            dragging: false,
+            plus_down: None,
+            eat_text: false,
+            bench_usb: None,
+        }
+    }
+}
+
 /// The emulator's own windows and dialogs. While one is open it takes the
 /// input, and the program sees nothing pressed.
 #[derive(Default)]
@@ -476,9 +519,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let clipboard = video.clipboard();
     machine.rt.clipboard = Box::new(SystemClipboard::new(video.clipboard()));
     let keyboard = sdl.keyboard();
-    let mut controls = Controls::new(&sdl)?;
-    let mut typing = controls::Typing::default();
-    typing.upper_case = machine.rt.settings.upper_case_letters;
+    let mut inputs = Inputs::new(Controls::new(&sdl)?);
+    inputs.typing.upper_case = machine.rt.settings.upper_case_letters;
     let audio = Audio::open(&sdl);
     // Runs the frames while a call to SDL holds the loop up.
     let standby = standby::Standby::start(audio.sink());
@@ -589,9 +631,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut home_memory = Memory::default();
     screens.welcome = (simple_ui && !machine.rt.settings.simple_ui_welcome_shown)
         .then(|| Welcome::new((display_w, display_h)));
-    // Select, for the menu and quitting; where the list was left; and the
-    // program it ran last, for Restart.
-    let mut hotkeys = simple_ui::Hotkeys::default();
+    // Where the list was left, and the program it ran last, for Restart.
     let mut list_memory = simple_ui::Memory::default();
     let mut ran_from_list = restart;
     // The debugger's panel below the editor, and the stop it last showed.
@@ -606,24 +646,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut side_focus = false;
     // The help was opened in direct mode, over the screen.
     let mut side_direct = false;
-    // The text of a key that something else took: the space some systems
-    // type for Ctrl+Space, or a digit that chose a slot in a window that
-    // then closed, which would otherwise reach the program or the editor.
-    let mut eat_text = false;
 
     let mut events = sdl.event_pump()?;
     let mut pacer = pacing::Pacer::new(Instant::now());
-    // The left button went down on the editor and is still held.
-    let mut dragging = false;
-    // When the + button, F5 or a controller's, went down, while it is
-    // held.
-    let mut plus_down: Option<Instant> = None;
-    // Holding the pad's up or down repeats in the projects, and the left
-    // stick works as the pad there. `pad_screen` is the screen it was last
-    // ticked for, `pad_tick` when.
-    let mut pad_repeat = PadRepeat::default();
-    let mut pad_screen = 0;
-    let mut pad_tick = Instant::now();
     let mut bench = bench::Bench::from_env();
     if std::env::var_os("SB_GPU_GOLDEN").is_some() {
         if canvas.renderer_name == "software" {
@@ -637,8 +662,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // Why the renderer has to be replaced, from where it was found out.
     let mut renderer_failed: Option<String> = None;
     let mut watch = RendererWatch::default();
-    // A USB key that reads as down for a frame, for the bench.
-    let mut bench_usb: Option<u8> = None;
     // Renderers to refuse, for the bench.
     let mut refusals = 0;
     let mut suspend = SuspendWatch::new();
@@ -718,7 +741,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             drop(canvas);
             let mut waiting = Waiting {
                 events: &mut events,
-                controls: &mut controls,
+                controls: &mut inputs.controls,
                 refusals: &mut refusals,
                 quiet: headless(),
             };
@@ -828,7 +851,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     None
                 }
                 _ if what.starts_with("usb:") => {
-                    bench_usb = what[4..].parse().ok();
+                    inputs.bench_usb = what[4..].parse().ok();
                     None
                 }
                 _ if what.starts_with("key:") || what.starts_with("editor-key:") => {
@@ -855,14 +878,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     let (state, name) = what.split_once(':').expect("checked");
                     Button::from_string(name).map(|button| {
                         if state == "pad" {
-                            controls.bench |= controls::button_bit(button);
+                            inputs.controls.bench |= controls::button_bit(button);
                             Event::GamepadButtonDown {
                                 timestamp,
                                 which,
                                 button,
                             }
                         } else {
-                            controls.bench &= !controls::button_bit(button);
+                            inputs.controls.bench &= !controls::button_bit(button);
                             Event::GamepadButtonUp {
                                 timestamp,
                                 which,
@@ -1147,15 +1170,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             screens.manager.as_ref().map(ProjectManager::mode_id),
             screens.game_list.as_ref().map(GameList::mode_id),
         );
-        let pad_dt = pad_tick.elapsed().min(Duration::from_millis(100));
-        pad_tick = Instant::now();
-        if screen != pad_screen {
-            pad_screen = screen;
-            pad_repeat.reset();
+        let pad_dt = inputs.pad_tick.elapsed().min(Duration::from_millis(100));
+        inputs.pad_tick = Instant::now();
+        if screen != inputs.pad_screen {
+            inputs.pad_screen = screen;
+            inputs.pad_repeat.reset();
         }
         let mut repeats = Vec::new();
         if screen >= 2
-            && let Some((dir, n)) = pad_repeat.tick(pad_dt)
+            && let Some((dir, n)) = inputs.pad_repeat.tick(pad_dt)
         {
             let (timestamp, which) = (0, 0.into());
             let button = dir.button();
@@ -1198,29 +1221,31 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // A, B, X and Y are what the setting makes them from here
                 // on, for every screen and the program, even after a
                 // change an event before made.
-                controls.swap = machine.rt.settings.swap_ab_xy;
-                controls.stick_mouse.on = machine.rt.settings.right_stick_mouse;
-                controls.event(&mut event);
+                inputs.controls.swap = machine.rt.settings.swap_ab_xy;
+                inputs.controls.stick_mouse.on = machine.rt.settings.right_stick_mouse;
+                inputs.controls.event(&mut event);
                 // R3 clicks on the emulator's screens as the mouse does.
                 let main_id = canvas.window().id();
                 let lcd = main_map.lcd(simple_ui);
-                controls.stick_click(&mut event, stick_role!(), main_id, lcd);
+                inputs
+                    .controls
+                    .stick_click(&mut event, stick_role!(), main_id, lcd);
                 // A press and its release can both come between two
                 // frames, which what is held then would miss. One of the
                 // emulator's screens takes them back below.
                 let keys = machine.rt.settings.keyboard_buttons;
-                for (tap, down) in controls.taps(&event, keys).into_iter().flatten() {
+                for (tap, down) in inputs.controls.taps(&event, keys).into_iter().flatten() {
                     machine.rt.input.tap(tap, down);
                 }
                 match event {
                     Event::GamepadButtonDown {
                         button: Button::Back,
                         ..
-                    } => hotkeys.select(true),
+                    } => inputs.hotkeys.select(true),
                     Event::GamepadButtonUp {
                         button: Button::Back,
                         ..
-                    } => hotkeys.select(false),
+                    } => inputs.hotkeys.select(false),
                     _ => {}
                 }
             }
@@ -1229,16 +1254,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let event = match event {
                 Event::GamepadButtonDown { button, .. } if !repeated => {
                     match button {
-                        Button::DPadUp => pad_repeat.down(Dir::Up),
-                        Button::DPadDown => pad_repeat.down(Dir::Down),
+                        Button::DPadUp => inputs.pad_repeat.down(Dir::Up),
+                        Button::DPadDown => inputs.pad_repeat.down(Dir::Down),
                         _ => {}
                     }
                     event
                 }
                 Event::GamepadButtonUp { button, .. } => {
                     match button {
-                        Button::DPadUp => pad_repeat.up(Dir::Up),
-                        Button::DPadDown => pad_repeat.up(Dir::Down),
+                        Button::DPadUp => inputs.pad_repeat.up(Dir::Up),
+                        Button::DPadDown => inputs.pad_repeat.up(Dir::Down),
                         _ => {}
                     }
                     event
@@ -1250,8 +1275,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     value,
                 } => {
                     let pushed = match axis {
-                        Axis::LeftX => pad_repeat.stick_x(value),
-                        Axis::LeftY => pad_repeat.stick_y(value),
+                        Axis::LeftX => inputs.pad_repeat.stick_x(value),
+                        Axis::LeftY => inputs.pad_repeat.stick_y(value),
                         _ => None,
                     };
                     match pushed {
@@ -1402,10 +1427,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 scancode, repeat, ..
             } = event
             {
-                typing.any_key_down(&mut machine.rt, scancode, repeat);
+                inputs
+                    .typing
+                    .any_key_down(&mut machine.rt, scancode, repeat);
             }
             if matches!(event, Event::KeyDown { .. }) {
-                eat_text = screens.any()
+                inputs.eat_text = screens.any()
                     || program_dialog.is_some()
                     || debug_panel.typing()
                     || (side.is_some() && side_focus);
@@ -1458,7 +1485,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     let _ = window.set_fullscreen(machine.rt.settings.fullscreen);
                     (screens.game_list, screens.pause_menu, screens.welcome) = (None, None, None);
                 }
-                plus_down = None;
+                inputs.plus_down = None;
                 continue;
             }
             // Ctrl+Shift+F11 turns the desktop's fullscreen on or off,
@@ -1488,12 +1515,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Event::GamepadButtonDown {
                         button: Button::East,
                         ..
-                    } => hotkeys.a_down(true) && screens.welcome.is_none(),
+                    } => inputs.hotkeys.a_down(true) && screens.welcome.is_none(),
                     Event::GamepadButtonDown {
                         button: Button::Start,
                         ..
-                    } if hotkeys.start_down(true) == simple_ui::Start::Quit => {
-                        (screens.pause_menu, plus_down, quit) = (None, None, true);
+                    } if inputs.hotkeys.start_down(true) == simple_ui::Start::Quit => {
+                        (screens.pause_menu, inputs.plus_down, quit) = (None, None, true);
                         continue;
                     }
                     Event::KeyDown {
@@ -1516,7 +1543,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             Some(open)
                         }
                     };
-                    plus_down = None;
+                    inputs.plus_down = None;
                     continue;
                 }
             }
@@ -1524,7 +1551,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 button: Button::Start,
                 ..
             } = event
-                && !hotkeys.start_up()
+                && !inputs.hotkeys.start_up()
             {
                 continue;
             }
@@ -1625,12 +1652,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 Event::MouseMotion { x, y, .. } if !from_editor => {
                     let size = (mode.width as i32, mode.height as i32);
                     let lcd = map().lcd(simple_ui).to_display(x, y);
-                    controls::place_mouse(&mut controls.mouse, to_screen(x, y), size, lcd);
+                    controls::place_mouse(&mut inputs.controls.mouse, to_screen(x, y), size, lcd);
                 }
                 Event::MouseWheel { y, .. }
                     if screens.manager.is_none() && !on_editor && !from_editor =>
                 {
-                    controls.mouse.wheel += y.round() as i32;
+                    inputs.controls.mouse.wheel += y.round() as i32;
                 }
                 // Here, before the dialogs and menus below take the event
                 // and go on to the next, so that the page and the editor's
@@ -1640,7 +1667,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } => {
                     debug_panel.release();
-                    dragging = false;
+                    inputs.dragging = false;
                 }
                 // The + button acts when let go, unless it was held until
                 // the program stopped (checked on hardware).
@@ -1651,11 +1678,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 | Event::GamepadButtonUp {
                     button: Button::Start,
                     ..
-                } if plus_down.take().is_some() => machine.sysreq(),
+                } if inputs.plus_down.take().is_some() => machine.sysreq(),
                 Event::GamepadButtonDown {
                     button: Button::Start,
                     ..
-                } if !screens.any() => plus_down = Some(Instant::now()),
+                } if !screens.any() => inputs.plus_down = Some(Instant::now()),
                 _ => {}
             }
             if let Some((open, asking)) = &mut screens.dialog {
@@ -2344,8 +2371,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                     // A button let go where this loop did not see it ends
                     // the selection too.
-                    dragging &= mousestate.left();
-                    if dragging && on_editor {
+                    inputs.dragging &= mousestate.left();
+                    if inputs.dragging && on_editor {
                         let (x, y) = to_screen(x, y);
                         machine.editor_mouse_drag(x, y);
                     }
@@ -2574,7 +2601,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         if !machine.editor_margin_click(x, y) {
                             let extend = shift(keyboard.mod_state());
                             machine.editor_mouse_down(x, y, extend);
-                            dragging = true;
+                            inputs.dragging = true;
                         }
                     }
                     Click::Consumed | Click::Ignored => {}
@@ -2599,7 +2626,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     keymod,
                     repeat: false,
                     ..
-                } if !ctrl(keymod) => plus_down = Some(Instant::now()),
+                } if !ctrl(keymod) => inputs.plus_down = Some(Instant::now()),
                 // F8 leaves F9 to F11 for SmileBASIC 4's tools.
                 Event::KeyDown {
                     keycode: Some(Keycode::F8),
@@ -2639,7 +2666,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     } else {
                         machine.rt.toggle_line_popups();
                     }
-                    eat_text = true;
+                    inputs.eat_text = true;
                 }
                 // Editing the line typed in direct mode or for INPUT.
                 Event::KeyDown {
@@ -2651,7 +2678,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     && machine.rt.wants_line()
                     && let Some(code) = line_command(key, shift(keymod), ctrl(keymod)) =>
                 {
-                    typing.key_down(&mut machine.rt, keymod, repeat, Some(code))
+                    inputs
+                        .typing
+                        .key_down(&mut machine.rt, keymod, repeat, Some(code))
                 }
                 // Ctrl+C is a break, as the + button is, in a program and
                 // on a DIRECT mode line that runs. It types nothing, also
@@ -2665,7 +2694,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     if !repeat {
                         machine.keyboard_break();
                     }
-                    eat_text = true;
+                    inputs.eat_text = true;
                 }
                 Event::KeyDown {
                     keycode: Some(key @ (Keycode::C | Keycode::X)),
@@ -2707,7 +2736,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     && let Some(n) = function_key(key) =>
                 {
                     machine.type_function_key(n);
-                    eat_text = true;
+                    inputs.eat_text = true;
                 }
                 // From the screen, F4 brings the editor's own window up.
                 Event::KeyDown {
@@ -2739,12 +2768,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     button: Button::Back,
                     ..
                 } if !machine.is_running() && !on_editor && !simple_ui => {
-                    controls.stick_mouse.select.arm()
+                    inputs.controls.stick_mouse.select.arm()
                 }
                 Event::GamepadButtonUp {
                     button: Button::Back,
                     ..
-                } if controls.stick_mouse.select.alone()
+                } if inputs.controls.stick_mouse.select.alone()
                     && !machine.is_running()
                     && !on_editor
                     && !simple_ui =>
@@ -2874,7 +2903,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         key => special_key(key).and_then(editor::select_key),
                     } =>
                 {
-                    typing.key_down(&mut machine.rt, keymod, repeat, Some(code))
+                    inputs
+                        .typing
+                        .key_down(&mut machine.rt, keymod, repeat, Some(code))
                 }
                 // What a program's dialog does not take is lost, or it
                 // would reach the prompt or the program beside it.
@@ -2885,10 +2916,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     keymod,
                     repeat,
                     ..
-                } => typing.key_down(&mut machine.rt, keymod, repeat, special_key(key)),
-                Event::TextInput { .. } if eat_text => eat_text = false,
+                } => inputs
+                    .typing
+                    .key_down(&mut machine.rt, keymod, repeat, special_key(key)),
+                Event::TextInput { .. } if inputs.eat_text => inputs.eat_text = false,
                 Event::TextInput { text, .. } => {
-                    typing.text(&mut machine.rt, &text);
+                    inputs.typing.text(&mut machine.rt, &text);
                 }
                 _ => {}
             }
@@ -2956,8 +2989,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let right_side = !machine.is_split_rows() && machine.active_side() == 1;
             open.set_left(machine.is_split() && right_side);
         }
-        if plus_down.is_some_and(|t| t.elapsed() >= FORCED_STOP) {
-            plus_down = None;
+        if inputs.plus_down.is_some_and(|t| t.elapsed() >= FORCED_STOP) {
+            inputs.plus_down = None;
             machine.stop();
         }
         close_bar_on_start(&mut menu, &mut was_running, machine.is_running());
@@ -2969,23 +3002,25 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // alone, and after a Projects run's error only its A goes anywhere.
         let waiting = machine.home_waiting() && program_dialog.is_none();
         let beside = side_direct && side_focus && side.is_some();
-        controls.swap = machine.rt.settings.swap_ab_xy;
-        controls.stick_mouse.on = machine.rt.settings.right_stick_mouse;
-        let mut held = controls.state(
+        inputs.controls.swap = machine.rt.settings.swap_ab_xy;
+        inputs.controls.stick_mouse.on = machine.rt.settings.right_stick_mouse;
+        let mut held = inputs.controls.state(
             &events.keyboard_state(),
             events.mouse_state(),
             machine.rt.settings.keyboard_buttons,
         );
         // The right stick moves the main window's pointer, but not while
         // the editor's own window has the keys.
-        if let Some(at) = controls.stick_pointer(&mut held, stick_role!()) {
+        if let Some(at) = inputs.controls.stick_pointer(&mut held, stick_role!()) {
             let (x, y) = main_map.lcd(simple_ui).display_to_window(at);
             let size = (mode.width as i32, mode.height as i32);
-            controls.place_pointer(&mut held, main_map.to_screen(x, y), size, at);
+            inputs
+                .controls
+                .place_pointer(&mut held, main_map.to_screen(x, y), size, at);
             mouse.warp_mouse_in_window(canvas.window(), x, y);
         }
-        typing.hold(&held);
-        typing.upper_case = machine.rt.settings.upper_case_letters;
+        inputs.typing.hold(&held);
+        inputs.typing.upper_case = machine.rt.settings.upper_case_letters;
         let screen = modal || paused || editor_keys || waiting || beside;
         // Programs see nothing pressed while the editor has the keys, but
         // a key held there repeats.
@@ -2995,13 +3030,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         } else {
             Default::default()
         };
-        machine.rt.input.live = controls.carried.program_sees(held, screen);
+        machine.rt.input.live = inputs.controls.carried.program_sees(held, screen);
         // What a screen had the controls for, or closed with, is none of
         // the program's.
-        if controls.carried.blanked() {
+        if inputs.controls.carried.blanked() {
             machine.rt.input.drop_taps();
         }
-        if let Some(usage) = bench_usb.take() {
+        if let Some(usage) = inputs.bench_usb.take() {
             machine.rt.input.live.set_key(usage, true);
         }
         if let Ok(path) = font_choice.try_recv() {
@@ -3071,7 +3106,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // real one moves, and the real one goes there too, unless Settings
         // keep the computer's pointer where it is: then the program sees
         // the move only until the next frame, which reads the real one.
-        let (sent, now) = (&mut controls.mouse, machine.rt.input.live.mouse);
+        let (sent, now) = (&mut inputs.controls.mouse, machine.rt.input.live.mouse);
         let fed = !modal
             && !paused
             && !machine.editor_has_keys()
@@ -3095,14 +3130,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             save_settings(&settings_path, &saved_settings);
         }
         toasts.tick();
-        controls
+        inputs
+            .controls
             .key_buttons
             .update(machine.rt.input.take_keys_read());
         // A program that keeps every key to itself has no use for the
         // picture yet; it may still come to read only buttons.
-        if machine.rt.input.take_buttons_read() && !controls.key_buttons.all_reserved() {
+        if machine.rt.input.take_buttons_read() && !inputs.controls.key_buttons.all_reserved() {
             let keys = machine.rt.settings.keyboard_buttons;
-            key_hint.buttons_read(keys, controls.gamepads());
+            key_hint.buttons_read(keys, inputs.controls.gamepads());
         }
         // The keys' picture shows once, so it waits out the emulator's
         // screens rather than run its time out under them.
@@ -3495,7 +3531,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 || apart && pointer_in_editor
                 || machine.rt.settings.keep_mouse_cursor
                 || machine.rt.mouse_cursor()
-                || controls.stick_mouse.select_points());
+                || inputs.controls.stick_mouse.select_points());
         let system_cursor = show_cursor && !overlays.cursor.on();
         if system_cursor != cursor_shown {
             cursor_shown = system_cursor;
@@ -3779,7 +3815,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     .copy(&mut canvas, (0, 0), place.rect(), place.size.0)
             );
         }
-        let (at, lcd) = (controls.mouse.display, main_map.lcd(simple_ui));
+        let (at, lcd) = (inputs.controls.mouse.display, main_map.lcd(simple_ui));
         drawing!(overlays.cursor.draw(
             &mut canvas,
             texture_creator,
