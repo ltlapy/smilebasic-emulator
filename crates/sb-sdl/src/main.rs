@@ -3164,7 +3164,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let keys = machine.rt.settings.keyboard_buttons;
             key_hint.buttons_read(keys, controls.gamepads());
         }
-        key_hint.tick();
+        // The keys' picture shows once, so it waits out the emulator's
+        // screens rather than run its time out under them.
+        if !paused && !modal {
+            key_hint.tick();
+        }
         slow_hint.follow(&machine.rt.settings);
         let was_shown = slow_hint.visible();
         slow_hint.tick(key_hint.visible());
@@ -3716,6 +3720,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 if let (0, Some((outline, frame, place, clip))) = (i, &outline) {
                     debug_panel::sprites::draw_outline(fb, outline, *frame, *place, *clip, 2);
                 }
+                // The notices go under the rest of the emulator's UI, and
+                // not at all while its screens are up, which they would
+                // only be in the way of. The Simple UI's go on a layer of
+                // their own.
+                if i == 0 && !paused && !modal && !simple_ui {
+                    if key_hint.visible() {
+                        key_hint.draw(fb, font);
+                    }
+                    if slow_hint.visible() {
+                        slow_hint.draw(fb, font, simple_ui);
+                    }
+                }
                 match &side {
                     _ if i != side_on || !under => {}
                     Some(Side::Help(help)) => help.draw(fb, font, side_focus),
@@ -3753,15 +3769,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 }
                 if let (true, None, Some(open)) = (i == ed && under, menus_apart, &debug_menu) {
                     open.draw(fb, font);
-                }
-                // The Simple UI's notices go on a layer of their own.
-                if i == 0 && key_hint.visible() && !simple_ui {
-                    key_hint.draw(fb, font);
-                }
-                // Under the menus and windows, which the notice would only
-                // be in the way of.
-                if i == 0 && slow_hint.visible() && !paused && !modal && !simple_ui {
-                    slow_hint.draw(fb, font, simple_ui);
                 }
                 if i == ui && under {
                     toasts.draw(fb, font);
