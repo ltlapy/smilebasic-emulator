@@ -1435,6 +1435,25 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                 };
             }
+            // Does what an item of the menu bar says, for a click on it or
+            // for the key that stands for it.
+            macro_rules! act {
+                ($action:expr) => {{
+                    let tools = events::Tools {
+                        clipboard: &clipboard,
+                        help: help.as_deref(),
+                        drawn_by: &paths.drawn_by,
+                    };
+                    let main = events::MainWindow {
+                        window: canvas.window_mut(),
+                        display: profile_display,
+                        keep_shape: &mut keep_shape,
+                        kms,
+                    };
+                    let (side, bar) = (&mut side_panel, &mut menu);
+                    events::menu_action($action, &mut screens, side, bar, tools, main, cx!())
+                }};
+            }
             // The system's file dialogs, for the screens that open them.
             macro_rules! choosers {
                 () => {
@@ -1742,21 +1761,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } else {
                     Click::Ignored
                 } {
-                    Click::Chosen(action) => {
-                        let tools = events::Tools {
-                            clipboard: &clipboard,
-                            help: help.as_deref(),
-                            drawn_by: &paths.drawn_by,
-                        };
-                        let main = events::MainWindow {
-                            window: canvas.window_mut(),
-                            display: profile_display,
-                            keep_shape: &mut keep_shape,
-                            kms,
-                        };
-                        let (side, bar) = (&mut side_panel, &mut menu);
-                        events::menu_action(action, &mut screens, side, bar, tools, main, cx!());
-                    }
+                    Click::Chosen(action) => act!(action),
                     Click::Ignored
                         if let Some(open) = &mut side_panel.open
                             && editor_window
@@ -1798,11 +1803,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     keycode: Some(key),
                     keymod,
                     ..
-                } if let Some(action) = debug_key(key, shift(keymod), ctrl(keymod)) => {
-                    let size = (display_w, display_h);
-                    screens.dialog =
-                        debug_action(machine, action, &mut toasts, size).or(screens.dialog);
-                }
+                } if let Some(action) = debug_key(key, shift(keymod), ctrl(keymod)) => act!(action),
                 // SmileBASIC 4's F5 is the + button.
                 Event::KeyDown {
                     keycode: Some(Keycode::F5),
@@ -1939,8 +1940,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     keycode: Some(Keycode::F12),
                     ..
                 } if !machine.is_running() => {
-                    let size = (display_w, display_h);
-                    screens.manager = Some(ProjectManager::new(&machine.rt.storage, size));
+                    act!(Action::Projects);
                 }
                 // A controller's Select (-) opens them in direct mode, so
                 // that a game can be picked with the pad alone, when it is
@@ -1961,8 +1961,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     && !on_editor
                     && !simple_ui =>
                 {
-                    let size = (display_w, display_h);
-                    screens.manager = Some(ProjectManager::new(&machine.rt.storage, size));
+                    act!(Action::Projects);
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::F2),
@@ -1980,11 +1979,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         || !machine.is_editing() && !machine.is_running() && !from_editor) =>
                 {
                     let size = (display_w, display_h);
-                    if let Some(panel) = open_help(machine, help.as_deref(), &mut toasts, size) {
-                        side_panel.open = Some(panel);
-                        side_panel.focus = true;
-                        side_panel.direct = !on_editor;
-                    }
+                    side_panel.show_help(machine, help.as_deref(), &mut toasts, size, !on_editor);
                 }
                 // Simple save and load, as SmileBASIC 4 has them.
                 Event::KeyDown {
@@ -1992,11 +1987,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     keymod,
                     ..
                 } if ctrl(keymod) && (!machine.is_running() || on_editor && apart) => {
-                    let size = (display_w, display_h);
-                    match open_file_dialog(machine, key == Keycode::S, size) {
-                        Ok(open) => screens.file_dialog = Some(open),
-                        Err(refused) => screens.dialog = Some((*refused, Asking::Notice)),
-                    }
+                    act!(match key {
+                        Keycode::S => Action::SaveSlot,
+                        _ => Action::LoadSlot,
+                    });
                 }
                 Event::KeyDown {
                     keycode: Some(key),
@@ -2013,13 +2007,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     keymod,
                     ..
                 } if on_editor && ctrl(keymod) => {
-                    let tools = events::Tools {
-                        clipboard: &clipboard,
-                        help: help.as_deref(),
-                        drawn_by: &paths.drawn_by,
-                    };
-                    let (keys, side) = ((key, shift(keymod)), &mut side_panel);
-                    events::editor_ctrl_key(keys, editor_room, side, tools, cx!());
+                    match events::editor_ctrl_action(key, shift(keymod)) {
+                        Some(action) => act!(action),
+                        None => events::editor_ctrl_key(key, editor_room, machine),
+                    }
                 }
                 // Esc, which the editor's text does not use, closes a panel.
                 Event::KeyDown {
@@ -3444,6 +3435,25 @@ struct Beside {
     focus: bool,
     /// The help was opened in direct mode, over the screen.
     direct: bool,
+}
+
+impl Beside {
+    /// Shows the help for the command at the cursor and gives it the
+    /// keys, if there is help for it; `direct` is whether it was asked for
+    /// in direct mode, to show over the screen. With no help to show, a
+    /// notice says so and what was open stays.
+    fn show_help(
+        &mut self,
+        machine: &mut Machine,
+        help: Option<&Help>,
+        toasts: &mut Toasts,
+        size: (u32, u32),
+        direct: bool,
+    ) {
+        if let Some(panel) = open_help(machine, help, toasts, size) {
+            (self.open, self.focus, self.direct) = (Some(panel), true, direct);
+        }
+    }
 }
 
 /// A panel beside the editor.
