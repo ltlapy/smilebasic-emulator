@@ -537,8 +537,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // The frame's size and filter, which the texture is made for.
     let mut texture_kind = (mode.frame(), filter);
     let mut texture = frame_texture(&canvas, texture_creator, texture_kind)?;
-    // The other textures, and what the frames' textures hold.
-    let mut textures = Held::default();
     // The pixels that mouse positions are given in: the screen's, or the
     // editor's frame.
     let mut pointer_space = (mode.width, mode.height);
@@ -554,6 +552,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // from the screen and hidden while it is closed, with its frame's
     // texture and the pixels its pointer positions are given in.
     let mut editor_gfx: OnceCell<EditorWindow> = OnceCell::new();
+    // The other textures, and what the frames' textures hold. Some are
+    // the editor's window's, so they come after it, to be dropped first.
+    let mut textures = Held::default();
     // The emulator's UI over the screens or the editor, with the cursor
     // drawn where the system shows none.
     let cursor_var = std::env::var(pointer::CURSOR_VAR).ok();
