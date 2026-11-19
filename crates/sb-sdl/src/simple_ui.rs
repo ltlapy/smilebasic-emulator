@@ -134,30 +134,25 @@ pub enum Start {
     Plus,
 }
 
-/// Select as the modifier of the Simple UI's hotkeys.
+/// What the Simple UI's hotkeys remember. Whether Select is held comes
+/// from the one place that follows it, the right-stick mouse's `Select`.
 #[derive(Debug, Default)]
 pub struct Hotkeys {
-    select: bool,
     /// The Start held now went down with Select, so its release is not
     /// the + button's.
     select_start: bool,
 }
 
 impl Hotkeys {
-    /// Select went down or up, on any controller.
-    pub fn select(&mut self, down: bool) {
-        self.select = down;
-    }
-
     /// A went down: true when, with Select held and the Simple UI on, it opens
     /// or closes the pause menu and is no press of A.
-    pub fn a_down(&self, simple_ui: bool) -> bool {
-        simple_ui && self.select
+    pub fn a_down(&self, simple_ui: bool, select: bool) -> bool {
+        simple_ui && select
     }
 
     /// Start went down.
-    pub fn start_down(&mut self, simple_ui: bool) -> Start {
-        if simple_ui && self.select {
+    pub fn start_down(&mut self, simple_ui: bool, select: bool) -> Start {
+        if simple_ui && select {
             self.select_start = true;
             Start::Quit
         } else {
@@ -1809,23 +1804,20 @@ mod tests {
     #[test]
     fn select_and_a_open_the_menu_select_and_start_quit_and_start_alone_is_plus() {
         let mut keys = Hotkeys::default();
-        assert!(!keys.a_down(true));
-        assert_eq!(keys.start_down(true), Start::Plus);
+        assert!(!keys.a_down(true, false));
+        assert_eq!(keys.start_down(true, false), Start::Plus);
         assert!(keys.start_up(), "its release is the + button's");
-        keys.select(true);
-        assert!(keys.a_down(true));
-        assert_eq!(keys.start_down(true), Start::Quit);
+        assert!(keys.a_down(true, true));
+        assert_eq!(keys.start_down(true, true), Start::Quit);
         // Its release is not the + button's, even with Select let go
         // first.
-        keys.select(false);
         assert!(!keys.start_up());
-        assert!(!keys.a_down(true));
-        assert_eq!(keys.start_down(true), Start::Plus);
+        assert!(!keys.a_down(true, false));
+        assert_eq!(keys.start_down(true, false), Start::Plus);
         assert!(keys.start_up());
         // On the desktop, Select changes nothing.
-        keys.select(true);
-        assert!(!keys.a_down(false));
-        assert_eq!(keys.start_down(false), Start::Plus);
+        assert!(!keys.a_down(false, true));
+        assert_eq!(keys.start_down(false, true), Start::Plus);
         assert!(keys.start_up());
     }
 

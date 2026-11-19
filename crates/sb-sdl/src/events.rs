@@ -14,6 +14,7 @@ use sb_runtime::machine::Machine;
 use sb_runtime::sound::bank::Bank;
 use sdl3::clipboard::ClipboardUtil;
 use sdl3::event::Event;
+use sdl3::gamepad::Button;
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
 use sdl3::video::Window;
@@ -22,12 +23,13 @@ use crate::colors::ColorWindow;
 use crate::debug_panel::{DebugPanel, Hit, Typed};
 use crate::dialog::{Answer, Dialog};
 use crate::file_dialogs::FilePicker;
+use crate::inputs::Inputs;
 use crate::menu::{Action, MenuBar};
 use crate::program_dialog::ProgramView;
 use crate::projects::{Memory, Outcome, ProjectManager, Transfer};
 use crate::settings_window::SettingsWindow;
 use crate::shortcuts::ShortcutsWindow;
-use crate::simple_ui::{self, GameList, Welcomed};
+use crate::simple_ui::{self, GameList, MenuSettings, PauseMenu, Welcomed};
 use crate::toast::Toasts;
 use crate::window::{self, KeepShape};
 use crate::{
@@ -694,6 +696,70 @@ pub fn color_window(
             }
         }
     }
+}
+
+/// The Simple UI's hotkeys, ahead of every screen. Select+A, or F8, opens
+/// and closes the pause menu, over a dialog too; that A goes nowhere else.
+/// Select+Start quits as the menu's Quit does, and the release of that
+/// Start is not the + button's. The welcome screen opens no menu.
+/// `restart` says whether the menu offers Restart. True when the event
+/// went to one of these.
+pub fn pause_hotkeys(
+    event: &Event,
+    inputs: &mut Inputs,
+    screens: &mut Screens,
+    (simple_ui, restart): (bool, bool),
+    cx: Ctx,
+) -> bool {
+    let Ctx {
+        machine,
+        quit,
+        size,
+        ..
+    } = cx;
+    let select = inputs.controls.stick_mouse.select.held();
+    if simple_ui {
+        let toggled = match event {
+            Event::GamepadButtonDown {
+                button: Button::East,
+                ..
+            } => inputs.hotkeys.a_down(true, select) && screens.welcome.is_none(),
+            Event::GamepadButtonDown {
+                button: Button::Start,
+                ..
+            } if inputs.hotkeys.start_down(true, select) == simple_ui::Start::Quit => {
+                (screens.pause_menu, inputs.plus_down, *quit) = (None, None, true);
+                return true;
+            }
+            Event::KeyDown {
+                keycode: Some(Keycode::F8),
+                repeat: false,
+                ..
+            } => screens.welcome.is_none(),
+            _ => false,
+        };
+        if toggled {
+            screens.pause_menu = match screens.pause_menu {
+                Some(_) => None,
+                None => {
+                    let running = machine.is_running();
+                    let program = running || machine.home_waiting();
+                    let settings = MenuSettings::of(&machine.rt.settings);
+                    let open = PauseMenu::new(running, program, restart, settings, size);
+                    Some(open)
+                }
+            };
+            inputs.plus_down = None;
+            return true;
+        }
+    }
+    matches!(
+        event,
+        Event::GamepadButtonUp {
+            button: Button::Start,
+            ..
+        }
+    ) && !inputs.hotkeys.start_up()
 }
 
 /// The Simple UI's pause menu's: it takes the event. `memory` is where

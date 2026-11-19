@@ -69,6 +69,11 @@ impl Select {
         }
     }
 
+    /// Whether Select is held now, on any controller.
+    pub fn held(&self) -> bool {
+        self.held
+    }
+
     /// The press of Select now is one that opens the projects if it is
     /// released with nothing else done meanwhile.
     pub fn arm(&mut self) {

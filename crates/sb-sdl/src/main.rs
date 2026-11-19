@@ -113,7 +113,7 @@ use sdl3::sys::surface::SDL_ScaleMode;
 use sdl3::video::{FullscreenType, Window, WindowBuilder, WindowContext, WindowPos};
 use settings_window::SettingsWindow;
 use shortcuts::ShortcutsWindow;
-use simple_ui::{GameList, MenuSettings, PauseMenu, Welcome};
+use simple_ui::{GameList, PauseMenu, Welcome};
 use toast::Toasts;
 use window::Which;
 
@@ -1192,17 +1192,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 for (tap, down) in inputs.controls.taps(&event, keys).into_iter().flatten() {
                     machine.rt.input.tap(tap, down);
                 }
-                match event {
-                    Event::GamepadButtonDown {
-                        button: Button::Back,
-                        ..
-                    } => inputs.hotkeys.select(true),
-                    Event::GamepadButtonUp {
-                        button: Button::Back,
-                        ..
-                    } => inputs.hotkeys.select(false),
-                    _ => {}
-                }
             }
             let event = inputs.pad_event(event, repeated, screen);
             // Whatever the event does may show on the screens.
@@ -1467,53 +1456,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                 };
             }
-            // Select+A, or F8, opens and closes the Simple UI's pause menu,
-            // over a dialog too; that A goes nowhere else. Select+Start
-            // quits as the menu's Quit does, and the release of that Start
-            // is not the + button's. The welcome screen opens no menu.
-            if simple_ui {
-                let toggled = match event {
-                    Event::GamepadButtonDown {
-                        button: Button::East,
-                        ..
-                    } => inputs.hotkeys.a_down(true) && screens.welcome.is_none(),
-                    Event::GamepadButtonDown {
-                        button: Button::Start,
-                        ..
-                    } if inputs.hotkeys.start_down(true) == simple_ui::Start::Quit => {
-                        (screens.pause_menu, inputs.plus_down, quit) = (None, None, true);
-                        continue;
-                    }
-                    Event::KeyDown {
-                        keycode: Some(Keycode::F8),
-                        repeat: false,
-                        ..
-                    } => screens.welcome.is_none(),
-                    _ => false,
-                };
-                if toggled {
-                    screens.pause_menu = match screens.pause_menu {
-                        Some(_) => None,
-                        None => {
-                            let running = machine.is_running();
-                            let program = running || machine.home_waiting();
-                            let restart = ran_from_list.is_some();
-                            let settings = MenuSettings::of(&machine.rt.settings);
-                            let size = (display_w, display_h);
-                            let open = PauseMenu::new(running, program, restart, settings, size);
-                            Some(open)
-                        }
-                    };
-                    inputs.plus_down = None;
-                    continue;
-                }
-            }
-            if let Event::GamepadButtonUp {
-                button: Button::Start,
-                ..
-            } = event
-                && !inputs.hotkeys.start_up()
-            {
+            if events::pause_hotkeys(
+                &event,
+                &mut inputs,
+                &mut screens,
+                (simple_ui, ran_from_list.is_some()),
+                cx!(),
+            ) {
                 continue;
             }
             if screens.pause_menu.is_some() {
