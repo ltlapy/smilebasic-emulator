@@ -20,6 +20,8 @@ Rendering and performance:
 - [renderer-verification.md](renderer-verification.md): rendering rules and how they were checked
 - [renderer-decisions.md](renderer-decisions.md): choices made for the GPU renderer
 - [frame-thread.md](frame-thread.md): how frames and sound go on while the main thread is held up
+- [working-notes.md](working-notes.md): what each crate is for, what to watch in it, and how to check a change
+- [frontend-guide.md](frontend-guide.md): where the window's code and state live, and how to check a change to it
 - [benchmarking.md](benchmarking.md): how to measure performance
 - [benchmark-results.md](benchmark-results.md): performance results
 
