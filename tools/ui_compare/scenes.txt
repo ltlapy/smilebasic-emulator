@@ -121,3 +121,4 @@ keys: F12 while a program runs|run=PERF/TRUN,at=100:key:F12,at=112:key:ctrl+S|
 simple ui: select+a, menu stays open|at=60:pad:a,at=65:padup:a,at=90:pad:back,at=95:pad:a,at=100:padup:a,at=105:padup:back,at=120:pad:dpdown,at=125:padup:dpdown|--simple-ui
 simple ui: select+start quits|at=60:pad:a,at=65:padup:a,at=90:pad:back,at=95:pad:start,at=100:padup:start,at=105:padup:back|--simple-ui
 simple ui: start alone over a program|run=PERF/TRUN,at=90:pad:start,at=95:padup:start|--simple-ui
+program DIALOG: two buttons, Left|run=PERF/TDLG,at=100:key:Return,at=140:key:Left|
