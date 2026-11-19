@@ -116,6 +116,19 @@ smilebasic
 lists the rest. A scene is one such line. A change is checked by some dozens
 of them, each run on both builds, with the shots compared byte for byte.
 
+`tools/ui_compare/compare.sh` does that for the scenes in `scenes.txt`
+beside it, with the programs in its `PERF` folder:
+
+```
+tools/ui_compare/compare.sh BEFORE AFTER OUT_DIR [NAMES_REGEX]
+```
+
+`BEFORE` and `AFTER` are the two binaries. Build the old one from a clean
+checkout of its commit: a build made with the new changes still in the tree
+is the new build, and the script refuses two equal binaries. A full run
+takes about 15 minutes, and a build running beside it changes the timing of
+some scenes. When a change touches a screen no scene reaches, add a scene.
+
 What to know about scenes:
 
 - A program named `TEST` is the file `TTEST` in its project folder. With
@@ -127,8 +140,9 @@ What to know about scenes:
 - Copy both binaries to one folder. A binary in `target/debug` behaves
   differently in the bench from a copy elsewhere.
 - DIRECT mode's banner, Help > About and the Simple UI's pause menu print
-  the commit. Leave those pixels out of the comparison, or build both with
-  the same `SB_COMMIT`.
+  the commit. `shothash.py` leaves the banner's and the pause menu's pixels
+  out; a scene that ends on About differs between two builds by itself,
+  unless both were built with the same `SB_COMMIT`.
 - A scene that opens something in the first trips shows however far the
   program got in its first frame. Let the program settle first
   (`at=60:menu` in place of `menu`).

@@ -1,0 +1,120 @@
+# The scenes compare.sh runs, one a line: NAME|SB_UI_BENCH parts|flag.
+# docs/performance/benchmarking.md lists the parts. PERF/TRUN and the
+# others are the programs in the PERF folder beside this file.
+menu, click File|menu,at=100:click:20:10|
+File > Save slot (file dialog)|menu,at=100:click:20:10,at=110:click:40:60|
+file dialog, type, Escape|menu,at=100:click:20:10,at=110:click:40:60,at=130:key:A,at=150:key:Escape|
+File > Load into slot|menu,at=100:click:20:10,at=110:click:40:84|
+File > Settings, wheel, click|menu,at=100:click:20:10,at=110:click:40:140,at=130:wheel:640:400:-3,at=150:click:640:300|
+settings, keys|settings,at=100:key:Down,at=110:key:Down,at=120:key:Return,at=140:key:Tab|
+colors, click, drag|colors,at=100:click:500:300,at=110:press:520:320,at=115:drag:560:330,at=120:release:560:330|
+Projects (F12), keys|at=80:key:F12,at=100:key:Down,at=110:key:Right,at=120:key:Down|
+Projects, clicks, Escape|at=80:key:F12,at=100:click:300:200,at=110:click:700:300,at=130:key:Escape|
+File > Quit with unsaved (dialog)|at=60:unsaved,menu,at=100:click:20:10,at=110:click:40:172|
+quit dialog, Right, Escape|at=60:unsaved,menu,at=100:click:20:10,at=110:click:40:172,at=130:key:Right,at=150:key:Escape|
+editor, right click, menu click|load=PERF/TLIGHT,editor,at=100:rclick:400:300,at=120:click:420:330|
+running program, menu, Escape|run=PERF/TRUN,at=60:menu,at=120:key:Escape|
+simple ui: list, keys|at=80:key:Down,at=100:key:Tab|--simple-ui
+simple ui: pause menu (F8), keys|at=80:key:F8,at=100:key:Down,at=110:key:Down,at=120:key:Return|--simple-ui
+simple ui: pad|at=80:pad:dpdown,at=85:padup:dpdown,at=100:pad:a,at=105:padup:a|--simple-ui
+renderer: targets reset|run=PERF/TRUN,at=100:targets|
+renderer: device reset|run=PERF/TRUN,at=100:device|
+renderer: told to fail|run=PERF/TRUN,at=100:fail|
+renderer: device lost|run=PERF/TRUN,at=100:lost|
+renderer: refused twice|run=PERF/TRUN,at=100:refuse:2,at=101:fail|
+renderer: cpu then auto|run=PERF/TRUN,at=100:cpu,at=150:auto|
+renderer: cpu-smart|run=PERF/TRUN,cpu-smart|
+subprogram: tool and stop|run=PERF/TRUN,at=100:tool,at=160:substop|
+subprogram: tool, device reset|run=PERF/TRUN,at=100:tool,at=140:device|
+editor apart, device reset|load=PERF/TLIGHT,editor,apart,panel,at=100:device|
+suspend|run=PERF/TRUN,at=100:sleep:300|
+editor: type and keys|load=PERF/TLIGHT,editor,type=PRINT,at=120:key:Return,at=130:key:Up,at=140:key:shift+Down|
+editor: drag select|load=PERF/TLIGHT,editor,at=100:press:300:200,at=105:drag:500:260,at=110:release:500:260|
+projects: pad held repeats|at=80:key:F12,at=100:pad:dpdown,at=160:padup:dpdown|
+program: usb key|run=PERF/TRUN,at=100:usb:4|
+program: plus held stops|run=PERF/TRUN,at=80:pad:start,at=170:padup:start|
+simple ui: select+a|at=80:pad:back,at=90:pad:a,at=95:padup:a,at=100:padup:back|--simple-ui
+dialog: window closed under a notice|about,at=100:key:Escape,at=120:key:Return|
+simple ui: welcome, then A|at=80:pad:a,at=85:padup:a,at=120:key:Down|--simple-ui
+projects: double click, right click|at=80:key:F12,at=100:dclick:300:200,at=130:rclick:320:240,at=150:wheel:400:300:-2|
+projects: text and pad|at=80:key:F12,at=100:key:Tab,at=110:pad:dpdown,at=115:padup:dpdown,at=120:pad:a,at=125:padup:a|
+load dialog: click a file, keys|menu,at=100:click:20:10,at=110:click:40:84,at=130:click:400:250,at=140:key:Down,at=150:wheel:400:300:-1|
+save dialog: type a name, Return|at=60:unsaved,menu,at=100:click:20:10,at=110:click:40:60,at=130:key:Return|
+shortcuts window: wheel, Escape|at=80:key:F1,at=100:wheel:640:360:-3,at=130:key:Escape|
+colors: keys and text|colors,at=100:key:Down,at=110:key:Tab,at=120:key:Right|
+settings: click through pages|settings,at=100:click:200:120,at=120:click:200:160,at=140:click:700:300|
+simple ui: menu after welcome|at=60:pad:a,at=65:padup:a,at=90:key:F8,at=110:key:Down,at=120:key:Down,at=130:key:Down,at=150:key:Right|--simple-ui
+simple ui: menu, settings rows|at=60:pad:a,at=65:padup:a,at=90:key:F8,at=100:key:Down,at=105:key:Down,at=110:key:Down,at=120:key:Right,at=130:key:Down,at=140:key:Right|--simple-ui
+simple ui: menu by pad, B closes|at=60:pad:a,at=65:padup:a,at=90:pad:back,at=95:pad:a,at=100:padup:a,at=105:padup:back,at=120:pad:dpdown,at=125:padup:dpdown,at=140:pad:b,at=145:padup:b|--simple-ui
+help in direct mode: wheel, Escape|help,at=100:wheel:900:300:-3,at=130:key:Escape|
+help beside editor: keys|load=PERF/TLIGHT,editor,help,at=100:key:Down,at=110:key:F2,at=120:key:PageDown,at=140:move:900:300|
+debugger: panel wheel, right click, choice|load=PERF/TLIGHT,editor,panel,at=100:wheel:400:650:-2,at=120:rclick:400:650,at=140:click:420:670|
+debugger: menu closed by a key|load=PERF/TLIGHT,editor,panel,at=100:rclick:400:650,at=130:key:A|
+debugger: panel clicks|load=PERF/TLIGHT,editor,panel,at=100:click:200:560,at=120:click:500:560,at=140:click:300:640|
+program DIALOG: shown|run=PERF/TDLG|
+program DIALOG: Return twice|run=PERF/TDLG,at=100:key:Return,at=140:key:Return|
+program DIALOG: move, click, keys|run=PERF/TDLG,at=90:move:640:400,at=100:click:640:420,at=140:key:Left,at=150:key:Return|
+debugger: tabs by click|load=PERF/TLIGHT,editor,panel,at=100:click:472:488,at=120:click:572:488,at=140:click:656:488|
+debugger: add a watch, keys|load=PERF/TLIGHT,editor,panel,at=100:click:72:544,at=110:key:F,at=120:key:Backspace,at=130:key:Return|
+debugger: watch field, Escape|load=PERF/TLIGHT,editor,panel,at=100:click:72:544,at=130:key:Escape|
+debugger: menu, first item|load=PERF/TLIGHT,editor,panel,at=100:rclick:400:650,at=130:click:420:662|
+debugger: menu, hover, second item|load=PERF/TLIGHT,editor,panel,at=100:rclick:400:650,at=120:move:420:684,at=140:click:420:684|
+menu Edit: select all, comment, uncomment|load=PERF/TKEYS,editor,menu,at=100:click:70:10,at=108:click:100:164,at=118:click:70:10,at=126:click:100:302,at=136:click:70:10,at=144:click:100:164,at=154:click:70:10,at=162:click:100:326|
+menu Edit: select all, cut, undo, redo|load=PERF/TKEYS,editor,menu,at=100:click:70:10,at=108:click:100:164,at=118:click:70:10,at=126:click:100:92,at=136:click:70:10,at=144:click:100:35,at=154:click:70:10,at=162:click:100:59|
+menu Edit: copy, paste|load=PERF/TKEYS,editor,menu,at=100:click:70:10,at=108:click:100:164,at=118:click:70:10,at=126:click:100:116,at=136:click:70:10,at=144:click:100:140|
+menu Edit: find|load=PERF/TKEYS,editor,menu,at=100:click:70:10,at=108:click:100:197|
+menu Edit: replace|load=PERF/TKEYS,editor,menu,at=100:click:70:10,at=108:click:100:221|
+menu Edit: go to line|load=PERF/TKEYS,editor,menu,at=100:click:70:10,at=108:click:100:245|
+menu Edit: labels and DEFs|load=PERF/TKEYS,editor,menu,at=100:click:70:10,at=108:click:100:269|
+menu Edit: capitals toggle|load=PERF/TKEYS,editor,menu,at=100:click:70:10,at=108:click:100:359,at=140:click:70:10|
+menu View: editor/direct, split|load=PERF/TKEYS,editor,menu,at=100:click:118:10,at=108:click:160:83,at=118:click:118:10,at=126:click:160:35|
+menu View: wrap, overview, tiles|load=PERF/TKEYS,editor,menu,at=100:click:118:10,at=108:click:160:140,at=118:click:118:10,at=126:click:160:164,at=136:click:118:10,at=144:click:160:188|
+menu View: colors|load=PERF/TKEYS,editor,menu,at=100:click:118:10,at=108:click:160:260|
+menu View: keep 16:9, vsync|load=PERF/TKEYS,editor,menu,at=100:click:118:10,at=108:click:160:350,at=118:click:118:10,at=126:click:160:398,at=150:click:118:10|
+menu View: separate window|load=PERF/TKEYS,editor,menu,at=100:click:118:10,at=108:click:160:107|
+menu Run: toggles|load=PERF/TKEYS,editor,menu,at=100:click:163:10,at=108:click:200:107,at=118:click:163:10,at=126:click:200:197,at=150:click:163:10|
+menu Run: run, pause, resume|load=PERF/TKEYS,editor,menu,at=100:click:163:10,at=108:click:200:35,at=118:click:163:10,at=126:click:200:83,at=136:click:163:10,at=144:click:200:83|
+menu Run: run then stop|load=PERF/TKEYS,editor,menu,at=100:click:163:10,at=108:click:200:35,at=118:click:163:10,at=126:click:200:59|
+menu Debug: breakpoint, panel|load=PERF/TKEYS,editor,menu,at=100:click:210:10,at=108:click:250:188,at=118:click:210:10,at=126:click:250:269|
+menu Debug: breakpoint, condition|load=PERF/TKEYS,editor,menu,at=100:click:210:10,at=108:click:250:188,at=118:click:210:10,at=126:click:250:212|
+menu Debug: breakpoint, clear, toggle|load=PERF/TKEYS,editor,menu,at=100:click:210:10,at=108:click:250:188,at=118:click:210:10,at=126:click:250:236,at=136:click:210:10,at=144:click:250:350,at=170:click:210:10|
+menu Debug: restart|load=PERF/TKEYS,editor,menu,at=100:click:210:10,at=108:click:250:317|
+menu Help: help for the command|load=PERF/TKEYS,editor,menu,at=100:click:262:10,at=108:click:290:35|
+menu Help: shortcuts|load=PERF/TKEYS,editor,menu,at=100:click:262:10,at=108:click:290:59|
+menu File: projects|load=PERF/TKEYS,editor,menu,at=100:click:20:10,at=108:click:40:36|
+editor ctrl: select all, comment, uncomment|load=PERF/TLIGHT,editor,at=100:key:ctrl+A,at=110:key:ctrl+K,at=120:key:ctrl+A,at=130:key:ctrl+shift+K|
+editor ctrl: cut, undo, redo, redo|load=PERF/TLIGHT,editor,at=100:key:ctrl+A,at=110:key:ctrl+X,at=120:key:ctrl+Z,at=130:key:ctrl+Y,at=140:key:ctrl+Z,at=150:key:ctrl+shift+Z|
+editor ctrl: copy, end, paste|load=PERF/TLIGHT,editor,at=100:key:ctrl+A,at=110:key:ctrl+C,at=120:key:ctrl+End,at=130:key:ctrl+V|
+editor ctrl: home, delete line, delete to end|load=PERF/TLIGHT,editor,at=100:key:Down,at=110:key:Down,at=120:key:ctrl+Backspace,at=130:key:Right,at=140:key:Right,at=150:key:ctrl+Delete,at=160:key:ctrl+Home|
+editor ctrl: insert line|load=PERF/TLIGHT,editor,at=100:key:Down,at=110:key:ctrl+Return|
+editor ctrl: go to line|load=PERF/TLIGHT,editor,at=100:key:ctrl+G|
+editor ctrl: find, next|load=PERF/TLIGHT,editor,at=100:key:ctrl+F,at=110:key:F3|
+editor ctrl: replace, replace all|load=PERF/TLIGHT,editor,at=100:key:ctrl+H,at=110:key:ctrl+Return|
+editor ctrl: index|load=PERF/TLIGHT,editor,at=100:key:ctrl+J,at=110:key:Down,at=120:key:Return|
+editor ctrl: split, switch side, back|load=PERF/TLIGHT,editor,at=100:key:ctrl+/,at=110:key:ctrl+Tab,at=120:key:ctrl+/|
+editor ctrl: wrap, size|load=PERF/TLIGHT,editor,at=100:key:ctrl+W,at=110:key:ctrl+B,at=120:key:ctrl+B|
+editor ctrl: close editor|load=PERF/TLIGHT,editor,at=100:key:ctrl+0|
+editor keys: F2, shift select, shift tab|load=PERF/TLIGHT,editor,at=100:key:F2,at=110:key:shift+Down,at=120:key:shift+Right,at=130:key:Tab,at=140:key:shift+Tab|
+editor keys: escape closes the help|load=PERF/TLIGHT,editor,at=100:key:F1,at=110:key:Escape,at=120:key:Escape|
+direct keys: F1 help, F4, F12|frames=200,at=100:key:F1,at=110:key:Escape,at=120:key:F4,at=130:key:F4,at=140:key:F12|
+draw: narrow window, menu and settings|menu,at=60:resize:700:900,at=100:click:20:10,at=115:click:40:140|
+draw: narrow window, editor and panel|load=PERF/TLIGHT,editor,panel,at=60:resize:700:900,at=120:click:300:600|
+draw: wide window, editor, help|load=PERF/TLIGHT,editor,help,at=60:resize:1600:600|
+draw: tool as subprogram, focus switch|run=PERF/TRUN,at=80:tool,at=120:key:F9|
+draw: editor apart, panel, colors window|load=PERF/TLIGHT,editor,apart,panel,at=100:colors|
+draw: editor apart, menu on the editor|load=PERF/TLIGHT,editor,apart,menu,at=90:editor-focus,at=110:editor-click:20:10|
+draw: editor apart, settings from the editor|load=PERF/TLIGHT,editor,apart,at=90:editor-focus,settings|
+draw: simple ui, toast and list|toast,at=60:pad:a,at=65:padup:a|--simple-ui
+renderer: textures lost, then a wake|run=PERF/TRUN,at=80:targets,at=100:sleep:6000|
+keys: ctrl+S in direct mode|frames=200,at=100:key:ctrl+S|
+keys: ctrl+L in direct mode, Escape|frames=200,at=100:key:ctrl+L,at=112:key:Down,at=124:key:Escape|
+keys: ctrl+S in the editor|at=60:unsaved,load=PERF/TLIGHT,editor,at=100:key:ctrl+S|
+keys: ctrl+L in the editor|at=60:unsaved,load=PERF/TLIGHT,editor,at=100:key:ctrl+L|
+keys: breakpoint, panel, step|load=PERF/TLIGHT,editor,at=100:key:Down,at=112:key:Down,at=124:key:shift+F7,at=136:key:ctrl+F7,at=148:key:F6,at=160:key:F7|
+keys: run to cursor, continue, restart|load=PERF/TLIGHT,editor,at=100:key:Down,at=112:key:Down,at=124:key:Down,at=136:key:ctrl+F6,at=148:key:shift+F5,at=160:key:ctrl+shift+F5|
+keys: step out, jump to cursor|load=PERF/TLIGHT,editor,at=100:key:F6,at=112:key:Down,at=124:key:ctrl+shift+F6,at=136:key:shift+F6|
+keys: debugger keys in direct mode|load=PERF/TLIGHT,at=100:key:F6,at=112:key:F7,at=124:key:shift+F7,at=136:key:ctrl+F7|
+keys: Select opens projects|frames=200,at=100:pad:back,at=112:padup:back,at=124:key:Down|
+keys: Select held with A does not|frames=200,at=100:pad:back,at=112:pad:a,at=124:padup:a,at=136:padup:back|
+keys: F1 in the editor, then direct|load=PERF/TLIGHT,editor,at=100:key:F1,at=112:key:Escape,at=124:key:ctrl+0,at=136:key:F1|
+keys: F12 while a program runs|run=PERF/TRUN,at=100:key:F12,at=112:key:ctrl+S|
