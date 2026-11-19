@@ -69,6 +69,13 @@ impl Mapping {
         )
     }
 
+    /// Where a rectangle of the display, in its own pixels, is on the
+    /// window's canvas.
+    pub fn on_window(self, [x, y, w, h]: [f32; 4]) -> FRect {
+        let (at, s) = (self.display, self.display.w / self.display_w as f32);
+        FRect::new(at.x + x * s, at.y + y * s, w * s, h * s)
+    }
+
     /// This mapping with [`SB4_DISPLAY`] for its display, which the
     /// program's pointer goes by. On the desktop that is the UI's
     /// display. The Simple UI's display is the output's size in pixels of

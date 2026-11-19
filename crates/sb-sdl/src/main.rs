@@ -2564,9 +2564,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if let Some(sub) = machine.sub_screen_with(sub_backend) {
             let fb = sub.frame;
             let lcd = main_map.lcd(simple_ui);
-            let (at, s) = (lcd.display, lcd.display.w / lcd.display_w as f32);
-            let on_window =
-                |[x, y, w, h]: [f32; 4]| FRect::new(at.x + x * s, at.y + y * s, w * s, h * s);
+            let on_window = |rect: [f32; 4]| lcd.on_window(rect);
             if let Some(bars) = sub.bars() {
                 let c = |shift: u32| (sub.back >> shift & 0xFF) as u8;
                 let before = canvas.blend_mode();
@@ -2604,34 +2602,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // out together.
         if let Some((rect, alpha)) = machine.focus_border() {
             let lcd = main_map.lcd(simple_ui);
-            let ([x, y, w, h], (ox, oy), (sx, sy)) =
-                placement::border_place(rect, main_map, lcd, display_h, main_ui_h);
-            let place = |x: i32, y: i32, w: i32, h: i32| {
-                let at = |v: i32, s: f32| v as f32 * s;
-                FRect::new(ox + at(x, sx), oy + at(y, sy), at(w, sx), at(h, sy))
-            };
-            canvas.set_blend_mode(BlendMode::Blend);
-            for (inset, width, color) in [
-                (-1, 3, Color::RGBA(255, 255, 0, alpha)),
-                (2, 2, Color::RGBA(0, 0, 0, alpha)),
-            ] {
-                let (x, y, w, h) = (x + inset, y + inset, w - 2 * inset, h - 2 * inset);
-                canvas.set_draw_color(color);
-                drawing!(canvas.fill_rects(&[
-                    place(x, y, w, width),
-                    place(x, y + h - width, w, width),
-                    place(x, y + width, width, h - 2 * width),
-                    place(x + w - width, y + width, width, h - 2 * width),
-                ]));
-            }
-            canvas.set_blend_mode(BlendMode::None);
+            let place = placement::border_place(rect, main_map, lcd, display_h, main_ui_h);
+            drawing!(draw::focus_border(&mut canvas, place, alpha));
         }
         // The debugger's panel leaves the screens' place clear.
         if let (Some((place, _, Some(size))), Some((tex, _))) = (&debug, &textures.panel_screens) {
             let s = DebugPanel::screen_place(*place, *size);
-            let scale = display.w / display_w as f32;
-            let at = |v: u32| v as f32 * scale;
-            let dst = FRect::new(display.x + at(s.x), display.y + at(s.y), at(s.w), at(s.h));
+            let dst = main_map.on_window([s.x as f32, s.y as f32, s.w as f32, s.h as f32]);
             drawing!(canvas.copy(tex, None, dst));
         }
         let (grp, panel_grp) = (&machine.rt.grp, &debugger.panel.grp);
@@ -2865,42 +2842,35 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             _ => overlays.menu.release(),
         }
-        if let (0, Some((place, ..)), false) = (ed, &debug, panel_inside[0]) {
-            drawing!(overlays.panel[0].copy(&mut canvas, (place.x, place.y), display, display_w));
-        }
         // The Simple UI's notices, under the rest of its UI as on the
         // desktop. Neither shows with the pause menu or the game list, so
         // they stay clear of the bar of hints at the bottom; the slow
         // program's notice waits for the keys' picture to go.
         let notice = corner::visible(&key_hint, &slow_hint);
-        if simple_ui && notice && !paused && !modal {
+        let notice = (simple_ui && notice && !paused && !modal).then(|| {
             let size = settings.simple_ui_size;
-            let (ui, place) = simple_ui::notice_place((out_w, out_h), size);
-            drawing!(overlays.notice.update(texture_creator, ui, |fb| {
-                corner::draw(fb, font, &key_hint, &slow_hint, true);
-            }));
-            drawing!(overlays.notice.copy(&mut canvas, (0, 0), place, ui.0));
-        } else {
-            overlays.notice.release();
-        }
-        drawing!(overlays.overlay[0].copy(&mut canvas, (0, 0), display, display_w));
-        match (bar_shown[0], menus_apart) {
-            (true, Some(place)) => {
-                let at = place.rect();
-                drawing!(overlays.bar[0].copy(&mut canvas, (0, 0), at, place.size.0));
+            simple_ui::notice_place((out_w, out_h), size)
+        });
+        match notice {
+            Some((ui, _)) => {
+                drawing!(overlays.notice.update(texture_creator, ui, |fb| {
+                    corner::draw(fb, font, &key_hint, &slow_hint, true);
+                }));
             }
-            (true, None) => {
-                drawing!(overlays.bar[0].copy(&mut canvas, (0, 0), display, display_w));
-            }
-            (false, _) => {}
+            None => overlays.notice.release(),
         }
-        if let Some(place) = menus_apart {
-            drawing!(
-                overlays
-                    .menu
-                    .copy(&mut canvas, (0, 0), place.rect(), place.size.0)
-            );
-        }
+        let places = overlays::MainPlaces {
+            display,
+            display_w,
+            panel: match (ed, &debug, panel_inside[0]) {
+                (0, Some((place, ..)), false) => Some((place.x, place.y)),
+                _ => None,
+            },
+            notice: notice.map(|(ui, place)| (place, ui.0)),
+            bar: bar_shown[0],
+            menus: menus_apart,
+        };
+        drawing!(overlays.copy_main(&mut canvas, places));
         let (at, lcd) = (inputs.controls.mouse.display, main_map.lcd(simple_ui));
         drawing!(overlays.cursor.draw(
             &mut canvas,
@@ -2928,7 +2898,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             let (display, ui_w) = (editor_place.2, editor_place.3.0);
             let canvas = &mut *editor_canvas;
-            if let Some((place, ..)) = &debug {
+            if debug.is_some() {
                 let (grp, panel_grp) = (&machine.rt.grp, &debugger.panel.grp);
                 let creator = gfx.creator.get();
                 drawing!(
@@ -2936,21 +2906,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         .editor_grp
                         .draw(canvas, creator, grp, panel_grp, display, ui_w)
                 );
-                if !panel_inside[1] {
-                    drawing!(overlays.panel[1].copy(canvas, (place.x, place.y), display, ui_w));
-                }
             }
-            drawing!(overlays.overlay[1].copy(canvas, (0, 0), display, ui_w));
-            if bar_shown[1] {
-                drawing!(overlays.bar[1].copy(canvas, (0, 0), display, ui_w));
-            }
-            if windows_apart {
-                drawing!(
-                    overlays
-                        .windows
-                        .copy(canvas, (0, 0), windows_place, display_w)
-                );
-            }
+            let places = overlays::EditorPlaces {
+                display,
+                ui_w,
+                panel: match (&debug, panel_inside[1]) {
+                    (Some((place, ..)), false) => Some((place.x, place.y)),
+                    _ => None,
+                },
+                bar: bar_shown[1],
+                windows: windows_apart.then_some((windows_place, display_w)),
+            };
+            drawing!(overlays.copy_editor(canvas, places));
             bench.lap(Stage::Overlays);
             bench.shoot(&editor_canvas, "editor");
             let presents =

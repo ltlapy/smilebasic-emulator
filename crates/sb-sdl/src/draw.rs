@@ -1,9 +1,13 @@
 //! What the emulator draws over the screens and the editor: each
-//! window's UI, on a frame in that window's pixels.
+//! window's UI, on a frame in that window's pixels, and the focus's
+//! border on the window itself.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
 use sb_runtime::settings::Settings;
+use sdl3::pixels::Color;
+use sdl3::render::{BlendMode, Canvas, FRect};
+use sdl3::video::Window;
 
 use crate::debug_panel::sprites::Outline;
 use crate::debug_panel::{self, DebugPanel, View};
@@ -163,4 +167,36 @@ impl Ui<'_> {
             ui::fill(fb, self.bar, 0);
         }
     }
+}
+
+/// Shows where the focus has just gone: a yellow line on the edge of the
+/// rectangle `place` gives (see [`crate::placement::border_place`]), one
+/// pixel out and two in, then a dark band two pixels wide, both at
+/// `alpha`, so that they fade out together.
+pub fn focus_border(
+    canvas: &mut Canvas<Window>,
+    place: ([i32; 4], (f32, f32), (f32, f32)),
+    alpha: u8,
+) -> Result<(), sdl3::Error> {
+    let ([x, y, w, h], (ox, oy), (sx, sy)) = place;
+    let place = |x: i32, y: i32, w: i32, h: i32| {
+        let at = |v: i32, s: f32| v as f32 * s;
+        FRect::new(ox + at(x, sx), oy + at(y, sy), at(w, sx), at(h, sy))
+    };
+    canvas.set_blend_mode(BlendMode::Blend);
+    for (inset, width, color) in [
+        (-1, 3, Color::RGBA(255, 255, 0, alpha)),
+        (2, 2, Color::RGBA(0, 0, 0, alpha)),
+    ] {
+        let (x, y, w, h) = (x + inset, y + inset, w - 2 * inset, h - 2 * inset);
+        canvas.set_draw_color(color);
+        canvas.fill_rects(&[
+            place(x, y, w, width),
+            place(x, y + h - width, w, width),
+            place(x, y + width, width, h - 2 * width),
+            place(x + w - width, y + width, width, h - 2 * width),
+        ])?;
+    }
+    canvas.set_blend_mode(BlendMode::None);
+    Ok(())
 }
