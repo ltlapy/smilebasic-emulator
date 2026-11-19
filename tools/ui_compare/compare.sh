@@ -35,6 +35,8 @@ run() { # name binary spec flag
   rm -rf "$data"
   mkdir -p "$data/smilebasic-emulator/projects"
   cp -r "$here/PERF" "$data/smilebasic-emulator/projects/PERF"
+  # A file dialog shows when a file was changed.
+  touch -d 2026-01-01T00:00:00Z "$data"/smilebasic-emulator/projects/PERF/*
   XDG_DATA_HOME=$data SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy \
     SB_UI_BENCH="$3,shot=$out/$1,novsync,frames=200" timeout 60 "$2" $4 > "$out/$1.txt" 2>&1
   # A scene that quits leaves no shot.
