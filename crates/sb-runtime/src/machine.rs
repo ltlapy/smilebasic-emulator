@@ -117,6 +117,21 @@ pub struct Missed {
     pub deferred: u64,
 }
 
+/// VSYNC's rule: `VSYNC frames` waits until that many frames after the
+/// one the last VSYNC waited for, `last`. Reached in frame `frame`, it
+/// gives the frame the next VSYNC counts from, and how many frames to
+/// wait, or `None` when that frame has gone by: the VSYNC is behind and
+/// counts from now. `reached` is `frame`, or the one before while the
+/// frame's job has yet to raise MAINCNT.
+fn vsync_wait(last: Option<u64>, frames: u32, frame: u64, reached: u64) -> (u64, Option<u32>) {
+    let until = last.map(|at| at + u64::from(frames));
+    match until {
+        Some(until) if until > frame => (until, Some((until - frame) as u32)),
+        Some(until) if until > reached => (until, None),
+        _ => (reached, None),
+    }
+}
+
 pub struct Machine {
     pub rt: Runtime,
     vm: Option<Vm>,
@@ -2153,13 +2168,11 @@ impl Machine {
                     // MAINCNT, which is what the count looks at.
                     let reached = self.frame - u64::from(self.rt.in_frame_job);
                     self.rt.in_frame_job = false;
-                    let until = self.vsync_at.map(|at| at + u64::from(frames));
-                    if let Some(until) = until.filter(|&until| until > self.frame) {
-                        self.vsync_at = Some(until);
-                        self.wait = (until - self.frame) as u32;
+                    let (mark, wait) = vsync_wait(self.vsync_at, frames, self.frame, reached);
+                    self.vsync_at = Some(mark);
+                    if let Some(wait) = wait {
+                        self.wait = wait;
                     } else {
-                        self.vsync_at =
-                            Some(until.filter(|&until| until > reached).unwrap_or(reached));
                         self.rt.sound.synced();
                         // SmileBASIC 4 goes straight on, and so does a
                         // headless run. In a window, a trip that cannot
@@ -3201,6 +3214,38 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn vsync_counts_from_the_frame_the_last_one_waited_for() {
+        // On time: the next frame, and the one after for the next VSYNC.
+        assert_eq!(vsync_wait(Some(100), 1, 100, 100), (101, Some(1)));
+        assert_eq!(vsync_wait(Some(101), 1, 101, 101), (102, Some(1)));
+        // The first VSYNC of a program counts from now.
+        assert_eq!(vsync_wait(None, 1, 7, 7), (7, None));
+        // A trip that took a frame too many: behind, and counted from now.
+        assert_eq!(vsync_wait(Some(100), 1, 101, 101), (101, None));
+        assert_eq!(vsync_wait(Some(100), 1, 103, 103), (103, None));
+        // Past XSCREEN or ACLS the frame's job has yet to count the frame:
+        // a VSYNC that waited for this frame keeps it as its mark.
+        assert_eq!(vsync_wait(Some(100), 1, 101, 100), (101, None));
+        assert_eq!(vsync_wait(Some(99), 1, 101, 100), (100, None));
+    }
+
+    #[test]
+    fn a_vsync_behind_goes_on_as_on_hardware() {
+        // A second behind, ten VSYNCs take nine frames: the first goes
+        // straight on, and each of the others waits for one.
+        let (mut last, mut frame, mut waited) = (Some(40), 100, 0);
+        for _ in 0..10 {
+            let (mark, wait) = vsync_wait(last, 1, frame, frame);
+            last = Some(mark);
+            frame += u64::from(wait.unwrap_or(0));
+            waited += wait.unwrap_or(0);
+        }
+        assert_eq!(waited, 9);
+        // And VSYNC 200 takes 140.
+        assert_eq!(vsync_wait(Some(40), 200, 100, 100), (240, Some(140)));
+    }
     use crate::font::Font;
     use crate::palette::Part;
     use crate::runtime::keys;
