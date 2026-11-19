@@ -10,7 +10,7 @@ Debian 10's headers and Debian 10's libc for the architecture, checksums pinned 
 into local/cross (or SB_CROSS_HOME). It still needs python3, rustup, cmake, make and
 pkg-config.
 
-See docs/building-handheld.md.
+See docs/building/building-handheld.md.
 """
 
 import argparse
@@ -560,13 +560,13 @@ def main() -> int:
         "--unchecked-vars",
         action="store_true",
         help="build with sb-core's unchecked-vars feature: faster arithmetic, but no bounds check on "
-        "each variable access (see docs/security.md); off by default; put this before --test",
+        "each variable access (see docs/development/security.md); off by default; put this before --test",
     )
     parser.add_argument(
         "--jit",
         action="store_true",
         help="build with sb-core's jit feature: native code for hot loops, aarch64 only (see "
-        "docs/jit-design.md); off by default; put this before --test",
+        "docs/performance/jit-design.md); off by default; put this before --test",
     )
     parser.add_argument(
         "--glibc",

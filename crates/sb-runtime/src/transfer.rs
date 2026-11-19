@@ -1,7 +1,7 @@
 //! Moving projects to and from SmileBASIC 4. Exporting writes a project's
 //! files in SmileBASIC 4's container, signed, with a META file; importing
 //! turns such a folder back into the emulator's plain files.
-//! docs/file-formats.md describes both kinds of file.
+//! docs/smilebasic4/file-formats.md describes both kinds of file.
 
 use std::fs;
 use std::path::{Path, PathBuf};

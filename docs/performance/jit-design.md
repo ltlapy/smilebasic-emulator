@@ -8,7 +8,7 @@ from a prototype (stage 1), behind the `jit` feature of `sb-core`, measured
 under qemu and on an RK3326 handheld.
 
 [benchmark-results.md](benchmark-results.md) has the interpreter's own
-numbers, and [security.md](security.md) the rules for `unsafe` code.
+numbers, and [security.md](../development/security.md) the rules for `unsafe` code.
 
 ## Summary
 
@@ -83,8 +83,8 @@ builds stay interpreted.
 
 ## What is compiled, and from what
 
-The input is the fuser's output, [`Compiled::fast`](../crates/sb-core/src/bytecode.rs)
-and [`Compiled::micro`](../crates/sb-core/src/fuse.rs), not the stack
+The input is the fuser's output, [`Compiled::fast`](../../crates/sb-core/src/bytecode.rs)
+and [`Compiled::micro`](../../crates/sb-core/src/fuse.rs), not the stack
 bytecode or the AST. The fuser has already found statements, turned their
 expressions into three-address steps with hidden places, and folded
 constants into steps. Its entries also fix the boundaries where a time
@@ -146,7 +146,7 @@ registers, and stores `pc` and `left` back when it returns.
 ### Values and guards
 
 A variable may hold any kind of value whatever its suffix
-([sb4-pitfalls.md](sb4-pitfalls.md)), so every read tests the tag. The code
+([sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md)), so every read tests the tag. The code
 generator tracks, for each value it works with, whether it is known to be
 an integer, known to be a real, or known only at run time (a variable
 read, or the result of an operator on such a value). An operator on values

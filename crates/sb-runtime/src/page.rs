@@ -21,7 +21,7 @@ const SIDE: usize = GRP_SIZE as usize;
 /// rows falls in one cache set. 64 pixels more, 256 bytes, spreads the rows
 /// over the sets: on an RK3326, GCOPY's scene took 52% less time and
 /// GFILL's 23% less, for 3% more memory a page. See
-/// docs/benchmark-results.md, "GRP rows padded".
+/// docs/performance/benchmark-results.md, "GRP rows padded".
 pub const STRIDE: usize = SIDE + 64;
 const _: () = assert!(STRIDE >= SIDE);
 

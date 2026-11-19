@@ -54,7 +54,7 @@ Release and `dist` builds of `smilebasic.exe` use the Windows GUI subsystem, so 
 the program opens no console window. It shows an error that stops it from starting in a
 message box. Its other messages are lost even when you start it from a console: which
 renderer it uses, the fallback font notice, and the results of `SB_UI_BENCH` and `SB_GPU`
-from [benchmarking.md](benchmarking.md). Build without a profile (`cargo build`) to keep the
+from [benchmarking.md](../performance/benchmarking.md). Build without a profile (`cargo build`) to keep the
 console.
 
 `smilebasic-check.exe` and `smilebasic-import.exe` are console programs in every build.

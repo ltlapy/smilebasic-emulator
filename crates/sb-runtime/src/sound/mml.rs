@@ -21,7 +21,7 @@ const MACRO_NAME_CHARS: usize = 256;
 /// each time it is defined or used. Macros using macros multiply, so a few
 /// hundred bytes could otherwise ask for gigabytes. MML with no macros
 /// costs nothing against this.
-// Ours, far above what any song seen needs (see docs/differences.md).
+// Ours, far above what any song seen needs (see docs/using/differences.md).
 const MACRO_CHARS: usize = 1 << 22;
 
 /// A number in MML: written out, or one of the variables $0 to $7.

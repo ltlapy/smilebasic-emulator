@@ -3,7 +3,7 @@
 //!
 //! Check programs end each part by saving the console's text with SAVEV
 //! into a TXT file whose name starts with `RES` (see
-//! docs/hardware-tests.md). Run on SmileBASIC 4, in Ryujinx, those files
+//! docs/smilebasic4/hardware-tests.md). Run on SmileBASIC 4, in Ryujinx, those files
 //! land in the project's folder; this runs the same parts here, on a copy
 //! of that folder and the projects beside it, and compares them row by
 //! row.

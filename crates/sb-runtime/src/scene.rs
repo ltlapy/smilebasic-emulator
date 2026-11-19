@@ -1,7 +1,7 @@
 //! What a frame shows, as plain data: the scene builder holds SmileBASIC
 //! 4's rules for what goes on the screen, in what order, and a rasterizer
 //! only draws what it is given. Nothing here knows about SDL, a GPU or the
-//! operating system. See docs/renderer.md.
+//! operating system. See docs/rendering/renderer.md.
 
 use std::ops::Range;
 
@@ -85,7 +85,7 @@ pub struct LayerPass {
 /// matrix themselves, whole. Text screens are drawn flat on an offscreen
 /// frame first, each run of them between sprites put on in its turn: that
 /// is why they reach at most one screen past each edge (see
-/// docs/differences.md).
+/// docs/using/differences.md).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Projection {
     pub matrix: [f64; 16],

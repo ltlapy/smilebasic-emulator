@@ -1,4 +1,4 @@
-//! The GPU path (see docs/renderer.md): draws a scene with SDL_Renderer's textured triangles in the
+//! The GPU path (see docs/rendering/renderer.md): draws a scene with SDL_Renderer's textured triangles in the
 //! place of the CPU rasterizer, on any render driver with no shader of ours.
 //! A frame with something it cannot draw goes to the CPU whole; the CPU's
 //! pages stay what programs read, and nothing is read back.

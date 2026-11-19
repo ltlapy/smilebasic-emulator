@@ -47,9 +47,9 @@ headless on Windows, macOS and Linux.
 - `cargo test --workspace` passes before every commit.
 - A change to `sb-core`'s VM or fused code also passes clippy and the tests with
   `--features unchecked-vars`, the build without bounds checks on variables
-  (see [docs/security.md](docs/security.md)), and with `--features jit`, the
+  (see [docs/development/security.md](docs/development/security.md)), and with `--features jit`, the
   build that runs hot loops as native code (see
-  [docs/jit-design.md](docs/jit-design.md)). Its tests check that native
+  [docs/performance/jit-design.md](docs/performance/jit-design.md)). Its tests check that native
   code ran; `tools/build_handheld.py --jit --test` runs them on aarch64
   under qemu.
 - Optional, with a nightly toolchain and Miri installed:

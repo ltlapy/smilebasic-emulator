@@ -11,10 +11,10 @@ stacker = "0.1.25"
 
 [features]
 # Reads and writes the fused code's variables without a bounds check on
-# each. Off by default: see docs/security.md before turning it on.
+# each. Off by default: see docs/development/security.md before turning it on.
 unchecked-vars = []
 # Runs the fused code's hot loops as native code. Off by default: see
-# docs/jit-design.md and docs/security.md before turning it on.
+# docs/performance/jit-design.md and docs/development/security.md before turning it on.
 jit = ["dep:sb-jit"]
 
 [lints]

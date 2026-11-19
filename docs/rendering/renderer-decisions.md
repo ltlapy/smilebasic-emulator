@@ -169,7 +169,7 @@ the opengl driver through EGL with no window shown: ms for each frame drawn. GPU
 is the CPU's side (walking the scene, pages, flush) plus the wait for the GPU
 when read back at once, with no vsync and no real present. A window's present is
 not in these. Instructions are in billions over the same run, for TPERF's scenes
-and ELE2020. [benchmarking.md](benchmarking.md) covers how to measure the path.
+and ELE2020. [benchmarking.md](../performance/benchmarking.md) covers how to measure the path.
 
 | Scene | CPU ms | GPU ms | CPU instr | GPU instr | Peak RSS, CPU, GPU | Pixels 1 off, 2, more, of those compared | Most off |
 |---|---|---|---|---|---|---|---|

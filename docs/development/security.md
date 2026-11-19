@@ -55,7 +55,7 @@ runs on an open system and has to do it itself.
   lengths against what the code names first. Generated code is outside
   Rust's checks and outside Miri. Its addresses are a table's start plus a
   constant offset, bounded by construction; the argument, the invariants
-  and the tests are in [jit-design.md](jit-design.md#memory-safety). A bug
+  and the tests are in [jit-design.md](../performance/jit-design.md#memory-safety). A bug
   in it, or in Cranelift, could be memory unsafety that an untrusted
   program can reach: as with `unchecked-vars`, leave the feature off in
   any build you hand to others. A default build contains none of it.
@@ -104,7 +104,7 @@ runs on an open system and has to do it itself.
   stops a program, and `ON BREAK GOTO` does not block it. `BUTTON` has no
   bit for it, so a program cannot read it.
 
-[differences.md](differences.md) describes what programs see of the file
+[differences.md](../using/differences.md) describes what programs see of the file
 rules, under "Files from elsewhere".
 
 ## Rules for new code
@@ -130,7 +130,7 @@ Each of these changes what a bug can cost, so it needs its conditions met
 when it is built or shipped.
 
 - **Handheld port.** `tools/build_handheld.py` builds the emulator for
-  aarch64 and armhf, and [building-handheld.md](building-handheld.md) checks
+  aarch64 and armhf, and [building-handheld.md](../building/building-handheld.md) checks
   it under qemu. The docs record no run on a device. These stay open:
   - Handheld firmware often runs ports as root, which would turn a path bug
     into writing anywhere on the system. The emulator does not drop

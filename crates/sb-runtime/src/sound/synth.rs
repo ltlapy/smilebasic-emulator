@@ -100,7 +100,7 @@ const BEND_RANGE: i32 = 24;
 /// SmileBASIC 4's drum sets @128 to @148 as GS drum kits, which General
 /// MIDI SoundFonts such as GeneralUser GS have.
 // These are the nearest GS kits by name, not the sets' own sounds (see
-// docs/differences.md).
+// docs/using/differences.md).
 pub const DRUM_KITS: [i32; 21] = [
     0, 24, 25, 1, 2, 8, 25, 26, 25, 26, 16, 24, 25, 26, 25, 32, 40, 48, 56, 56, 0,
 ];

@@ -53,7 +53,7 @@ takes their writes on `GUPDATE`.
 `page::Page` (`page.rs`) owns a page's buffer. Its rows lie `page::STRIDE`
 pixels apart, 2112, so that the same column of successive rows does not fall
 in one set of a small cache
-([benchmark-results.md](benchmark-results.md#grp-rows-padded)).
+([benchmark-results.md](../performance/benchmark-results.md#grp-rows-padded)).
 That makes a page 16.5 MiB (2048 x 2112 x 4 bytes) instead of 16 MiB. The 64
 pixels after each row are never written or read. Code takes rows from `Page`
 as slices of 2048 pixels (`row`, `rows`, `spans`); the sprite rasterizer and
@@ -102,7 +102,7 @@ then calls `Runtime::render`. The window goes through
      `flat`, whose place and size the builder works out (`scene::flat_area`,
      `compose::source_bounds`), then put on with `compose::project`. That is why
      text screens reach at most one screen past each edge (see
-     [differences.md](differences.md)).
+     [differences.md](../using/differences.md)).
    - `FilterOp::apply` (`filter.rs`) runs on the target. A raster filter on a
      direct layer then makes the frame opaque again.
    - For modes 1-4, `compose::compose` puts `scratch` over the frame, multiplied
@@ -212,7 +212,7 @@ The split has these aims:
   `sb-runtime`. Backends only rasterize what it gives them.
 - The CPU rasterizer stays the reference and the fallback.
 - `sb-core` and `sb-runtime` stay frontend-free: no SDL, wgpu or OS types (see
-  [CONTRIBUTING.md](../CONTRIBUTING.md)). The scene is plain data, so that a
+  [CONTRIBUTING.md](../../CONTRIBUTING.md)). The scene is plain data, so that a
   later WASM build can use the CPU rasterizer with a canvas, or a WebGL2/WebGPU
   backend.
 - The scene allocates nothing per frame: its vectors are kept and cleared.
@@ -457,7 +457,7 @@ The rest of the window:
 - **Present** is `pacing.rs` (vsync handling, frame skipping).
 - **A held-up main thread.** While SDL holds the main thread up, as when the
   window is dragged on GNOME, a standby thread runs the program's frames and
-  their sound: [frame-thread.md](frame-thread.md).
+  their sound: [frame-thread.md](../development/frame-thread.md).
 - **Window screenshots.** The app has no PrintScreen command. The only window
   capture is `SB_UI_BENCH`'s `shot=PATH` (`bench.rs`), which reads the canvas
   with `SDL_RenderReadPixels` into PAM files.
@@ -865,7 +865,7 @@ reference ([renderer-verification.md](renderer-verification.md)).
 - **Debugger GRP view.** It could send tiles instead of whole pages. The `Dirty`
   marks have one reader, so it would need a history of its own.
 - **Text on a 4x4 layer.** Projecting each cell directly would remove the bound
-  described in [differences.md](differences.md). That is a behavior change:
+  described in [differences.md](../using/differences.md). That is a behavior change:
   decide it after TTEST36-style checks.
 - **Fewer inexact pixels.** Compute sample coordinates in fixed point (for
   example 16.16 integers) in both backends for affine items. This changes the

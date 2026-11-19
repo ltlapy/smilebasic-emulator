@@ -3,7 +3,7 @@
 //! is dragged on GNOME. The machine stays the main thread's; the loop lends it
 //! for such a call with [`Standby::hold`], and the standby thread runs a frame
 //! only once one is a whole frame late and the call has taken [`HELD_UP`].
-//! See `docs/frame-thread.md`.
+//! See `docs/development/frame-thread.md`.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};

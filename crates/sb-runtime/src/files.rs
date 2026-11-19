@@ -602,7 +602,7 @@ impl Runtime {
     /// as it is.
     pub(crate) fn report_failure(&mut self, what: &str, e: &StorageError) {
         if self.direct {
-            // SmileBASIC 4 shows its own dialogs instead (see docs/differences.md).
+            // SmileBASIC 4 shows its own dialogs instead (see docs/using/differences.md).
             let console = &mut self.text[CONSOLE];
             if console.cursor().0 != 0 {
                 console.newline();

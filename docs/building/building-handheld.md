@@ -51,11 +51,11 @@ nothing.
 goes with `--test` too. The fused code then reads and writes variables without a bounds
 check on each, for about a tenth fewer instructions on arithmetic on a Cortex-A35. A bug in
 what stands in for that check would be memory unsafety that a program can reach; see
-[security.md](security.md). Help > About shows `unchecked-vars` after the version.
+[security.md](../development/security.md). Help > About shows `unchecked-vars` after the version.
 
 `--jit`, off by default and a prototype, builds with sb-core's `jit` feature, and goes with
 `--test` too, which then runs the generated aarch64 code under qemu. Hot loops of numbers
-run as native code; see [jit-design.md](jit-design.md) for what it covers, what it costs and
+run as native code; see [jit-design.md](../performance/jit-design.md) for what it covers, what it costs and
 why it stays off. `--bench` prints what compiling took, and `SB_JIT=0` runs the same binary
 without native code. armhf builds stay interpreted: build them without `--jit`.
 
@@ -152,7 +152,7 @@ Without `perf`, run the last line from `./smilebasic-check` on for times.
 
 SDL looks for `libEGL.so.1` and `libGLESv2.so.2`. If your driver uses other names, as a Mali
 blob may, set `SDL_VIDEO_EGL_DRIVER` and `SDL_VIDEO_GL_DRIVER` to its paths.
-[benchmarking.md](benchmarking.md) explains the output.
+[benchmarking.md](../performance/benchmarking.md) explains the output.
 
 To play, start it with the Simple UI, which needs only the gamepad:
 
@@ -161,10 +161,10 @@ SDL_VIDEO_DRIVER=kmsdrm SDL_RENDER_DRIVER=opengles2 ./smilebasic --simple-ui
 ```
 
 It opens a list of the projects, scales its text by whole factors of 640x480, and fits the
-program's screen to the display. [shortcuts.md](shortcuts.md#simple-ui) lists the buttons.
+program's screen to the display. [shortcuts.md](../using/shortcuts.md#simple-ui) lists the buttons.
 
 KMSDRM shows no mouse cursor, so the emulator draws its own there. The right stick moves it
-([shortcuts.md](shortcuts.md#gamepad-as-the-mouse)). `SB_CURSOR=system` leaves the cursor to
+([shortcuts.md](../using/shortcuts.md#gamepad-as-the-mouse)). `SB_CURSOR=system` leaves the cursor to
 SDL instead, and `SB_CURSOR=drawn` draws the emulator's own under any driver.
 
 ## Build without root

@@ -2,7 +2,7 @@
 
 For an AI agent or a person about to change this repository: what each
 crate is for, what to watch in it, and how to check a change. It adds to
-[CONTRIBUTING.md](../CONTRIBUTING.md), which has the rules for code,
+[CONTRIBUTING.md](../../CONTRIBUTING.md), which has the rules for code,
 tests and commits; read that first.
 
 The notes come from work on the code, mostly a long refactoring of the
@@ -14,12 +14,12 @@ before a change there.
 
 | Crate | What it is | Read before changing it |
 |---|---|---|
-| `sb-core` | The language: lexer, parser, compiler, bytecode VM. It reaches screens, sound and files only through `host::Host` | [security.md](security.md), [jit-design.md](jit-design.md) |
-| `sb-jit` | Native code for the VM's hot loops, behind the `jit` feature. It knows nothing of SmileBASIC | [jit-design.md](jit-design.md) |
-| `sb-runtime` | The machine without a window: commands, screens, sprites, sound, files, the editor, the CPU renderer | [renderer.md](renderer.md), [sb4-pitfalls.md](sb4-pitfalls.md), [differences.md](differences.md) |
+| `sb-core` | The language: lexer, parser, compiler, bytecode VM. It reaches screens, sound and files only through `host::Host` | [security.md](security.md), [jit-design.md](../performance/jit-design.md) |
+| `sb-jit` | Native code for the VM's hot loops, behind the `jit` feature. It knows nothing of SmileBASIC | [jit-design.md](../performance/jit-design.md) |
+| `sb-runtime` | The machine without a window: commands, screens, sprites, sound, files, the editor, the CPU renderer | [renderer.md](../rendering/renderer.md), [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md), [differences.md](../using/differences.md) |
 | `sb-profiles` | The other SmileBASIC versions, as profiles of this one. Small so far | |
-| `sb-import` | `smilebasic-import`: copies the user's own SmileBASIC 4 resources into the data directory | [importing.md](importing.md), [file-formats.md](file-formats.md) |
-| `sb-check` | `smilebasic-check`: runs programs with no window, to compare with SmileBASIC 4 and to measure | [hardware-tests.md](hardware-tests.md), [benchmarking.md](benchmarking.md) |
+| `sb-import` | `smilebasic-import`: copies the user's own SmileBASIC 4 resources into the data directory | [importing.md](../using/importing.md), [file-formats.md](../smilebasic4/file-formats.md) |
+| `sb-check` | `smilebasic-check`: runs programs with no window, to compare with SmileBASIC 4 and to measure | [hardware-tests.md](../smilebasic4/hardware-tests.md), [benchmarking.md](../performance/benchmarking.md) |
 | `sb-sdl` | `smilebasic`: the window, input, sound device, the GPU path, the emulator's own screens | [frontend-guide.md](frontend-guide.md), [frame-thread.md](frame-thread.md) |
 
 A crate depends only on what CONTRIBUTING.md's table allows it. SDL and
@@ -32,13 +32,13 @@ anything of the operating system stay in `sb-sdl`.
 - The manual says it: follow the manual, name the command in the doc
   comment.
 - A check on SmileBASIC 4 confirmed it: it is in
-  [sb4-pitfalls.md](sb4-pitfalls.md). Put new confirmed facts there, and
+  [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md). Put new confirmed facts there, and
   keep them out of code comments, which then only say why the code does
   what it does.
 - Nobody has checked: mark the code `// UNVERIFIED: <what is assumed>`.
   Take the mark away when the check is done.
 - The emulator departs from SmileBASIC 4 on purpose: say so in
-  [differences.md](differences.md), and leave the faithful code beside the
+  [differences.md](../using/differences.md), and leave the faithful code beside the
   departure, commented out, so that the difference can be read and undone.
 
 **A program is untrusted.** It may fail with a SmileBASIC error. It must
@@ -51,7 +51,7 @@ in one call.
 a hot path needs a number. Compare builds by instruction counts on a run
 that does the same work (`smilebasic-check --bench --fixed`), and compare
 the checksums first: different checksums mean different work, and then the
-counts say nothing. [benchmarking.md](benchmarking.md) has the method.
+counts say nothing. [benchmarking.md](../performance/benchmarking.md) has the method.
 
 **The repository will be published.** No path, address or name from
 anyone's machine. Nothing of SmileBoom's: no fonts, sprites, sounds or text
@@ -96,8 +96,8 @@ The tests do not cover everything. The other tools:
 |---|---|
 | That a program behaves as on SmileBASIC 4 | `smilebasic-check PROJECT PROGRAM`, which compares the `RES` files the program saves with those SmileBASIC 4 saved |
 | That two builds do the same work, and what it costs | `smilebasic-check --bench --fixed FRAMES PROJECT PROGRAM`: equal checksums, then instruction counts |
-| That the GPU path draws what the CPU draws | `SB_GPU=check`, see [renderer.md](renderer.md) |
-| What the window shows, and what the loop's timing does | `SB_UI_BENCH`, see [benchmarking.md](benchmarking.md) and [frontend-guide.md](frontend-guide.md) |
+| That the GPU path draws what the CPU draws | `SB_GPU=check`, see [renderer.md](../rendering/renderer.md) |
+| What the window shows, and what the loop's timing does | `SB_UI_BENCH`, see [benchmarking.md](../performance/benchmarking.md) and [frontend-guide.md](frontend-guide.md) |
 
 "It ran" is not "it matched". Compare the output with what it should be,
 and read one run's output yourself before trusting a batch of them.
@@ -153,7 +153,7 @@ In the commit or the hand-over, say what you checked and what you did not.
   step does and tests the native code against the interpreter.
 - A change to an operator's rules, to `Value`'s layout or to how the fused
   code charges its budget has a counterpart here.
-  [jit-design.md](jit-design.md) lists them under "Costs to the code base".
+  [jit-design.md](../performance/jit-design.md) lists them under "Costs to the code base".
 
 ### sb-runtime
 
@@ -163,11 +163,11 @@ In the commit or the hand-over, say what you checked and what you did not.
   is correct and slow); its cost in `speed::command_cost`, for the speeds
   that stand for a console; its name in `syntax.rs`'s sorted list, for the editor.
 - The screens are drawn again only when something marked them changed
-  ([renderer.md](renderer.md), "Change tracking"). A command that changes
+  ([renderer.md](../rendering/renderer.md), "Change tracking"). A command that changes
   what shows without marking it leaves a stale frame; this is the first
   thing to suspect when a picture does not update.
 - The CPU renderer here is the reference. The GPU path in `sb-sdl` has to
-  draw the same, and [renderer-verification.md](renderer-verification.md)
+  draw the same, and [renderer-verification.md](../rendering/renderer-verification.md)
   holds the evidence for each rule.
 - Files go through `storage.rs`. Do not build a path from a program's
   string anywhere else.
@@ -191,12 +191,12 @@ In the commit or the hand-over, say what you checked and what you did not.
 ### sb-check
 
 - Other tools and scripts read its output and its exit status
-  ([hardware-tests.md](hardware-tests.md)). Add to them; do not reword
+  ([hardware-tests.md](../smilebasic4/hardware-tests.md)). Add to them; do not reword
   what is there without changing the readers.
 - `--fixed` is what makes two runs comparable. A new source of difference
   between runs (time, random numbers, a hash order that reaches the
   output) has to be fixed there too, or said in
-  [benchmarking.md](benchmarking.md).
+  [benchmarking.md](../performance/benchmarking.md).
 
 ### sb-sdl
 

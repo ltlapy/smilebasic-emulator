@@ -1,5 +1,5 @@
 //! Native code for the fused entries, with the `jit` feature (off by
-//! default): see docs/jit-design.md.
+//! default): see docs/performance/jit-design.md.
 //!
 //! When the VM takes a program, after [`crate::fuse::check`], [`attach`]
 //! picks the loops whose entries all have a native form, compiles each with

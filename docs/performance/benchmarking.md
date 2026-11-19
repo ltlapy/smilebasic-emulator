@@ -31,7 +31,7 @@ perf stat -e instructions:u -- smilebasic-check --bench --fixed 400 PROJECT PROG
   did different work, so their counts say nothing. The checksum covers the
   console and every 60th screen. With `SB_BENCH_SOUND` set, a fixed run also
   prints a checksum of the sound mixed, to the bit. `--wav FILE` saves that
-  sound to listen to (see [hardware-tests.md](hardware-tests.md#recording-sound)).
+  sound to listen to (see [hardware-tests.md](../smilebasic4/hardware-tests.md#recording-sound)).
 - Run it with `FRAMES` 0 to see what start-up costs, and subtract that from
   both counts, so that loading the font and sounds does not dilute the change.
 - Take times as well: instruction counts do not see cache misses or slow
@@ -65,7 +65,7 @@ four minutes. For each scene it shows and saves:
 Two more scenes raise the number of sprites and of triangles until 60 fps
 cannot be held, and give that as a score.
 
-Pack it as the file `TPERF`, as [hardware-tests.md](hardware-tests.md) says
+Pack it as the file `TPERF`, as [hardware-tests.md](../smilebasic4/hardware-tests.md) says
 for check programs. Run `PERF` from a project and answer yes when it asks to
 save: the results go into the text file `RESPERF`. `#ONLY`, at the top of the
 program, runs one scene alone, and `#LOADPCT` scales the load. Compare only
@@ -650,7 +650,7 @@ two frames, as a tap shorter than the frontend's frame.
 
 ## The GPU path
 
-`crates/sb-sdl/src/gpu.rs` and [renderer.md](renderer.md) describe the path
+`crates/sb-sdl/src/gpu.rs` and [renderer.md](../rendering/renderer.md) describe the path
 itself.
 
 ### `SB_GPU`
@@ -792,8 +792,8 @@ Below the stages come:
 | `frames` | Program frames run per second of the time timed: calls of the machine's frame, including those that went on with a kept frame |
 | `maincnt` | How far `MAINCNT` went per second of the time timed: below 60 when frames were kept for a program too slow for the computer |
 | `missed` | Frames in the time timed in which the program missed part of its trip round its main loop, as `smilebasic-check --window` counts them ([Per-frame costs and overload](#per-frame-costs-and-overload)): out of time part-way through it, held at its `VSYNC` to catch up, and `VSYNC`s that waited for the next frame where SmileBASIC 4 would go straight on |
-| `undrawn` | Trips in the time timed that ran the program and left the drawing out, because it would have ended after the frame's time ([differences.md](differences.md#speed)). They are not in `missed`: the program lost nothing |
-| `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](frame-thread.md)), in how many trips, and the time it took |
+| `undrawn` | Trips in the time timed that ran the program and left the drawing out, because it would have ended after the frame's time ([differences.md](../using/differences.md#speed)). They are not in `missed`: the program lost nothing |
+| `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](../development/frame-thread.md)), in how many trips, and the time it took |
 | `slow hint` | The frame the notice for a program slower than real time first showed at, or that it did not show |
 | `sound` | What the sound device's buffer went through |
 | `uploaded` | Bytes given to textures a frame |
@@ -825,7 +825,7 @@ costs.
 ## Measuring on a handheld
 
 Cross-build `smilebasic-check` for the device
-([building-handheld.md](building-handheld.md)), and copy the program over as a
+([building-handheld.md](../building/building-handheld.md)), and copy the program over as a
 project. Run the same `--bench --fixed` lines under `perf stat` where it
 exists, or `--bench` for times where not. building-handheld.md gives the
 commands, including one for the GPU path under GLES2.

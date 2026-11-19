@@ -9,7 +9,7 @@
 //! instructions of the twelve a read takes, the table's length loaded,
 //! compared and branched on. Both views have the same methods, so
 //! `run_fused` is the same code in both builds, and this file is the only
-//! one where they differ. See docs/security.md before turning it on.
+//! one where they differ. See docs/development/security.md before turning it on.
 
 #[cfg(not(feature = "unchecked-vars"))]
 pub(crate) use checked::Vars;

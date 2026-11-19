@@ -6,7 +6,7 @@ Still in development.
 
 ## Features
 
-- [x] SmileBASIC 4 compatible ([differences](docs/differences.md))
+- [x] SmileBASIC 4 compatible ([differences](docs/using/differences.md))
 - [x] Rich debugging tools
 - [x] GPU rendering
 - [ ] SmileBASIC 3 and Petit Computer
@@ -28,8 +28,8 @@ build came from, as in `0.1.0+4e42491`. Set `SB_COMMIT` to name a commit
 yourself, for example when building outside a git checkout, or set it empty
 to leave the commit out.
 
-For Windows, see [building-windows.md](docs/building-windows.md). For an aarch64
-handheld, see [building-handheld.md](docs/building-handheld.md).
+For Windows, see [building-windows.md](docs/building/building-windows.md). For an aarch64
+handheld, see [building-handheld.md](docs/building/building-handheld.md).
 
 ## Resources
 
@@ -41,7 +41,7 @@ To use SmileBASIC 4's own font, sprites and sounds, import them from your own co
 smilebasic-import BASE_ROMFS BASE_EXEFS UPDATE_ROMFS UPDATE_EXEFS
 ```
 
-See [importing.md](docs/importing.md).
+See [importing.md](docs/using/importing.md).
 
 ## Running
 
@@ -54,7 +54,7 @@ smilebasic --simple-ui  # fullscreen, a game list and gamepad controls
 `PROGRAM` is a SmileBASIC 4 `TXT` file or plain UTF-8 text. Its folder becomes
 the current project, so it can load and save the files beside it, plain names
 such as `HGLIB.PRG.txt` included
-([details](docs/differences.md#a-programs-own-folder)).
+([details](docs/using/differences.md#a-programs-own-folder)).
 
 Projects are folders in `projects/` in the data directory, `@WORKSPACE`
 included. Programs are saved as plain UTF-8 text, with full-width letters and
@@ -68,7 +68,7 @@ the start-up test passes; CPU is exact but slower.
 Gamepads work as controllers 1 to 4, and the keyboard as controller 1. For a
 gamepad with A at the bottom, turn on File > Settings > Input > Swap A/B and
 X/Y. Help > Keyboard shortcuts lists the keys, as does
-[shortcuts.md](docs/shortcuts.md).
+[shortcuts.md](docs/using/shortcuts.md).
 
 ## Documentation
 

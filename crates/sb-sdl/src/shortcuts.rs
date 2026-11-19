@@ -1,4 +1,4 @@
-//! Help > Keyboard shortcuts: docs/shortcuts.md's tables of keys, in a window.
+//! Help > Keyboard shortcuts: docs/using/shortcuts.md's tables of keys, in a window.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
@@ -8,7 +8,7 @@ use crate::ui::{
     BORDER, CHAR, DISABLED, LINE, PAD, Rect, TEXT, draw_text, outline, text_width, window,
 };
 
-const SHORTCUTS: &str = include_str!("../../../docs/shortcuts.md");
+const SHORTCUTS: &str = include_str!("../../../docs/using/shortcuts.md");
 const WIDTH: u32 = 1160;
 const HEIGHT: u32 = 640;
 /// The width of the keys' column.
@@ -23,7 +23,7 @@ pub enum Outcome {
     Close,
 }
 
-/// A line of docs/shortcuts.md the window shows.
+/// A line of docs/using/shortcuts.md the window shows.
 #[derive(Debug, PartialEq, Eq)]
 enum Entry {
     Heading(String),
@@ -31,7 +31,7 @@ enum Entry {
     Keys(String, String),
 }
 
-/// docs/shortcuts.md's groups and the rows of their tables, in order.
+/// docs/using/shortcuts.md's groups and the rows of their tables, in order.
 fn entries() -> Vec<Entry> {
     let mut entries = Vec::new();
     for line in SHORTCUTS.lines() {

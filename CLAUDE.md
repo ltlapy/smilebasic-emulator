@@ -9,7 +9,7 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for code and commit rules.
   development headers listed in SDL's `docs/README-linux.md`.
 - Check before committing: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo test --workspace`.
-- Before changing code, read [docs/working-notes.md](docs/working-notes.md): what each
+- Before changing code, read [docs/development/working-notes.md](docs/development/working-notes.md): what each
   crate is for, what to watch in it, and how to check a change.
 - This repository will be published. Write everything in it on that assumption, carefully:
   no paths from the local machine, nothing you would not show a stranger.

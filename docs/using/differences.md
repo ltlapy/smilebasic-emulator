@@ -3,7 +3,7 @@
 This file lists what the emulator leaves out or does another way, by choice or
 because it lacks SmileBASIC 4's own data. Guesses about behavior nobody has
 checked on hardware are not listed: they are marked `UNVERIFIED` in the source.
-What has been checked is in [sb4-pitfalls.md](sb4-pitfalls.md).
+What has been checked is in [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md).
 
 ## Contents
 
@@ -268,7 +268,7 @@ apart from the macro hang below.
 ## Speed
 
 SmileBASIC 4 runs a fixed amount of code each frame (see
-[sb4-pitfalls.md](sb4-pitfalls.md)). The emulator runs code that does not wait
+[sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md)). The emulator runs code that does not wait
 for the next frame for as long as the frame leaves after drawing, which is far
 more on any recent computer: the 1/60 s frame less what the last frames'
 events, drawing and presenting took and 2 ms to spare, from 10 to 14 ms, and
@@ -283,7 +283,7 @@ out the same each time.
 File > Settings > General > Speed, and `smilebasic-check --speed`, choose
 Switch 2 or Switch 1 instead: a program then gets about as much work done in a
 frame as on that console, and misses frames when it needs more. See
-[benchmarking.md](benchmarking.md#running-at-a-consoles-speed) for how close
+[benchmarking.md](../performance/benchmarking.md#running-at-a-consoles-speed) for how close
 it comes.
 
 When the computer cannot run the program and draw the window in a frame, the
@@ -356,7 +356,7 @@ for it, and its music slows down and breaks up.
 
 When the system holds the window up, as GNOME does while you drag or resize it,
 another thread runs the program and its sound, and the window shows nothing new
-until it comes back ([frame-thread.md](frame-thread.md)). The program sees the
+until it comes back ([frame-thread.md](../development/frame-thread.md)). The program sees the
 input as it was when the window stopped. Meanwhile `CLIPBOARD` reads the text
 it last read or set, and a text it sets reaches the system's clipboard when the
 window comes back.
@@ -397,7 +397,7 @@ window comes back.
 - Holes in the heap: SmileBASIC 4's blocks lie in one heap, and one that moved
   leaves a hole that a larger one cannot use. Nearly full, SmileBASIC 4 can run
   out earlier than the emulator, some dozens of elements earlier in the
-  `UNSHIFT` and `PUSH` that [sb4-pitfalls.md](sb4-pitfalls.md) gives. A program
+  `UNSHIFT` and `PUSH` that [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md) gives. A program
   that works on SmileBASIC 4 works on the emulator.
 - Strings under 64 KiB are not looked at one by one. What they add up to is
   refused at the next count, a little later than SmileBASIC 4 might.

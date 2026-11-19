@@ -6,8 +6,8 @@ how the emulator's two drawing paths compare, and how the results were measured.
 - [renderer.md](renderer.md) describes how rendering works.
 - [renderer-decisions.md](renderer-decisions.md) says why the GPU path takes its
   form.
-- [sb4-pitfalls.md](sb4-pitfalls.md) records confirmed SmileBASIC 4 behavior,
-  and [hardware-tests.md](hardware-tests.md) how the check programs run.
+- [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md) records confirmed SmileBASIC 4 behavior,
+  and [hardware-tests.md](../smilebasic4/hardware-tests.md) how the check programs run.
 
 Contents:
 
@@ -26,10 +26,9 @@ Contents:
 
 Each rule below is marked:
 
-- **C**: confirmed on hardware, by the manual, or from SmileBASIC 4. The table cites the source. "Pitfalls" means
-  [sb4-pitfalls.md](sb4-pitfalls.md).
-- **U**: guessed without a hardware check, or expected of SmileBASIC 4 and
-  not yet seen.
+- **C**: confirmed on hardware or by the manual. The table cites the source.
+  "Pitfalls" means [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md).
+- **U**: not yet seen on hardware.
 
 R1 to R31 are the IDs of the items that were open when the test batches were
 written ([Test batches A to G](#test-batches-a-to-g)).
@@ -146,7 +145,7 @@ Ties at a multiple of 90 degrees, for a sample point exactly between texels:
 | `LMATRIX layer,hx,hy` moves the layer by minus the home point | `screen.rs` | C: pitfalls |
 | The 2D LMATRIX form: `Affine::place(pos, home, rot, scale)` like a sprite: scale, then turn clockwise, x and y outside; after the element's own placement | `screen.rs` | C (R11): pitfalls; TEST53 part 1 |
 | 4x4 LMATRIX: `(x,y,0,1)` to clip space, X right, Y up, column-major, perspective divide | `compose::homography` | C: pitfalls; TTEST26, TTEST27 |
-| Sprites and text screens on a 4x4 layer show whole, also off-screen parts | `project_image`, `scene::flat_area` | C: pitfalls; TTEST36 (text bounded: [differences.md](differences.md)) |
+| Sprites and text screens on a 4x4 layer show whole, also off-screen parts | `project_image`, `scene::flat_area` | C: pitfalls; TTEST36 (text bounded: [differences.md](../using/differences.md)) |
 | 4x4: a sprite's Z is not used; shown where W > 0 and Z/W is from -1 to 1 | `compose::project`, `project_image` | C (R12): pitfalls; TEST53 part 2 |
 | 4x4: sampled without smoothing | `compose::project` | C (R12): pitfalls; TEST53 part 2 |
 | LCLIP on a 4x4 layer is in frame pixels, after projection, inclusive, Y from the top | `project(..., clip)` | C (R13): pitfalls; TEST53 part 3 |
@@ -219,7 +218,7 @@ Ties at a multiple of 90 degrees, for a sample point exactly between texels:
 | GSAVE/GLOAD rectangles off the page read as empty | `save_rect`, `load_rect` | C: pitfalls |
 | GSAVE/GLOAD width and height: any, 0 included, up to what memory holds | `grp.rs` (`MOST_PIXELS`) | C: pitfalls; TEST48. U: negative sizes (Out of range, from the code), and the error past memory (Out of range in the emulator, see differences.md) |
 | TSAVE and TLOAD width and height: 0 or more, as GSAVE | `txt.rs` (`MOST_CELLS`) | U (R31): from the code; the error past memory stands in as for GSAVE |
-| GARRAY/GUPDATE: GPGET sees array writes at once; the screen after GUPDATE | `Graphics::update` | C: pitfalls ([differences.md](differences.md) for the omission) |
+| GARRAY/GUPDATE: GPGET sees array writes at once; the screen after GUPDATE | `Graphics::update` | C: pitfalls ([differences.md](../using/differences.md) for the omission) |
 
 ## Ties: what TEST63 says
 
@@ -496,7 +495,7 @@ emulator's.
 **Only GRP drawing can be checked on hardware by automatic readback.**
 SmileBASIC 4 has no command that reads the composed screen. Everything composed
 (sprites, text screens, layers, filters, FADE) needs a lossless screenshot. The
-tests in [hardware-tests.md](hardware-tests.md) do this: Ryujinx screenshots at
+tests in [hardware-tests.md](../smilebasic4/hardware-tests.md) do this: Ryujinx screenshots at
 1:1 under `XSCREEN 1280,720`, compared with `smilebasic-check --screen`.
 
 **Sources:**
@@ -507,18 +506,18 @@ tests in [hardware-tests.md](hardware-tests.md) do this: Ryujinx screenshots at
   TEST53, TEST54, TEST55 and TEST56. That GPU stores results its own way.
 
 **How close the emulator-hosted screenshots come.** TEST49's stored results are
-within 1 of the rules (see [sb4-pitfalls.md](sb4-pitfalls.md)). TEST54's and
+within 1 of the rules (see [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md)). TEST54's and
 TEST55's are within 1 of the emulator in every channel, and TEST53's within 2
 but for four lone pixels.
 
 [renderer-decisions.md](renderer-decisions.md) has what the GPU path costs, and
-[benchmarking.md](benchmarking.md) how to repeat those measurements.
+[benchmarking.md](../performance/benchmarking.md) how to repeat those measurements.
 
 ## Test batches A to G
 
 All seven batches ran. The sections below give each batch as written before it
 ran, so the programs that ran may differ: TEST47, for one, had 23 parts. The
-results are in [Rules](#rules) and [sb4-pitfalls.md](sb4-pitfalls.md).
+results are in [Rules](#rules) and [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md).
 
 | Batch | Subject | Items | Ran as | Read by |
 |---|---|---|---|---|
@@ -530,7 +529,7 @@ results are in [Rules](#rules) and [sb4-pitfalls.md](sb4-pitfalls.md).
 | F | Timing and state | R7, R20, R22, TSCREEN's kept settings | TEST47 | Console |
 | G | Display scaling | R23 | TEST55 | Window captures |
 
-The batches follow [hardware-tests.md](hardware-tests.md):
+The batches follow [hardware-tests.md](../smilebasic4/hardware-tests.md):
 
 - one program with numbered parts;
 - `DUMPCON` saves the console as `RESnnPn` for automatic parts;

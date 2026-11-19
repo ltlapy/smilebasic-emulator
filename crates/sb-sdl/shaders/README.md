@@ -15,4 +15,4 @@ Vulkan backend binds them combined, as `sampler2D`.
 
 For now there is SPIR-V only, for Vulkan. Direct3D 12 needs DXIL and Metal MSL
 as well, as `SDL_shadercross` makes from the same source. See
-[renderer.md](../../../docs/renderer.md), "Color filter".
+[renderer.md](../../../docs/rendering/renderer.md), "Color filter".

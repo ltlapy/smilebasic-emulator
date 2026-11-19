@@ -11,7 +11,7 @@ repository; this adds what is particular to the frontend.
 in this order:
 
 1. Replaces a renderer that failed, and notices a wake from a suspend.
-2. Lets the bench act (`SB_UI_BENCH`, see [benchmarking.md](benchmarking.md)).
+2. Lets the bench act (`SB_UI_BENCH`, see [benchmarking.md](../performance/benchmarking.md)).
 3. Works out where things go in the windows.
 4. Handles the events.
 5. Runs the program's frames (`run_frames`).
@@ -112,7 +112,7 @@ smilebasic
 
 `at=TRIP:` presses keys (`key:ctrl+S`), controller buttons (`pad:a`,
 `padup:a`), and uses the mouse (`click:X:Y`, `rclick`, `dclick`, `press`,
-`drag`, `release`, `move`, `wheel:X:Y:N`); [benchmarking.md](benchmarking.md)
+`drag`, `release`, `move`, `wheel:X:Y:N`); [benchmarking.md](../performance/benchmarking.md)
 lists the rest. A scene is one such line. A change is checked by some dozens
 of them, each run on both builds, with the shots compared byte for byte.
 

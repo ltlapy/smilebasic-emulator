@@ -1,5 +1,5 @@
 //! SmileBASIC 4's file container, and the `PCBN` arrays inside DAT and
-//! GRP files. docs/file-formats.md describes both, from files SmileBASIC 4
+//! GRP files. docs/smilebasic4/file-formats.md describes both, from files SmileBASIC 4
 //! saved.
 //!
 //! | Offset | Size | Field |

@@ -803,7 +803,7 @@ would lose 12 to 15 ms of its 46 and GFILL about 3 ms of its 12 to 14.
 #### GRP rows padded
 
 `page::Page` now owns a page's buffer, and rows lie `page::STRIDE` pixels
-apart ([renderer.md](renderer.md#frame-data)). To choose the stride,
+apart ([renderer.md](../rendering/renderer.md#frame-data)). To choose the stride,
 the handheld ran four builds, alternating, six runs each, with the method of
 the set above: main (`caa624c`), the branch at stride 2048, and the branch
 at 2064 and 2112. Median `run_us` over frames 10 to 69, in ms:
@@ -892,7 +892,7 @@ rectangles were checked once (`Page::spans`) and single pixels placed in
 Uploads to the GPU pass the pitch. On GLES2 they go in bands of at most
 64 KiB, as SDL's driver copies a rectangle to a buffer of its own whenever
 the pitch is not the rectangle's width
-([renderer.md](renderer.md#grp-pages)). The device's GLES2 self-test
+([renderer.md](../rendering/renderer.md#grp-pages)). The device's GLES2 self-test
 passes all 26 scenes with main and with the branch. Two of its counts of
 pixels off differ: blur, 52048 off by one with main and 52072 with the
 branch, and 4x4 text, 212 far against 208. Builds of the branch at stride
@@ -1233,7 +1233,7 @@ disassembly of `run_fast`:
   after the globals.
 
 A variable's suffix gives nothing to build on: it only sets the starting
-value ([sb4-pitfalls.md](sb4-pitfalls.md)): `A%="X"` stores a string, and
+value ([sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md)): `A%="X"` stores a string, and
 a variable of any suffix can hold any kind of value. Only constants and
 the chains' hidden places are known to hold numbers.
 
@@ -1420,7 +1420,7 @@ What a step still costs, for later work:
 The `unchecked-vars` feature of `sb-core`, off by default, takes the
 bounds check out with `unsafe`, in one small module,
 `crates/sb-core/src/vars.rs`. Its invariant and checks are in that file
-and in [security.md](security.md): `fuse::check` bounds every global
+and in [security.md](../development/security.md): `fuse::check` bounds every global
 place by the program's globals and constants on every program the VM
 takes, and works out what each entry needs of the running DEF's
 variables, which `run_fused` compares with the DEF's before each entry,
@@ -2046,7 +2046,7 @@ Each of these was measured and not kept.
   to -20%. It would be the first `unsafe` in `crates/sb-runtime/src`, for a
   gain on x86 alone. NEON was not tried, as no Arm target was available to
   build for on 2026-11-05, when this was measured. The cross-build in
-  [building-handheld.md](building-handheld.md), added in `bc19803`, provides
+  [building-handheld.md](../building/building-handheld.md), added in `bc19803`, provides
   one.
 - **The fused steps' variables as two fields** instead of an array of two
   tables indexed by the variable's table bit, for a select in place of a

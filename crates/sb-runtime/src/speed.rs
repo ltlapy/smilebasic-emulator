@@ -12,7 +12,7 @@
 //!
 //! The costs come from TPERF's scenes and the loops of TEST65, TEST67,
 //! TEST69 to TEST76, timed on both consoles running
-//! SmileBASIC 4.4.9, and from TEST68 on a Switch 2 (docs/benchmarking.md).
+//! SmileBASIC 4.4.9, and from TEST68 on a Switch 2 (docs/performance/benchmarking.md).
 //! TEST70 finds a Switch 2 as fast in the hand as docked.
 //!
 //! A `GFILL` or `GCOPY` whose left edge is not on a 16-pixel boundary

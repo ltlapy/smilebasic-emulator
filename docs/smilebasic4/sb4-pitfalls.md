@@ -2,7 +2,7 @@
 
 Behavior checked on SmileBASIC 4 for Nintendo Switch that the manual does not
 describe, or that is easy to read the wrong way. The emulator follows these
-facts except where [differences.md](differences.md) says otherwise. Items still
+facts except where [differences.md](../using/differences.md) says otherwise. Items still
 waiting for a check are marked `UNVERIFIED` in the source instead.
 
 TEST and TTEST numbers name check programs kept outside the repository;
@@ -1892,7 +1892,7 @@ The right stick as the mouse:
   a pixel off its image. An image side and a scale that are powers of two read
   the page's higher texel, and anything else mostly the lower, at any flip or
   turn (TEST63, 3831 sprites and 192 cells on a Switch 2;
-  [renderer-verification.md](renderer-verification.md) has the numbers).
+  [renderer-verification.md](../rendering/renderer-verification.md) has the numbers).
   - On a half-pixel position 16x16 shows the page's next row at its bottom edge,
     and 15x15 the column before it at its left.
   - A cell shows what lies beside it on the font page or `TPAGE`.

@@ -111,4 +111,4 @@ ran. Nothing is allocated for it.
 `SB_UI_BENCH` reports `kept`, the frames the standby thread ran, and the time
 it took running them. The `log=` lines end with the same two columns, and
 `maincnt` gives how far `MAINCNT` went in the time timed.
-[benchmarking.md](benchmarking.md) says how to drag a window with no screen.
+[benchmarking.md](../performance/benchmarking.md) says how to drag a window with no screen.
