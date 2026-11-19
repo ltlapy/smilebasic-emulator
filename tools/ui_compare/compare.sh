@@ -37,6 +37,8 @@ run() { # name binary spec flag
   cp -r "$here/PERF" "$data/smilebasic-emulator/projects/PERF"
   XDG_DATA_HOME=$data SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy \
     SB_UI_BENCH="$3,shot=$out/$1,novsync,frames=200" timeout 60 "$2" $4 > "$out/$1.txt" 2>&1
+  # A scene that quits leaves no shot.
+  [ -f "$out/$1-main.pam" ] || { echo "quit$(grep -c "could not" "$out/$1.txt")"; return; }
   m=$(python3 "$here/shothash.py" "$out/$1-main.pam")$(grep "^drawn by" "$out/$1.txt" | md5sum | cut -c1-3)
   [ -f "$out/$1-editor.pam" ] && m=$m$(md5sum < "$out/$1-editor.pam" | cut -c1-6)
   echo "$m"

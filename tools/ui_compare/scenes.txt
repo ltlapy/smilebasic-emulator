@@ -118,3 +118,6 @@ keys: Select opens projects|frames=200,at=100:pad:back,at=112:padup:back,at=124:
 keys: Select held with A does not|frames=200,at=100:pad:back,at=112:pad:a,at=124:padup:a,at=136:padup:back|
 keys: F1 in the editor, then direct|load=PERF/TLIGHT,editor,at=100:key:F1,at=112:key:Escape,at=124:key:ctrl+0,at=136:key:F1|
 keys: F12 while a program runs|run=PERF/TRUN,at=100:key:F12,at=112:key:ctrl+S|
+simple ui: select+a, menu stays open|at=60:pad:a,at=65:padup:a,at=90:pad:back,at=95:pad:a,at=100:padup:a,at=105:padup:back,at=120:pad:dpdown,at=125:padup:dpdown|--simple-ui
+simple ui: select+start quits|at=60:pad:a,at=65:padup:a,at=90:pad:back,at=95:pad:start,at=100:padup:start,at=105:padup:back|--simple-ui
+simple ui: start alone over a program|run=PERF/TRUN,at=90:pad:start,at=95:padup:start|--simple-ui
