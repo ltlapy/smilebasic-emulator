@@ -367,9 +367,47 @@ pub fn border_place(
     }
 }
 
+/// Where the screen, shown at `rect` in the window, is on the UI of
+/// `ui_w` x `ui_h` that `display` shows, as x, y, width and height, for
+/// what is drawn on the UI over the screen, and what to clip that to: the
+/// screen's part of a UI `bottom` high.
+pub fn screen_on_ui(
+    rect: FRect,
+    display: FRect,
+    (ui_w, ui_h): (u32, u32),
+    bottom: u32,
+) -> ((f64, f64, f64, f64), crate::ui::Rect) {
+    let (sx, sy) = (ui_w as f32 / display.w, ui_h as f32 / display.h);
+    let at = (
+        f64::from((rect.x - display.x) * sx),
+        f64::from((rect.y - display.y) * sy),
+        f64::from(rect.w * sx),
+        f64::from(rect.h * sy),
+    );
+    let clip = crate::ui::Rect {
+        x: at.0.max(0.0) as u32,
+        y: at.1.max(0.0) as u32,
+        w: (at.2 as u32).min(ui_w),
+        h: (at.3 as u32).min(bottom),
+    };
+    (at, clip)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_screen_on_the_ui_follows_the_display() {
+        // A display of 640x360 at (100, 0) showing a UI of 1280x720, and a
+        // screen that fills it but for bars of 20 at its sides.
+        let display = FRect::new(100.0, 0.0, 640.0, 360.0);
+        let rect = FRect::new(120.0, 0.0, 600.0, 360.0);
+        let (at, clip) = screen_on_ui(rect, display, (1280, 720), 700);
+        assert_eq!(at, (40.0, 0.0, 1200.0, 720.0));
+        let (x, y, w, h) = (clip.x, clip.y, clip.w, clip.h);
+        assert_eq!((x, y, w, h), (40, 0, 1200, 700));
+    }
 
     #[test]
     fn the_screen_fits_the_display_in_every_mode() {

@@ -2557,19 +2557,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Some((outline, sub.frame, at, clip))
                 }
                 None if apart => {
-                    let (sx, sy) = (display_w as f32 / display.w, display_h as f32 / display.h);
-                    let at = (
-                        f64::from((rect.x - display.x) * sx),
-                        f64::from((rect.y - display.y) * sy),
-                        f64::from(rect.w * sx),
-                        f64::from(rect.h * sy),
-                    );
-                    let clip = ui::Rect {
-                        x: at.0.max(0.0) as u32,
-                        y: at.1.max(0.0) as u32,
-                        w: (at.2 as u32).min(display_w),
-                        h: (at.3 as u32).min(main_ui_h),
-                    };
+                    let ui = (display_w, display_h);
+                    let (at, clip) = placement::screen_on_ui(rect, display, ui, main_ui_h);
                     Some((outline, frame, at, clip))
                 }
                 None => None,
