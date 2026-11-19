@@ -199,20 +199,6 @@ pub fn screen_place(
     }
 }
 
-/// How the Simple UI's editor frame, SmileBASIC 4's, is scaled into
-/// `rect`: sharp when it fits a whole number of times, and otherwise with
-/// the pixel art filter, unless the screen is filtered smoothly.
-pub fn editor_filter(rect: FRect, (_, h): (u32, u32), filter: Filter) -> Filter {
-    let scale = rect.h / h as f32;
-    if (scale - scale.round()).abs() < 0.001 {
-        Filter::Nearest
-    } else if filter == Filter::Bilinear {
-        Filter::Bilinear
-    } else {
-        Filter::SmartNearest
-    }
-}
-
 /// Whether the desktop's 1280x720 display, at `display` in a window
 /// `out_h` pixels high, leaves room below it: in a window narrower than
 /// 16:9, where it is scaled to the window's width at its top. Elsewhere

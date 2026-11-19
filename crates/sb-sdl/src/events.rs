@@ -1228,7 +1228,7 @@ pub fn editor_ctrl_action(key: Keycode, shift: bool) -> Option<Action> {
 /// A key with Ctrl in the editor that is no item of the menu bar (see
 /// [`editor_ctrl_action`]). `room` is the window the editor shows in, for
 /// its sizes.
-pub fn editor_ctrl_key(key: Keycode, room: Option<(u32, f32)>, machine: &mut Machine) {
+pub fn editor_ctrl_key(key: Keycode, room: (u32, f32), machine: &mut Machine) {
     match key {
         Keycode::B => next_editor_size(machine, room),
         Keycode::Home => machine.edit().file_top(),

@@ -68,7 +68,7 @@ use keyhint::KeyHint;
 use layer::Layer;
 use menu::{Action, Click, Context, MenuBar};
 use overlays::Overlays;
-use placement::{Mapping, display_rect, editor_filter, from_corner, screen_place, windows_rect};
+use placement::{Mapping, display_rect, from_corner, screen_place, windows_rect};
 use popup::Popup;
 use program_dialog::ProgramView;
 use projects::{Memory, ProjectManager, Transfer};
@@ -1053,10 +1053,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             true => display_h,
             false => placement::ui_height(display, display_h, out_h),
         };
-        let (shown, _) = match (simple_ui, filled_editor) {
-            (true, _) => screen_place(&mode, settings, true, out_w, screen_h),
-            (false, Some(rect)) => (rect, filter),
-            (false, None) => {
+        let (shown, _) = match (filled_editor, simple_ui) {
+            (Some(rect), _) => (rect, filter),
+            (None, true) => screen_place(&mode, settings, true, out_w, screen_h),
+            (None, false) => {
                 placement::desktop_screen_place(&mode, settings, (out_w, out_h), display)
             }
         };
@@ -1076,8 +1076,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let ui_scale = bench.ui_scale;
         // The window the editor shows in, whose zooms F2 and View > Size
         // go by: its width and the height of SmileBASIC 4's display there.
-        // The Simple UI keeps SmileBASIC 4's frame, which each size changes.
-        let mut editor_room = (!simple_ui).then_some((out_w, display.h));
+        let mut editor_room = (out_w, display.h);
         // The editor's window has the UI in pixels of its own, and the
         // emulator's windows laid out on the display as on the main window.
         let (editor_map, windows_map, editor_ui) = match editor_gfx.get().filter(|_| apart) {
@@ -1087,7 +1086,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 let editor_canvas = gfx.canvas.borrow();
                 let (out_w, out_h) = drawing!(editor_canvas.output_size());
                 let (win_w, _) = editor_canvas.window().size();
-                editor_room = Some((out_w, (display_h * layout.ui) as f32));
+                editor_room = (out_w, (display_h * layout.ui) as f32);
                 let map = Mapping {
                     px: out_w as f32 / win_w.max(1) as f32,
                     display: from_corner(layout.ui_pixels()),
@@ -2293,16 +2292,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         };
         let editing = machine.is_editing() && !machine.is_detached();
         // The main window's editor laid out for the room it has, under the
-        // menu bar as the window shows it. The Simple UI keeps SmileBASIC
-        // 4's frame, scaled to where the screen goes.
-        let fill = (!simple_ui).then(|| {
+        // menu bar as the window shows it. Worked out only while it shows:
+        // a trip that draws a program's screen does nothing for the editor.
+        let fill = editing.then(|| {
             let scale = placement::menu_scale(display, display_w, (out_w, out_h));
             let bar = (MenuBar::HEIGHT as f32 * scale).ceil() as u32;
             let look = (settings.editor_font, settings.editor_size);
             placement::editor_fill(display, (out_w, out_h), look, bar)
         });
-        if !apart {
-            machine.set_editor_area(fill.map(|fill| fill.area));
+        if let Some(fill) = fill {
+            machine.set_editor_area(Some(fill.area));
         }
         let renderer = machine.rt.settings.renderer;
         if paths.follow(&canvas, renderer) {
@@ -2332,12 +2331,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         };
         let frame = (fb.width(), fb.height());
         // The editor's frame, of the fill's area, fills the window at its
-        // zoom, or in the Simple UI goes where the screen does.
-        let rect = match (editing, fill) {
-            (true, Some(fill)) => fill.rect(),
-            _ => rect,
-        };
-        filled_editor = (editing && fill.is_some()).then_some(rect);
+        // zoom.
+        let rect = fill.map_or(rect, placement::Fill::rect);
+        filled_editor = fill.map(|_| rect);
         // The frame the GPU path drew, which is not in `fb`.
         let on_gpu = !editing && machine.rt.frame_on_backend();
         // XSCREEN's mode 1 starts from a frame that stays sharp.
@@ -2345,11 +2341,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // The editor's frame can be finer than the screen it is shown in.
         let kind = if editing {
             pointer_space = frame;
-            let scaled = match fill {
-                Some(_) => Filter::Nearest,
-                None => editor_filter(rect, frame, filter),
-            };
-            (frame, scaled)
+            // Each of its pixels is a whole number of the window's.
+            (frame, Filter::Nearest)
         } else {
             pointer_space = (mode.width, mode.height);
             (frame, if smart_frame { Filter::Nearest } else { filter })
@@ -3483,7 +3476,7 @@ fn menu_context(
     machine: &Machine,
     main: &Window,
     display: Option<(u32, u32)>,
-    editor_room: Option<(u32, f32)>,
+    (width, display_h): (u32, f32),
 ) -> Context {
     let fullscreen = main.fullscreen_state() != FullscreenType::Off;
     let (window_size, window_fits) = match display {
@@ -3499,14 +3492,19 @@ fn menu_context(
         }
         None => (None, 0),
     };
-    let settings = &machine.rt.settings;
-    let distinct = editor_room.map_or([true; 4], |(width, display_h)| {
-        let (font, size) = (settings.editor_font, settings.editor_size);
-        editor_layout::distinct_sizes(width, display_h, font, size)
-    });
-    let same_sizes = (0..distinct.len())
-        .filter(|&i| !distinct[i])
-        .fold(0, |bits, i| bits | 1 << i);
+    // Which of View > Size's steps look the same, which only an open menu
+    // shows: a trip with the menus closed works nothing out for it.
+    let same_sizes = match display {
+        Some(_) => {
+            let settings = &machine.rt.settings;
+            let (font, size) = (settings.editor_font, settings.editor_size);
+            let distinct = editor_layout::distinct_sizes(width, display_h, font, size);
+            (0..distinct.len())
+                .filter(|&i| !distinct[i])
+                .fold(0, |bits, i| bits | 1 << i)
+        }
+        None => 0,
+    };
     Context {
         running: machine.is_running(),
         editing: machine.is_editing(),
@@ -4670,13 +4668,10 @@ impl<'a> SmartFrame<'a> {
 /// after the smallest, as F2 and Ctrl+B do. In the window `room` gives,
 /// as [`editor_layout::next_size`] takes it, sizes that look the same as
 /// the one chosen are skipped.
-fn next_editor_size(machine: &mut Machine, room: Option<(u32, f32)>) {
+fn next_editor_size(machine: &mut Machine, (width, display_h): (u32, f32)) {
     let settings = &mut machine.rt.settings;
     let (font, size) = (settings.editor_font, settings.editor_size);
-    settings.editor_size = match room {
-        Some((width, display_h)) => editor_layout::next_size(width, display_h, font, size),
-        None => size.next(),
-    };
+    settings.editor_size = editor_layout::next_size(width, display_h, font, size);
 }
 
 /// Reads editor colors from a file; returns what to tell the user.

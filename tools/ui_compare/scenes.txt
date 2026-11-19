@@ -131,3 +131,6 @@ sprite outline: apart, wide main window|run=PERF/TSPR,editor,apart,panel,at=60:r
 sprite outline: in the main window's panel|run=PERF/TSPR,editor,panel,at=140:click:570:488,at=160:click:600:564|
 quit dialog: Right stays, Left moves|at=60:unsaved,menu,at=100:click:20:10,at=110:click:40:172,at=130:key:Right,at=140:key:Left|
 quit dialog: Left twice stays, pad right|at=60:unsaved,menu,at=100:click:20:10,at=110:click:40:172,at=130:key:Left,at=140:key:Left,at=150:pad:dpright,at=155:padup:dpright|
+menu View > Size: the steps|load=PERF/TLIGHT,editor,size-menu|
+menu View > Size: narrow window, same steps dimmed|load=PERF/TLIGHT,editor,at=60:resize:700:900,at=100:size-menu|
+menu View > Size: wide window, click a step|load=PERF/TLIGHT,editor,at=60:resize:1600:600,at=100:size-menu,at=130:click:330:140|
