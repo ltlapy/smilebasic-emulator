@@ -139,11 +139,6 @@ const EDITOR_TITLE: &str = "SmileBASIC editor";
 const SETTINGS_FILE: &str = "settings.txt";
 /// SmileBASIC runs at 60 frames a second.
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
-/// Frames run without drawing them, at most, when drawing falls behind.
-const MOST_SKIPPED: u32 = 3;
-/// How long a frame run to catch up runs a program that does not wait for
-/// the next one; [`pacing::RunTime`] sizes the others' time.
-const CATCH_UP_RUN_TIME: Duration = Duration::from_millis(1);
 /// Holding the + button, or F5 for it, this long stops a program even
 /// past ON BREAK GOTO (checked on hardware).
 const FORCED_STOP: Duration = Duration::from_secs(1);
@@ -4197,17 +4192,14 @@ fn run_frames(
     audio.play(&machine.take_samples());
     let mut skipped = 0;
     while !paused
-        && skipped < MOST_SKIPPED
-        && pacer.behind(Instant::now())
-        && !fits_frame(machine, pacer.draw_cost())
+        && let Some(more) = pacer.catch_up(Instant::now(), skipped, || pacing::Behind {
+            fits: fits_frame(machine, pacer.draw_cost()),
+            at_sync: machine.at_sync(),
+            trip: machine.loop_time(),
+        })
     {
-        let whole = 2 * machine.loop_time() + pacer.draw_cost() <= 2 * FRAME;
-        machine.time_limit = Some(if whole && machine.at_sync() {
-            pacer.frame_time(false)
-        } else {
-            CATCH_UP_RUN_TIME
-        });
-        machine.hold_at_sync = !whole;
+        machine.time_limit = Some(more.time);
+        machine.hold_at_sync = more.hold;
         guard.run(machine, toasts, Machine::frame);
         calls += 1;
         machine.hold_at_sync = false;

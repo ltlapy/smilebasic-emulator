@@ -216,6 +216,59 @@ impl Scene {
     }
 }
 
+/// Frames run in a row without drawing them, at most, by a loop that is
+/// behind and whose program does not fit a frame.
+pub const MOST_SKIPPED: u32 = 3;
+/// How long a frame run to catch up runs a program that has no time for a
+/// whole trip; [`RunTime`] sizes the others' time.
+const CATCH_UP_RUN_TIME: Duration = Duration::from_millis(1);
+
+/// What the program is at when the loop is a frame behind, for
+/// [`catch_up`].
+#[derive(Clone, Copy, Debug)]
+pub struct Behind {
+    /// As [`Scene::fits`]: [`Scene::drawing`] then says which drawings to
+    /// leave out, and no frame is run to catch up.
+    pub fits: bool,
+    /// The program waits at its VSYNC.
+    pub at_sync: bool,
+    /// How long its last trip round its main loop ran.
+    pub trip: Duration,
+}
+
+/// A frame to run at once, undrawn, to catch up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CatchUp {
+    /// The time it gives the program.
+    pub time: Duration,
+    /// It leaves a program at its VSYNC there: the frame only keeps the
+    /// sound, the animations and MAINCNT going.
+    pub hold: bool,
+}
+
+/// The frame to run to catch up for a program that does not fit a frame,
+/// when the loop is a frame behind. This is the older of the two ways to
+/// leave drawings out; [`Scene::drawing`] is the other, for programs
+/// that fit.
+///
+/// Where two trips and a drawing fit two frames, a program at its VSYNC
+/// gets a whole trip, with the time `frame_time` that any frame gives it.
+/// Otherwise the program is held at its VSYNC, or runs on for
+/// [`CATCH_UP_RUN_TIME`] if it is part-way through its loop.
+pub fn catch_up(program: Behind, draw: Duration, frame_time: Duration) -> Option<CatchUp> {
+    if program.fits {
+        return None;
+    }
+    let whole = 2 * program.trip + draw <= 2 * FRAME;
+    Some(CatchUp {
+        time: match whole && program.at_sync {
+            true => frame_time,
+            false => CATCH_UP_RUN_TIME,
+        },
+        hold: !whole,
+    })
+}
+
 /// The time from `now` to the next vsync of a display at 60 Hz, one of
 /// whose vsyncs a present came back at `last`. The clock is no guide to
 /// it: frames that are behind move away from the vsyncs.
@@ -390,10 +443,20 @@ impl Pacer {
         }
     }
 
-    /// Whether the frame after the one being run is due, for the loop to
-    /// run it at once.
-    pub fn behind(&self, now: Instant) -> bool {
-        self.clock.behind(now)
+    /// Whether to run another frame at once, undrawn, after the `skipped`
+    /// run so this trip: the frame after the one being run is due at
+    /// `now`. `program` says what the program is at, and is asked only
+    /// then. See [`catch_up`].
+    pub fn catch_up(
+        &self,
+        now: Instant,
+        skipped: u32,
+        program: impl FnOnce() -> Behind,
+    ) -> Option<CatchUp> {
+        if skipped >= MOST_SKIPPED || !self.clock.behind(now) {
+            return None;
+        }
+        catch_up(program(), self.draw_cost(), self.frame_time(false))
     }
 
     /// Counts a frame run to catch up, which went undrawn.
@@ -632,7 +695,7 @@ mod tests {
         for _ in 0..frames {
             run += 1;
             let mut skipped = 0;
-            while skipped < crate::MOST_SKIPPED && clock.behind(now) {
+            while skipped < MOST_SKIPPED && clock.behind(now) {
                 clock.caught_up();
                 run += 1;
                 skipped += 1;
@@ -652,6 +715,41 @@ mod tests {
     }
 
     const WORK: Duration = Duration::from_millis(3);
+
+    #[test]
+    fn a_frame_to_catch_up_holds_a_program_that_has_no_time_for_a_trip() {
+        let ms = Duration::from_millis;
+        let limit = ms(12);
+        let at = |fits, at_sync, trip| Behind {
+            fits,
+            at_sync,
+            trip: ms(trip),
+        };
+        let run = |time, hold| Some(CatchUp { time, hold });
+        // A program that fits is left to `Scene::drawing`.
+        assert_eq!(catch_up(at(true, true, 5), ms(3), limit), None);
+        // Two trips and a drawing in two frames: a whole trip.
+        assert_eq!(
+            catch_up(at(false, true, 14), ms(5), limit),
+            run(limit, false)
+        );
+        // Part-way through its loop it only runs on a little.
+        assert_eq!(
+            catch_up(at(false, false, 14), ms(5), limit),
+            run(ms(1), false)
+        );
+        // A trip too long for that is held at its VSYNC...
+        assert_eq!(
+            catch_up(at(false, true, 15), ms(5), limit),
+            run(ms(1), true)
+        );
+        // ...and so is a program whose trip is not known yet, behind a
+        // drawing of two frames.
+        assert_eq!(
+            catch_up(at(false, true, 0), ms(34), limit),
+            run(ms(1), true)
+        );
+    }
 
     #[test]
     fn the_clock_runs_60_frames_a_second() {
