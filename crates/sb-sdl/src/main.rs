@@ -7,6 +7,7 @@ mod controls;
 mod corner;
 mod debug_panel;
 mod dialog;
+mod draw;
 mod editor_layout;
 mod events;
 mod file_dialogs;
@@ -2790,88 +2791,36 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // The UI in the window's pixels, and the emulator's windows,
             // which go on a layer of their own on the editor's window.
             let windows_on_layer = i == 1 && windows_apart;
+            let shown = draw::Ui {
+                window: i,
+                ui,
+                ed,
+                side_on,
+                windows_on_layer,
+                dim,
+                panel,
+                debug: &debug,
+                outline: &outline,
+                notices: i == 0 && !paused && !modal && !simple_ui,
+                key_hint: &key_hint,
+                slow_hint: &slow_hint,
+                side: &side_panel,
+                screens: &screens,
+                program_dialog: &program_dialog,
+                popup: &debugger.menu,
+                toasts: &toasts,
+                menu: &menu,
+                context,
+                bar_shown: bar_shown[i],
+                menus_apart: menus_apart.is_some(),
+                bar,
+                font,
+                settings,
+                scale,
+                cursor_on,
+            };
             let parts = |fb: &mut Framebuffer, debug_panel: &mut DebugPanel, windows: bool| {
-                let under = !windows || !windows_on_layer;
-                let over = windows || !windows_on_layer;
-                if dim && under {
-                    ui::clear(fb, 0x8000_0000);
-                    if let (Some(panel), false) = (panel, inside.get()) {
-                        ui::fill(fb, panel, 0);
-                    }
-                }
-                if let (true, Some((place, view, size))) = (under && inside.get(), &debug) {
-                    debug_panel.draw_on_display(fb, font, *place, *size, view, scale);
-                }
-                if panel.is_some() && under {
-                    debug_panel.draw_tip(fb, font);
-                }
-                if let (0, Some((outline, frame, place, clip))) = (i, &outline) {
-                    debug_panel::sprites::draw_outline(fb, outline, *frame, *place, *clip, 2);
-                }
-                // The notices go under the rest of the emulator's UI, and
-                // not at all while its screens are up, which they would
-                // only be in the way of. The Simple UI's go on a layer of
-                // their own.
-                if i == 0 && !paused && !modal && !simple_ui {
-                    corner::draw(fb, font, &key_hint, &slow_hint, false);
-                }
-                match &side_panel.open {
-                    _ if i != side_on || !under => {}
-                    Some(Side::Help(help)) => help.draw(fb, font, side_panel.focus),
-                    Some(Side::Index(index, _)) => index.draw(fb, font, side_panel.focus),
-                    None => {}
-                }
-                // Windows over the editor go over its panels too.
-                if let (true, Some(open)) = (i == ui && over, &screens.manager) {
-                    open.draw(fb, font, cursor_on);
-                }
-                if let (true, Some(open)) = (i == ui && over, &screens.game_list) {
-                    open.draw(fb, font);
-                }
-                if let (true, Some(open)) = (i == ui && over, &screens.welcome) {
-                    open.draw(fb, font);
-                }
-                if let (0, Some(open)) = (i, &program_dialog) {
-                    open.draw(fb, font, cursor_on);
-                }
-                if i == ui && over {
-                    if let Some(open) = &screens.color_window {
-                        open.draw(fb, font, &settings.editor_colors);
-                    }
-                    if let Some(open) = &screens.settings_window {
-                        open.draw(fb, font, settings);
-                    }
-                    if let Some(open) = &screens.shortcuts_window {
-                        open.draw(fb, font);
-                    }
-                    match &screens.file_dialog {
-                        Some(FileDialog::Save(d)) => d.draw(fb, font, cursor_on),
-                        Some(FileDialog::Load(p)) => p.draw(fb, font, cursor_on),
-                        None => {}
-                    }
-                }
-                if let (true, None, Some(open)) = (i == ed && under, menus_apart, &debugger.menu) {
-                    open.draw(fb, font);
-                }
-                if i == ui && under {
-                    toasts.draw(fb, font);
-                }
-                if i == ui {
-                    match &screens.dialog {
-                        Some((open, _)) if over => open.draw(fb, font),
-                        None if bar_shown[i] && under && menus_apart.is_none() => {
-                            menu.draw_lists(fb, font, settings, context)
-                        }
-                        _ => {}
-                    }
-                }
-                if let (true, Some(open)) = (i == ui && over, &screens.pause_menu) {
-                    open.draw(fb, font);
-                }
-                // The bar covers what is under it.
-                if dim && under && bar_shown[i] {
-                    ui::fill(fb, bar, 0);
-                }
+                shown.draw(fb, debug_panel, inside.get(), windows)
             };
             if let (Some(place), Some((_, view, screens))) = (panel, &debug) {
                 // What is partly see-through over the panel shows what is
