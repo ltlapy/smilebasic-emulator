@@ -323,6 +323,15 @@ pub struct Bench {
     /// The frames the program missed part of its trip in, when the timing
     /// began and now.
     missed: (Missed, Missed),
+    /// The machine's count of deferred VSYNCs after the last trip, whether
+    /// it rose in that trip, and the stretches of trips in a row in which
+    /// it rose, of the trips timed. Once one VSYNC that was behind has
+    /// waited for the next frame, the machine counts every VSYNC after it
+    /// until two trips of the program fit one frame, though none of those
+    /// loses a frame. Each stretch starts with a VSYNC that did wait.
+    deferred_seen: u64,
+    deferring: bool,
+    deferrals: u32,
     /// Whether this trip left the drawing out, and the trips timed that did.
     undrawn_now: bool,
     undrawn: u32,
@@ -484,7 +493,11 @@ impl Bench {
             self.ran = 0;
             self.maincnt.0 = machine.rt.main_count();
             self.missed.0 = machine.missed;
+            (self.deferring, self.deferrals) = (false, 0);
         }
+        let deferred = machine.missed.deferred > self.deferred_seen;
+        self.deferrals += u32::from(deferred && !self.deferring);
+        (self.deferring, self.deferred_seen) = (deferred, machine.missed.deferred);
         self.maincnt.1 = machine.rt.main_count();
         self.missed.1 = machine.missed;
         let ended = self.until_end && self.trip > set_up + 10 && !machine.is_running();
@@ -760,10 +773,12 @@ impl Bench {
             );
             let (from, to) = self.missed;
             println!(
-                "missed    {} frames out of time mid-trip, {} held at VSYNC, {} VSYNCs deferred",
+                "missed    {} frames out of time mid-trip, {} held at VSYNC, {} VSYNCs deferred \
+                 in {} stretches",
                 to.cut - from.cut,
                 to.held - from.held,
-                to.deferred - from.deferred
+                to.deferred - from.deferred,
+                self.deferrals
             );
         }
         println!(
