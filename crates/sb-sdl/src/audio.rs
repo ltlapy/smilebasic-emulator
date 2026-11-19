@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use sb_runtime::sound::output::{Output, Stats};
 use sb_runtime::sound::{RATE, SoundFont};
 use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStreamWithCallback};
+use sdl3::sys::audio::SDL_SetAudioStreamGetCallback;
 
 /// GeneralUser GS by S. Christian Collins; see `sounds/` for its license.
 static BUNDLED_FONT: &[u8] = include_bytes!("../sounds/GeneralUser-GS.sf2");
@@ -91,6 +92,23 @@ impl Audio {
     pub fn stats(&self) -> Option<Stats> {
         self._stream.as_ref()?;
         self.output.lock().ok().map(|o| o.stats)
+    }
+}
+
+impl Drop for Audio {
+    /// The sdl3 crate (0.20) frees the callback before it destroys the
+    /// stream, while the device's thread may be calling it or about to:
+    /// a `Pull` freed under it then writes into freed memory. Taking the
+    /// callback off the stream first ends that, as SDL takes the stream's
+    /// lock both to call the callback and to change it.
+    fn drop(&mut self) {
+        if let Some(stream) = &self._stream {
+            // SAFETY: the stream lives until `_stream` is dropped, after
+            // this; SDL runs no callback once the call returns.
+            unsafe {
+                SDL_SetAudioStreamGetCallback(stream.raw(), None, std::ptr::null_mut());
+            }
+        }
     }
 }
 
