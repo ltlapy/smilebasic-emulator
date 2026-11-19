@@ -113,7 +113,8 @@ pub struct Missed {
     pub held: u64,
     /// A VSYNC that was behind waited for the next frame rather than go
     /// straight on as on SmileBASIC 4, as the trip after it would not end
-    /// in the frame's time.
+    /// in the frame's time. The VSYNCs after it, each in the frame after
+    /// the last, are behind only by that wait and are not counted.
     pub deferred: u64,
 }
 
@@ -142,6 +143,9 @@ pub struct Machine {
     /// The frame the last VSYNC waited for, none being long ago, which the next one counts
     /// from.
     vsync_at: Option<u64>,
+    /// A VSYNC that was behind waited for the next frame, and the program
+    /// has not made that frame up since: see [`Missed::deferred`].
+    owes_frame: bool,
     /// VSYNCs the program has reached.
     vsyncs: u64,
     /// Whether the program stopped at a VSYNC or WAIT and has run no
@@ -556,6 +560,7 @@ impl Machine {
             wait: 0,
             frame: 0,
             vsync_at: None,
+            owes_frame: false,
             vsyncs: 0,
             at_sync: false,
             loop_time: Duration::ZERO,
@@ -1451,6 +1456,7 @@ impl Machine {
         self.vm = Some(vm);
         self.wait = 0;
         self.vsync_at = Some(self.frame + 1);
+        self.owes_frame = false;
     }
 
     /// Goes on with a program that STOP, the + button or the debugger
@@ -2140,6 +2146,7 @@ impl Machine {
                     let frames = frames.saturating_sub(self.rt.in_frame_job.into());
                     self.rt.in_frame_job = false;
                     self.wait = frames;
+                    self.owes_frame = false;
                     self.vsync_at = Some(self.frame + u64::from(frames));
                     if frames == 0 && has_time(vm, &self.rt, start) {
                         continue;
@@ -2168,10 +2175,14 @@ impl Machine {
                     // MAINCNT, which is what the count looks at.
                     let reached = self.frame - u64::from(self.rt.in_frame_job);
                     self.rt.in_frame_job = false;
+                    // Behind only by the frame an earlier VSYNC waited for.
+                    let on_time = self.vsync_at.map(|at| at + u64::from(frames));
+                    let owed = self.owes_frame && on_time == Some(self.frame);
                     let (mark, wait) = vsync_wait(self.vsync_at, frames, self.frame, reached);
                     self.vsync_at = Some(mark);
                     if let Some(wait) = wait {
                         self.wait = wait;
+                        self.owes_frame = false;
                     } else {
                         self.rt.sound.synced();
                         // SmileBASIC 4 goes straight on, and so does a
@@ -2185,10 +2196,14 @@ impl Machine {
                             deadline.is_some_and(|end| now + self.loop_time < end)
                         });
                         if fits && has_time(vm, &self.rt, start) {
+                            self.owes_frame = false;
                             continue;
                         }
                         if !fits {
-                            self.missed.deferred += 1;
+                            if !owed {
+                                self.missed.deferred += 1;
+                            }
+                            self.owes_frame = true;
                         }
                     }
                     self.at_sync = true;

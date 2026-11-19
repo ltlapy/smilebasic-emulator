@@ -791,6 +791,28 @@ fn kept_frames_spend_no_frame_held_at_vsync() {
     assert_eq!(m.rt.main_count(), count.wrapping_add(1));
 }
 
+/// A VSYNC that is behind and waits for the next frame is counted once.
+/// The VSYNCs after it come a frame late only by that wait, each in the
+/// frame after the last, and lose nothing.
+#[test]
+fn a_deferred_vsync_is_counted_once() {
+    let mut m = machine();
+    // No time is left at any VSYNC, so one that is behind cannot go on.
+    m.time_limit = Some(std::time::Duration::ZERO);
+    // VSYNC 0 is behind by itself.
+    m.set_slot(0, "VSYNC 0:@L:VSYNC:GOTO @L".to_string());
+    m.run_slot(0);
+    m.frame();
+    assert_eq!(m.missed.deferred, 1);
+    let count = m.rt.main_count();
+    for _ in 0..5 {
+        m.frame();
+    }
+    assert_eq!(m.rt.main_count(), count.wrapping_add(5));
+    assert_eq!(m.missed.deferred, 1, "a trip every frame, and none behind");
+    assert!(m.at_sync());
+}
+
 /// A program out of time between VSYNCs has only part of a scene made.
 #[test]
 fn a_program_out_of_time_is_mid_loop() {
