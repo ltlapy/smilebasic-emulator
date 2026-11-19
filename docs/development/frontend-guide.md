@@ -47,6 +47,11 @@ struct fits.
 | What a screen does with an event | `events.rs`: one function per screen, given `Ctx` |
 | What a menu bar item does | `events::menu_action` |
 | A key that does what a menu item does | The key gives the `Action` and calls `menu_action` (`debug_key`, `events::editor_ctrl_action`, the `act!` macro) |
+| The Simple UI's hotkeys (Select+A, Select+Start, F8) | `events::pause_hotkeys` |
+| Whether Select is held | `stick_mouse::Select`, the only place that follows it |
+| Bringing the frame to the main window's texture | `upload_frame` in `main.rs` |
+| Drawing a subprogram's screen | `draw_sub_screen` in `main.rs` |
+| What a dialog and a program's DIALOG lay out and draw alike | The functions at the end of `program_dialog.rs` (`draw_window`, `button_rect`, ...) |
 | What the UI looks like on a frame | `draw::Ui::draw` |
 | Copying layers to a window | `Overlays::copy_main`, `copy_editor` |
 | Where something goes in a window, or which pixel the pointer is over | `placement.rs` |
@@ -71,15 +76,27 @@ Two parts of the event handling are still in `frontend()` on purpose.
 - **The window's own events.** Renderer resets, focus, raising a window.
   They touch the canvas, the textures and the windows at once.
 
-The screen frame's upload and the subprogram's screen are also still there.
-They tie the main texture, the GPU path's view and the doubled frame
-together, on the hottest path. Move them only with a run on the slowest
-target afterwards.
+The main frame's texture and its kind are still locals of `frontend()`,
+handed to `upload_frame`. They are replaced together with the renderer,
+and their place among the locals decides when they are dropped (see
+"Drop order" below).
 
 The loop has six local macros (`drawing!`, `lend!`, `stick_role!`, `cx!`,
 `choosers!`, `act!`). Each exists because a function could not borrow what
 it needs. Do not add a seventh: group the state it would capture into a
 struct and pass that.
+
+## Drop order
+
+Rust drops locals in the reverse of the order they are declared in, and
+nothing checks that a texture goes before its renderer. In `frontend()`, a
+variable that holds textures is declared after the canvas and the window
+they belong to: `textures` comes after `editor_gfx` because some of its
+textures are the editor window's. Destroying a texture after its renderer
+is a use after free that SDL hides by default and
+`SDL_INVALID_PARAM_CHECKS=1` shows; `tests/editor_window.rs` quits that way.
+When state that owns textures moves to a new struct or a new place, keep
+that order.
 
 ## Things that look the same and are not
 

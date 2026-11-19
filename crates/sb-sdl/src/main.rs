@@ -2359,40 +2359,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             pointer_space = (mode.width, mode.height);
             (frame, if smart_frame { Filter::Nearest } else { filter })
         };
-        if kind != texture_kind {
-            texture_kind = kind;
-            texture = drawing!(frame_texture(&canvas, texture_creator, kind));
-            textures.main_holds = None;
-        }
-        let gpu_view = (paths.main.as_mut())
-            .filter(|_| on_gpu)
-            .and_then(|gpu| gpu.view(kind.1 == Filter::Bilinear));
-        if Some(revision) != textures.main_holds && !on_gpu {
-            bench::uploaded(fb.pixels().len() * 4);
-            drawing!(texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize));
-        }
-        if smart_frame {
-            let cpu = bench.cpu_smart;
-            let changed = Some(revision) != textures.main_holds;
-            drawing!(textures.smart.prepare(
-                &mut canvas,
-                texture_creator,
-                gpu_view.as_deref().unwrap_or(&texture),
-                fb,
-                rect,
-                changed,
-                cpu,
-            ));
-            // Scaling on the CPU needs the frame on the CPU, from now on: this
-            // one is drawn again next time round, once there is no GPU path.
-            if on_gpu && textures.smart.on_cpu() {
-                eprintln!("SB_GPU: the doubled frame was refused; staying on the CPU");
-                paths.turn_off("CPU (doubled frame refused by the driver)");
-            }
-        } else {
-            textures.smart.release();
-        }
-        textures.main_holds = Some(revision);
+        let showing = Showing {
+            revision,
+            kind,
+            rect,
+            on_gpu,
+            smart: smart_frame,
+            cpu_smart: bench.cpu_smart,
+        };
+        let gpu_view = drawing!(upload_frame(
+            (&mut texture, &mut texture_kind),
+            &mut textures,
+            &mut paths,
+            (&mut canvas, texture_creator),
+            fb,
+            showing,
+        ));
         bench.lap(Stage::Screen);
         // The editor in its own window, where the debugger's panel goes
         // too: where its frame and the UI are there, and the UI's size.
@@ -2491,50 +2473,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             .or(gpu_view.as_deref())
             .unwrap_or(&texture);
         drawing!(canvas.copy(screen, None, rect));
-        // The subprogram's screen goes where XSUBSCREEN puts it on the
-        // 1280x720 display, over the editor too.
-        if paths.sub.is_none() && machine.sub_shows() {
-            paths.sub = paths.main.as_ref().and_then(gpu::Gpu::for_sub);
-        }
-        let sub_backend = (paths.sub.as_mut())
-            .filter(|_| !debugger.was_shown)
-            .map(|g| g as &mut dyn SceneBackend);
-        if let Some(sub) = machine.sub_screen_with(sub_backend) {
-            let fb = sub.frame;
-            let lcd = main_map.lcd(simple_ui);
-            let on_window = |rect: [f32; 4]| lcd.on_window(rect);
-            if let Some(bars) = sub.bars() {
-                let c = |shift: u32| (sub.back >> shift & 0xFF) as u8;
-                let before = canvas.blend_mode();
-                // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
-                unsafe {
-                    SDL_SetRenderDrawBlendMode(canvas.raw(), SDL_BLENDMODE_BLEND_PREMULTIPLIED)
-                };
-                canvas.set_draw_color(Color::RGBA(c(16), c(8), c(0), c(24)));
-                for bar in bars {
-                    drawing!(canvas.fill_rect(on_window(bar)));
-                }
-                canvas.set_blend_mode(before);
-            }
-            // Whatever XSCREEN's mode, as a screen in mode 0 is.
-            let kind = ((fb.width(), fb.height()), Filter::Bilinear);
-            let sub_view = (paths.sub.as_mut())
-                .filter(|_| sub.on_backend)
-                .and_then(gpu::Gpu::premultiplied_view);
-            if let Some(view) = &sub_view {
-                drawing!(canvas.copy(view, None, on_window(sub.quad)));
-            } else if textures.sub.as_ref().is_none_or(|(_, k)| *k != kind) {
-                let made = drawing!(frame_texture(&canvas, texture_creator, kind));
-                // SAFETY: the texture is valid while `made` lives.
-                unsafe { SDL_SetTextureBlendMode(made.raw(), SDL_BLENDMODE_BLEND_PREMULTIPLIED) };
-                textures.sub = Some((made, kind));
-            }
-            if let (None, Some((tex, _))) = (&sub_view, &mut textures.sub) {
-                bench::uploaded(fb.pixels().len() * 4);
-                drawing!(tex.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize));
-                drawing!(canvas.copy(tex, None, on_window(sub.quad)));
-            }
-        }
+        let lcd = main_map.lcd(simple_ui);
+        drawing!(draw_sub_screen(
+            machine,
+            &mut paths,
+            &mut textures.sub,
+            (&mut canvas, texture_creator),
+            lcd,
+            !debugger.was_shown,
+        ));
         // Where the focus has just gone: a yellow line on the edge, one
         // pixel out and two in, then a dark band two pixels wide, fading
         // out together.
@@ -4466,6 +4413,134 @@ fn frame_texture<'a>(
     bench::made();
     gpu::texture_fits(canvas.raw(), w, h)?;
     Ok(creator.create_texture_streaming(PixelFormat::ARGB8888, w, h)?)
+}
+
+/// The frame the main window shows this trip, as [`upload_frame`] takes it.
+struct Showing {
+    /// Whether it is the editor's, and its revision.
+    revision: (bool, u64),
+    /// Its size and the filter it is scaled with.
+    kind: TextureKind,
+    /// Where it goes in the window.
+    rect: FRect,
+    /// The GPU path drew it, so its pixels are not in the framebuffer.
+    on_gpu: bool,
+    /// It is scaled as XSCREEN's mode 1 is: see [`SmartFrame`].
+    smart: bool,
+    /// The bench asks for that scaling on the CPU.
+    cpu_smart: bool,
+}
+
+/// Brings the frame `fb` to where the main window draws it from: makes
+/// the texture again when the frame's kind changed, sends the pixels when
+/// the texture does not hold this revision, and gets the doubled frame of
+/// XSCREEN's mode 1 ready. Gives the GPU path's own frame when that is the
+/// one to show.
+fn upload_frame<'a>(
+    (texture, texture_kind): (&mut Texture<'a>, &mut TextureKind),
+    textures: &mut Held<'a>,
+    paths: &mut gpu::Paths,
+    (canvas, creator): (&mut Canvas<Window>, &'a TextureCreator<WindowContext>),
+    fb: &Framebuffer,
+    showing: Showing,
+) -> Result<Option<std::mem::ManuallyDrop<Texture<'static>>>, AnyError> {
+    let Showing {
+        revision,
+        kind,
+        rect,
+        on_gpu,
+        smart,
+        cpu_smart,
+    } = showing;
+    if kind != *texture_kind {
+        *texture_kind = kind;
+        *texture = frame_texture(canvas, creator, kind)?;
+        textures.main_holds = None;
+    }
+    let gpu_view = (paths.main.as_mut())
+        .filter(|_| on_gpu)
+        .and_then(|gpu| gpu.view(kind.1 == Filter::Bilinear));
+    if Some(revision) != textures.main_holds && !on_gpu {
+        bench::uploaded(fb.pixels().len() * 4);
+        texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+    }
+    if smart {
+        let changed = Some(revision) != textures.main_holds;
+        textures.smart.prepare(
+            canvas,
+            creator,
+            gpu_view.as_deref().unwrap_or(texture),
+            fb,
+            rect,
+            changed,
+            cpu_smart,
+        )?;
+        // Scaling on the CPU needs the frame on the CPU, from now on: this
+        // one is drawn again next time round, once there is no GPU path.
+        if on_gpu && textures.smart.on_cpu() {
+            eprintln!("SB_GPU: the doubled frame was refused; staying on the CPU");
+            paths.turn_off("CPU (doubled frame refused by the driver)");
+        }
+    } else {
+        textures.smart.release();
+    }
+    textures.main_holds = Some(revision);
+    Ok(gpu_view)
+}
+
+/// Draws the subprogram's screen where XSUBSCREEN puts it on the 1280x720
+/// display, over the editor too. `lcd` maps that display to the window,
+/// `held` is the texture its frame goes to when the GPU path did not draw
+/// it, and `on_gpu` says whether that path may.
+fn draw_sub_screen<'a>(
+    machine: &mut Machine,
+    paths: &mut gpu::Paths,
+    held: &mut Option<(Texture<'a>, TextureKind)>,
+    (canvas, creator): (&mut Canvas<Window>, &'a TextureCreator<WindowContext>),
+    lcd: placement::Mapping,
+    on_gpu: bool,
+) -> Result<(), AnyError> {
+    if paths.sub.is_none() && machine.sub_shows() {
+        paths.sub = paths.main.as_ref().and_then(gpu::Gpu::for_sub);
+    }
+    let sub_backend = (paths.sub.as_mut())
+        .filter(|_| on_gpu)
+        .map(|g| g as &mut dyn SceneBackend);
+    let Some(sub) = machine.sub_screen_with(sub_backend) else {
+        return Ok(());
+    };
+    let fb = sub.frame;
+    let on_window = |rect: [f32; 4]| lcd.on_window(rect);
+    if let Some(bars) = sub.bars() {
+        let c = |shift: u32| (sub.back >> shift & 0xFF) as u8;
+        let before = canvas.blend_mode();
+        // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
+        unsafe { SDL_SetRenderDrawBlendMode(canvas.raw(), SDL_BLENDMODE_BLEND_PREMULTIPLIED) };
+        canvas.set_draw_color(Color::RGBA(c(16), c(8), c(0), c(24)));
+        for bar in bars {
+            canvas.fill_rect(on_window(bar))?;
+        }
+        canvas.set_blend_mode(before);
+    }
+    // Whatever XSCREEN's mode, as a screen in mode 0 is.
+    let kind = ((fb.width(), fb.height()), Filter::Bilinear);
+    let sub_view = (paths.sub.as_mut())
+        .filter(|_| sub.on_backend)
+        .and_then(gpu::Gpu::premultiplied_view);
+    if let Some(view) = &sub_view {
+        canvas.copy(view, None, on_window(sub.quad))?;
+    } else if held.as_ref().is_none_or(|(_, k)| *k != kind) {
+        let made = frame_texture(canvas, creator, kind)?;
+        // SAFETY: the texture is valid while `made` lives.
+        unsafe { SDL_SetTextureBlendMode(made.raw(), SDL_BLENDMODE_BLEND_PREMULTIPLIED) };
+        *held = Some((made, kind));
+    }
+    if let (None, Some((tex, _))) = (&sub_view, held) {
+        bench::uploaded(fb.pixels().len() * 4);
+        tex.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+        canvas.copy(tex, None, on_window(sub.quad))?;
+    }
+    Ok(())
 }
 
 /// The textures frontend() keeps besides the main frame's, and what the
