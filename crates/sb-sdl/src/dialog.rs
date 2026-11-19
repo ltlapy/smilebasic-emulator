@@ -8,7 +8,7 @@ use sdl3::gamepad::Button;
 use sdl3::keyboard::Keycode;
 
 use crate::program_dialog::{
-    button_rect, centered, draw_buttons, draw_lines, draw_window, line_y, wrap_lines,
+    button_rect, centered, draw_buttons, draw_lines, draw_window, line_y, moved_focus, wrap_lines,
 };
 use crate::ui::{BORDER, CHAR, LINE, PAD, Rect, TEXT, draw_text, fill, text_width};
 
@@ -171,9 +171,9 @@ impl Dialog {
             .map(|i| ANSWERS[i])
     }
 
-    /// Left, Right and Tab move between the buttons, Enter chooses and
-    /// Esc cancels. With a field, Backspace deletes from it and Enter
-    /// accepts.
+    /// Left and Right move between the buttons and stop at the ends, Tab
+    /// goes round, Enter chooses and Esc cancels, as in a program's
+    /// DIALOG. With a field, Backspace deletes from it and Enter accepts.
     pub fn key(&mut self, key: Keycode) -> Option<Answer> {
         if let Some(field) = &mut self.field {
             match key {
@@ -186,23 +186,25 @@ impl Dialog {
                 _ => {}
             }
         }
+        if let Some(focus) = moved_focus(self.focus, self.labels.len(), key) {
+            self.focus = focus;
+            return None;
+        }
         match key {
-            Keycode::Left | Keycode::Right | Keycode::Tab => {
-                self.focus = (self.focus + 1) % self.labels.len();
-                None
-            }
             Keycode::Return | Keycode::KpEnter | Keycode::Space => Some(ANSWERS[self.focus]),
             Keycode::Escape => Some(Answer::Cancel),
             _ => None,
         }
     }
 
-    /// A controller: left and right on the pad move between the buttons,
-    /// A (the right face button) chooses and B (the bottom one) cancels,
-    /// as SmileBASIC 4's buttons are placed.
+    /// A controller: left and right on the pad, or the left stick, which
+    /// the loop gives as the pad's, move between the buttons and stop at
+    /// the ends. A (the right face button) chooses and B (the bottom one)
+    /// cancels, as SmileBASIC 4's buttons are placed.
     pub fn pad(&mut self, button: Button) -> Option<Answer> {
         match button {
-            Button::DPadLeft | Button::DPadRight => self.key(Keycode::Right),
+            Button::DPadLeft => self.key(Keycode::Left),
+            Button::DPadRight => self.key(Keycode::Right),
             Button::East if self.field.is_some() => Some(Answer::Accept),
             Button::East => Some(ANSWERS[self.focus]),
             Button::South => Some(Answer::Cancel),
@@ -252,6 +254,23 @@ mod tests {
         assert_eq!(d.key(Keycode::Left), None);
         assert_eq!(d.key(Keycode::Return), Some(Answer::Accept));
         assert_eq!(d.key(Keycode::Escape), Some(Answer::Cancel));
+    }
+
+    #[test]
+    fn the_focus_stops_at_the_ends_and_tab_goes_round() {
+        let mut d = Dialog::quit(&[0], (1280, 720));
+        // Cancel, the right one, has the focus at first.
+        d.key(Keycode::Right);
+        assert_eq!(d.focus, 1);
+        d.pad(Button::DPadRight);
+        assert_eq!(d.focus, 1);
+        d.pad(Button::DPadLeft);
+        assert_eq!(d.focus, 0);
+        d.key(Keycode::Left);
+        assert_eq!(d.focus, 0);
+        d.key(Keycode::Tab);
+        d.key(Keycode::Tab);
+        assert_eq!(d.focus, 0);
     }
 
     #[test]

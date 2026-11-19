@@ -177,20 +177,11 @@ impl ProgramView {
     /// alone, and `Some(None)` for keys it took without an answer.
     pub fn key(&mut self, key: Keycode) -> Option<Option<DialogAnswer>> {
         let n = self.labels().len();
+        if let Some(focus) = moved_focus(self.focus, n, key) {
+            self.focus = focus;
+            return Some(None);
+        }
         match key {
-            // As the D-pad does, stopping at the ends.
-            Keycode::Left if n > 1 => {
-                self.focus = self.focus.saturating_sub(1);
-                Some(None)
-            }
-            Keycode::Right if n > 1 => {
-                self.focus = (self.focus + 1).min(n - 1);
-                Some(None)
-            }
-            Keycode::Tab if n > 1 => {
-                self.focus = (self.focus + 1) % n;
-                Some(None)
-            }
             Keycode::Return | Keycode::KpEnter if n > 0 => Some(Some(self.choose(self.focus))),
             Keycode::Escape if n == 2 => Some(Some(self.choose(0))),
             Keycode::Backspace if matches!(self.dialog.kind, DialogKind::Name { .. }) => {
@@ -268,6 +259,18 @@ pub(crate) fn button_rect(f: Rect, w: u32, n: usize, i: usize) -> Rect {
         y: f.y + f.h - 2 * PAD - LINE,
         w,
         h: LINE,
+    }
+}
+
+/// Where `key` moves the focus from button `focus` of `n`, if it moves
+/// it: Left and Right stop at the ends, as SmileBASIC 4's D-pad does in a
+/// DIALOG, and Tab goes round from the last to the first.
+pub(crate) fn moved_focus(focus: usize, n: usize, key: Keycode) -> Option<usize> {
+    match key {
+        Keycode::Left if n > 1 => Some(focus.saturating_sub(1)),
+        Keycode::Right if n > 1 => Some((focus + 1).min(n - 1)),
+        Keycode::Tab if n > 1 => Some((focus + 1) % n),
+        _ => None,
     }
 }
 

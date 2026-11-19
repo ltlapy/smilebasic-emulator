@@ -111,6 +111,9 @@ A `DIALOG` with two buttons starts with the focus on the right one.
 A and B choose when released. A click chooses the button under the mouse,
 which leaves the focus where it is until then.
 
+The emulator's own questions, such as the one before quitting with unsaved
+programs, move the focus with the same keys.
+
 ## Gamepad in the projects
 
 The menu needs the mouse or keys.
