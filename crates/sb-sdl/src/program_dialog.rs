@@ -137,27 +137,12 @@ impl ProgramView {
         let buttons = if self.labels().is_empty() { 0 } else { LINE };
         // Title bar, body, buttons.
         let h = LINE + self.body_lines() as u32 * LINE + buttons + 6 * PAD;
-        Rect {
-            x: self.size.0.saturating_sub(w) / 2,
-            y: self.size.1.saturating_sub(h) / 2,
-            w,
-            h,
-        }
+        centered(self.size, w, h)
     }
 
     /// Buttons sit along the bottom, right-aligned.
     fn button(&self, i: usize) -> Rect {
-        let f = self.frame();
-        let w = self.button_width();
-        let n = self.labels().len() as u32;
-        let right = f.x + f.w - 2 * PAD;
-        let from_right = n - i as u32;
-        Rect {
-            x: right - from_right * w - (from_right - 1) * PAD,
-            y: f.y + f.h - 2 * PAD - LINE,
-            w,
-            h: LINE,
-        }
+        button_rect(self.frame(), self.button_width(), self.labels().len(), i)
     }
 
     fn choose(&self, i: usize) -> DialogAnswer {
@@ -231,23 +216,12 @@ impl ProgramView {
 
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font, blink: bool) {
         let f = self.frame();
-        fill(fb, f, BORDER);
-        let inner = Rect {
-            x: f.x + 2,
-            y: f.y + 2,
-            w: f.w - 4,
-            h: f.h - 4,
-        };
-        fill(fb, inner, BACKGROUND | 0xFF00_0000);
-        fill(fb, Rect { h: LINE, ..inner }, HIGHLIGHT);
-        let caption = fitted(&self.dialog.caption, f.w.saturating_sub(4 * PAD));
-        draw_text(fb, font, f.x + 2 * PAD, f.y + 6, &caption, TEXT);
-        let line_y = |i: u32| f.y + LINE + 2 * PAD + i * LINE;
+        draw_window(fb, font, f, &self.dialog.caption);
         match self.dialog.kind {
             DialogKind::Name { .. } => {
                 let field = Rect {
                     x: f.x + 2 * PAD,
-                    y: line_y(0),
+                    y: line_y(f, 0),
                     w: self.field_width(),
                     h: LINE,
                 };
@@ -266,19 +240,78 @@ impl ProgramView {
                     TEXT,
                 );
             }
-            _ => {
-                for (i, line) in self.lines.iter().enumerate() {
-                    let y = line_y(i as u32) + (LINE - CHAR) / 2;
-                    draw_text(fb, font, f.x + 2 * PAD, y, line, TEXT);
-                }
-            }
+            _ => draw_lines(fb, font, f, &self.lines),
         }
-        for (i, label) in self.labels().iter().enumerate() {
-            let r = self.button(i);
-            focus_face(fb, r, i == self.focus, self.hover == Some(i));
-            let x = r.x + (r.w - text_width(label)) / 2;
-            draw_text(fb, font, x, r.y + 4, label, TEXT);
-        }
+        let buttons = (self.labels().iter().enumerate()).map(|(i, l)| (*l, self.button(i)));
+        draw_buttons(fb, font, buttons, self.focus, self.hover);
+    }
+}
+
+/// What the emulator's dialogs and a program's DIALOG lay out and draw
+/// alike. A window of `w` by `h` in the middle of a display of `size`.
+pub(crate) fn centered(size: (u32, u32), w: u32, h: u32) -> Rect {
+    Rect {
+        x: size.0.saturating_sub(w) / 2,
+        y: size.1.saturating_sub(h) / 2,
+        w,
+        h,
+    }
+}
+
+/// Button `i` of `n`, each `w` wide: they sit along the bottom of the
+/// window `f`, right-aligned.
+pub(crate) fn button_rect(f: Rect, w: u32, n: usize, i: usize) -> Rect {
+    let right = f.x + f.w - 2 * PAD;
+    let from_right = (n - i) as u32;
+    Rect {
+        x: right - from_right * w - (from_right - 1) * PAD,
+        y: f.y + f.h - 2 * PAD - LINE,
+        w,
+        h: LINE,
+    }
+}
+
+/// The window `f` with its title bar and `title`, cut to fit.
+pub(crate) fn draw_window(fb: &mut Framebuffer, font: &Font, f: Rect, title: &str) {
+    fill(fb, f, BORDER);
+    let inner = Rect {
+        x: f.x + 2,
+        y: f.y + 2,
+        w: f.w - 4,
+        h: f.h - 4,
+    };
+    fill(fb, inner, BACKGROUND | 0xFF00_0000);
+    fill(fb, Rect { h: LINE, ..inner }, HIGHLIGHT);
+    let title = fitted(title, f.w.saturating_sub(4 * PAD));
+    draw_text(fb, font, f.x + 2 * PAD, f.y + 6, &title, TEXT);
+}
+
+/// The top of line `i` of the body of the window `f`.
+pub(crate) fn line_y(f: Rect, i: u32) -> u32 {
+    f.y + LINE + 2 * PAD + i * LINE
+}
+
+/// The body's lines.
+pub(crate) fn draw_lines(fb: &mut Framebuffer, font: &Font, f: Rect, lines: &[String]) {
+    for (i, line) in lines.iter().enumerate() {
+        let y = line_y(f, i as u32) + (LINE - CHAR) / 2;
+        draw_text(fb, font, f.x + 2 * PAD, y, line, TEXT);
+    }
+}
+
+/// The buttons, each a label and its place; `focus` is the one Enter
+/// chooses and `hover` the one under the mouse.
+pub(crate) fn draw_buttons<'a>(
+    fb: &mut Framebuffer,
+    font: &Font,
+    buttons: impl Iterator<Item = (&'a str, Rect)>,
+    focus: usize,
+    hover: Option<usize>,
+) {
+    for (i, (label, r)) in buttons.enumerate() {
+        focus_face(fb, r, i == focus, hover == Some(i));
+        let x = r.x + (r.w - text_width(label)) / 2;
+        draw_text(fb, font, x, r.y + 4, label, TEXT);
     }
 }
 

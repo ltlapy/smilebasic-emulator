@@ -7,12 +7,10 @@ use sb_runtime::font::Font;
 use sdl3::gamepad::Button;
 use sdl3::keyboard::Keycode;
 
-use crate::program_dialog::{fitted, wrap_lines};
-use crate::ui::{
-    BACKGROUND, BORDER, CHAR, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, focus_face, text_width,
+use crate::program_dialog::{
+    button_rect, centered, draw_buttons, draw_lines, draw_window, line_y, wrap_lines,
 };
-
-const LINE: u32 = 24;
+use crate::ui::{BORDER, CHAR, LINE, PAD, Rect, TEXT, draw_text, fill, text_width};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
@@ -154,25 +152,11 @@ impl Dialog {
         let w = (text.max(2 * self.button_width() + PAD) + 4 * PAD).min(self.size.0);
         // Title bar, body, buttons.
         let h = LINE + self.body_lines() * LINE + LINE + 6 * PAD;
-        Rect {
-            x: self.size.0.saturating_sub(w) / 2,
-            y: self.size.1.saturating_sub(h) / 2,
-            w,
-            h,
-        }
+        centered(self.size, w, h)
     }
 
     fn button(&self, i: usize) -> Rect {
-        let f = self.frame();
-        let w = self.button_width();
-        let n = self.labels.len() as u32;
-        let i = i as u32;
-        Rect {
-            x: f.x + f.w - 2 * PAD - (n - i) * w - (n - 1 - i) * PAD,
-            y: f.y + f.h - 2 * PAD - LINE,
-            w,
-            h: LINE,
-        }
+        button_rect(self.frame(), self.button_width(), self.labels.len(), i)
     }
 
     /// The mouse shows which button a click chooses; it leaves the focus,
@@ -228,26 +212,12 @@ impl Dialog {
 
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
         let f = self.frame();
-        fill(fb, f, BORDER);
-        let inner = Rect {
-            x: f.x + 2,
-            y: f.y + 2,
-            w: f.w - 4,
-            h: f.h - 4,
-        };
-        fill(fb, inner, BACKGROUND | 0xFF00_0000);
-        let bar = Rect { h: LINE, ..inner };
-        fill(fb, bar, HIGHLIGHT);
-        let title = fitted(&self.title, f.w.saturating_sub(4 * PAD));
-        draw_text(fb, font, f.x + 2 * PAD, f.y + 6, &title, TEXT);
-        for (i, line) in self.lines.iter().enumerate() {
-            let y = f.y + LINE + 2 * PAD + i as u32 * LINE + (LINE - CHAR) / 2;
-            draw_text(fb, font, f.x + 2 * PAD, y, line, TEXT);
-        }
+        draw_window(fb, font, f, &self.title);
+        draw_lines(fb, font, f, &self.lines);
         if let Some(text) = &self.field {
             let field = Rect {
                 x: f.x + 2 * PAD,
-                y: f.y + LINE + 2 * PAD + self.lines.len() as u32 * LINE,
+                y: line_y(f, self.lines.len() as u32),
                 w: f.w - 4 * PAD,
                 h: LINE,
             };
@@ -261,12 +231,8 @@ impl Dialog {
             let y = field.y + (LINE - CHAR) / 2;
             draw_text(fb, font, field.x + PAD, y, &format!("{shown}_"), TEXT);
         }
-        for (i, label) in self.labels.iter().enumerate() {
-            let r = self.button(i);
-            focus_face(fb, r, i == self.focus, self.hover == Some(i));
-            let x = r.x + (r.w - text_width(label)) / 2;
-            draw_text(fb, font, x, r.y + 4, label, TEXT);
-        }
+        let buttons = (self.labels.iter().enumerate()).map(|(i, l)| (l.as_str(), self.button(i)));
+        draw_buttons(fb, font, buttons, self.focus, self.hover);
     }
 }
 
