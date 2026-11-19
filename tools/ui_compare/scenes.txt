@@ -125,3 +125,7 @@ program DIALOG: two buttons, Left|run=PERF/TDLG,at=100:key:Return,at=140:key:Lef
 program DIALOG: two buttons, click the left|run=PERF/TDLG,at=100:key:Return,at=130:move:560:380,at=140:click:560:380|
 program DIALOG: name, typing|run=PERF/TDLG,at=100:key:Return,at=120:key:Return,at=140:key:A,at=150:key:B,at=160:key:Backspace|
 program DIALOG: name, Return|run=PERF/TDLG,at=100:key:Return,at=120:key:Return,at=140:key:A,at=160:key:Return|
+sprite outline: editor apart|run=PERF/TSPR,editor,apart,panel,at=140:editor-click:570:488,at=160:editor-click:600:564|
+sprite outline: apart, narrow main window|run=PERF/TSPR,editor,apart,panel,at=60:resize:700:900,at=140:editor-click:570:488,at=160:editor-click:600:564|
+sprite outline: apart, wide main window|run=PERF/TSPR,editor,apart,panel,at=60:resize:1600:600,at=140:editor-click:570:488,at=160:editor-click:600:540|
+sprite outline: in the main window's panel|run=PERF/TSPR,editor,panel,at=140:click:570:488,at=160:click:600:564|
