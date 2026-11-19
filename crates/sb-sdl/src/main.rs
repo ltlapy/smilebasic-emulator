@@ -101,7 +101,10 @@ use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
 use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator, create_renderer};
 use sdl3::sys::blendmode::SDL_BLENDMODE_BLEND_PREMULTIPLIED;
-use sdl3::sys::events::{SDL_EVENT_RENDER_DEVICE_LOST, SDL_Event, SDL_PushEvent};
+use sdl3::sys::events::{
+    SDL_EVENT_RENDER_DEVICE_LOST, SDL_EVENT_RENDER_DEVICE_RESET, SDL_EVENT_RENDER_TARGETS_RESET,
+    SDL_Event, SDL_EventType, SDL_PushEvent,
+};
 use sdl3::sys::render::{
     SDL_GetNumRenderDrivers, SDL_GetRenderDriver, SDL_SetDefaultTextureScaleMode,
     SDL_SetRenderDrawBlendMode, SDL_SetTextureBlendMode,
@@ -736,8 +739,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if bench.on() {
                 eprintln!("woke from a suspend: giving the renderer all again");
             }
-            let reset = Event::RenderDeviceReset { timestamp: 0 };
-            let _ = sdl.event().and_then(|e| e.push_event(reset));
+            push_render_event(SDL_EVENT_RENDER_DEVICE_RESET);
         }
         bench.sound(audio.stats());
         // Frames the standby thread ran this trip.
@@ -759,11 +761,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     if let Some(gpu) = paths.main.iter_mut().chain(&mut paths.sub).next() {
                         gpu.scribble();
                     }
-                    Some(Event::RenderTargetsReset { timestamp: 0 })
+                    push_render_event(SDL_EVENT_RENDER_TARGETS_RESET);
+                    None
                 }
-                "device" => Some(Event::RenderDeviceReset { timestamp: 0 }),
+                "device" => {
+                    push_render_event(SDL_EVENT_RENDER_DEVICE_RESET);
+                    None
+                }
                 "lost" => {
-                    push_device_lost();
+                    push_render_event(SDL_EVENT_RENDER_DEVICE_LOST);
                     None
                 }
                 "fail" => {
@@ -3253,12 +3259,14 @@ fn new_renderer(
     }
 }
 
-/// Stands for a device that is gone, as the sdl3 crate has no event of its own for it.
-fn push_device_lost() {
+/// Puts one of the renderer's events on SDL's queue: its targets or its
+/// device reset, or its device gone. The sdl3 crate's `push_event`
+/// refuses the first two and has no event of its own for the third.
+fn push_render_event(kind: SDL_EventType) {
     // SAFETY: an all-zero event is valid, and the type is the only field read.
     unsafe {
         let mut event: SDL_Event = std::mem::zeroed();
-        event.r#type = SDL_EVENT_RENDER_DEVICE_LOST.0;
+        event.r#type = kind.0;
         SDL_PushEvent(&mut event);
     }
 }
