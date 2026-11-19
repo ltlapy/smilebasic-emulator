@@ -122,3 +122,6 @@ simple ui: select+a, menu stays open|at=60:pad:a,at=65:padup:a,at=90:pad:back,at
 simple ui: select+start quits|at=60:pad:a,at=65:padup:a,at=90:pad:back,at=95:pad:start,at=100:padup:start,at=105:padup:back|--simple-ui
 simple ui: start alone over a program|run=PERF/TRUN,at=90:pad:start,at=95:padup:start|--simple-ui
 program DIALOG: two buttons, Left|run=PERF/TDLG,at=100:key:Return,at=140:key:Left|
+program DIALOG: two buttons, click the left|run=PERF/TDLG,at=100:key:Return,at=130:move:560:380,at=140:click:560:380|
+program DIALOG: name, typing|run=PERF/TDLG,at=100:key:Return,at=120:key:Return,at=140:key:A,at=150:key:B,at=160:key:Backspace|
+program DIALOG: name, Return|run=PERF/TDLG,at=100:key:Return,at=120:key:Return,at=140:key:A,at=160:key:Return|
