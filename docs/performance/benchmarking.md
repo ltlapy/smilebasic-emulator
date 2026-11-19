@@ -791,7 +791,7 @@ Below the stages come:
 | `drawing` | The stages before `present` |
 | `frames` | Program frames run per second of the time timed: calls of the machine's frame, including those that went on with a kept frame |
 | `maincnt` | How far `MAINCNT` went per second of the time timed: below 60 when frames were kept for a program too slow for the computer |
-| `missed` | Frames in the time timed in which the program missed part of its trip round its main loop, as `smilebasic-check --window` counts them ([Per-frame costs and overload](#per-frame-costs-and-overload)): out of time part-way through it, held at its `VSYNC` to catch up, and `VSYNC`s that waited for the next frame where SmileBASIC 4 would go straight on. Such a wait is counted once: the `VSYNC`s after it, a frame late only because of it, are not |
+| `missed` | Frames in the time timed in which the program missed part of its trip round its main loop, as `smilebasic-check --window` counts them ([Per-frame costs and overload](#per-frame-costs-and-overload)): out of time part-way through it, held at its `VSYNC` to catch up, and `VSYNC`s that waited for the next frame where SmileBASIC 4 would go straight on |
 | `undrawn` | Trips in the time timed that ran the program and left the drawing out, because it would have ended after the frame's time ([differences.md](../using/differences.md#speed)). They are not in `missed`: the program lost nothing |
 | `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](../development/frame-thread.md)), in how many trips, and the time it took |
 | `slow hint` | The frame the notice for a program slower than real time first showed at, or that it did not show |
