@@ -4220,9 +4220,12 @@ fn run_frames(
     }
 }
 
-/// Whether the program waits at its VSYNC and its last trip round its main
-/// loop fits a frame by itself, so that it can have a trip in every frame
-/// if drawings that cost `draw` are left out, as many as may be. Only at
+/// Whether the program waits at its VSYNC and can have a trip round its
+/// main loop in every frame if drawings that cost `draw` are left out, as
+/// many as may be: that many trips as long as its last one, and one
+/// drawing, take no longer than their frames. The last trip's time is no
+/// test by itself: one that was cut and went on after a wait reads longer
+/// than the time a frame gives though it fits in one piece. Only at
 /// unlimited speed, where a frame has a time limit, and for the main
 /// program alone.
 fn fits_frame(machine: &Machine, draw: Duration) -> bool {
@@ -4231,7 +4234,6 @@ fn fits_frame(machine: &Machine, draw: Duration) -> bool {
     machine.is_running()
         && machine.at_sync()
         && !trip.is_zero()
-        && trip <= pacing::MOST_RUN_TIME
         && frames * trip + draw <= frames * FRAME
         && machine.rt.settings.speed == sb_runtime::speed::Speed::Unlimited
         && !machine.sub_running()

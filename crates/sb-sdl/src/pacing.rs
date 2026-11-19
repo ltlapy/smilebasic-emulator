@@ -44,6 +44,14 @@ pub const LEAST_RUN_TIME: Duration = Duration::from_millis(10);
 /// The most: past this, a slow trip round the loop would leave too little
 /// for a drawing that takes longer than the last ones did.
 pub const MOST_RUN_TIME: Duration = Duration::from_millis(14);
+/// What a frame gives a program whose trip round its main loop fits a
+/// frame (see [`Scene::fits`]): nearly the whole frame, as the drawing is
+/// what is left out then. The same trip takes longer after a wait than
+/// after another trip, by a millisecond and more of 13 where the CPU slows
+/// down when idle. With less time than this, a trip cut once made the loop
+/// wait, the wait made the next trip slow enough to be cut too, and a
+/// program that fits ran at half its speed for good.
+pub const FITTING_RUN_TIME: Duration = Duration::from_micros(15_500);
 /// Left free in each frame besides what the rest of the trip took: for a
 /// present's own work, which a present that waits for vsync cannot be told
 /// from its wait, and for a drawing a little slower than the last ones.
@@ -97,7 +105,7 @@ impl RunTime {
 /// Frames in a row, at most, whose drawing is left out while the program
 /// runs: one frame in five is drawn whatever the drawing costs, 12 a
 /// second, so that the picture still moves. A program whose trip takes
-/// nearly the 14 ms a frame gives needs that many for one drawing.
+/// nearly the time a frame gives needs that many for one drawing.
 pub const MOST_UNDRAWN: u32 = 4;
 /// What drawing the window costs, from the last three drawings: from
 /// when the program's frame had run to when the present came back, without
@@ -434,11 +442,11 @@ impl Pacer {
 
     /// The time a frame gives a program that does not wait for the next
     /// one. A program whose trip round its main loop `fits` a frame gets
-    /// the most, whatever the drawing takes: the drawing is what is then
-    /// left out.
+    /// [`FITTING_RUN_TIME`], whatever the drawing takes: the drawing is
+    /// what is then left out.
     pub fn frame_time(&self, fits: bool) -> Duration {
         match fits {
-            true => MOST_RUN_TIME,
+            true => FITTING_RUN_TIME,
             false => self.run_time.limit(),
         }
     }

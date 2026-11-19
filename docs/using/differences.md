@@ -272,7 +272,8 @@ SmileBASIC 4 runs a fixed amount of code each frame (see
 for the next frame for as long as the frame leaves after drawing, which is far
 more on any recent computer: the 1/60 s frame less what the last frames'
 events, drawing and presenting took and 2 ms to spare, from 10 to 14 ms, and
-14 ms for a program whose trip round its main loop fits in that. With
+15.5 ms for a program that has a trip round its main loop in every frame
+(see below). With
 vsync on a display that does not refresh at 60 Hz it is 10 ms, as a present
 can then wait for most of one of the display's frames. Programs time
 themselves with `VSYNC`, `WAIT` and `MAINCNT`, so none needs the slower
@@ -287,8 +288,9 @@ frame as on that console, and misses frames when it needs more. See
 it comes.
 
 When the computer cannot run the program and draw the window in a frame, the
-window leaves drawings out before the program falls behind. A program whose
-trip round its main loop takes up to 14 ms has a trip in every frame, with its
+window leaves drawings out before the program falls behind. A program that
+has time in five frames for five trips round its main loop and one drawing has
+a trip in every frame, with its
 `MAINCNT`, animation step, sound and input, whatever the drawing takes, and
 the window is drawn in every second to fifth frame: 12 times a second at
 least. A computer that keeps 60 frames a second draws every frame, as
@@ -307,8 +309,8 @@ before.
 - The emulator's own screens, a paused or stopped program, a dialog, the
   editor, the debugger and a subprogram are drawn every frame.
 
-Only when the trip itself takes more than 14 ms, or one drawing in five is
-still too much, does the program slow down or miss frames as described below.
+Only when five trips and one drawing take longer than five frames does the
+program slow down or miss frames as described below.
 A frame that is drawn shows the scene the program finished:
 
 - A `VSYNC` that is behind stops the program when another trip round its main
