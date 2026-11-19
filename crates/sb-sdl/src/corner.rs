@@ -5,6 +5,7 @@
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
+use sb_runtime::settings::Settings;
 
 use crate::keyhint::KeyHint;
 use crate::slow_hint::SlowHint;
@@ -31,6 +32,21 @@ pub fn panel(fb: &mut Framebuffer, size: (u32, u32)) -> Rect {
     fill(fb, panel, BACKGROUND);
     outline(fb, panel, BORDER);
     panel
+}
+
+/// Counts a frame for both notices, as `settings` want them. The keys'
+/// picture shows once, so it waits while `covered` by the emulator's
+/// screens rather than run its time out under them, and the slow
+/// program's notice waits for the picture to go. True if that notice has
+/// just come up.
+pub fn tick(keys: &mut KeyHint, slow: &mut SlowHint, settings: &Settings, covered: bool) -> bool {
+    if !covered {
+        keys.tick();
+    }
+    slow.follow(settings);
+    let was_shown = slow.visible();
+    slow.tick(keys.visible());
+    !was_shown && slow.visible()
 }
 
 /// Whether either notice shows.

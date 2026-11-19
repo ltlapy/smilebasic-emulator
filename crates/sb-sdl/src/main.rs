@@ -421,6 +421,21 @@ impl Screens {
             || self.welcome.is_some()
     }
 
+    /// Shows the question a command of the program or of direct mode
+    /// asks, on a display of `size`, and takes it away once the machine
+    /// no longer asks it. Another dialog stays.
+    fn follow_confirmation(&mut self, machine: &Machine, size: (u32, u32)) {
+        match (&self.dialog, machine.confirmation()) {
+            (Some((_, Asking::Command(shown))), Some(confirm)) if shown == confirm => {}
+            (None | Some((_, Asking::Command(_))), Some(confirm)) => {
+                let open = Dialog::ask(confirm, size);
+                self.dialog = Some((open, Asking::Command(confirm.clone())));
+            }
+            (Some((_, Asking::Command(_))), None) => self.dialog = None,
+            _ => {}
+        }
+    }
+
     /// Whether the menu bar, if `bar` is shown, the pause menu or the
     /// welcome screen holds the frames of a program that is `running`.
     fn pause(&self, bar: bool, running: bool) -> bool {
@@ -2278,41 +2293,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let keys = machine.rt.settings.keyboard_buttons;
             key_hint.buttons_read(keys, inputs.controls.gamepads());
         }
-        // The keys' picture shows once, so it waits out the emulator's
-        // screens rather than run its time out under them.
-        if !paused && !modal {
-            key_hint.tick();
-        }
-        slow_hint.follow(&machine.rt.settings);
-        let was_shown = slow_hint.visible();
-        slow_hint.tick(key_hint.visible());
-        if !was_shown && slow_hint.visible() {
+        let settings = &machine.rt.settings;
+        if corner::tick(&mut key_hint, &mut slow_hint, settings, paused || modal) {
             bench.slow_hint_shown();
         }
         for notice in machine.take_notices() {
             toasts.push(notice);
         }
-        match (&screens.dialog, machine.confirmation()) {
-            (Some((_, Asking::Command(shown))), Some(confirm)) if shown == confirm => {}
-            (None | Some((_, Asking::Command(_))), Some(confirm)) => {
-                let open = Dialog::ask(confirm, (display_w, display_h));
-                screens.dialog = Some((open, Asking::Command(confirm.clone())));
-            }
-            (Some((_, Asking::Command(_))), None) => screens.dialog = None,
-            _ => {}
-        }
+        screens.follow_confirmation(machine, (display_w, display_h));
         // Centered on the screen, which goes below the desktop's display
         // in a window narrower than 16:9.
-        match (&mut program_dialog, machine.program_dialog()) {
-            (Some(open), Some(shown)) if open.shows(shown) => open.set_size((display_w, main_ui_h)),
-            (_, Some(shown)) => {
-                program_dialog = Some(ProgramView::new(shown, (display_w, main_ui_h)));
-            }
-            (_, None) => program_dialog = None,
-        }
-        if let Some(open) = &mut program_dialog {
-            open.follow(machine.dialog_focus());
-        }
+        follow_program_dialog(&mut program_dialog, machine, (display_w, main_ui_h));
         blink = blink.wrapping_add(1);
 
         // A drawing that would end after the frame's time is left out if
@@ -3409,6 +3400,19 @@ fn file_url(path: &Path) -> String {
 enum FileDialog {
     Save(SaveDialog),
     Load(FilePicker),
+}
+
+/// Has `view` show the program's DIALOG as the machine has it, on a UI
+/// of `size`, with the focus where the controller moved it.
+fn follow_program_dialog(view: &mut Option<ProgramView>, machine: &Machine, size: (u32, u32)) {
+    match (&mut *view, machine.program_dialog()) {
+        (Some(open), Some(shown)) if open.shows(shown) => open.set_size(size),
+        (_, Some(shown)) => *view = Some(ProgramView::new(shown, size)),
+        (_, None) => *view = None,
+    }
+    if let Some(open) = view {
+        open.follow(machine.dialog_focus());
+    }
 }
 
 /// The debugger's part of the window.
