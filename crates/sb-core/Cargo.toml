@@ -3,6 +3,8 @@ name = "sb-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "The SmileBASIC 4 language: lexer, parser, compiler and bytecode VM"
 rust-version.workspace = true
 
 [dependencies]

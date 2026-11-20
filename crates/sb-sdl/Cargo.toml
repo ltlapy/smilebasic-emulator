@@ -3,6 +3,8 @@ name = "sb-sdl"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "smilebasic: an emulator for SmileBASIC 4 programs"
 rust-version.workspace = true
 
 [[bin]]

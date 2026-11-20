@@ -6,6 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/ltlapy/smilebasic-emulator"
 rust-version = "1.97"
 
 # From Rust 1.88 on, Clippy asks for `as_chunks` where `chunks_exact` takes

@@ -3,6 +3,8 @@ name = "sb-check"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "smilebasic-check: runs SmileBASIC 4 programs with no window, to compare and to measure"
 rust-version.workspace = true
 
 [[bin]]

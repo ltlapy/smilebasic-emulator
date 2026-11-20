@@ -3,6 +3,8 @@ name = "sb-import"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "smilebasic-import: copies your own SmileBASIC 4 resources into the emulator's data directory"
 rust-version.workspace = true
 
 [[bin]]

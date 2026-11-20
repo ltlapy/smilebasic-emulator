@@ -3,6 +3,8 @@ name = "sb-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "The SmileBASIC 4 machine without a window: commands, screens, sprites, sound, files and the editor"
 rust-version.workspace = true
 
 [dependencies]

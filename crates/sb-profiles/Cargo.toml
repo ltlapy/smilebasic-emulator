@@ -3,6 +3,8 @@ name = "sb-profiles"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Other SmileBASIC versions as profiles of the SmileBASIC 4 runtime"
 rust-version.workspace = true
 
 [dependencies]
