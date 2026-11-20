@@ -88,10 +88,11 @@ impl Audio {
         }
     }
 
-    /// What the device's buffer went through, if there is a device.
-    pub fn stats(&self) -> Option<Stats> {
+    /// What the device's buffer went through and the samples waiting in
+    /// it now, if there is a device.
+    pub fn stats(&self) -> Option<(Stats, usize)> {
         self._stream.as_ref()?;
-        self.output.lock().ok().map(|o| o.stats)
+        self.output.lock().ok().map(|o| (o.stats, o.queued()))
     }
 }
 

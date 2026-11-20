@@ -35,7 +35,9 @@
 //!   frames the standby thread ran while the loop was held up, and its microseconds
 //!   running them; then MAINCNT, and the frames so far that the program
 //!   missed part of its trip in, by why, as the report's missed line says; then 1
-//!   if the trip drew the window and 0 if it left the drawing out;
+//!   if the trip drew the window and 0 if it left the drawing out; then the
+//!   samples of sound waiting in the device's buffer as the trip began, and
+//!   the times they have run out so far;
 //! - `menu`, `file-menu`, `view-menu`, `size-menu`, `help`, `about`, `colors`,
 //!   `settings`, `toast`: shows the menu bar (as F8 does), the bar with its File menu
 //!   open or its View menu at Window size or at Size, the help beside the editor, the About dialog, the editor colors window,
@@ -80,7 +82,7 @@
 //! went, the frames the program missed part of its trip in, the trips that
 //! left the drawing out, the trip the
 //! notice for a program slower than real time showed at, and what the
-//! sound device's buffer went through, so
+//! sound device's buffer went through and how much sound waited in it, so
 //! that the frames keep time whatever happens to the drawing. For the
 //! sound, `SDL_AUDIO_DRIVER=dummy` with `SDL_AUDIO_DEVICE_SAMPLE_FRAMES`
 //! at 960 takes samples at very nearly the real rate without a device.
@@ -342,6 +344,10 @@ pub struct Bench {
     ran: u32,
     /// The sound device's buffer's stats when the timing began, and now.
     sound: Option<(Stats, Stats)>,
+    /// The samples waiting in that buffer as this trip began, and as each
+    /// trip timed did.
+    queued_now: usize,
+    queued: Vec<usize>,
     /// The trip the notice for a program slower than real time first
     /// showed at.
     slow_hint: Option<u32>,
@@ -461,6 +467,7 @@ impl Bench {
             self.kept.add(self.kept_now);
             self.kept_trips += u32::from(self.kept_now.frames > 0);
             self.undrawn += u32::from(self.undrawn_now);
+            self.queued.push(self.queued_now);
             if self.log.is_some() {
                 let stages = self.current.map(|t| t.as_micros().to_string());
                 let (drawing, rest) = stages.split_at(DRAWING);
@@ -474,10 +481,12 @@ impl Bench {
                     held,
                     deferred,
                 } = machine.missed;
+                let ran_out = self.sound.map_or(0, |(_, now)| now.ran_out);
                 self.lines.push(format!(
                     "{trip} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy} \
-                     {count} {cut} {held} {deferred} {}",
-                    u8::from(!self.undrawn_now)
+                     {count} {cut} {held} {deferred} {} {} {ran_out}",
+                    u8::from(!self.undrawn_now),
+                    self.queued_now
                 ));
             }
         }
@@ -520,11 +529,13 @@ impl Bench {
         self.kept_now.add(kept);
     }
 
-    /// Notes the sound device's buffer's stats, if there is a device.
-    pub fn sound(&mut self, stats: Option<Stats>) {
-        let Some(stats) = stats else {
+    /// Notes the sound device's buffer's stats and the samples waiting in
+    /// it, if there is a device.
+    pub fn sound(&mut self, stats: Option<(Stats, usize)>) {
+        let Some((stats, queued)) = stats else {
             return;
         };
+        self.queued_now = queued;
         match &mut self.sound {
             Some((_, now)) if self.began.is_some() => *now = stats,
             _ => self.sound = Some((stats, stats)),
@@ -708,7 +719,7 @@ impl Bench {
             let (drawing, rest) = (drawing.join(" "), rest.join(" "));
             let head = format!(
                 "frame w h {drawing} uploaded made {rest} kept worker maincnt cut held deferred \
-                 drawn\n"
+                 drawn queued ranout\n"
             );
             let text = head + &self.lines.join("\n") + "\n";
             if let Err(e) = std::fs::write(path, text) {
@@ -801,6 +812,17 @@ impl Bench {
                 to.skips - from.skips,
                 (to.silent - from.silent) as f64 * 1000.0 / RATE as f64
             );
+            let mut queued = self.queued.clone();
+            queued.sort_unstable();
+            let ms = |samples: usize| samples as f64 * 1000.0 / RATE as f64;
+            let (least, median) = (queued.first(), queued.get(queued.len() / 2));
+            if let (Some(&least), Some(&median)) = (least, median) {
+                println!(
+                    "queued    {:.1} ms of sound waiting as a trip began at least, median {:.1} ms",
+                    ms(least),
+                    ms(median)
+                );
+            }
         }
         let bytes: u64 = self.timed.iter().map(|&(_, b)| b).sum();
         let trips = self.timed.len().max(1) as u64;

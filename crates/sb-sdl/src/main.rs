@@ -737,7 +737,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             push_render_event(SDL_EVENT_RENDER_DEVICE_RESET);
         }
-        bench.sound(audio.stats());
+        if bench.on() {
+            bench.sound(audio.stats());
+        }
         // Frames the standby thread ran this trip.
         let mut kept = standby::Kept::default();
         if bench.step(machine) {

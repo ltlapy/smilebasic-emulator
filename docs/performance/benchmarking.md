@@ -713,7 +713,7 @@ The keys and the report call a trip a frame.
 | `vblank` | From when the timing begins, makes each present of the main window that waits for vsync return at the next sixtieth of a second, as a display at 60 Hz does, and has the display count as one. The offscreen driver's presents do not wait |
 | `shot=PATH` | Saves the frame of the last trip timed of each window shown, as `PATH-main.pam` and `PATH-editor.pam`, to compare drawings |
 | `luma=PATH` | Writes each timed frame's number and mean brightness (0 to 255), read as it goes to the window, to PATH, and reports the frames darker than both neighbors. That is a flicker, which `check` cannot see |
-| `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds. Two columns follow `wait`: `kept`, the frames the standby thread ran during the trip, and `worker`, its microseconds running them. The last four are `MAINCNT` after the trip and the frames so far that the program missed part of its trip in, by why, as the `missed` line counts them: `cut`, `held` and `deferred`. The last column, `drawn`, is 1 if the trip drew the window and 0 if it left the drawing out |
+| `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds. Two columns follow `wait`: `kept`, the frames the standby thread ran during the trip, and `worker`, its microseconds running them. The last four are `MAINCNT` after the trip and the frames so far that the program missed part of its trip in, by why, as the `missed` line counts them: `cut`, `held` and `deferred`. `drawn` is 1 if the trip drew the window and 0 if it left the drawing out. The last two are about the sound device's buffer: `queued`, the samples waiting in it as the trip began (48 a millisecond), and `ranout`, the times it has run out so far |
 | `at=TRIP:WHAT` | Does WHAT to the frontend in that trip, counted from the start of the run. Give it any number of times |
 
 `at=TRIP:WHAT` takes:
@@ -796,6 +796,7 @@ Below the stages come:
 | `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](../development/frame-thread.md)), in how many trips, and the time it took |
 | `slow hint` | The frame the notice for a program slower than real time first showed at, or that it did not show |
 | `sound` | What the sound device's buffer went through |
+| `queued` | The sound waiting in that buffer as a trip began: the least of the run and the median. A stall longer than what waits runs the buffer out |
 | `uploaded` | Bytes given to textures a frame |
 
 To measure sound with no device, set `SDL_AUDIO_DRIVER=dummy` and
