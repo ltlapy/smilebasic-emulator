@@ -521,14 +521,22 @@ fn key_taps(event: &Event, buttons: Option<&KeyButtons>) -> Taps {
     ]
 }
 
+/// The mouse's left and right buttons, as MBUTTON's bits.
+pub const LEFT_BUTTON: u32 = 1 << 0;
+pub const RIGHT_BUTTON: u32 = 1 << 1;
+
 /// Keeps from the program what was pressed for one of the emulator's own
 /// screens, such as the A that chose Run in Projects: a button or stick held
 /// when the screen goes reads as let go until it really is, so that it
 /// neither types Enter nor reads as a press beneath or after the screen.
+/// The same goes for a mouse button, and for one that clicked the menu
+/// bar or a panel, which are no screens: see [`Carried::took_mouse`].
 #[derive(Debug, Default)]
 pub struct Carried {
     buttons: [u32; PADS],
     sticks: [[bool; 2]; PADS],
+    /// Mouse buttons, as MBUTTON's bits.
+    mouse: u32,
     /// A screen had the controls at the end of the last frame.
     screen: bool,
     /// The program saw nothing pressed in the last frame.
@@ -563,7 +571,21 @@ impl Carried {
                 }
             }
         }
+        if screen || was_screen {
+            self.mouse = state.mouse.buttons;
+        } else {
+            self.mouse &= state.mouse.buttons;
+        }
+        state.mouse.buttons &= !self.mouse;
         if screen { State::default() } else { state }
+    }
+
+    /// The emulator used a press of the mouse buttons `bits`, MBUTTON's,
+    /// for something of its own that is no screen, such as the menu bar: the
+    /// program reads them as let go until they are. Goes before the
+    /// frame's [`Carried::program_sees`].
+    pub fn took_mouse(&mut self, bits: u32) {
+        self.mouse |= bits;
     }
 
     /// Whether [`Carried::program_sees`] left out every button and stick
@@ -945,6 +967,37 @@ mod tests {
         assert_eq!(closed.pads[0].buttons, 0, "the frame it closes in");
         let after = carried.program_sees(holding(A_BUTTON | 1 << 1), false);
         assert_eq!(after.pads[0].buttons, 1 << 1, "pressed after");
+    }
+
+    #[test]
+    fn a_click_on_a_screen_or_the_menu_bar_is_none_of_the_programs() {
+        let clicking = |buttons| {
+            let mut state = State::default();
+            state.mouse.buttons = buttons;
+            state
+        };
+        let (left, right) = (1, 2);
+        let mut carried = Carried::default();
+        // A click that closes a screen, held on after it.
+        carried.program_sees(clicking(left), true);
+        let closed = carried.program_sees(clicking(left), false);
+        assert_eq!(closed.mouse.buttons, 0, "the frame it closes in");
+        let held = carried.program_sees(clicking(left | right), false);
+        assert_eq!(held.mouse.buttons, right, "another button pressed after");
+        carried.program_sees(clicking(0), false);
+        let again = carried.program_sees(clicking(left), false);
+        assert_eq!(again.mouse.buttons, left, "a new click");
+        // A click on the menu bar, with no screen shown.
+        carried.program_sees(clicking(0), false);
+        carried.took_mouse(left);
+        let on_bar = carried.program_sees(clicking(left), false);
+        assert_eq!(on_bar.mouse.buttons, 0);
+        // One let go before the frame leaves nothing behind.
+        carried.program_sees(clicking(0), false);
+        carried.took_mouse(left);
+        carried.program_sees(clicking(0), false);
+        let next = carried.program_sees(clicking(left), false);
+        assert_eq!(next.mouse.buttons, left);
     }
 
     #[test]

@@ -54,7 +54,7 @@ use std::time::{Duration, Instant};
 use audio::Audio;
 use bench::Stage;
 use colors::ColorWindow;
-use controls::Controls;
+use controls::{Controls, LEFT_BUTTON, RIGHT_BUTTON};
 use debug_panel::{DebugPanel, Hit, Tab, View, value_text};
 use dialog::Dialog;
 use editor_layout::Layout;
@@ -1677,6 +1677,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         .as_ref()
                         .is_some_and(|s| s.frame().contains(to_display(x, y))) =>
                 {
+                    inputs.controls.carried.took_mouse(RIGHT_BUTTON);
                     let at = to_display(x, y);
                     let items = if debugger.panel.contains(at) {
                         panel_menu(machine, &debugger.panel, at)
@@ -1707,12 +1708,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } else {
                     Click::Ignored
                 } {
-                    Click::Chosen(action) => act!(action),
+                    Click::Chosen(action) => {
+                        inputs.controls.carried.took_mouse(LEFT_BUTTON);
+                        act!(action)
+                    }
                     Click::Ignored
                         if let Some(open) = &mut side_panel.open
                             && editor_window
                             && open.frame().contains(to_display(x, y)) =>
                     {
+                        inputs.controls.carried.took_mouse(LEFT_BUTTON);
                         side_panel.focus = true;
                         if let Side::Index(index, _) = open {
                             let outcome = index.click(to_display(x, y));
@@ -1725,11 +1730,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                     }
                     Click::Ignored if on_editor && debugger.panel.contains(to_display(x, y)) => {
+                        inputs.controls.carried.took_mouse(LEFT_BUTTON);
                         let (at, double) = (to_display(x, y), clicks == 2);
                         let panel = &mut debugger.panel;
                         events::panel_click(at, double, panel, &mut screens, &clipboard, cx!());
                     }
                     Click::Ignored if on_editor => {
+                        inputs.controls.carried.took_mouse(LEFT_BUTTON);
                         side_panel.focus = false;
                         let (x, y) = to_screen(x, y);
                         if !machine.editor_margin_click(x, y) {
@@ -1738,7 +1745,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             inputs.dragging = true;
                         }
                     }
-                    Click::Consumed | Click::Ignored => {}
+                    Click::Consumed => inputs.controls.carried.took_mouse(LEFT_BUTTON),
+                    Click::Ignored => {}
                 },
                 Event::KeyDown {
                     keycode: Some(Keycode::Pause),
