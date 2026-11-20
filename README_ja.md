@@ -85,6 +85,13 @@ smilebasic --simple-ui
 ドキュメントの一覧は [docs/index.md](docs/index.md) にあります。ソースからのビルド方法もそこにあります。
 
 
+## AI の利用について
+
+このプロジェクトのコードとドキュメントの大部分は、AI (Anthropic の Claude) が書いたものです。
+方針と設計の判断、実機でのテストは人が行いました。
+AI が関わったコミットには `Co-Authored-By:` の行が付いています。
+
+
 ## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)

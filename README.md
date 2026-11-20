@@ -80,6 +80,13 @@ in the menu bar.
 [docs/index.md](docs/index.md) lists the documents, building from source among
 them.
 
+## AI disclosure
+
+Most of this project's code and documents were written by an AI (Anthropic's
+Claude). A person set the direction, made the design decisions and ran the
+tests on real hardware. Commits the AI took part in end with a
+`Co-Authored-By:` line.
+
 ## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)

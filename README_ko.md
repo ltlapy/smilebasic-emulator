@@ -85,6 +85,13 @@ SmileBASIC 4의 TXT 파일 혹은 UTF-8 텍스트 파일을 지원합니다.
 문서 목록은 [docs/index.md](docs/index.md) 에 있습니다. 소스에서 빌드하는 방법도 여기에서 찾을 수 있습니다.
 
 
+## AI 사용 고지
+
+이 프로젝트의 코드와 문서는 대부분 AI(Anthropic의 Claude)가 작성했습니다.
+방향과 설계 결정, 실기 테스트는 사람이 맡았습니다.
+AI가 참여한 커밋에는 `Co-Authored-By:` 줄이 붙어 있습니다.
+
+
 ## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
