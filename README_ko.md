@@ -106,3 +106,7 @@ Izumi Gothic 16 in `crates/sb-runtime/fonts/izumi` is equivalent to public
 domain by its author's declaration, in `LICENSE.txt`.
 GeneralUser GS in `crates/sb-sdl/sounds` is under its own license, in
 `GeneralUser-GS-LICENSE.txt`.
+
+[THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) holds the license texts of these, and of the Rust
+crates and SDL that the binaries link. It goes with every binary that is
+given out; `tools/third_party_notices.py` writes it.
