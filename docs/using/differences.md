@@ -212,9 +212,9 @@ apart from the macro hang below.
 - A held button or stick, when one of the emulator's own screens closes, reads
   as released until it is. The A that chose Run in the project manager is one such
   press. It types nothing and `BUTTON` does not show it, in the program or in
-  DIRECT mode. A mouse button is the same, and so is one that clicked the menu
-  bar, a panel beside the editor or the editor: `MBUTTON` and `TOUCH` show
-  neither the click nor its release.
+  DIRECT mode. A key and a mouse button are the same, and so is a mouse button
+  that clicked the menu bar, a panel beside the editor or the editor:
+  `KEYBOARD`, `MBUTTON` and `TOUCH` show neither the press nor its release.
 - Mouse buttons: the left button is the touch screen (touch 0 only).
 - Mouse cursor: a program that hides the mouse cursor
   (`SYSPARAM "MOUSECURSOR",0`, as programs start) hides the computer's cursor

@@ -529,14 +529,18 @@ pub const RIGHT_BUTTON: u32 = 1 << 1;
 /// screens, such as the A that chose Run in Projects: a button or stick held
 /// when the screen goes reads as let go until it really is, so that it
 /// neither types Enter nor reads as a press beneath or after the screen.
-/// The same goes for a mouse button, and for one that clicked the menu
-/// bar or a panel, which are no screens: see [`Carried::took_mouse`].
+/// The same goes for a key, as KEYBOARD reads it, and a mouse button,
+/// and for a mouse button that clicked the menu bar or a panel, which are
+/// no screens: see [`Carried::took_mouse`].
 #[derive(Debug, Default)]
 pub struct Carried {
     buttons: [u32; PADS],
     sticks: [[bool; 2]; PADS],
     /// Mouse buttons, as MBUTTON's bits.
     mouse: u32,
+    /// Keys, as [`State::keys`] and [`State::modifiers`] have them.
+    keys: [u64; 4],
+    modifiers: u32,
     /// A screen had the controls at the end of the last frame.
     screen: bool,
     /// The program saw nothing pressed in the last frame.
@@ -573,10 +577,17 @@ impl Carried {
         }
         if screen || was_screen {
             self.mouse = state.mouse.buttons;
+            (self.keys, self.modifiers) = (state.keys, state.modifiers);
         } else {
             self.mouse &= state.mouse.buttons;
+            self.modifiers &= state.modifiers;
         }
         state.mouse.buttons &= !self.mouse;
+        state.modifiers &= !self.modifiers;
+        for (carried, keys) in self.keys.iter_mut().zip(&mut state.keys) {
+            *carried &= *keys;
+            *keys &= !*carried;
+        }
         if screen { State::default() } else { state }
     }
 
@@ -998,6 +1009,31 @@ mod tests {
         carried.program_sees(clicking(0), false);
         let next = carried.program_sees(clicking(left), false);
         assert_eq!(next.mouse.buttons, left);
+    }
+
+    #[test]
+    fn a_key_held_when_a_screen_goes_reads_as_let_go_until_it_is() {
+        const ENTER: u8 = 0x28;
+        const SPACE: u8 = 0x2c;
+        const SHIFT: u32 = 1 << 1;
+        let typing = |keys: &[u8], modifiers| {
+            let mut state = State::default();
+            for &key in keys {
+                state.set_key(key, true);
+            }
+            state.modifiers = modifiers;
+            state
+        };
+        let mut carried = Carried::default();
+        carried.program_sees(typing(&[ENTER], SHIFT), true);
+        let closed = carried.program_sees(typing(&[ENTER], SHIFT), false);
+        assert_eq!((closed.keys, closed.modifiers), ([0; 4], 0));
+        let held = carried.program_sees(typing(&[ENTER, SPACE], SHIFT), false);
+        assert_eq!(held.keys, typing(&[SPACE], 0).keys, "a key pressed after");
+        assert_eq!(held.modifiers, 0);
+        carried.program_sees(typing(&[SPACE], 0), false);
+        let again = carried.program_sees(typing(&[ENTER, SPACE], SHIFT), false);
+        assert_eq!(again, typing(&[ENTER, SPACE], SHIFT), "pressed again");
     }
 
     #[test]
