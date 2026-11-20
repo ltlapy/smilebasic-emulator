@@ -2,3 +2,6 @@
 
 # Machine-local files. Never commit.
 /local/
+
+# Tool state kept beside the project.
+/.ori/
