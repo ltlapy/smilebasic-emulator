@@ -1,78 +1,84 @@
 # SmileBASIC emulator
 
-An emulator for SmileBASIC 4 programs, written in Rust with SDL3.
+English | [한국어](README_ko.md) | [日本語](README_ja.md)
 
-Still in development.
+An emulator for SmileBASIC 4 (Nintendo Switch) programs, written in Rust with
+SDL3. Still in development.
+
+This is an unofficial project. SmileBoom and Nintendo have no part in it and
+do not endorse it. SmileBASIC and Petit Computer are trademarks of SmileBoom
+Co.Ltd., and Nintendo Switch is a trademark of Nintendo.
 
 ## Features
 
 - [x] SmileBASIC 4 compatible ([differences](docs/using/differences.md))
-- [x] Rich debugging tools
+- [x] Debugging tools
 - [x] GPU rendering
-- [ ] SmileBASIC 3 and Petit Computer
+- [ ] SmileBASIC 3 and Petit Computer(DSi/WiiU)
 
-## Building
+## Official resources
 
-```sh
-cargo build --release
+SmileBASIC's font, sounds and sprites are SmileBoom's copyrighted work, so the
+emulator ships stand-ins for them.
 
-# Optimized build (up to 16% faster, x2 build time)
-cargo build --profile dist
-```
+Text and music work with bundled fonts and a bundled SoundFont. Sprites are
+blank.
 
-SDL3 is built from source. On Linux, install the X11, Wayland and audio
-development headers listed in SDL's `docs/README-linux.md` first.
-
-The version shown at start-up and in Help > About ends with the commit the
-build came from, as in `0.1.0+4e42491`. Set `SB_COMMIT` to name a commit
-yourself, for example when building outside a git checkout, or set it empty
-to leave the commit out.
-
-For Windows, see [building-windows.md](docs/building/building-windows.md). For an aarch64
-handheld, see [building-handheld.md](docs/building/building-handheld.md).
-
-## Resources
-
-Text and music work without any setup, using bundled fonts and SoundFont. 
-
-To use SmileBASIC 4's own font, sprites and sounds, import them from your own copy:
+SmileBASIC 4's own font, sprites, music and sound effects need an unencrypted
+dump of the game and its update. If you bought SmileBASIC 4 and dumped your
+copy, `smilebasic-import` brings them in:
 
 ```sh
 smilebasic-import BASE_ROMFS BASE_EXEFS UPDATE_ROMFS UPDATE_EXEFS
 ```
 
-See [importing.md](docs/using/importing.md).
+They go to `resources` in the data directory. See
+[importing.md](docs/using/importing.md).
 
 ## Running
 
 ```sh
 smilebasic              # start in DIRECT mode
 smilebasic PROGRAM      # load PROGRAM into PRG0 and run it
-smilebasic --simple-ui  # fullscreen, a game list and gamepad controls
+smilebasic --simple-ui  # fullscreen, a list of projects, gamepad controls
 ```
 
 `PROGRAM` is a SmileBASIC 4 `TXT` file or plain UTF-8 text. Its folder becomes
-the current project, so it can load and save the files beside it, plain names
-such as `HGLIB.PRG.txt` included
+the current project, so the program loads and saves the files beside it
 ([details](docs/using/differences.md#a-programs-own-folder)).
 
-Projects are folders in `projects/` in the data directory, `@WORKSPACE`
-included. Programs are saved as plain UTF-8 text, with full-width letters and
-digits turned into ASCII. The project manager imports and exports projects in
-SmileBASIC 4's own files. Run on a project returns to the projects when the
-program ends or is stopped; after an error it waits for A or Enter.
+The emulator keeps its data here:
 
-File > Settings > Screen > Renderer: Auto, the default, uses GPU rendering if
-the start-up test passes; CPU is exact but slower.
+- Windows: `%APPDATA%\smilebasic-emulator`
+- Linux: `~/.local/share/smilebasic-emulator`
+- macOS: `~/Library/Application Support/smilebasic-emulator`
 
-Gamepads work as controllers 1 to 4, and the keyboard as controller 1. For a
-gamepad with A at the bottom, turn on File > Settings > Input > Swap A/B and
-X/Y. Help > Keyboard shortcuts lists the keys, as does
-[shortcuts.md](docs/using/shortcuts.md).
+Projects are folders in `projects` there. Programs are saved as plain UTF-8
+text, and the project manager imports and exports SmileBASIC 4's own files.
+
+## Keys
+
+The keys follow SmileBASIC 4's, and the emulator adds some of its own.
+
+| Key | What it does |
+|---|---|
+| F1 | Help for the command at the cursor |
+| F4 | Switch between DIRECT mode and the editor |
+| F5 | Run the program, or stop it |
+| F8 | Menu bar and pause |
+| F12 | Projects |
+| Ctrl+Shift+F11 | Fullscreen |
+
+[shortcuts.md](docs/using/shortcuts.md) has the rest.
+
+Gamepads work as controllers 1 to 4. With no gamepad, the keyboard is
+controller 1; to turn that off, clear Run > Use the keyboard as a controller
+in the menu bar.
 
 ## Documentation
 
-See [docs/index.md](docs/index.md).
+[docs/index.md](docs/index.md) lists the documents, building from source among
+them.
 
 ## License
 
@@ -81,17 +87,17 @@ Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
 contribution you intentionally submit for inclusion is dual-licensed the same
 way, with no additional terms or conditions.
 
-The bundled fonts in `crates/sb-runtime/fonts/fusionpixel`,
-`crates/sb-runtime/fonts/galmuri`, `crates/sb-runtime/fonts/mplus`,
-`crates/sb-runtime/fonts/neodgm`, `crates/sb-runtime/fonts/notosanssc` and
-`crates/sb-runtime/fonts/unifont`
-are under the SIL Open Font License 1.1.
+The bundled fonts below are under the SIL Open Font License 1.1:
+- `crates/sb-runtime/fonts/fusionpixel`
+- `crates/sb-runtime/fonts/galmuri`
+- `crates/sb-runtime/fonts/mplus`
+- `crates/sb-runtime/fonts/neodgm`
+- `crates/sb-runtime/fonts/notosanssc`
+- `crates/sb-runtime/fonts/unifont`
+
 Misaki Gothic 2nd in `crates/sb-runtime/fonts/misaki` is under its author's
-license, and Izumi Gothic 16 in `crates/sb-runtime/fonts/izumi` is
-equivalent to public domain by its author's declaration; each has its
-`LICENSE.txt` there.
+license, in `LICENSE.txt`.
+Izumi Gothic 16 in `crates/sb-runtime/fonts/izumi` is equivalent to public
+domain by its author's declaration, in `LICENSE.txt`.
 GeneralUser GS in `crates/sb-sdl/sounds` is under its own license, in
-`GeneralUser-GS-LICENSE.txt` there.
-`crates/sb-runtime/fonts/sb4-order` is not a font: it holds the order of
-SmileBASIC 4's font page (each character code's glyph number), taken from
-its `font.map`, and no glyphs.
+`GeneralUser-GS-LICENSE.txt`.
