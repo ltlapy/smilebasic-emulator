@@ -48,13 +48,16 @@ x86_64-w64-mingw32-objdump -p target/x86_64-pc-windows-gnu/dist/smilebasic.exe |
 The emulator keeps its files in `%APPDATA%\smilebasic-emulator`, where Linux uses
 `$XDG_DATA_HOME/smilebasic-emulator`.
 
-## No console output
+## Console output
 
 Release and `dist` builds of `smilebasic.exe` use the Windows GUI subsystem, so double-clicking
 the program opens no console window. It shows an error that stops it from starting in a
-message box. Its other messages are lost even when you start it from a console: which
-renderer it uses, the fallback font notice, and the results of `SB_UI_BENCH` and `SB_GPU`
-from [benchmarking.md](../performance/benchmarking.md). Build without a profile (`cargo build`) to keep the
-console.
+message box.
+
+Started from a console, it prints there: `--help`, which renderer it uses, the fallback font
+notice, and the results of `SB_UI_BENCH` and `SB_GPU` from
+[benchmarking.md](../performance/benchmarking.md). The console does not wait for a GUI program,
+so its prompt comes back first and the output follows it; `start /wait smilebasic --help` waits.
+This has not been run on Windows yet.
 
 `smilebasic-check.exe` and `smilebasic-import.exe` are console programs in every build.

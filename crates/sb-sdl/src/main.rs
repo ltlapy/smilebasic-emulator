@@ -3,6 +3,7 @@
 mod audio;
 mod bench;
 mod colors;
+mod console;
 mod controls;
 mod corner;
 mod debug_panel;
@@ -118,7 +119,7 @@ use toast::Toasts;
 use window::Which;
 
 const USAGE: &str = "usage:
-  smilebasic                    start in direct mode
+  smilebasic                    start in DIRECT mode
   smilebasic PROGRAM            load a SmileBASIC 4 program (TXT file or plain
                                 text) into PRG0 and run it; the folder that
                                 holds it is the current project, so the
@@ -129,6 +130,7 @@ const USAGE: &str = "usage:
                                 the same with the Simple UI, for this run only:
                                 fullscreen, for a gamepad alone, starting in
                                 a list of the projects
+  smilebasic --help             show this
 
 SmileBASIC 4's own font and sprites come from smilebasic-import; without
 them, a bundled font and blank sprites are used";
@@ -148,14 +150,21 @@ const RAISE_WAIT: Duration = Duration::from_millis(300);
 type AnyError = Box<dyn std::error::Error>;
 
 fn main() {
+    console::attach();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Asked for, so it is no error: printed, with no message box.
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{USAGE}");
+        return;
+    }
     let result = match parse_args(&args) {
         Some((program, simple_ui)) => run(program.map(Path::new), simple_ui),
         None => Err(USAGE.into()),
     };
     if let Err(e) = result {
         eprintln!("{e}");
-        // Release builds on Windows have no console to print to.
+        // A release build on Windows started from the desktop has no
+        // console to print to.
         if !headless() {
             let _ = show_simple_message_box(MessageBoxFlag::ERROR, TITLE, &e.to_string(), None);
         }
