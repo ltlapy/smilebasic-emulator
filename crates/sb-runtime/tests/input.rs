@@ -637,7 +637,7 @@ fn the_release_that_closes_a_dialog_is_hidden() {
             break;
         }
     }
-    assert!(frames > 6, "closed before A was let go");
+    assert!(frames > 6, "closed before A was released");
     assert_eq!(rt.text[4].cell(0, 0).code, u16::from(b'0'));
 }
 

@@ -2038,7 +2038,7 @@ impl Runtime {
             (true, _) => Ok(()),
             (false, ErrorKind::SyntaxError) => Err(Error::with_detail(
                 ErrorKind::SyntaxError,
-                "only in direct mode",
+                "only in DIRECT mode",
             )),
             (false, kind) => Err(kind.into()),
         }

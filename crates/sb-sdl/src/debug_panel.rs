@@ -1440,7 +1440,7 @@ mod tests {
         assert_eq!(p.click(at, false), Some(Hit::Sprite(9)));
         assert_eq!(p.sprite, Some(9));
         p.click(at, false);
-        assert_eq!(p.sprite, None, "a second click lets go");
+        assert_eq!(p.sprite, None, "a second click deselects");
         let below = ((r.x + 4) as i32, (rows[2].0.y + r.h + 4) as i32);
         assert_eq!(p.hit_at(below), Some(Hit::Sprites));
         // A new stop keeps the tab.

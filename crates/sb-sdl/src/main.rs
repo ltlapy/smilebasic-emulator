@@ -123,12 +123,12 @@ const USAGE: &str = "usage:
   smilebasic PROGRAM            load a SmileBASIC 4 program (TXT file or plain
                                 text) into PRG0 and run it; the folder that
                                 holds it is the current project, so the
-                                program loads and saves the files beside it
+                                program loads and saves the files next to it
                                 (HGLIB.PRG.txt, HGLIB.PRG or THGLIB.PRG are
                                 all TXT:HGLIB.PRG)
   smilebasic --simple-ui [PROGRAM]
                                 the same with the Simple UI, for this run only:
-                                fullscreen, for a gamepad alone, starting in
+                                fullscreen, for a gamepad only, starting in
                                 a list of the projects
   smilebasic --help             show this
 
@@ -683,7 +683,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         };
     }
     'running: loop {
-        let trip_began = Instant::now();
+        let iteration_began = Instant::now();
         // A renderer that failed ends the iteration here. It is replaced at
         // the top of the loop.
         macro_rules! drawing {
@@ -750,7 +750,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // After a suspend a GL context may have silently lost its textures.
         if suspend.woke() {
             if bench.on() {
-                eprintln!("woke from a suspend: giving the renderer all again");
+                eprintln!("woke from a suspend: uploading everything to the renderer again");
             }
             push_render_event(SDL_EVENT_RENDER_DEVICE_RESET);
         }
@@ -2216,11 +2216,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let (run_began, ran) = (frames.began, frames.took);
         {
             let shown = !pacing::hidden(canvas.window()) && !bench.occluded();
-            let trip = frames.trip(machine, !paused && shown);
+            let iteration = frames.iteration(machine, !paused && shown);
             let project = machine.rt.storage.project();
             let program =
                 (machine.is_running()).then(|| (project, machine.rt.slot_names[0].as_str()));
-            slow_hint.trip(run_began, trip, program);
+            slow_hint.iteration(run_began, iteration, program);
         }
         bench.lap(Stage::Run);
         // A step that waits for input needs the keys on the screen, and
@@ -2838,8 +2838,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         iterations = iterations.wrapping_add(1);
         pacer.drew(pacing::Drew {
-            trip_began,
-            trip: trip_began.elapsed(),
+            iteration_began,
+            iteration: iteration_began.elapsed(),
             ran,
             drawn_from,
             present_began,
@@ -3701,7 +3701,7 @@ fn debug_action(
         Action::JumpToCursor => {
             let here = cursor.zip(machine.paused_at());
             if !here.is_some_and(|((slot, line), at)| slot == at.0 && machine.jump_to(line)) {
-                toasts.push("Can only go on from a line of the stopped DEF".to_string());
+                toasts.push("Can only continue from a line of the stopped DEF".to_string());
             }
             return None;
         }
@@ -3737,7 +3737,7 @@ fn debug_action(
                 "The stopped program's lines have moved: run it again"
             }
             _ if machine.is_running() => "The program is running",
-            _ if machine.stopped_by_error() => "A program stopped by an error cannot go on",
+            _ if machine.stopped_by_error() => "A program stopped by an error cannot continue",
             _ => "No stopped program: set a breakpoint or use STOP",
         };
         toasts.push(why.to_string());
@@ -3809,9 +3809,9 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         Some((slot, line)) if machine.stop_reason().is_some() || !machine.stopped_by_error() => {
             let (mut status, failed) = stop_text(machine.stop_reason(), slot, line);
             if machine.lines_moved(slot) {
-                status.push_str(" - edited since RUN, the old code goes on");
+                status.push_str(" - edited since RUN, the old code continues");
             }
-            (status, failed, "F6/F7: step  Shift+F5: go on")
+            (status, failed, "F6/F7: step  Shift+F5: continue")
         }
         _ => ("Not running".to_string(), false, "F5: run  Ctrl+F7: close"),
     };
@@ -4075,7 +4075,7 @@ fn editor_menu(machine: &mut Machine) -> Vec<(String, bool, Choice)> {
             Choice::Debug(Action::RunToCursor),
         ),
         (
-            "Go on from cursor".to_string(),
+            "Continue from cursor".to_string(),
             paused,
             Choice::Debug(Action::JumpToCursor),
         ),
@@ -4188,7 +4188,7 @@ impl Frames {
     /// Returns the iteration in the form that the notice for a program
     /// slower than real time takes; `watched` is whether the program is not
     /// paused and the window is shown.
-    fn trip(&self, machine: &Machine, watched: bool) -> slow_hint::Trip {
+    fn iteration(&self, machine: &Machine, watched: bool) -> slow_hint::Iteration {
         let settings = &machine.rt.settings;
         let counts = watched
             && machine.keep_frames
@@ -4197,7 +4197,7 @@ impl Frames {
             && machine.program_dialog().is_none()
             && !machine.is_editing()
             && !machine.sub_running();
-        slow_hint::Trip {
+        slow_hint::Iteration {
             started: self.started,
             kept: self.kept,
             counts,
@@ -4247,7 +4247,7 @@ fn run_frames(
         && let Some(more) = pacer.catch_up(Instant::now(), skipped, || pacing::Behind {
             fits: fits_frame(machine, pacer.draw_cost()),
             at_sync: machine.at_sync(),
-            trip: machine.loop_time(),
+            loop_time: machine.loop_time(),
         })
     {
         machine.time_limit = Some(more.time);
@@ -4283,12 +4283,12 @@ fn run_frames(
 /// frame gives, even though it fits in one piece. Only at unlimited speed,
 /// where a frame has a time limit, and only for the main program.
 fn fits_frame(machine: &Machine, draw: Duration) -> bool {
-    let trip = machine.loop_time();
+    let loop_time = machine.loop_time();
     let frames = pacing::MOST_UNDRAWN + 1;
     machine.is_running()
         && machine.at_sync()
-        && !trip.is_zero()
-        && frames * trip + draw <= frames * FRAME
+        && !loop_time.is_zero()
+        && frames * loop_time + draw <= frames * FRAME
         && machine.rt.settings.speed == sb_runtime::speed::Speed::Unlimited
         && !machine.sub_running()
         && !machine.is_editing()
@@ -4999,7 +4999,7 @@ mod tests {
         // An error stays readable until A, and its press tidies.
         run(&mut m, "FAIL.PRG");
         assert!(m.home_waiting() && !simple_ui_ended(&mut m));
-        assert!(!tidy(&m), "the message stays as it was");
+        assert!(!tidy(&m), "the message stays unchanged");
         for _ in 0..30 {
             m.frame();
         }

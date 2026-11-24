@@ -255,7 +255,7 @@ pub struct Behind {
     /// The program waits at its VSYNC.
     pub at_sync: bool,
     /// The time the last iteration of its main loop took.
-    pub trip: Duration,
+    pub loop_time: Duration,
 }
 
 /// A frame to run immediately, undrawn, to catch up.
@@ -281,7 +281,7 @@ pub fn catch_up(program: Behind, draw: Duration, frame_time: Duration) -> Option
     if program.fits {
         return None;
     }
-    let whole = 2 * program.trip + draw <= 2 * FRAME;
+    let whole = 2 * program.loop_time + draw <= 2 * FRAME;
     Some(CatchUp {
         time: match whole && program.at_sync {
             true => frame_time,
@@ -382,8 +382,8 @@ pub struct Late {
 #[derive(Clone, Copy, Debug)]
 pub struct Drew {
     /// When the iteration began, and how long it took up to now.
-    pub trip_began: Instant,
-    pub trip: Duration,
+    pub iteration_began: Instant,
+    pub iteration: Duration,
     /// The time the program's frames ran, and when they ended.
     pub ran: Duration,
     pub drawn_from: Instant,
@@ -554,7 +554,7 @@ impl Pacer {
         let in_step = drew.waited && self.at_60_hz;
         let drawn_to = match in_step {
             true => drew.present_began,
-            false => drew.trip_began + drew.trip,
+            false => drew.iteration_began + drew.iteration,
         };
         let took = drawn_to.saturating_duration_since(drew.drawn_from);
         self.draw_time.drew(took, in_step);
@@ -562,7 +562,7 @@ impl Pacer {
         // left, which is not part of the drawing's time. On a display at
         // another rate, it can hold up the loop for one more frame of the
         // display.
-        let rest = drew.trip.saturating_sub(drew.ran);
+        let rest = drew.iteration.saturating_sub(drew.ran);
         self.run_time.drew(match (drew.waited, self.at_60_hz) {
             (false, _) => Some(rest),
             (true, true) => Some(rest.saturating_sub(drew.present_took)),
@@ -743,13 +743,13 @@ mod tests {
     const WORK: Duration = Duration::from_millis(3);
 
     #[test]
-    fn a_frame_to_catch_up_holds_a_program_that_has_no_time_for_a_trip() {
+    fn a_frame_to_catch_up_holds_a_program_that_has_no_time_for_a_main_loop_iteration() {
         let ms = Duration::from_millis;
         let limit = ms(12);
-        let at = |fits, at_sync, trip| Behind {
+        let at = |fits, at_sync, loop_time| Behind {
             fits,
             at_sync,
-            trip: ms(trip),
+            loop_time: ms(loop_time),
         };
         let run = |time, hold| Some(CatchUp { time, hold });
         // A program that fits is left to `Scene::drawing`.
@@ -1045,7 +1045,7 @@ mod tests {
         let mut drawings = 0;
         let counts = |now: Instant| now - start >= Duration::from_secs(1);
         while now - start < Duration::from_secs(secs + 1) {
-            let trip_began = now;
+            let iteration_began = now;
             now += run;
             if counts(now) {
                 played.ran += 1;
@@ -1073,8 +1073,8 @@ mod tests {
                         played.gap = played.gap.max(undrawn);
                     }
                     pacer.drew(Drew {
-                        trip_began,
-                        trip: now - trip_began,
+                        iteration_began,
+                        iteration: now - iteration_began,
                         ran: run,
                         drawn_from,
                         present_began,

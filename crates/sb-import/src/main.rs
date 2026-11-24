@@ -26,8 +26,8 @@ const USAGE: &str = "usage: smilebasic-import [options] DIR...
 Imports the font, sprites and sounds from your own extracted SmileBASIC 4
 RomFS and ExeFS directories, and copies its projects #SYS, #TOOL, #EXAMPLE
 and #GUIDE into the emulator's projects folder, keeping files already
-there. List the update's directories after the base game's so that its
-files win.
+there. List the update's directories after the base game's so that the
+update's files are used.
 
 options:
   -o OUT       import into OUT instead of the emulator's data directory
@@ -36,9 +36,10 @@ options:
                projects folder
   --sf2 FILE   also write the instruments as a SoundFont
   --midi DIR   also write the preset songs as MIDI files
-  --gm         with --sf2 and --midi, number @0-@127 and the drum sets as
-               General MIDI and Roland GS do (drums on channel 10), not by
-               SmileBASIC 4's own banks. Other instruments keep theirs.";
+  --gm         with --sf2 and --midi, number @0-@127 and the drum sets the
+               same way as General MIDI and Roland GS do (drums on channel
+               10), not by SmileBASIC 4's own banks. Other instruments keep
+               their own numbers.";
 
 type AnyError = Box<dyn std::error::Error>;
 
@@ -107,10 +108,10 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
         println!("already there: {} files", projects.unchanged);
     }
     for file in &projects.kept {
-        println!("kept {file}: it differs from SmileBASIC 4's");
+        println!("kept {file}: it differs from SmileBASIC 4's file");
     }
     for (file, why) in &projects.skipped {
-        println!("left out {file}: {why}");
+        println!("skipped {file}: {why}");
     }
     for missing in &projects.missing {
         println!("not found: {missing} (a project, in the RomFS)");

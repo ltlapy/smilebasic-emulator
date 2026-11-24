@@ -732,9 +732,9 @@ frame.
 | `shot=PATH` | Saves the frame of the last iteration timed of each window shown, as `PATH-main.pam` and `PATH-editor.pam`, to compare drawings |
 | `luma=PATH` | Writes each timed frame's number and mean brightness (0 to 255), read as it goes to the window, to PATH, and reports the frames darker than both neighbors. That is a flicker, which `check` cannot see |
 | `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds. Two columns follow `wait`: `kept`, the frames the standby thread ran during the iteration, and `worker`, its microseconds running them. The last four are `MAINCNT` after the iteration and the frames so far in which the program missed part of an iteration of its main loop, by reason, as the `missed` line counts them: `cut`, `held` and `deferred`. `drawn` is 1 if the iteration drew the window and 0 if it skipped drawing. The last two are about the sound device's buffer: `queued`, the samples waiting in it when the iteration began (48 per millisecond), and `ranout`, the times it has run out so far |
-| `at=TRIP:WHAT` | Does WHAT to the frontend in that iteration, counted from the start of the run. Give it any number of times |
+| `at=ITERATION:WHAT` | Does WHAT to the frontend in that iteration, counted from the start of the run. Give it any number of times |
 
-`at=TRIP:WHAT` takes:
+`at=ITERATION:WHAT` takes:
 
 | `WHAT` | What it does |
 |---|---|

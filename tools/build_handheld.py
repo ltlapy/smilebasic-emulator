@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-build smilebasic and smilebasic-check for Linux handhelds, aarch64 or armhf.
+"""Cross-builds smilebasic and smilebasic-check for Linux handhelds, aarch64 or armhf.
 
 By default this uses the tools on your PATH and the -devel headers in /usr/include. It
 downloads nothing: when something is missing, it prints the commands to install it and

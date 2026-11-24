@@ -437,7 +437,7 @@ pub fn track_details(t: &TrackInfo, whole: bool) -> Vec<String> {
         t.pitch
     ));
     lines.push(format!(
-        "TEMPO {}  POS {} (tick {}, {} a quarter note)",
+        "TEMPO {}  POS {} (tick {}, {} per quarter note)",
         t.tempo,
         position(t),
         t.ticks,

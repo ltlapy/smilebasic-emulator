@@ -851,7 +851,7 @@ mod tests {
                 p.tick(&mut synth);
             }
             blocks += 1;
-            assert!(blocks < 1000, "goes on for ever");
+            assert!(blocks < 1000, "never ends");
         }
         let notes_off = synth.0 / 2;
         assert!(notes_off > 0 && notes_off < 2 * BLOCK_WORK as usize);

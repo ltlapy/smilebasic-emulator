@@ -685,7 +685,7 @@ fn last_line_kept(program: &str, keep: bool, frames: u32) -> String {
 /// instructions misses frames, as on SmileBASIC 4; kept frames give each
 /// such iteration one frame.
 #[test]
-fn kept_frames_give_each_trip_one_frame() {
+fn kept_frames_give_each_main_loop_iteration_one_frame() {
     let program = "VSYNC:M=MAINCNT()\n\
                    FOR J=1 TO 5:FOR I=1 TO 100000:NEXT:VSYNC:NEXT\n\
                    ?MAINCNT()-M\n";
@@ -698,7 +698,7 @@ fn kept_frames_give_each_trip_one_frame() {
 /// of a program's main loop that is too long to keep, such as loading:
 /// their frames go by as usual.
 #[test]
-fn kept_frames_let_long_trips_and_busy_programs_be() {
+fn kept_frames_let_long_main_loop_iterations_and_busy_programs_be() {
     let busy = "M=MAINCNT():FOR I=1 TO 600000:NEXT:?MAINCNT()-M\n";
     assert_eq!(
         last_line_kept(busy, true, 1000),
@@ -764,7 +764,7 @@ fn presses_counted(work: u32, hold: u32, keep: bool) -> String {
 /// the next frame, so that none go missing, including those that start and
 /// end in it. Kept frames give the iteration one frame.
 #[test]
-fn presses_survive_trips_longer_than_a_frame() {
+fn presses_survive_main_loop_iterations_longer_than_a_frame() {
     for hold in [1, 3] {
         for keep in [false, true] {
             assert_eq!(presses_counted(1000, hold, keep), "15 15", "{hold} {keep}");

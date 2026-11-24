@@ -160,7 +160,7 @@ fn the_workspace_and_wrong_files() {
     };
     assert_eq!(
         summary.line("Exported A"),
-        "Exported A: 1 file; 1 left out (GBAD: why)."
+        "Exported A: 1 file; 1 skipped (GBAD: why)."
     );
 }
 

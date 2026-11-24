@@ -10,11 +10,11 @@ crates/sb-runtime/fonts/sb4-order/order.bin. --dump prints a table as text, one
 "U+XXXX glyph" line per code, to review it.
 
 The table keeps only each character code's glyph number, the place of its glyph on the
-font page (GRP5). It drops the metrics and attribute bits, and font.map's glyph pictures
-live in GDEFFONT, which is not read here. Codes that font.map sends to the missing glyph
-(703), U+FFFD among them, are left out.
+font page (GRP5). It drops the metrics and attribute bits. The glyph pictures are in
+GDEFFONT, which is not read here. Codes that font.map maps to the missing glyph (703),
+U+FFFD among them, are excluded.
 
-Format: u16 words, little-endian, one entry per code in rising code order. Bits 0-11 of a
+Format: u16 words, little-endian, one entry per code in ascending code order. Bits 0-11 of a
 word are the glyph number. Bits 12-15 are the gap g to the previous entry's code: the code
 is the previous one plus g + 1, the previous one being -1 before the first entry. For
 g = 15 the code is the next word instead. Needs only the Python standard library.

@@ -322,7 +322,7 @@ pub const SCENES: &[Golden] = &[
         0.001,
     ),
     Golden {
-        name: "direct mode",
+        name: "DIRECT mode",
         source: "BACKCOLOR &HFF304050\nPRINT \"A LINE\"\n",
         sub: None,
         typed: Some("SPSET 0"),

@@ -35,7 +35,7 @@ const USAGE: &str = "usage:
       part in PARTS (such as 1-26 or 2,5,7), typing the part number at
       its INPUT. The RES* text files each run saves are compared with the
       ones SmileBASIC 4 saved into PROJECT; where there are none yet,
-      ours are printed. The projects beside PROJECT are copied too, with
+      ours are printed. The projects next to PROJECT are copied too, with
       ### as the workspace.
       With --screen, each part's screen is also saved into DIR as a PNG
       once it has run for two seconds, and then Enter is pressed, for
@@ -45,38 +45,39 @@ const USAGE: &str = "usage:
       long running and rendering took, the slowest frames, and the
       console at the end; with PNG, also save the last screen there.
   smilebasic-check --bench --fixed FRAMES PROJECT PROGRAM [PNG]
-      the same on a fresh copy of PROJECT and the projects beside it, with
+      the same on a fresh copy of PROJECT and the projects next to it, with
       time following the frame count and fixed random seeds, so that each
       run does the same work, for comparing builds with perf. It also
       prints a checksum of screens and console: only runs with the same
       checksum did the same work. FRAMES 0 shows what start-up costs.
       Options, after --bench and --fixed:
         --script FILE  give the program the input FILE asks for, in the
-                       form --play takes; shots go beside PNG, or into
-                       the current folder
+                       form --play takes; shots are saved next to PNG, or
+                       in the current folder
         --log FILE     write each frame's times to FILE as CSV: frame,
                        run_us, draw_us, instructions, vsyncs (those the
                        program reached), redrawn, end_us (since the start)
-        --window       run frames as the window does with its setting to
-                       skip frames on: to the clock, with its time limits,
-                       catching up without drawing; add --keep-frames for
-                       the window's default. Not with --fixed, as the work
-                       then follows the clock
+        --window       run frames the same way as the window does with its
+                       setting to skip frames on: to the clock, with its
+                       time limits, catching up without drawing; add
+                       --keep-frames for the window's default. Not with
+                       --fixed, because the work then follows the clock
         --slower N     with --window, the clock and limits divided by N,
-                       to stand for a machine N times slower than this
+                       to simulate a machine N times slower than this one
         --keep-frames  spend no frame while the program is part-way
-                       through a trip round its main loop (a trip that
+                       through an iteration of its main loop (one that
                        started at a VSYNC or WAIT and is short), so that
-                       each trip gets one frame however slow the computer;
-                       with this or --window, the frames the program
-                       missed part of its trip in are counted, by why
+                       each such iteration gets one frame regardless of
+                       how slow the computer is; with this or --window,
+                       the frames in which the program missed part of
+                       such an iteration are counted, by reason
         --wav FILE     write the sound to FILE, as for --play
       With SB_BENCH_SOUND in the environment, it also prints a checksum
       of the sound mixed, to the bit, for comparing builds.
   smilebasic-check --play [--wav FILE] FRAMES PROJECT PROGRAM SCRIPT DIR
       run PROGRAM for at most FRAMES frames, giving it the input SCRIPT
       (a file, or - for none) asks for, and save the screens it asks for
-      into DIR, the last one as end.png. Direct mode goes on after the
+      into DIR, the last one as end.png. DIRECT mode continues after the
       program while the script has more, such as a SUBRUN line, and
       while a subprogram runs. Like --bench, the program runs
       in PROJECT itself, so give it a copy if it may save files. Each
@@ -90,7 +91,7 @@ const USAGE: &str = "usage:
         F button NAMES N  buttons held for N frames, NAMES such as A or
                           A+UP: A B X Y UP DOWN LEFT RIGHT L R ZL ZR
                           LSTICK RSTICK; N 0 presses and releases them
-                          between two frames, as a tap shorter than the
+                          between two frames, like a tap shorter than the
                           frontend's frame
         F stick X Y N     the left stick tilted (-1 to 1) for N frames
         F usb ID N        the keyboard key with USB usage ID (such as
@@ -99,14 +100,14 @@ const USAGE: &str = "usage:
         F touch X Y N     the screen touched at X,Y for N frames; the
                           pointer stays there afterwards
         F plus N          the + button (F5) held for N frames. Released
-                          before 60, it acts then: the program jumps to
-                          its ON BREAK GOTO label or stops with User
-                          break, and DIRECT mode runs PRG0. Held 60
+                          before 60, it acts on release: the program
+                          jumps to its ON BREAK GOTO label or stops with
+                          User break, and DIRECT mode runs PRG0. Held 60
                           frames, it stops the program at F+60, past
                           ON BREAK, and its release does nothing
         F ctrlc N         Left Ctrl and C held for N frames. While a
-                          program or a DIRECT mode line runs, it is a
-                          break as the + button's, at the press: the
+                          program or a DIRECT mode line runs, it breaks
+                          the same as the + button, but at the press: the
                           program jumps to its ON BREAK GOTO label or
                           stops; C types nothing and KEYBOARD sees only
                           its release
@@ -115,7 +116,7 @@ const USAGE: &str = "usage:
         F end             the run stops
       Lines starting with # are comments.
       With --wav, the sound mixed goes into FILE as a WAV file: 16-bit
-      PCM stereo at 48000 Hz, 800 samples a frame, so N frames give N/60
+      PCM stereo at 48000 Hz, 800 samples per frame, so N frames give N/60
       seconds. The same program, script and frames give the same bytes,
       unless the program reads the time or RND; --bench --fixed fixes
       those. Without an imported sound archive, BGMPLAY 0-73, BEEP's
@@ -125,7 +126,7 @@ const USAGE: &str = "usage:
   --speed SPEED, before or after any of the above: run programs at
       SPEED, one of unlimited (the default: as fast as this computer
       can), switch2 or switch1. A console's speed gives a program about
-      the work a frame it gets on that console: one too slow there
+      the work per frame that it gets on that console: one too slow there
       misses frames and VSYNCs here too, and PERFEND gives the
       console's time, the same on every run.
 
@@ -136,7 +137,7 @@ exit status:
   2  --play, --bench: a program stopped on an error, also in an EXEC slot
      or a subprogram, each printed to stderr as
      `error 31 at 0:3: Subscript out of range (DETAIL)`, with
-     `subprogram ` before it for the subprogram's
+     `subprogram ` before it for an error in the subprogram
   3  --play, --bench: no error, but STOP left the program stopped at the
      end, printed to stderr as `stop at 0:2`";
 
@@ -714,7 +715,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
             deferred,
         } = m.missed;
         println!(
-            "missed: {cut} frames out of time mid-trip, {held} held at VSYNC, \
+            "missed: {cut} frames out of time mid-iteration, {held} held at VSYNC, \
              {deferred} VSYNCs deferred; MAINCNT {}, VSYNCs {}",
             m.rt.main_count(),
             m.vsyncs()

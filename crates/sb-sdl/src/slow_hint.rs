@@ -54,7 +54,7 @@ const FOOTER: &str = "Frame-counting games may misbehave.";
 
 /// An iteration of the window's loop, as the detector sees it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Trip {
+pub struct Iteration {
     /// The time since the previous iteration began.
     pub elapsed: Duration,
     /// Program frames that started in it: how far `MAINCNT` went.
@@ -95,19 +95,19 @@ impl Detector {
 
     /// Notes an iteration. Returns true if the program has just come to
     /// count as slow.
-    pub fn trip(&mut self, trip: Trip) -> bool {
-        if !trip.counts || trip.elapsed >= STALL {
+    pub fn iteration(&mut self, iteration: Iteration) -> bool {
+        if !iteration.counts || iteration.elapsed >= STALL {
             (self.span, self.started, self.kept) = (Duration::ZERO, 0, 0);
             self.slow_spans = 0;
             return false;
         }
         if self.warmed < GRACE {
-            self.warmed += trip.elapsed;
+            self.warmed += iteration.elapsed;
             return false;
         }
-        self.span += trip.elapsed;
-        self.started += trip.started;
-        self.kept += trip.kept;
+        self.span += iteration.elapsed;
+        self.started += iteration.started;
+        self.kept += iteration.kept;
         if self.span < SPAN {
             return false;
         }
@@ -149,8 +149,13 @@ pub struct SlowHint {
 impl SlowHint {
     /// Notes an iteration of the loop that began at `now`. `program` is the
     /// project and file of the running program, if any. The elapsed time of
-    /// `trip` is computed here.
-    pub fn trip(&mut self, now: Instant, mut trip: Trip, program: Option<(&str, &str)>) {
+    /// `iteration` is computed here.
+    pub fn iteration(
+        &mut self,
+        now: Instant,
+        mut iteration: Iteration,
+        program: Option<(&str, &str)>,
+    ) {
         let elapsed = self.last.map(|last| now - last);
         self.last = Some(now);
         let seen = (self.program.as_ref()).map(|(p, f)| (p.as_str(), f.as_str()));
@@ -161,8 +166,8 @@ impl SlowHint {
         let (Some(program), Some(elapsed)) = (&self.program, elapsed) else {
             return;
         };
-        trip.elapsed = elapsed;
-        if self.detector.trip(trip) && !self.shown.contains(program) {
+        iteration.elapsed = elapsed;
+        if self.detector.iteration(iteration) && !self.shown.contains(program) {
             self.shown.insert(program.clone());
             self.pending = true;
         }
@@ -246,8 +251,8 @@ mod tests {
 
     /// An iteration one frame long that started `started` frames and kept
     /// `kept` calls.
-    fn trip(started: u32, kept: u32) -> Trip {
-        Trip {
+    fn iteration(started: u32, kept: u32) -> Iteration {
+        Iteration {
             elapsed: FRAME,
             started,
             kept,
@@ -259,16 +264,16 @@ mod tests {
     /// the rest of the window's 60 iterations per second keep their frames.
     /// Returns whether the detector said slow at any of them.
     fn run(d: &mut Detector, seconds: f64, fps: u32, counts: bool) -> bool {
-        let trips = (seconds * 60.0).round() as u32;
+        let iterations = (seconds * 60.0).round() as u32;
         let mut became = false;
-        for i in 0..trips {
+        for i in 0..iterations {
             // Spread the frames evenly over the window's iterations.
             let started = (i + 1) * fps / 60 - i * fps / 60;
-            let t = Trip {
+            let t = Iteration {
                 counts,
-                ..trip(started, 1 - started.min(1))
+                ..iteration(started, 1 - started.min(1))
             };
-            became |= d.trip(t);
+            became |= d.iteration(t);
         }
         became
     }
@@ -304,9 +309,9 @@ mod tests {
         // An iteration of four frames' time, kept: three calls in one
         // iteration.
         for _ in 0..20 {
-            assert!(!d.trip(trip(0, 3)));
+            assert!(!d.iteration(iteration(0, 3)));
             for _ in 0..60 {
-                d.trip(trip(1, 0));
+                d.iteration(iteration(1, 0));
             }
         }
         assert!(!d.is_slow());
@@ -335,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn trips_that_do_not_count_start_again() {
+    fn iterations_that_do_not_count_start_again() {
         // Paused, waiting for input, frames skipped: no iteration counts.
         let mut d = Detector::default();
         run(&mut d, 3.0, 60, true);
@@ -343,17 +348,17 @@ mod tests {
         // An iteration that does not count breaks a run of slow spans.
         for _ in 0..10 {
             assert!(!run(&mut d, 1.5, 20, true));
-            assert!(!d.trip(Trip::default()));
+            assert!(!d.iteration(Iteration::default()));
         }
         // So does a stalled iteration, for example while the window is
         // dragged.
         for _ in 0..10 {
             assert!(!run(&mut d, 1.5, 20, true));
-            let held = Trip {
+            let held = Iteration {
                 elapsed: Duration::from_millis(500),
-                ..trip(1, 0)
+                ..iteration(1, 0)
             };
-            assert!(!d.trip(held));
+            assert!(!d.iteration(held));
         }
         assert!(run(&mut d, 2.5, 20, true));
     }
@@ -365,9 +370,9 @@ mod tests {
         let mut d = Detector::default();
         let mut slow = 0;
         for _ in 0..600 {
-            slow += u32::from(d.trip(Trip {
+            slow += u32::from(d.iteration(Iteration {
                 elapsed: 2 * FRAME,
-                ..trip(1, 0)
+                ..iteration(1, 0)
             }));
         }
         assert_eq!(slow, 0);
@@ -380,8 +385,8 @@ mod tests {
         let mut feed = |hint: &mut SlowHint, seconds: u32, program: Option<(&str, &str)>| {
             for i in 0..seconds * 60 {
                 now += FRAME;
-                let t = trip(u32::from(i % 2 == 0), u32::from(i % 2 == 1));
-                hint.trip(now, t, program);
+                let t = iteration(u32::from(i % 2 == 0), u32::from(i % 2 == 1));
+                hint.iteration(now, t, program);
                 hint.tick(false);
             }
         };

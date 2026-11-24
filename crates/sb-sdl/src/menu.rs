@@ -432,7 +432,11 @@ const MENUS: &[Menu] = &[
             keyed("Step over", "F7", Action::StepOver),
             keyed("Step out", "Shift+F6", Action::StepOut),
             keyed("Run to cursor", "Ctrl+F6", Action::RunToCursor),
-            keyed("Go on from cursor", "Ctrl+Shift+F6", Action::JumpToCursor),
+            keyed(
+                "Continue from cursor",
+                "Ctrl+Shift+F6",
+                Action::JumpToCursor,
+            ),
             LINE,
             keyed("Breakpoint", "Shift+F7", Action::ToggleBreakpoint),
             item("Breakpoint condition...", Action::BreakpointCondition),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes THIRD-PARTY-NOTICES.txt: the licenses of everything the binaries hold.
+"""Writes THIRD-PARTY-NOTICES.txt: the licenses of everything the binaries contain.
 
     python3 tools/third_party_notices.py          # write the file
     python3 tools/third_party_notices.py --check  # fail if it is out of date
@@ -8,7 +8,7 @@ It lists the crates that `smilebasic`, `smilebasic-import` and
 `smilebasic-check` link, on the targets and with the features named below, with the
 license files each crate ships, then SDL, the bundled fonts and the bundled
 SoundFont. Run it after a change to Cargo.lock or to the bundled files, and
-ship the file beside the binaries.
+ship the file next to the binaries.
 """
 
 import glob

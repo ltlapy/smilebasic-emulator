@@ -1017,7 +1017,7 @@ mod tests {
         );
         assert_eq!(s.simple_ui_size, SimpleUiSize::Large);
         assert!(s.simple_ui_welcome_shown && s.swap_ab_xy);
-        assert!(!s.simple_ui, "each has a key of its own");
+        assert!(!s.simple_ui, "each has a separate key");
         let s = Settings::from_text("simple_ui_size=huge\nswap_ab_xy=1\n");
         assert_eq!(s, Settings::default());
         for (text, size) in [

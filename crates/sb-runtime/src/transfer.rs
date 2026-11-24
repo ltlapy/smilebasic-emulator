@@ -36,7 +36,7 @@ impl Summary {
         match self.skipped.first() {
             None => format!("{done}: {files}."),
             Some((name, why)) => format!(
-                "{done}: {files}; {} left out ({name}: {why}).",
+                "{done}: {files}; {} skipped ({name}: {why}).",
                 self.skipped.len()
             ),
         }

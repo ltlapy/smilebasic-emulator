@@ -123,7 +123,7 @@ const fn program_font(n: usize) -> Row {
         label: PROGRAM_FONT[n],
         about: "Puts the file's or the bundled fonts' glyphs on the font page (GRP5) \
                 for the characters SmileBASIC's font has, so programs draw with them \
-                and read them from GRP5. Set now and by ACLS. Not SmileBASIC 4's. \
+                and read them from GRP5. Set now and by ACLS. Not in SmileBASIC 4. \
                 Default: SmileBASIC.",
         control: Control::Choice(
             SOURCE_NAMES,
@@ -146,7 +146,7 @@ const PAGES: &[Page] = &[
             check(
                 "Type capitals without Shift",
                 "Letter keys type capitals, and Shift or Caps Lock types lower case, \
-                 as SmileBASIC 4's keyboard does. On by default. Also in the Edit \
+                 like SmileBASIC 4's keyboard. On by default. Also in the Edit \
                  menu.",
                 |s| s.upper_case_letters,
                 |s| s.upper_case_letters ^= true,
@@ -170,8 +170,8 @@ const PAGES: &[Page] = &[
             Row {
                 label: "Speed",
                 about: "Unlimited runs programs as fast as this computer can (default). \
-                        Switch 2 and Switch 1 give them a frame's work as on that \
-                        console: a program too slow there misses frames here too.",
+                        Switch 2 and Switch 1 give them the work per frame they get on \
+                        that console: a program too slow there misses frames here too.",
                 control: Control::Choice(
                     &["Unlimited", "Switch 2", "Switch 1"],
                     |s| Speed::ALL.iter().position(|&v| v == s.speed).unwrap_or(0),
@@ -191,7 +191,7 @@ const PAGES: &[Page] = &[
                 "Tell me when a program runs slower than real time",
                 "When a program runs slower than real time for a few seconds, a notice \
                  in the bottom right corner points to the setting above. It shows once \
-                 per program a session. On by default.",
+                 per program per session. On by default.",
                 |s| s.slow_hint,
                 |s| s.slow_hint ^= true,
             ),
@@ -226,9 +226,9 @@ const PAGES: &[Page] = &[
             ),
             check(
                 "Swap A/B and X/Y",
-                "Gamepads' A and B trade places, as do X and Y, for programs (BUTTON) \
+                "Gamepads' A and B swap, and so do X and Y, for programs (BUTTON) \
                  and for the emulator's own screens. For gamepads with A at the bottom. \
-                 The keyboard's keys stay as they are. Not SmileBASIC 4's. Off by default.",
+                 The keyboard's keys stay unchanged. Not in SmileBASIC 4. Off by default.",
                 |s| s.swap_ab_xy,
                 |s| s.swap_ab_xy ^= true,
             ),
@@ -264,9 +264,9 @@ const PAGES: &[Page] = &[
             ),
             Row {
                 label: "Before file commands such as SAVE and LOAD",
-                about: "Ask first: a Yes/No question, as SmileBASIC 4 asks (default). \
-                        Show a notice: go ahead and say what was done. Silent: just go \
-                        ahead. Losing unsaved edits always asks.",
+                about: "Ask first: a Yes/No question, as in SmileBASIC 4 (default). \
+                        Show a notice: go ahead and say what was done. Silent: go ahead \
+                        and say nothing. Losing unsaved edits always asks.",
                 control: Control::Choice(
                     &["Ask first", "Show a notice", "Silent"],
                     |s| s.file_confirm as usize,
@@ -335,7 +335,7 @@ const PAGES: &[Page] = &[
             Row {
                 label: "Tab width",
                 about: "Tab in the editor pads with spaces to the next multiple of this \
-                        many columns. SYSPARAM(\"TABSTEP\") returns it. Default 1, as \
+                        many columns. SYSPARAM(\"TABSTEP\") returns it. Default 1, because \
                         the editor's characters are already wide.",
                 control: Control::Choice(
                     &["1", "2", "4", "8"],
@@ -350,8 +350,8 @@ const PAGES: &[Page] = &[
             },
             check(
                 "Open the editor in a separate window",
-                "F4 opens the editor in a second window beside the screen instead of \
-                 in place of it, so the screen stays visible and programs and direct \
+                "F4 opens the editor in a second window next to the screen instead of \
+                 in place of it, so the screen stays visible and programs and DIRECT \
                  mode keep running. Also in the View menu.",
                 |s| s.editor_window,
                 |s| s.editor_window ^= true,
@@ -359,15 +359,15 @@ const PAGES: &[Page] = &[
             check(
                 "Remember the editor window's position and size",
                 "The separate editor window opens where it was last, at the same \
-                 size, if that place is still on a display. Off: it opens beside the \
+                 size, if that place is still on a display. Off: it opens next to the \
                  screen each time. Off by default.",
                 |s| s.editor_window_keep_place,
                 |s| s.editor_window_keep_place ^= true,
             ),
             check(
-                "Inline suggestions in direct mode",
-                "While you type a line in direct mode, a list of words that start \
-                 with what is typed shows under the cursor; Tab puts the first in. \
+                "Inline suggestions in DIRECT mode",
+                "While you type a line in DIRECT mode, a list of words that start \
+                 with what is typed shows under the cursor; Tab inserts the first. \
                  On by default.",
                 |s| s.complete_direct,
                 |s| s.complete_direct ^= true,
@@ -383,7 +383,7 @@ const PAGES: &[Page] = &[
                 label: "Minimum letters to show suggestions",
                 about: "How many letters of a word to type before suggestions show. \
                         Default 1, as in SmileBASIC 4. After GOTO, GOSUB, RESTORE, a \
-                        lone @ or # they show at once.",
+                        lone @ or # they show immediately.",
                 control: Control::Choice(
                     &["1", "2", "3", "4"],
                     |s| s.complete_after as usize - 1,
@@ -400,7 +400,7 @@ const PAGES: &[Page] = &[
             check(
                 "Suggest names from the edited program",
                 "Suggestions also include the variables, DEFs and labels written in \
-                 the slot open in the editor, also in direct mode. Off by default. \
+                 the slot open in the editor, also in DIRECT mode. Off by default. \
                  Labels after GOTO and # constants show either way.",
                 |s| s.complete_names,
                 |s| s.complete_names ^= true,
@@ -415,9 +415,9 @@ const PAGES: &[Page] = &[
             ),
             check(
                 "Enter accepts the chosen suggestion",
-                "In the editor, after Up or Down chooses a suggestion, Enter puts it \
-                 in instead of a new line. Off: only Tab does. In direct mode Up and \
-                 Down recall history, and Tab puts in the first.",
+                "In the editor, after Up or Down chooses a suggestion, Enter inserts \
+                 it instead of a new line. Off: only Tab does. In DIRECT mode Up and \
+                 Down recall history, and Tab inserts the first.",
                 |s| s.complete_enter,
                 |s| s.complete_enter ^= true,
             ),

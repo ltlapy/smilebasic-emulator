@@ -36,8 +36,8 @@
 //!   microseconds, the bytes uploaded, the textures made, and in
 //!   microseconds the time the rest of the iteration took: events, running
 //!   the program, waiting for the next frame; then the frames the standby
-//!   thread ran while the loop was held up, and its microseconds running
-//!   them; then MAINCNT, and the frames so far in which the program missed
+//!   thread ran while the main thread was blocked, and its microseconds
+//!   running them; then MAINCNT, and the frames so far in which the program missed
 //!   part of an iteration of its main loop, by reason, the same as the
 //!   missed line of the report; then 1 if the iteration drew the window and
 //!   0 if it skipped the drawing; then the samples of sound waiting in the
@@ -65,8 +65,8 @@
 //!   of the offscreen driver do not wait;
 //! - `occluded`: from then too, has the main window count as covered, the
 //!   same as the system reports it when it can;
-//! - `at=TRIP:WHAT`, any number of them: does something to the frontend in
-//!   that iteration, counted from the start: `targets` or `device` as if the
+//! - `at=ITERATION:WHAT`, any number of them: does something to the frontend
+//!   in that iteration, counted from the start: `targets` or `device` as if the
 //!   renderer reset them (the first also spoils what the GPU path holds),
 //!   `resize:W:H` (`editor-resize:W:H` for the editor's own window),
 //!   `fullscreen`, `windowed`, `auto` and `cpu` for the renderer setting,
@@ -287,7 +287,7 @@ pub struct Bench {
     on: bool,
     /// Iterations timed, and iterations before the timing begins, as
     /// `frames=` and `settle=` say.
-    trips: u32,
+    iterations: u32,
     settle: u32,
     run: Option<(String, String)>,
     load: Option<(String, String)>,
@@ -323,7 +323,7 @@ pub struct Bench {
     /// The things that happen to the frontend, each with its iteration.
     at: Vec<(u32, String)>,
     /// Iterations since the start.
-    trip: u32,
+    iteration: u32,
     /// The stages of each timed iteration, and the bytes it uploaded.
     timed: Vec<([Duration; STAGES], u64)>,
     current: [Duration; STAGES],
@@ -332,7 +332,7 @@ pub struct Bench {
     kept_now: Kept,
     kept: Kept,
     /// Iterations timed in which the standby thread ran frames.
-    kept_trips: u32,
+    kept_iterations: u32,
     /// MAINCNT when the timing began, and now.
     maincnt: (u32, u32),
     /// The frames in which the program missed part of an iteration of its
@@ -377,13 +377,13 @@ impl Bench {
         };
         let mut bench = Bench {
             on: true,
-            trips: 600,
+            iterations: 600,
             settle: SETTLE,
             ..Bench::default()
         };
         for part in spec.split(',').map(str::trim) {
             match part.split_once('=') {
-                Some(("frames", n)) => bench.trips = n.parse().unwrap_or(600),
+                Some(("frames", n)) => bench.iterations = n.parse().unwrap_or(600),
                 Some(("settle", n)) => bench.settle = n.parse().unwrap_or(SETTLE),
                 Some(("shot", path)) => bench.shot = Some(path.to_string()),
                 Some(("luma", path)) => bench.luma = Some(path.to_string()),
@@ -391,9 +391,9 @@ impl Bench {
                 Some(("scale", n)) => bench.ui_scale = n.parse().ok(),
                 Some(("type", text)) => bench.typed = Some(text.to_string()),
                 Some(("at", what)) => {
-                    if let Some((trip, what)) = what.split_once(':') {
-                        let trip = trip.parse().unwrap_or(u32::MAX);
-                        bench.at.push((trip, what.to_string()));
+                    if let Some((iteration, what)) = what.split_once(':') {
+                        let iteration = iteration.parse().unwrap_or(u32::MAX);
+                        bench.at.push((iteration, what.to_string()));
                     }
                 }
                 Some(("slow", ms)) => {
@@ -444,7 +444,7 @@ impl Bench {
         }
         let stop_at = if self.stop { SETTLE } else { 0 };
         let set_up = stop_at + 1;
-        match self.trip {
+        match self.iteration {
             0 => {
                 machine.rt.settings.editor_window = self.apart;
                 if let Some((project, program)) = &self.load {
@@ -465,7 +465,7 @@ impl Bench {
             t if t == stop_at && self.stop => machine.stop(),
             _ => {}
         }
-        if self.trip == set_up {
+        if self.iteration == set_up {
             if self.editor && !machine.is_editing() {
                 machine.toggle_editor();
             }
@@ -473,16 +473,16 @@ impl Bench {
                 machine.show_panel(true);
             }
         }
-        if self.trip == set_up + SETTLE / 2
+        if self.iteration == set_up + SETTLE / 2
             && let Some(text) = &self.typed
         {
             machine.type_text(text);
         }
-        if self.trip >= set_up + self.settle && self.last.is_some() {
+        if self.iteration >= set_up + self.settle && self.last.is_some() {
             let uploaded = UPLOADED.load(Ordering::Relaxed);
             self.timed.push((self.current, uploaded));
             self.kept.add(self.kept_now);
-            self.kept_trips += u32::from(self.kept_now.frames > 0);
+            self.kept_iterations += u32::from(self.kept_now.frames > 0);
             self.undrawn += u32::from(self.undrawn_now);
             self.queued.push(self.queued_now);
             if self.log.is_some() {
@@ -490,7 +490,7 @@ impl Bench {
                 let (drawing, rest) = stages.split_at(DRAWING);
                 let (drawing, rest) = (drawing.join(" "), rest.join(" "));
                 let made = MADE.load(Ordering::Relaxed);
-                let (trip, (w, h)) = (self.trip, self.size);
+                let (iteration, (w, h)) = (self.iteration, self.size);
                 let (kept, busy) = (self.kept_now.frames, self.kept_now.busy.as_micros());
                 let count = machine.rt.main_count();
                 let Missed {
@@ -500,20 +500,20 @@ impl Bench {
                 } = machine.missed;
                 let ran_out = self.sound.map_or(0, |(_, now)| now.ran_out);
                 self.lines.push(format!(
-                    "{trip} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy} \
+                    "{iteration} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy} \
                      {count} {cut} {held} {deferred} {} {} {ran_out}",
                     u8::from(!self.undrawn_now),
                     self.queued_now
                 ));
             }
         }
-        self.trip += 1;
+        self.iteration += 1;
         self.current = [Duration::ZERO; STAGES];
         self.kept_now = Kept::default();
         self.undrawn_now = false;
         UPLOADED.store(0, Ordering::Relaxed);
         MADE.store(0, Ordering::Relaxed);
-        self.last = (self.trip > set_up + self.settle).then(Instant::now);
+        self.last = (self.iteration > set_up + self.settle).then(Instant::now);
         if self.last.is_some() && self.began.is_none() {
             self.began = self.last;
             self.ran = 0;
@@ -526,13 +526,13 @@ impl Bench {
         (self.deferring, self.deferred_seen) = (deferred, machine.missed.deferred);
         self.maincnt.1 = machine.rt.main_count();
         self.missed.1 = machine.missed;
-        let ended = self.until_end && self.trip > set_up + 10 && !machine.is_running();
-        ended || self.timed.len() >= self.trips as usize
+        let ended = self.until_end && self.iteration > set_up + 10 && !machine.is_running();
+        ended || self.timed.len() >= self.iterations as usize
     }
 
     /// Notes that the notice for a program slower than real time shows.
     pub fn slow_hint_shown(&mut self) {
-        self.slow_hint.get_or_insert(self.trip);
+        self.slow_hint.get_or_insert(self.iteration);
     }
 
     /// Counts a program frame run.
@@ -540,7 +540,8 @@ impl Bench {
         self.ran += 1;
     }
 
-    /// Counts the frames the standby thread ran while the loop was held up.
+    /// Counts the frames the standby thread ran while the main thread was
+    /// blocked.
     pub fn kept(&mut self, kept: Kept) {
         self.ran += kept.frames;
         self.kept_now.add(kept);
@@ -610,7 +611,9 @@ impl Bench {
     /// Whether this iteration is the last one timed, whose frame
     /// [`Bench::shoot`] saves and which must then draw.
     pub fn shoots(&self) -> bool {
-        self.shot.is_some() && self.last.is_some() && self.timed.len() + 1 == self.trips as usize
+        self.shot.is_some()
+            && self.last.is_some()
+            && self.timed.len() + 1 == self.iterations as usize
     }
 
     /// Saves what `canvas` shows as `PATH-name.pam`, in the last iteration
@@ -619,7 +622,7 @@ impl Bench {
         let (Some(path), Some(_)) = (&self.shot, self.last) else {
             return;
         };
-        if self.timed.len() + 1 != self.trips as usize {
+        if self.timed.len() + 1 != self.iterations as usize {
             return;
         }
         let shot = canvas
@@ -666,19 +669,22 @@ impl Bench {
             }
         });
         let luma = sum as f64 / 1000.0 / (w * h as usize).max(1) as f64;
-        self.lumas.push((self.trip, luma as f32));
+        self.lumas.push((self.iteration, luma as f32));
     }
 
     /// The `at=` actions due in this iteration.
     pub fn due(&self) -> Vec<&str> {
-        let due = self.at.iter().filter(|(trip, _)| *trip == self.trip);
+        let due = self
+            .at
+            .iter()
+            .filter(|(iteration, _)| *iteration == self.iteration);
         due.map(|(_, what)| what.as_str()).collect()
     }
 
     /// Whether the frontend is to show `part` of its UI now.
     pub fn opens(&self, part: &str) -> bool {
         let set_up = if self.stop { SETTLE } else { 0 } + 1;
-        self.trip == set_up + 1 && self.extras.iter().any(|e| e == part)
+        self.iteration == set_up + 1 && self.extras.iter().any(|e| e == part)
             || self.due().contains(&part)
     }
 
@@ -704,7 +710,7 @@ impl Bench {
             return;
         };
         let lines: Vec<String> = (self.lumas.iter())
-            .map(|(trip, luma)| format!("{trip} {luma:.3}"))
+            .map(|(iteration, luma)| format!("{iteration} {luma:.3}"))
             .collect();
         if let Err(e) = std::fs::write(path, lines.join("\n") + "\n") {
             eprintln!("SB_UI_BENCH: {e}");
@@ -717,7 +723,7 @@ impl Bench {
         let least = lumas.iter().copied().fold(f32::MAX, f32::min);
         let most = lumas.iter().copied().fold(0.0, f32::max);
         println!(
-            "luma      {} frames from {least:.2} to {most:.2}; {} dips of a frame, deepest {deepest:.2}, \
+            "luma      {} frames from {least:.2} to {most:.2}; {} one-frame dips, deepest {deepest:.2}, \
              frames apart: median {}",
             lumas.len(),
             dips.len(),
@@ -779,7 +785,7 @@ impl Bench {
             .filter(|&t| t >= STALL)
             .collect();
         println!(
-            "stalls    {} trips of {STALL:?} or more, {:.2?} in all",
+            "stalls    {} iterations of {STALL:?} or more, {:.2?} in all",
             stalls.len(),
             stalls.iter().sum::<Duration>()
         );
@@ -790,18 +796,18 @@ impl Bench {
         if let Some(began) = self.began {
             let secs = began.elapsed().as_secs_f64();
             println!(
-                "frames    {:.2} run a second, {} in {secs:.2} s",
+                "frames    {:.2} run per second, {} in {secs:.2} s",
                 self.ran as f64 / secs,
                 self.ran
             );
             let counted = self.maincnt.1.wrapping_sub(self.maincnt.0);
             println!(
-                "maincnt   {:.2} a second, {counted} in all",
+                "maincnt   {:.2} per second, {counted} in all",
                 counted as f64 / secs
             );
             let (from, to) = self.missed;
             println!(
-                "missed    {} frames out of time mid-trip, {} held at VSYNC, {} VSYNCs deferred \
+                "missed    {} frames out of time mid-iteration, {} held at VSYNC, {} VSYNCs deferred \
                  in {} stretches",
                 to.cut - from.cut,
                 to.held - from.held,
@@ -810,16 +816,16 @@ impl Bench {
             );
         }
         println!(
-            "undrawn   {} of {} trips ran the program and left the drawing out",
+            "undrawn   {} of {} iterations ran the program and skipped drawing",
             self.undrawn,
             self.timed.len()
         );
         println!(
-            "kept      {} frames run while the loop was held up, in {} trips, {:.2?} running them",
-            self.kept.frames, self.kept_trips, self.kept.busy
+            "kept      {} frames run while the main thread was blocked, in {} iterations, {:.2?} running them",
+            self.kept.frames, self.kept_iterations, self.kept.busy
         );
         match self.slow_hint {
-            Some(trip) => println!("slow hint shown at frame {trip}"),
+            Some(iteration) => println!("slow hint shown at frame {iteration}"),
             None => println!("slow hint not shown"),
         }
         if let Some((from, to)) = self.sound {
@@ -835,18 +841,18 @@ impl Bench {
             let (least, median) = (queued.first(), queued.get(queued.len() / 2));
             if let (Some(&least), Some(&median)) = (least, median) {
                 println!(
-                    "queued    {:.1} ms of sound waiting as a trip began at least, median {:.1} ms",
+                    "queued    least {:.1} ms of sound waiting when an iteration began, median {:.1} ms",
                     ms(least),
                     ms(median)
                 );
             }
         }
         let bytes: u64 = self.timed.iter().map(|&(_, b)| b).sum();
-        let trips = self.timed.len().max(1) as u64;
+        let iterations = self.timed.len().max(1) as u64;
         let uploads = self.timed.iter().filter(|&&(_, b)| b > 0).count();
         println!(
-            "uploaded  {:.1} KB a frame, in {uploads} of {} frames",
-            bytes as f64 / trips as f64 / 1024.0,
+            "uploaded  {:.1} KB per frame, in {uploads} of {} frames",
+            bytes as f64 / iterations as f64 / 1024.0,
             self.timed.len()
         );
     }

@@ -6,13 +6,13 @@
 # Usage: compare.sh BEFORE AFTER OUT_DIR [NAMES_REGEX]
 #   BEFORE, AFTER: two smilebasic binaries, kept in the same folder
 #     (a binary run from target/debug behaves differently in the bench).
-#   OUT_DIR: where the shots and each run's output go.
-#   NAMES_REGEX: keeps the scenes whose name matches it.
+#   OUT_DIR: the folder for the shots and the output of each run.
+#   NAMES_REGEX: runs only the scenes whose names match it.
 #
-# Each line printed is a scene, the two builds' hashes, and "same" or
-# "DIFFER". Even between two runs of one build, about one scene in a
+# Each printed line gives a scene, the hashes of the two builds, and "same"
+# or "DIFFER". Even between two runs of one build, about one scene in a
 # hundred differs in a full run and matches when run again by itself, so
-# run a differing scene again before believing it.
+# run a differing scene again before trusting the result.
 if [ $# -lt 3 ]; then
   sed -n '2,15p' "$0" >&2
   exit 2

@@ -68,7 +68,7 @@ impl Wav {
         self.file.flush()?;
         if self.dropped {
             eprintln!(
-                "{}: the WAV file is full; the rest of the sound is left out",
+                "{}: the WAV file is full; the rest of the sound was not written",
                 self.path.display()
             );
         }

@@ -852,7 +852,7 @@ impl Gpu {
         let per = |d: Duration| d / n as u32;
         println!(
             "{name:9} {} frames drawn: build {:.3?}, pages {:.3?} ({:.1} MB), flush {:.3?}, wait {:.3?}; \
-             {} vertices, {} batches, {} target switches a frame",
+             {} vertices, {} batches, {} target switches per frame",
             s.drawn,
             per(s.build),
             per(s.pages),

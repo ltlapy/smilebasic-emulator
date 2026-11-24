@@ -1,6 +1,6 @@
-# The scenes compare.sh runs, one a line: NAME|SB_UI_BENCH parts|flag.
+# The scenes compare.sh runs, one per line: NAME|SB_UI_BENCH parts|flag.
 # docs/performance/benchmarking.md lists the parts. PERF/TRUN and the
-# others are the programs in the PERF folder beside this file.
+# others are the programs in the PERF folder next to this file.
 menu, click File|menu,at=100:click:20:10|
 File > Save slot (file dialog)|menu,at=100:click:20:10,at=110:click:40:60|
 file dialog, type, Escape|menu,at=100:click:20:10,at=110:click:40:60,at=130:key:A,at=150:key:Escape|

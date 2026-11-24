@@ -2139,7 +2139,7 @@ impl ProjectManager {
         let name = name.to_ascii_uppercase();
         let kind = source.kind.name();
         if to == source.project && name == source.name {
-            self.status = Some((format!("Can't copy {kind}:{name} onto itself."), true));
+            self.status = Some((format!("Cannot copy {kind}:{name} onto itself."), true));
             return;
         }
         if !asked && storage.exists_in(&to, source.kind, &name) {

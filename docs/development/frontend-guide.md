@@ -129,7 +129,7 @@ SB_UI_BENCH="load=PROJECT/PROGRAM,editor,menu,at=100:click:20:10,shot=OUT,novsyn
 smilebasic
 ```
 
-`at=TRIP:` presses keys (`key:ctrl+S`), controller buttons (`pad:a`,
+`at=ITERATION:` presses keys (`key:ctrl+S`), controller buttons (`pad:a`,
 `padup:a`), and uses the mouse (`click:X:Y`, `rclick`, `dclick`, `press`,
 `drag`, `release`, `move`, `wheel:X:Y:N`); [benchmarking.md](../performance/benchmarking.md)
 lists the rest. A scene is one such line. A change is checked by several dozen
