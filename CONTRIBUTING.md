@@ -14,8 +14,9 @@
 | `sb-check` | `sb-runtime`, `sb-profiles` | SDL |
 | `sb-sdl` | everything | nothing |
 
-SDL and platform code live in `sb-sdl` only. Everything else must build and test
-headless on Windows, macOS and Linux.
+SDL and platform code live in `sb-sdl` only, except the executable memory of
+`sb-jit`. Everything else must build and test headless on Windows, macOS and
+Linux.
 
 ### Behavior
 
@@ -32,6 +33,8 @@ headless on Windows, macOS and Linux.
 
 - `cargo fmt` and `cargo clippy --all-targets -- -D warnings` pass.
 - Code, comments, identifiers and docs are in American English.
+- Prose follows [docs/development/writing-style.md](docs/development/writing-style.md):
+  plain technical sentences, in comments, docs, commit messages and UI text.
 - Comments explain why. Skip comments that repeat the code.
 - `unsafe` needs a `// SAFETY:` comment. Outside `sb-sdl` and test code, avoid it
   unless a benchmark shows the need, and put the result in that comment.
@@ -68,7 +71,7 @@ headless on Windows, macOS and Linux.
   SIL OFL). Keep the license text and a note on the source and version next
   to the files.
 - The official reference is CC BY 4.0. Short quotes are fine with attribution;
-  don't copy whole pages.
+  do not copy whole pages.
 - No paths from a developer's own machine in code, docs or configs.
 
 ### License
@@ -91,7 +94,7 @@ as the project is, with no additional terms or conditions.
   Use a comma for two (`core, runtime:`). If you need more, split the commit.
 - Summary: lowercase start, no trailing period, 72 characters at most.
 - One logical change per commit. Each commit builds and passes tests.
-- Write the body when the reason isn't obvious from the summary. Wrap at 72.
+- Write the body when the reason is not obvious from the summary. Wrap at 72.
 - AI-assisted commits end with a `Co-Authored-By:` trailer naming the model.
 
 Examples:

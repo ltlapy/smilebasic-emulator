@@ -1,14 +1,14 @@
 //! Questions that commands wait on, and the notices shown instead of them.
 //! SmileBASIC 4 asks before every file read and write, except a LOAD in a
-//! running program; the emulator lets that be turned into a notice or silenced, but
-//! always asks before unsaved edits are lost.
+//! running program. The emulator lets that be turned into a notice or
+//! silenced, but always asks before unsaved edits are lost.
 
 use crate::runtime::Runtime;
 
-/// How file commands typed in direct mode confirm.
+/// The confirmation setting for file commands typed in DIRECT mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FileConfirm {
-    /// Ask first, as SmileBASIC 4 does.
+    /// Ask first, the same as SmileBASIC 4 does.
     #[default]
     Ask,
     /// Go ahead and show a notice.
@@ -29,7 +29,7 @@ pub struct Confirm {
     pub accept_first: bool,
 }
 
-/// How a question stands.
+/// The state of a question.
 pub(crate) enum Ask {
     /// No question was needed, or the user agreed.
     Go,
@@ -38,7 +38,7 @@ pub(crate) enum Ask {
     Wait,
 }
 
-/// What a file command is about to do, for its question or notice.
+/// The action a file command is about to take, for its question or notice.
 pub(crate) struct FileAction {
     pub title: String,
     /// One sentence saying what happens.
@@ -51,10 +51,11 @@ pub(crate) struct FileAction {
     /// Whether it also asks in a running program. On SmileBASIC 4, LOAD
     /// there asks only when it would replace unsaved edits.
     pub in_programs: bool,
-    /// Files of the folder a program was run from that it would replace,
-    /// delete or rename, by their names on disk, of those there from the
-    /// start and not yet changed (see [`crate::storage::Storage::original`]).
-    /// Any makes it ask, whatever the setting.
+    /// Files in the folder a program was run from that the command would
+    /// replace, delete or rename, by their names on disk. Only files there
+    /// from the start and not yet changed are listed (see
+    /// [`crate::storage::Storage::original`]). Any of them makes the command
+    /// ask, regardless of the setting.
     pub originals: Vec<String>,
 }
 
@@ -70,7 +71,7 @@ pub fn unsaved_lines(slots: &[usize]) -> Vec<String> {
     vec![first, "which will be lost.".to_string()]
 }
 
-/// Says that `files`, there before the emulator started, will change.
+/// Says that `files`, which existed before the emulator started, will change.
 pub fn original_lines(files: &[String]) -> Vec<String> {
     let first = match files {
         [file] => format!("This changes the original file {file}"),
@@ -157,8 +158,8 @@ impl Runtime {
         }
     }
 
-    /// Confirms a file command as the settings say. Replacing slots in
-    /// `replaces` that have unsaved edits always asks, as does changing
+    /// Confirms a file command as the settings say. It always asks before
+    /// it replaces slots in `replaces` that have unsaved edits, or changes
     /// one of the [`FileAction::originals`].
     pub(crate) fn confirm_file(&mut self, action: FileAction, replaces: &[usize]) -> Ask {
         let unsaved = self.unsaved_among(replaces.iter().copied());
@@ -195,8 +196,8 @@ impl Runtime {
                 // DELETE and RENAME, and for LOAD and EXEC over unsaved
                 // edits. Changing files the emulator was started with
                 // starts on Cancel.
-                // UNVERIFIED: that it does for the other file commands but
-                // saving.
+                // UNVERIFIED: that it does so for the other file commands
+                // except saving.
                 Confirm {
                     title: action.title,
                     lines,

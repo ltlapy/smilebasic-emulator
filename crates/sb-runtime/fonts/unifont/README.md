@@ -14,9 +14,9 @@ as half-width katakana.
   kanji come from Izumi Gothic 16.
 - License: the glyphs are dual-licensed; this project uses them under the
   SIL Open Font License 1.1, see `LICENSE.txt`.
-- The build script (`build.rs`) reads the file as it is and makes the
+- The build script (`build.rs`) reads the unchanged file and makes the
   full-width table's glyphs bold: each stroke grows one pixel toward the
   side the glyph leaves free, keeping one-pixel gaps open. A glyph drawn
   against column 0 with column 15 empty first moves one pixel right, so it
-  sits as Izumi's kanji do. The half-width forms stay as drawn (see
-  `src/dot_bold.rs` and `BOLD_EDGE`).
+  sits in the same position as Izumi's kanji. The half-width forms stay
+  unchanged (see `src/dot_bold.rs` and `BOLD_EDGE`).

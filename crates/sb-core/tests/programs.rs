@@ -47,8 +47,8 @@ fn bqparam_checks_the_gain_count_first() {
         kind("DIM F[13]:BQPARAM F,0,44100,1,0"),
         Some((illegal, Some(4)))
     );
-    // The rate, the type's range, and the
-    // types of the arguments before the array's length.
+    // The rate and the type's range. The types of the arguments are
+    // checked before the array's length.
     assert_eq!(
         kind("DIM F[13]:BQPARAM F,0,0,1,1"),
         Some((illegal, Some(2)))
@@ -75,7 +75,7 @@ fn bqparam_checks_the_gain_count_first() {
     assert_eq!(kind("DIM F[8]:FFTWFN F,4"), Some((range, Some(1))));
     assert_eq!(kind("DIM F[8]:FFTWFN F,-1"), Some((range, Some(1))));
     assert_eq!(kind("DIM F[6]:FFTWFN F,4"), Some((illegal, None)));
-    // BIQUAD the channels before the number of coefficients.
+    // BIQUAD checks the channels before the number of coefficients.
     assert_eq!(
         kind("DIM A[2,4],B[4],F[12]:BIQUAD A,B,F"),
         Some((illegal, None))
@@ -156,8 +156,8 @@ fn windows_and_coefficients_are_reals() {
     );
 }
 
-/// FFT and IFFT take the length from the third array and name another
-/// array of another length.
+/// FFT and IFFT take the length from the third array and name an array of
+/// a different length.
 #[test]
 fn fft_names_the_array_of_another_length() {
     let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
@@ -167,10 +167,11 @@ fn fft_names_the_array_of_another_length() {
         let call = |args: &str| kind(&format!("{arrays}{command} {args}"));
         assert_eq!(call("A,F,C,D"), Some((illegal, Some(1))), "{command}");
         assert_eq!(call("A,B,C,F"), Some((illegal, Some(3))), "{command}");
-        // Not a power of two names nothing, even with the others unlike.
+        // A length that is not a power of two names nothing, even when the
+        // other lengths differ.
         assert_eq!(call("A,F,G,D"), Some((illegal, None)), "{command}");
-        // The first output's length is not looked at; ours refuses a
-        // shorter one, naming it.
+        // SmileBASIC 4 does not look at the length of the first output. The
+        // emulator refuses a shorter one and names it.
         assert_eq!(call("G,B,C,D"), Some((illegal, Some(0))), "{command}");
         assert_eq!(kind(&format!("{arrays}{command} F,B,C,D")), None);
     }
@@ -207,8 +208,8 @@ fn arithmetic_and_types() {
     assert_eq!(error("\n?1/0"), (ErrorKind::DivideByZero, 2));
 }
 
-/// The order SmileBASIC 4 works things out in, as TEST08 showed on
-/// hardware: right to left nearly everywhere.
+/// The evaluation order of SmileBASIC 4, as TEST08 showed on hardware:
+/// right to left nearly everywhere.
 #[test]
 fn evaluation_order() {
     let defs = "\nDEF F(N)\nO$=O$+STR$(N)\nRETURN N\nEND\nDEF G(A,B,C)\nRETURN 0\nEND\n\
@@ -225,8 +226,8 @@ fn evaluation_order() {
         ("X=F(1)+F(2)+F(3)", "321"),
         ("X=-F(1)*(F(2)-F(3))", "321"),
         ("X=F(1) AND F(2)", "21"),
-        // TEST12: literals and sizes last first, SWAP and INC working
-        // each place out once, CALL's arguments before its name.
+        // TEST12: literals and sizes last first, SWAP and INC evaluating
+        // each place once, and the arguments of CALL before its name.
         ("DIM A[]=[F(1),F(2)]", "21"),
         ("DIM A[F(2),F(3)]", "32"),
         ("DIM C[4]:SWAP C[F(0)],C[F(1)]", "10"),
@@ -235,7 +236,7 @@ fn evaluation_order() {
     ] {
         assert_eq!(order(code), format!("{want}\n"), "{code}");
     }
-    // PRINT works every item out, last first, before printing any.
+    // PRINT evaluates every item, last first, before printing any.
     assert_eq!(output(&format!("?P(1);P(2);P(3){defs}")), "<3><2><1>123\n");
     // && and || still go left to right, stopping early.
     assert_eq!(order("X=F(0) && F(1)"), "0\n");
@@ -432,7 +433,7 @@ RETURN
     assert_eq!(error("RETURN").0, ErrorKind::ReturnWithoutGosub);
     assert_eq!(error("GOTO @NOWHERE"), (ErrorKind::UndefinedLabel, 1));
     assert_eq!(error("L$=\"@X\"\nGOTO L$"), (ErrorKind::UndefinedLabel, 2));
-    // RESTORE finds out only when it runs.
+    // RESTORE checks the label only when it runs.
     assert_eq!(output("IF 0 THEN RESTORE @NOWHERE\n?1"), "1\n");
     assert_eq!(
         error("?1\nRESTORE @NOWHERE"),
@@ -533,8 +534,8 @@ fn too_many_arguments() {
 
 /// The functions SmileBASIC 4 compiles in place with brackets check
 /// their number of arguments as the program compiles, so the lines
-/// before do not run; the others, and these as commands, check as the
-/// call runs.
+/// before do not run. The other functions, and these used as commands,
+/// check as the call runs.
 #[test]
 fn functions_compiled_in_place_check_their_counts() {
     let compiling = |src: &str| match sb_core::compile(src, &TextHost::default()) {
@@ -578,9 +579,9 @@ fn functions_compiled_in_place_check_their_counts() {
 }
 
 /// DEFARG, DEFARGC, DEFOUTC and the CHK functions with brackets are
-/// compiled in place, their arguments and DEF checked as the program
-/// compiles; as commands they call their handlers, which check as they
-/// run.
+/// compiled in place, and their arguments and DEF are checked as the
+/// program compiles. As commands they call their handlers, which check
+/// as they run.
 #[test]
 fn def_and_chk_functions_check_their_counts() {
     use ErrorKind as E;
@@ -730,11 +731,11 @@ fn duplicate_constants() {
     );
     assert_eq!(at("ENUM #A,#TRUE"), (ErrorKind::DuplicateConstant, 1, 9));
     assert_eq!(at("CONST #A=1:ENUM #B,#A").0, ErrorKind::DuplicateConstant);
-    // CONST works out its value first, ENUM checks its name first.
+    // CONST evaluates its value first, and ENUM checks its name first.
     assert_eq!(at("CONST #ON=#NONE").0, ErrorKind::UndefinedConstant);
     assert_eq!(at("ENUM #ON=#NONE").0, ErrorKind::DuplicateConstant);
-    // A value not worked out as the program compiles: its own error in
-    // CONST and ENUM, a Syntax error in DATA (SmileBASIC 4.4.8).
+    // A value that cannot be evaluated as the program compiles gives its own
+    // error in CONST and ENUM, and a Syntax error in DATA (SmileBASIC 4.4.8).
     let illegal = ErrorKind::IllegalConstantExpression;
     assert_eq!(at("?1\nCONST #A=Z"), (illegal, 2, 10));
     assert_eq!(at("CONST #A=1+LEN(Z$)").0, illegal);
@@ -761,8 +762,8 @@ fn number_literals() {
 }
 
 /// A constant exists from where its CONST or ENUM stands in the source,
-/// for every line after it, DEFs and top level alike: SmileBASIC 4
-/// compiles in one pass, and DEFs where they stand.
+/// for every line after it, in DEFs and at top level: SmileBASIC 4
+/// compiles in one pass, and compiles DEFs where they are in the source.
 #[test]
 fn constants_exist_from_where_they_stand() {
     let at = |src: &str| {
@@ -961,11 +962,11 @@ fn what_follows_return_in_a_command_def() {
     for body in ["5", "A+1", "A*2", "F()", "1,2", "\"A\""] {
         assert!(!compiles(body), "{body}");
     }
-    // A function's takes a value, one.
+    // The RETURN of a function takes exactly one value.
     let source = "?1\nDEF A()\n RETURN F()\nEND\nDEF F()\nEND";
     assert!(sb_core::parser::parse(source).is_ok());
     assert!(sb_core::parser::parse("DEF A()\n RETURN 1,2\nEND").is_err());
-    // Outside a DEF, GOSUB's takes none.
+    // Outside a DEF, the RETURN of a GOSUB takes none.
     assert!(sb_core::parser::parse("RETURN 5").is_err());
 }
 
@@ -997,9 +998,9 @@ fn vsync_and_freemem_as_functions() {
     assert_eq!(output("FREEMEM OUT A:?A==FREEMEM()"), "1\n");
 }
 
-/// TEST63 on a Switch 2: GOSUBs, calls and RESTORE "PUSH" share one stack, a call
-/// taking 6 slots and 2 more for a function's value and for each argument, OUT and
-/// variable, a GOSUB 1.
+/// TEST63 on a Switch 2: GOSUBs, calls and RESTORE "PUSH" share one stack. A call
+/// takes 6 slots, and 2 more for a function's value and for each argument, OUT and
+/// variable. A GOSUB takes 1.
 #[test]
 fn nesting_goes_as_deep_as_on_real_sb4() {
     let deepest = |source: &str| {
@@ -1017,9 +1018,9 @@ fn nesting_goes_as_deep_as_on_real_sb4() {
     };
     for (source, depth, line) in [
         // A loop with a LOCATE stops at 259069 (see sb-runtime's tests).
-        // PRINT goes on into the values' room while a value fits there, so
+        // PRINT continues into the values' room while a value fits there, so
         // printing 259072 stops. Without PRINT the GOSUBs fill the room
-        // and the 259073rd stops on itself.
+        // and the 259073rd GOSUB is the one that stops.
         ("@L\nN=N+1:?N\nGOSUB @L", 259_071, 2),
         ("@L\nN=N+1:?N\nON 0 GOSUB @L", 259_071, 2),
         ("@L\nN=N+1:?N\nGOSUB \"@L\"", 259_071, 2),
@@ -1054,7 +1055,7 @@ fn nesting_goes_as_deep_as_on_real_sb4() {
     );
 }
 
-/// TEST63: INPUT VAR(name) goes by the name, also when only running it tells it.
+/// TEST63: INPUT VAR(name) uses the name, also when it is known only at run time.
 #[test]
 fn input_of_a_variable_by_name() {
     for source in [
@@ -1152,7 +1153,7 @@ fn input_and_linput() {
         run_with_input("LINPUT \"ADDR:\";L$:?LEN(L$)", &["1, MAIN ST"]).unwrap(),
         "ADDR:1, MAIN ST\n10\n"
     );
-    // Extra values are left out (checked on hardware).
+    // Extra values are ignored (checked on hardware).
     assert_eq!(
         run_with_input("INPUT A\n?A", &["1,2"]).unwrap(),
         "? 1,2\n1\n"
@@ -1363,7 +1364,7 @@ fn constant_operations_fail_when_compiled() {
         compiled("?\"B\"+(\"A\"*-1)+\"C\""),
         Some(ErrorKind::Overflow)
     );
-    // A long constant chain is worked out once, not once for each part:
+    // A long constant chain is evaluated once, not once for each part:
     // programs that write programs build such lines.
     let chain = vec!["\"ABCDEFGHIJ\"+CHR$(10)"; 200].join("+");
     assert_eq!(compiled(&format!("A$={chain}")), None);
@@ -1477,8 +1478,8 @@ fn format_strings() {
 }
 
 /// VAL skips spaces and tabs before a number, so a number FORMAT$ pads to
-/// a width reads back, and stops at a comma or a line break. Spaces after
-/// a number leave the text not a number.
+/// a width reads back, and stops at a comma or a line break. With spaces
+/// after a number, the text is not a number.
 #[test]
 fn val_reads_the_first_item() {
     let source = r#"
@@ -1540,9 +1541,9 @@ fn syntax_errors_in_a_value_are_placed_at_the_equals_sign() {
     assert_eq!(place("LOCATE 1,(\n"), (1, 1));
 }
 
-/// A division by zero of constants is placed at the `=` too; a
-/// PRINT's at the statement's start, and one found as it runs at the
-/// statement's start.
+/// A division by zero of constants is placed at the `=` too. One in a
+/// PRINT is placed at the statement's start, and so is one found as the
+/// program runs.
 #[test]
 fn folded_errors_in_a_value_are_placed_at_the_equals_sign() {
     let place = |source: &str| {
@@ -1651,7 +1652,7 @@ fn sorting() {
     assert_eq!(output(&ties.replace("{}", "RSORT ")), "20341");
 }
 
-/// SORT and RSORT check their arguments as SmileBASIC 4 does.
+/// SORT and RSORT check their arguments the same as SmileBASIC 4 does.
 #[test]
 fn sorting_checks_its_arguments() {
     let wrong = |call: &str, kind: ErrorKind, arg: Option<u8>| {
@@ -1819,7 +1820,7 @@ fn loop_ends_inside_blocks_continue() {
         output("I=0\nLOOP\n INC I:IF I<3 THEN ENDLOOP\n ?I:BREAK\nENDLOOP"),
         "3\n"
     );
-    // Only the innermost loop's.
+    // This works only for the end of the innermost loop.
     assert_eq!(
         error("FOR I=0 TO 1\nWHILE 1\nIF 1 THEN NEXT\nWEND\nNEXT"),
         (ErrorKind::NextWithoutFor, 3)
@@ -1880,8 +1881,9 @@ fn resizing_checks_each_size() {
     assert_eq!(output("DIM M[2,3]:RESIZE M,0,3:?LEN(M)"), "0\n");
 }
 
-/// Only arrays of the system's are Can't RESIZE this array: the program's
-/// own resize, made at the top, in a DEF, or given back through OUT.
+/// Only the system's arrays give Can't RESIZE this array. The program's own
+/// arrays resize, whether made at the top, in a DEF, or given back through
+/// OUT.
 #[test]
 fn programs_arrays_can_be_resized() {
     assert_eq!(
@@ -1908,7 +1910,7 @@ fn array_operations() {
         "259\n"
     );
     // The result as its own parameter, real and integer, beside another
-    // array, one shorter that goes round, and an integer one.
+    // array, one shorter that wraps around, and an integer one.
     assert_eq!(
         output(
             "DIM A#[4]:A#[0]=1:A#[1]=2:A#[2]=3:A#[3]=4:DIM B#[]=[10,20]:DIM N%[]=[1,2,3,4]\n\
@@ -2103,8 +2105,8 @@ fn restore_label_scope() {
     assert_eq!(error(src), (undefined, 1));
     let src = "RESTORE \"@L\":READ A\nDEF F\n@L\nDATA 1\nEND";
     assert_eq!(error(src), (undefined, 1));
-    // In a DEF, its own label first, then the top level's, also one
-    // defined later.
+    // In a DEF, its own label first, then the label of the top level, also
+    // one defined later.
     let src = "@L\nDATA 2\nF\nDEF F\nRESTORE @L:READ A:?A\n@L\nDATA 1\nEND";
     assert_eq!(output(src), "1\n");
     let src = "F\nDEF F\nRESTORE @M:READ A:?A\nEND\n@M\nDATA 3";
@@ -2116,7 +2118,7 @@ fn restore_label_scope() {
     let src = "F\nDEF F\nRESTORE \"0:@L\":READ A:?A\n@L\nDATA 1\nEND\n@L\nDATA 2";
     assert_eq!(output(src), "2\n");
     assert_eq!(error("F\nDEF F\nRESTORE @N\nEND"), (undefined, 3));
-    // A label string is parsed as GOTO's is.
+    // A label string is parsed the same as for GOTO.
     let illegal = ErrorKind::IllegalLabelString;
     assert_eq!(error("RESTORE \"L\"\n@L\nDATA 1"), (illegal, 1));
     assert_eq!(error("RESTORE \"6:@L\"\n@L\nDATA 1"), (illegal, 1));
@@ -2135,7 +2137,7 @@ fn arrays_hold_nothing_until_their_dim_runs() {
         "0\n"
     );
     assert_eq!(output("DIM B[2]:?TYPEOF(B)"), "6\n");
-    // Empty sizes compile, and are no numbers when the DIM runs.
+    // Empty sizes compile, and are not numbers when the DIM runs.
     assert_eq!(error("?1\nDIM A[,]"), (ErrorKind::TypeMismatch, 2));
 }
 
@@ -2186,7 +2188,7 @@ fn out_of_memory_at_the_sizes_seen_on_hardware() {
     assert_eq!(ErrorKind::OutOfMemory.code(), 11);
 }
 
-/// Requests over absurd sizes end at once.
+/// Requests over absurd sizes end immediately.
 #[test]
 fn absurd_requests_are_out_of_memory() {
     for source in [
@@ -2263,8 +2265,6 @@ fn what_small_strings_add_up_to_is_out_of_memory() {
     assert_eq!(output(source), "100000\n");
 }
 
-/// Constant strings stay in memory for the compiler as a statement compiles,
-/// and then in the program's code (TEST57).
 /// A program of TEST58 with hardly anything free, from which memory falls
 /// short of the block a smaller array needs.
 const LITTLE_FREE: &str = "DIM A%[1000001]
@@ -2324,6 +2324,8 @@ X=POP(A%)
     );
 }
 
+/// Constant strings stay in memory for the compiler as a statement compiles,
+/// and then in the program's code (TEST57).
 #[test]
 fn long_constant_strings_stop_the_program_compiling() {
     let refused = |source: &str, kind: ErrorKind| {
@@ -2344,7 +2346,7 @@ fn long_constant_strings_stop_the_program_compiling() {
         "IF 0 THEN ?\"A\"*2000000000",
         "?1\nA$=\"A\"*(1<<24)",
         "CONST #A$=\"A\"*(1<<21)",
-        // Those worked out on the way stay too.
+        // Those evaluated on the way stay too.
         "?1\nA$=\"A\"*1000000+\"B\"*1000000",
         "?1\nA$=(\"A\"*1500000)*1",
         "?1\n?\"A\"*1500000,\"B\"*1500000",
@@ -2369,7 +2371,8 @@ fn long_constant_strings_stop_the_program_compiling() {
     );
     assert_eq!(ErrorKind::OutOfCodeMemory.code(), 12);
     assert_eq!(ErrorKind::OutOfCodeMemory.message(), "Out of code memory");
-    // Through a variable it is the program's to run into, if it gets there.
+    // Through a variable, the long string is left for the program to run
+    // into, if it gets there.
     assert_eq!(output("N=2000000000:IF 0 THEN ?\"A\"*N\n?1"), "1\n");
     assert_eq!(output("N=1<<21:A$=\"A\"*N:?LEN(A$)"), "2097152\n");
 }
@@ -2384,7 +2387,7 @@ fn direct_mode_line_is_0() {
     assert_eq!(host.output, "01\n");
 }
 
-/// Direct mode has far less code memory than a slot (TEST57).
+/// DIRECT mode has far less code memory than a slot (TEST57).
 #[test]
 fn direct_mode_has_little_code_memory() {
     let compile = |line: &str| sb_core::compile_direct(line, &TextHost::default(), 0).map(|_| ());
@@ -2393,7 +2396,7 @@ fn direct_mode_has_little_code_memory() {
     assert_eq!(e.kind, ErrorKind::OutOfCodeMemory);
 }
 
-/// Statements for programs are refused in direct mode as the line
+/// Statements for programs are refused in DIRECT mode as the line
 /// compiles, so nothing on it runs. SmileBASIC 4's compilers of CONST,
 /// ENUM, RETURN, BREAK, CONTINUE, DEFOUT, DATA, READ, RESTORE, OPTION and
 /// STOP refuse before they read what follows the keyword.
@@ -2575,8 +2578,8 @@ fn compile_errors_before_a_syntax_error_come_first() {
 }
 
 /// A block that does not close is named by its own error and the line
-/// it starts on, the innermost one first; a closing keyword with no
-/// block to close by its own error, on its line.
+/// it starts on, the innermost one first. A closing keyword with no
+/// block to close is named by its own error, on its line.
 #[test]
 fn block_errors() {
     use ErrorKind as E;
@@ -2620,7 +2623,7 @@ fn block_errors() {
         at("IF 1 THEN CASE 1\nWHEN 1\nENDCASE"),
         (E::CaseWithoutEndcase, 1)
     );
-    // An IF in it that goes on past the line takes its blocks along.
+    // An IF in it that continues past the line takes its blocks along.
     assert_eq!(
         output("IF 1 THEN IF 1 THEN\nFOR I=0 TO 1\n?I;\nNEXT\nENDIF:?"),
         "01\n"
@@ -2694,7 +2697,7 @@ fn growing_by_one_needs_the_new_block_beside_the_old() {
     assert_eq!(e.detail.as_deref(), Some("PUSH"));
     let text = "VAR N=39999999:VAR S$=\"A\"*N\nPUSH S$,\"B\":?LEN(S$)";
     assert_eq!(output(text), "40000000\n");
-    // Growth that fits goes on, and what was dropped does not count.
+    // Growth that fits continues, and what was dropped does not count.
     assert_eq!(
         output(
             "VAR I:DIM A%[0],B[0],C$[0]\nFOR I=1 TO 1000:PUSH A%,I:UNSHIFT B,I:PUSH C$,\"X\":NEXT\n?LEN(A%);LEN(B);LEN(C$)"
@@ -2703,7 +2706,7 @@ fn growing_by_one_needs_the_new_block_beside_the_old() {
     );
 }
 
-/// Which argument errors name, as TEST58 saw them.
+/// The arguments that errors name, as TEST58 saw them.
 #[test]
 fn errors_name_their_arguments() {
     let wrong = |source: &str, kind: ErrorKind, arg: u8| {
@@ -2773,12 +2776,12 @@ fn type_mismatches_name_their_arguments() {
     wrong("ARYOP 0,Z,A,A", Some(1));
     wrong("BIQUAD A,Z,C", Some(1));
     wrong("FFT A,A,A,Z", Some(3));
-    // What is put into a string is no argument of its own.
+    // A value put into a string does not count as a separate argument.
     wrong("PUSH S$,1", None);
 }
 
-/// The statements and functions the compiler makes instructions of name
-/// an argument of the wrong type too.
+/// The statements and functions that the compiler turns into instructions
+/// also name an argument of the wrong type.
 #[test]
 fn compiled_commands_name_a_wrong_type() {
     for (call, name) in [
@@ -2871,7 +2874,7 @@ fn builtins_check_their_out_count_as_they_run() {
     );
 }
 
-/// What RINGCOPY looks at and in what order (TEST57).
+/// The checks RINGCOPY makes, in order (TEST57).
 #[test]
 fn ringcopy_checks_in_order() {
     let wrong = |source: &str, kind: ErrorKind, arg: Option<u8>| {
@@ -2893,7 +2896,7 @@ fn ringcopy_checks_in_order() {
     wrong("DIM A[3],B[3]:RINGCOPY A,0,B,1,-1", illegal, Some(4));
     wrong("DIM A[3],B[3]:RINGCOPY A,0,B,1,3", illegal, Some(4));
     wrong("DIM A[3],B[3]:RINGCOPY A,0,B,4,0", illegal, Some(4));
-    // Nothing to copy, whatever else there is to find.
+    // Nothing to copy, regardless of what else there is to find.
     for (source, out) in [
         ("DIM A[4],B[3]:RINGCOPY A,2,B,0 OUT E:?E", "0\n"),
         ("DIM A[0],B[3]:RINGCOPY A,2,B OUT E:?E", "0\n"),
@@ -2904,7 +2907,7 @@ fn ringcopy_checks_in_order() {
     }
     wrong("DIM A[2,4],B[3,4]:RINGCOPY A,0,B", mismatch, None);
     wrong("DIM A$[3],B$[3]:RINGCOPY A$,0,B$", mismatch, None);
-    // Int and Real mix, and a negative offset comes round from the end.
+    // Int and Real mix, and a negative offset wraps around from the end.
     assert_eq!(
         output("DIM A[4]:DIM B[]=[1,2,3]:RINGCOPY A,-1,B OUT E:?A[0];A[1];A[2];A[3];E"),
         "23012\n"
@@ -2915,7 +2918,7 @@ fn ringcopy_checks_in_order() {
     );
 }
 
-/// FOR's test takes integers by a shorter way than other numbers.
+/// FOR's test takes a shorter path for integers than for other numbers.
 #[test]
 fn for_counts_the_same_in_integers_and_reals() {
     let count = |head: &str| output(&format!("N=0:FOR I={head}:N=N+1:NEXT:?N"));
@@ -2934,7 +2937,7 @@ fn for_counts_the_same_in_integers_and_reals() {
 }
 
 /// A string constant takes no block until it is stored: POP gives its last
-/// character whatever is free.
+/// character regardless of how much memory is free.
 #[test]
 fn pop_of_a_constant_takes_no_block() {
     let got = run(
@@ -3003,9 +3006,9 @@ fn error_at(source: &str) -> (ErrorKind, u32, u32) {
 
 /// A DEF meets its variables in source order (checked on hardware).
 /// Before its VAR, a name is the global that top-level code above the DEF
-/// made, and the VAR then makes the DEF's own; with no such global, the
-/// use makes the DEF's own, and the VAR is Duplicate variable, placed at
-/// its name.
+/// made, and the VAR then makes the DEF's own variable. With no such
+/// global, the use makes the DEF's own variable, and the VAR is Duplicate
+/// variable, placed at its name.
 #[test]
 fn a_def_meets_its_variables_in_source_order() {
     assert_eq!(output("A=5\nDEF F:?A:VAR A=1:?A:END:F:?A"), "5\n1\n5\n");
@@ -3040,7 +3043,7 @@ fn an_array_named_in_its_own_sizes() {
     );
 }
 
-/// Where compile errors are placed, as ENVSTAT's columns show on hardware.
+/// The positions of compile errors, as ENVSTAT's columns show on hardware.
 #[test]
 fn compile_errors_are_placed_as_on_hardware() {
     // A function compiled in place with the wrong number of arguments:
@@ -3058,7 +3061,7 @@ fn compile_errors_are_placed_as_on_hardware() {
     assert_eq!(error_at("CASE 1:ENDCASE"), (ErrorKind::SyntaxError, 1, 8));
 }
 
-/// A number and a string are not worked out as the program compiles:
+/// A number and a string are not evaluated together as the program compiles:
 /// `A=1+"A"` is a Type mismatch as it runs (checked on hardware).
 #[test]
 fn mixed_types_fail_as_they_run() {

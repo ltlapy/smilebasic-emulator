@@ -1,6 +1,6 @@
 //! The layers the emulator draws over the screens and the editor, kept
-//! together so that all of them can be told at once that the renderer
-//! lost what they held.
+//! together so that all of them can be told at the same time that the
+//! renderer lost their contents.
 
 use sdl3::render::{Canvas, FRect};
 use sdl3::video::Window;
@@ -12,8 +12,9 @@ use crate::pointer::DrawnCursor;
 type AnyError = Box<dyn std::error::Error>;
 
 /// The emulator's UI over the screens or the editor, drawn at display
-/// resolution. The first three are one for each window, the main one and
-/// the editor's own; each is drawn and uploaded only as it changes.
+/// resolution. The first three have one layer for each window: the main
+/// window and the editor's own window. Each layer is drawn and uploaded
+/// only when it changes.
 pub struct Overlays<'a> {
     /// The debugger's panel.
     pub panel: [Layer<'a>; 2],
@@ -21,14 +22,13 @@ pub struct Overlays<'a> {
     pub bar: [Layer<'a>; 2],
     /// Everything else.
     pub overlay: [Layer<'a>; 2],
-    /// The main window's open menus and context menu, where they go apart
-    /// from its display at 1x (see `placement::menu_place`).
+    /// The main window's open menus and context menu, when they are placed
+    /// apart from its display at 1x (see `placement::menu_place`).
     pub menu: Layer<'a>,
-    /// The emulator's windows on the editor's window, at the display's
-    /// size.
+    /// The emulator's windows on the editor window, at the display size.
     pub windows: Layer<'a>,
-    /// The Simple UI's notices in the bottom right corner, at a scale of
-    /// their own (see `simple_ui::notice_place`).
+    /// The Simple UI's notices in the bottom right corner, at their own
+    /// scale (see `simple_ui::notice_place`).
     pub notice: Layer<'a>,
     /// The cursor drawn where the system shows none.
     pub cursor: DrawnCursor<'a>,
@@ -47,8 +47,8 @@ impl<'a> Overlays<'a> {
         }
     }
 
-    /// Forgets what every texture holds, as when the renderer lost them:
-    /// each is drawn and uploaded again when it is next shown.
+    /// Forgets the contents of every texture after the renderer lost them.
+    /// Each is drawn and uploaded again when it is next shown.
     pub fn forget(&mut self) {
         let layers = self.panel.iter_mut().chain(&mut self.bar);
         layers.chain(&mut self.overlay).for_each(Layer::forget);
@@ -60,7 +60,7 @@ impl<'a> Overlays<'a> {
 
     /// Copies the main window's layers to `canvas`, from the lowest up:
     /// the debugger's panel, the Simple UI's notices, the rest of the UI,
-    /// the menu bar and the menus apart.
+    /// the menu bar and the menus placed apart.
     pub fn copy_main(
         &mut self,
         canvas: &mut Canvas<Window>,
@@ -110,35 +110,36 @@ impl<'a> Overlays<'a> {
     }
 }
 
-/// Where the layers of the editor's own window go on it; see
+/// The places of the layers on the editor's own window; see
 /// [`Overlays::copy_editor`].
 pub struct EditorPlaces {
     /// The UI on the window, and its width in its own pixels.
     pub display: FRect,
     pub ui_w: u32,
-    /// The debugger's panel's corner, where the panel has a layer of its
-    /// own.
+    /// The corner of the debugger's panel, when the panel has its own
+    /// layer.
     pub panel: Option<(u32, u32)>,
     /// The menu bar shows.
     pub bar: bool,
-    /// The emulator's windows' place and their layer's width, while they
-    /// are open on this window.
+    /// The place of the emulator's windows and the width of their layer,
+    /// while they are open on this window.
     pub windows: Option<(FRect, u32)>,
 }
 
-/// Where the main window's layers go on it; see [`Overlays::copy_main`].
+/// The places of the layers on the main window; see [`Overlays::copy_main`].
 pub struct MainPlaces {
     /// The display on the window, and its width in the UI's pixels.
     pub display: FRect,
     pub display_w: u32,
-    /// The debugger's panel's corner on the display, where the panel has
-    /// a layer of its own.
+    /// The corner of the debugger's panel on the display, when the panel
+    /// has its own layer.
     pub panel: Option<(u32, u32)>,
-    /// The Simple UI's notices' place and their layer's width, while
-    /// they show.
+    /// The place of the Simple UI's notices and the width of their layer,
+    /// while they show.
     pub notice: Option<(FRect, u32)>,
     /// The menu bar shows.
     pub bar: bool,
-    /// The menus go apart from the display at 1x, there.
+    /// The place of the menus, when they are placed apart from the
+    /// display at 1x.
     pub menus: Option<MenuPlace>,
 }

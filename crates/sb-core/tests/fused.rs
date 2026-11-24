@@ -1,5 +1,6 @@
-//! Fused instructions must not be seen: a program runs the same with them as
-//! one instruction at a time, up to its errors and where each time slice ends.
+//! Fused instructions must not be visible: a program runs the same with them
+//! as one instruction at a time, including its errors and the point where
+//! each time slice ends.
 
 use sb_core::bytecode::{Compiled, Op};
 use sb_core::fuse::FastOp;
@@ -18,8 +19,8 @@ fn compiled(source: &str, fused: bool) -> Compiled {
     program
 }
 
-/// What can be seen of a run in slices of `budget` instructions: where each
-/// slice ended, how it ended, and the output.
+/// Returns the observable results of a run in slices of `budget`
+/// instructions: where each slice ended, how it ended, and the output.
 fn run(source: &str, budget: u32, fused: bool) -> (Vec<String>, String) {
     let mut host = TextHost::default();
     let mut vm = Vm::new(compiled(source, fused));
@@ -58,7 +59,8 @@ const PROGRAMS: &[&str] = &[
     "T=1:S$=\"A\":FOR I=0 TO T\n?I\nT=S$\nNEXT\n?\"AFTER\"",
     "T=1:S$=\"A\":FOR I=0 TO 1 STEP T\n?I\nT=S$\nNEXT\n?\"AFTER\"",
     "T=2\nS$=\"A\":FOR I=0 TO 3:T=T-1:NEXT\n?I:FOR J=0 TO T:J=S$\nNEXT",
-    // Arithmetic and comparisons of every kind, where they fuse and not.
+    // Arithmetic and comparisons of every kind, where they fuse and where
+    // they do not.
     "A=1:B=2:C=A+B:?C:C=A-B:?C:C=A*B:?C:C=A/B:?C:C=A DIV B:?C:C=A MOD B:?C",
     "A=7:B=2:?A<<B:?A>>B:?A AND B:?A OR B:?A XOR B:?(A*2)+(B*3):?(A*2)-(B*3)",
     "A#=1.5:B%=2:?A#+B%:?B%+A#:?A#*B%:?A#/B%:?A# DIV B%:?A# MOD B%:?A#<<B%:?A# AND B%",
@@ -258,8 +260,9 @@ const PROGRAMS: &[&str] = &[
     "DIM A[2]:?1:IF A>=0 THEN ?2",
     "A=5:B=10-A:C=2-(A*2):D=100/(A+1):E=7 MOD (A-1):F=1<<(A-3):G=3<A:H=(A*2)<4:?B;C;D;E;F;G;H",
     "K=0:IF 0==K THEN ?\"Z\"\nIF 1!=K THEN ?\"N\"\nIF K+1==1 THEN ?\"O\"\nIF (K+1)*2>=2 THEN ?\"T\"",
-    // CALL by name, found again from what it found before: in other cases,
-    // with a slot, as a function, past the names it keeps, and wrongly.
+    // CALL by name, found again from the names it found before: in other
+    // letter cases, with a slot, as a function, past the names it keeps, and
+    // wrongly.
     CALL_CASES,
     CALL_FUNCTION,
     CALLS_BY_NAME,
@@ -285,7 +288,7 @@ const PROGRAMS: &[&str] = &[
     "DEF F(A%)\nRETURN A%*3\nEND\nX#=1.5:?F(X#):A%=2147483647:?F(A%)",
 ];
 
-/// CALL of one DEF in other cases and with its slot.
+/// CALL of one DEF in other letter cases and with its slot.
 const CALL_CASES: &str =
     "DEF P A,B\n?A+B\nEND\nFOR I=0 TO 3:CALL \"P\",I,2:CALL \"p\",I,3:CALL \"0:P\",I,4:NEXT";
 
@@ -293,7 +296,8 @@ const CALL_CASES: &str =
 const CALL_FUNCTION: &str =
     "DEF F(A)\nRETURN A*2\nEND\nFOR I=0 TO 2:CALL \"F\",I OUT X:?X:CALL \"ABS\",-I OUT Y:?Y:NEXT";
 
-/// Nine DEFs called by name in turn, one more than the VM keeps found.
+/// Nine DEFs called by name in turn, one more than the number of found DEFs
+/// the VM keeps.
 const CALLS_BY_NAME: &str = "\
 DEF D1 A:?1;A:END
 DEF D2 A:?2;A:END
@@ -413,7 +417,7 @@ const NESTED_INT: &str =
     "DIM R%[4],K%[4]:K%[1]=3:R%[3]=9:I=1:?R%[K%[I]]:R%[K%[I]]=5:?R%[3]:V=R%[K%[I]]+1:?V";
 const NESTED_REAL: &str = "DIM R#[4],K#[4]:K#[1]=2.5:R#[2]=1.5:I=1:?R#[K#[I]]:R#[K#[I]]=7:?R#[2]";
 
-/// What ON, CASE and indexes by arrays print, fused.
+/// The output of ON, CASE and indexes by arrays, fused.
 #[test]
 fn on_case_and_nested_indexes_print_what_they_should() {
     for (source, expected) in [
@@ -438,7 +442,7 @@ fn on_case_and_nested_indexes_print_what_they_should() {
     }
 }
 
-/// What DEF calls print, fused.
+/// The output of DEF calls, fused.
 #[test]
 fn def_calls_print_what_they_should() {
     for (source, expected) in [
@@ -457,7 +461,7 @@ fn def_calls_print_what_they_should() {
     }
 }
 
-/// What CALL prints when it finds DEFs by names it found before.
+/// The output of CALL when it finds DEFs by names it found before.
 #[test]
 fn calls_by_name_print_what_they_should() {
     let nine = (0..=20)
@@ -479,7 +483,7 @@ fn calls_by_name_print_what_they_should() {
     }
 }
 
-/// DEF calls fill the stack as without fusing.
+/// DEF calls fill the stack the same as without fusing.
 #[test]
 fn def_calls_overflow_as_without_fusing() {
     for program in [
@@ -518,7 +522,7 @@ fn def_calls_are_fused() {
         .filter(|f| matches!(f.op, FastOp::CallDef { .. }))
         .count();
     assert_eq!(calls, 2);
-    // F(I) reads its argument where it is.
+    // F(I) reads its argument in place.
     assert!(
         (program.fast.iter()).any(|f| matches!(f.op, FastOp::CallArgs { argc: 1, .. })),
         "{:?}",
@@ -531,7 +535,7 @@ fn def_calls_are_fused() {
 
 /// A function whose body is one RETURN of numbers worked out from its
 /// arguments, globals and constants is made in the chain of the statement
-/// that calls it; one with anything else in its body is called.
+/// that calls it. A function with anything else in its body is called.
 #[test]
 fn leaf_functions_are_made_in_chains() {
     for (source, made) in [
@@ -568,8 +572,8 @@ fn leaf_functions_are_made_in_chains() {
     }
 }
 
-/// GOSUBs fill the stack as without fusing, which takes longer slices than
-/// [`programs_run_the_same_fused_or_not`] uses.
+/// GOSUBs fill the stack the same as without fusing. That takes longer
+/// slices than [`programs_run_the_same_fused_or_not`] uses.
 #[test]
 fn gosubs_overflow_as_without_fusing() {
     for program in [
@@ -587,8 +591,8 @@ fn gosubs_overflow_as_without_fusing() {
     }
 }
 
-/// None of these leaves anything to `step` but DIM, the end of the program
-/// and the FOR test that only stands in a larger entry.
+/// None of these leaves anything to `step` except DIM, the end of the
+/// program, and the FOR test, which is only part of a larger entry.
 #[test]
 fn on_case_and_nested_indexes_are_fused() {
     for source in [
@@ -622,8 +626,9 @@ fn programs_run_the_same_fused_or_not() {
     }
 }
 
-/// Calls keep their arguments on the stack while they run. Whatever comes of a
-/// call, the stack and the error must be as if they had been taken off first.
+/// Calls keep their arguments on the stack while they run. For any result of
+/// a call, the stack and the error must be as if the arguments had been taken
+/// off first.
 #[test]
 fn calls_leave_the_stack_as_it_should_be() {
     for (source, expected) in [
@@ -711,8 +716,8 @@ fn a_call_runs_again_after_counting_memory() {
     assert_eq!(host.output, "4000000\n40\n");
 }
 
-/// Variables the fused code reads are the same ones the rest of the program and
-/// the debugger see, constants being kept out of their view.
+/// The variables that the fused code reads are the same ones that the rest of
+/// the program and the debugger see, and constants are kept out of their view.
 #[test]
 fn constants_are_not_variables() {
     let mut host = TextHost::default();
@@ -725,7 +730,7 @@ fn constants_are_not_variables() {
     assert!(!vm.program().constants.is_empty());
 }
 
-/// Constants beside an operator are carried in the entry or step, from
+/// Constants next to an operator are carried in the entry or step, from
 /// either side where the sides can change places.
 #[test]
 fn constants_are_carried_in_entries_and_steps() {
@@ -802,10 +807,10 @@ fn chains_take_statements_of_several_operators() {
     );
 }
 
-/// A long run of pushes, as an array literal of image data makes, takes
-/// time in proportion to its length to fuse. Looking for a chain from
-/// each of its addresses to its end took time squared in it: 45 seconds
-/// for these 60000 numbers in a test build, against well under one.
+/// A long run of pushes, like the one an array literal of image data makes,
+/// takes time proportional to its length to fuse. Looking for a chain from
+/// each of its addresses to its end took time quadratic in its length: 45
+/// seconds for these 60000 numbers in a test build, against well under one.
 #[test]
 fn long_array_literals_fuse_quickly() {
     let numbers: Vec<String> = (0..60_000).map(|i| (i % 1000).to_string()).collect();
@@ -818,8 +823,8 @@ fn long_array_literals_fuse_quickly() {
     assert_eq!(run(&source, 1_000_000, true).1, "1000\n");
 }
 
-/// A program of many loops takes time in proportion to its length to
-/// compile and start, native code looked for included. With the `jit`
+/// A program of many loops takes time proportional to its length to
+/// compile and start, including the search for native code. With the `jit`
 /// feature, looking for each loop's end from the program's end took 43
 /// seconds for these 40000 loops in a test build. Their bodies join
 /// strings, so no native code is made and the test stays short.
@@ -875,8 +880,8 @@ fn native_loops_run_as_the_interpreter() {
             }
         }
     }
-    // With the feature, the native code is what ran them, but for the
-    // real FOR, which it leaves to the interpreter.
+    // With the feature, the native code ran them, except the real FOR,
+    // which it leaves to the interpreter.
     if cfg!(feature = "jit") {
         for source in NATIVE_LOOPS.iter().filter(|s| !s.contains("STEP 0.5")) {
             let mut host = TextHost::default();
@@ -894,8 +899,8 @@ fn most_loops_are_fused() {
     assert!(program.fast.iter().any(|f| f.len > 3), "{:?}", program.fast);
 }
 
-/// Budgets that end in the middle of what would be fused, for each thing that
-/// can stop a program.
+/// Budgets that end in the middle of code that would be fused, for each thing
+/// that can stop a program.
 const BUDGETS: [u32; 5] = [1, 4, 9, 23, 41];
 
 const LOOP: &str = "\
@@ -927,8 +932,9 @@ DEF PQ N OUT M
 END
 ";
 
-/// Each line a run stops at, given that it first ran `budget` instructions
-/// fused, and how `stop` asks for the stops.
+/// Each line a run stops at, after it first ran `budget` instructions,
+/// with `stop` setting the stops. The run uses the fused code only when
+/// `fused` is true.
 fn stops(fused: bool, budget: u32, stop: impl Fn(&mut Vm)) -> Vec<(String, u64)> {
     let mut host = TextHost::default();
     let mut vm = Vm::new(compiled(LOOP, fused)).in_slot(0);
@@ -970,7 +976,8 @@ fn breakpoints_stop_as_without_fusing() {
     for budget in BUDGETS {
         let set = |vm: &mut Vm| vm.set_breakpoints(0, &[(4, None)]);
         let fused = stops(true, budget, set);
-        // The line in the loop, once each time round from wherever it began.
+        // The line in the loop, once per iteration of the program's loop,
+        // from any point where the run began.
         assert!(fused.len() >= 5, "{fused:?}");
         assert_eq!(fused, stops(false, budget, set));
     }
@@ -1003,11 +1010,12 @@ fn conditional_breakpoints_and_watches_stop_as_without_fusing() {
     }
 }
 
-/// The + button comes between slices: wherever a slice ends in fused code, it
-/// finds the program where it would have been.
+/// The + button comes between slices: at any point where a slice ends in
+/// fused code, it finds the program where it would have been.
 #[test]
 fn on_break_jumps_as_without_fusing() {
-    // The second's statements run as chains, the last two as one.
+    // The statements of the second source run as chains, the last two as
+    // one chain.
     let sources = [
         "ON BREAK GOTO @B\nA=0\nWHILE 1\n A=A+1:C=A*2\nWEND\n@B\n?A\n?\"OUT\"",
         "ON BREAK GOTO @B\nA=0\nWHILE 1\n A=(A+1)*3 AND 255\n C=(A-1)*(A+1):D=C*2-A\nWEND\n@B\n?A;C;D",
@@ -1027,8 +1035,8 @@ fn on_break_jumps_as_without_fusing() {
     }
 }
 
-/// Without ON BREAK the host stops the program between slices, and the place
-/// it stopped at goes on as if nothing had happened.
+/// Without ON BREAK the host stops the program between slices, and the
+/// program continues from the place it stopped at as if nothing had happened.
 #[test]
 fn a_stopped_slice_goes_on_as_without_fusing() {
     let source = "A=0\nFOR I=0 TO 50\n A=A+I:B=A*2\n STOP\nNEXT\n?A";
@@ -1047,8 +1055,8 @@ fn a_stopped_slice_goes_on_as_without_fusing() {
     assert_eq!(run(true), run(false));
 }
 
-/// A statement that fails names its own line and statement, whichever
-/// instruction of a fused group it was.
+/// A statement that fails names its own line and statement, no matter which
+/// instruction of a fused group failed.
 #[test]
 fn errors_name_their_statement() {
     let at = |source: &str| {
@@ -1082,7 +1090,7 @@ fn errors_name_their_statement() {
     }
 }
 
-/// What `source` prints and the code of the error it stops on, or 0.
+/// The output of `source` and the code of the error it stops on, or 0.
 fn outcome(source: &str, fused: bool) -> (String, i32) {
     let mut host = TextHost::default();
     let mut vm = Vm::new(compiled(source, fused));
@@ -1128,7 +1136,7 @@ fn negating_the_minimum_wraps() {
     check_all("A=&H7FFFFFFF", "Y=-A", "-2147483647", 0);
     // Binary minus still gives a real.
     check_all("A=&H80000000:Z=0", "Y=Z-A", "2147483648", 0);
-    // Worked out when it compiles, the same way.
+    // Computed at compile time, the same way.
     assert_eq!(outcome("?-&H80000000", true), ("-2147483648\n".into(), 0));
 }
 
@@ -1192,7 +1200,7 @@ fn bit_operators_saturate_reals() {
     check_all("X=2147483648", "Y=TYPEOF(X AND -1)", "1", 0);
 }
 
-/// Infinity and NaN made at run time, as TEST66 made them.
+/// Infinity and NaN made at run time, the same way TEST66 made them.
 const INF_NAN: &str = "A=1E308:B=10:F=A*B:N=F-F:Z=-1:O=0:P=1:S=7";
 
 /// A NaN operand of a bit operator is 0, with no error, and an infinity
@@ -1236,9 +1244,9 @@ fn int_array_stores_take_nan_as_zero() {
     check_all(&setup, "M%[0]=F:Y=M%[0]", "", 9);
 }
 
-/// DIV and MOD check a real operand as an int array store does: outside
-/// -2147483648..2147483647 before truncation is Overflow, and a NaN is 0
-/// (TEST66).
+/// DIV and MOD check a real operand the same way an int array store does:
+/// outside -2147483648..2147483647 before truncation is Overflow, and a NaN
+/// is 0 (TEST66).
 #[test]
 fn div_and_mod_check_the_real() {
     for (setup, statement, printed, code) in [
@@ -1263,7 +1271,8 @@ fn div_and_mod_check_the_real() {
     check_all(INF_NAN, "Y=TYPEOF(N MOD S)", "1", 0);
 }
 
-/// PUSH and UNSHIFT check a real as an int array store does (TEST66).
+/// PUSH and UNSHIFT check a real the same way an int array store does
+/// (TEST66).
 #[test]
 fn push_checks_the_real() {
     for (value, printed, code) in [
@@ -1291,8 +1300,9 @@ fn error_of(source: &str) -> sb_core::error::Error {
     fused
 }
 
-/// The builtins SmileBASIC 4 is seen to name in an error, as it names them,
-/// and the argument ENVSTAT gives (TEST66). Operators name nothing.
+/// The builtins that SmileBASIC 4 is seen to name in an error, in the form
+/// it names them, and the argument that ENVSTAT gives (TEST66). Operators
+/// name nothing.
 #[test]
 fn builtin_errors_name_the_command() {
     for (source, message, arg) in [
@@ -1380,7 +1390,7 @@ fn builtin_errors_name_the_command() {
 mod common;
 use common::CmdHost;
 
-/// [`run`] on a host with commands of its own, which it compiles with.
+/// [`run`] on a host with its own commands, which it also compiles with.
 fn run_on_host(source: &str, budget: u32, fused: bool) -> (Vec<String>, String) {
     let mut host = CmdHost::default();
     let mut program = sb_core::compile(source, &host).unwrap_or_else(|e| panic!("{source}: {e}"));
@@ -1426,7 +1436,7 @@ const HOST_PROGRAMS: &[&str] = &[
 ];
 
 /// Host calls made fused leave the same stops, output, errors and counts as
-/// made by `step`, in slices that end anywhere.
+/// calls made by `step`, in slices that end at any point.
 #[test]
 fn host_calls_run_the_same_fused_or_not() {
     for program in HOST_PROGRAMS {
@@ -1436,8 +1446,8 @@ fn host_calls_run_the_same_fused_or_not() {
             assert_eq!(fused, plain, "{program} in slices of {budget}");
         }
     }
-    // GOSUBs that fill the stack's room for values, which a command given
-    // arguments then finds full, in the longer slices that take.
+    // GOSUBs that fill the room for values on the stack, which a command
+    // given arguments then finds full, in the longer slices that this takes.
     for program in [
         "?1:GOSUB @S\n@S:PUT 1:GOSUB @S",
         "?1:GOSUB @S\n@S:A=GET():GOSUB @S",
@@ -1469,7 +1479,7 @@ fn host_calls_are_fused() {
 }
 
 /// A debugger sees each DEF call's own variables, and changes one of them,
-/// with calls under way inside calls.
+/// with calls in progress inside calls.
 #[test]
 fn each_call_keeps_its_own_variables() {
     let source = "\
@@ -1512,7 +1522,8 @@ FOR I=0 TO 1:A 5+I:NEXT
     assert_eq!(fused, run(false));
 }
 
-/// Runs `program` as given, fused code and all, in slices of `budget`.
+/// Runs `program` unchanged, including its fused code, in slices of
+/// `budget`.
 fn run_program(program: Compiled, budget: u32) -> (Vec<String>, String) {
     let mut host = TextHost::default();
     let mut vm = Vm::new(program);
@@ -1528,7 +1539,7 @@ fn run_program(program: Compiled, budget: u32) -> (Vec<String>, String) {
 }
 
 /// A host whose CALL SPRITE goes through a fixed list of callbacks, set by
-/// sprite number, with CALL TEXT's one.
+/// sprite number, and one callback for CALL TEXT.
 struct Callbacking {
     text: TextHost,
     sprites: &'static [(i32, &'static str)],
@@ -1619,9 +1630,9 @@ fn run_callbacks(
     panic!("{source}: did not end");
 }
 
-/// Callbacks of CALL SPRITE, fused, run as one instruction at a time: DEFs
-/// found by name again, labels, CALL TEXT inside one, CALLIDX(), and DEFs
-/// that cannot be callbacks.
+/// Callbacks of CALL SPRITE run the same fused as they do one instruction at
+/// a time: DEFs found by name again, labels, CALL TEXT inside one,
+/// CALLIDX(), and DEFs that cannot be callbacks.
 #[test]
 fn callbacks_run_the_same_fused_or_not() {
     const SOURCE: &str = "\
@@ -1681,11 +1692,12 @@ BIG:SMALL:BIG:SMALL
 ";
 
 /// An entry that names more of a DEF's variables than the running DEF has,
-/// wherever it came from: here one of BIG's entries, put in SMALL's place.
-/// With `unchecked-vars`, which reads places without checking each, the VM
-/// must leave it to `step`, and the program prints what it prints unfused;
-/// in a debug build, a read past the DEF's variables would fail its
-/// assertion. Without the feature, the read's own bounds check stops it.
+/// from any source: here one of BIG's entries, put in place of an entry of
+/// SMALL. With `unchecked-vars`, which reads places without checking each,
+/// the VM must leave it to `step`, and the program prints the same output as
+/// without fusing. In a debug build, a read past the DEF's variables would
+/// fail its assertion. Without the feature, the bounds check of the read
+/// itself stops it.
 #[test]
 fn entries_naming_more_variables_than_the_def_has_run_from_code() {
     let mut program = compiled(BIG_AND_SMALL, true);
@@ -1696,7 +1708,7 @@ fn entries_naming_more_variables_than_the_def_has_run_from_code() {
     let (big, small) = (adds[0], adds[1]);
     assert_eq!((program.fast[big].need, program.fast[small].need), (10, 1));
     program.fast[small].op = program.fast[big].op;
-    // A need set by hand does not count: the VM works it out again.
+    // A need set by hand does not count: the VM computes it again.
     program.fast[small].need = 0;
     let expected = run(BIG_AND_SMALL, 1_000_000, false);
     assert_eq!(expected.1, "1\n1\n1\n1\n");
@@ -1722,7 +1734,7 @@ fn entries_naming_more_variables_than_the_def_has_run_from_code() {
     assert!(cfg!(feature = "unchecked-vars") || stopped > 0);
 }
 
-/// Each entry's need is the locals it names, by a count of its own.
+/// Each entry's need is the locals it names, by a separate count.
 #[test]
 fn each_entry_needs_the_locals_it_names() {
     let more = [BIG_AND_SMALL, CONSTANTS_IN_DEF, DEF_OUT, DEF_RECURSIVE];

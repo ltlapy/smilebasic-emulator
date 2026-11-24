@@ -1,5 +1,5 @@
-//! BEEP's sounds: up to 16 at once, each on a handle that BEEPPIT,
-//! BEEPVOL, BEEPPAN and BEEPSTOP change.
+//! BEEP's sounds: up to 16 at the same time, each on a handle that
+//! BEEPPIT, BEEPVOL, BEEPPAN and BEEPSTOP change.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -16,16 +16,18 @@ pub const HANDLES: usize = 16;
 /// The note BEEP plays instruments at.
 // UNVERIFIED: SmileBASIC's note for BEEP 256 to 383.
 const INSTRUMENT_NOTE: i32 = 69;
-/// How long an instrument sounds before it is let go.
+/// The frames an instrument sounds before it is released.
 // UNVERIFIED: how long BEEP holds an instrument's note.
 const INSTRUMENT_FRAMES: u32 = 30;
-/// Frames an instrument's handle stays taken after letting go, for the
+/// Frames an instrument's handle stays taken after the release, for the
 /// note to die away.
 const RELEASE_FRAMES: u32 = 60;
-/// BEEP's volume a waveform or preset effect plays at as it is, as BGMPLAY's
-/// is: it is a linear gain, not squared as MML's `V` is.
+/// The BEEP volume at which a waveform or preset effect plays unchanged,
+/// the same as BGMPLAY's volume: it is a linear gain, not squared like
+/// MML's `V`.
 const WAVE_VOLUME: f32 = 64.0;
-/// How loud BEEP's default leaves an instrument's note, by the note at `V127`.
+/// The level of an instrument's note at BEEP's default, relative to the
+/// note at `V127`.
 const INSTRUMENT_LEVEL: f32 = 70.0 / 127.0;
 
 /// The channel volume for BEEP's `volume` on an instrument, which squares it:
@@ -36,9 +38,9 @@ pub(crate) fn instrument_volume(volume: i32) -> i32 {
 }
 
 /// Samples from the start of a waveform's sound to the end of its note, at
-/// `ticks` of [`wave::BEEP_TICKS_A_SECOND`]. The sound engine moves on a
-/// step at a time, 0.96 of these ticks in each, the first step included;
-/// the note's level then takes one more step to fall.
+/// `ticks` of [`wave::BEEP_TICKS_A_SECOND`]. The sound engine advances one
+/// step at a time, 0.96 of these ticks per step, the first step included.
+/// The note's level then takes one more step to fall.
 fn note_end(ticks: u64) -> usize {
     // A waveform WAVSETA gives 1 Hz holds its note for billions of ticks, more samples
     // than a 32-bit usize counts.
@@ -47,7 +49,8 @@ fn note_end(ticks: u64) -> usize {
 }
 
 /// Adds `voice` to `notes`, which holds [`MAX_VOICES`] at most: the oldest
-/// makes way. The list takes its memory once, when the first note joins it.
+/// is removed. The list allocates its memory once, when the first note is
+/// added.
 fn pile(notes: &mut Vec<wave::Voice>, voice: wave::Voice) {
     if notes.capacity() == 0 {
         notes.reserve_exact(MAX_VOICES);
@@ -83,11 +86,11 @@ impl WaveNote {
         }
     }
 
-    /// Ends the note. With the repeat flag the next pass starts in the same
-    /// place, the old notes dying away over it however long their release
-    /// takes, and this gives the samples until that one ends. With `full`,
-    /// when all the sounds have as many old notes as they may, this note's
-    /// oldest makes way.
+    /// Ends the note. With the repeat flag, the next pass starts in the same
+    /// place while the old notes die away over it, however long their
+    /// release takes, and this returns the samples until that pass ends.
+    /// With `full`, set when all the sounds have as many old notes as they
+    /// may, the oldest of this note's old notes is removed.
     fn end_note(&mut self, pitch: i32, pan: i32, full: bool) -> Option<usize> {
         if !self.wave.beep_repeats {
             self.voice.release();
@@ -139,7 +142,7 @@ enum Sounding {
         release: u32,
     },
     Wave(Box<WaveNote>),
-    /// A preset effect: a sequence on a synthesizer of its own, as it may
+    /// A preset effect: a sequence on its own synthesizer, because it may
     /// take several channels. `tail` counts the frames left after it
     /// ends, for its notes to die away.
     Sequence {
@@ -158,7 +161,7 @@ struct Beep {
     /// debugger.
     sound: i32,
     pitch: i32,
-    /// The pitch at the start, in cents: what BEEPPIT bends from.
+    /// The pitch at the start, in cents: the pitch BEEPPIT bends from.
     start_pitch: i32,
     volume: i32,
     pan: i32,
@@ -178,11 +181,11 @@ pub struct Beeps {
     decoded: Shared,
     synth: Option<Box<dyn Synth>>,
     beeps: Vec<Option<Beep>>,
-    /// Which handle the next BEEP tries first: it goes on rising, whether
-    /// the last has ended or not, and round after the last handle.
+    /// The handle the next BEEP tries first. It keeps rising, whether the
+    /// last has ended or not, and wraps around after the last handle.
     next: usize,
-    /// Notes of waveforms whose handles have gone, falling as their
-    /// envelopes' releases say, at the gain they had.
+    /// Notes of waveforms whose handles have gone, falling as the releases
+    /// of their envelopes say, at the gain they had.
     falling: Vec<wave::Voice>,
     scratch: [Vec<f32>; 2],
     wave_scratch: [Vec<f32>; 2],
@@ -215,9 +218,10 @@ impl Beeps {
         }
     }
 
-    /// The next handle that no program holds to a sound still going, which
-    /// ends whatever played on it before; `None` if all are held. A handle
-    /// nobody took back goes to the next BEEP that gets there.
+    /// The next handle that no program holds to a sound still playing,
+    /// which ends anything that played on it before; `None` if all are
+    /// held. A handle nobody took back goes to the next BEEP that gets
+    /// there.
     fn handle(&mut self) -> Option<usize> {
         let h = (0..HANDLES)
             .map(|i| (self.next + i) % HANDLES)
@@ -245,8 +249,8 @@ impl Beeps {
     }
 
     /// Plays BEEP's `sound`, an instrument (`program` 0 to 127) or a
-    /// waveform, or holds a handle for a preset effect, and gives the
-    /// handle, which `keep` makes the program's while the sound goes on.
+    /// waveform, or holds a handle for a preset effect, and returns the
+    /// handle. With `keep`, the program holds it while the sound continues.
     /// When the program holds all of them, nothing plays and there is no
     /// handle.
     pub fn play(
@@ -344,9 +348,9 @@ impl Beeps {
         self.mix(h);
     }
 
-    /// Ends what plays on a handle, which frees it. A waveform's notes are
-    /// let go and fall on their own, as their releases say: at release 127
-    /// that is the sound engine's one step.
+    /// Ends the sound on a handle, which frees the handle. A waveform's
+    /// notes are released and fall on their own, as their releases say: at
+    /// release 127 that is one step of the sound engine.
     fn stop_now(&mut self, h: usize) {
         let Some(b) = self.beeps[h].take() else {
             return;
@@ -428,8 +432,8 @@ impl Beeps {
             }
         }
         // A synthesizer with nothing sounding would add zeros, which leave
-        // the buffers as they are: they start at 0 and only take sums, and
-        // so never hold -0.
+        // the buffers unchanged: they start at 0 and only take sums, and so
+        // never hold -0.
         if let Some(s) = self.synth.as_mut().filter(|s| !s.silent()) {
             let [l, r] = &mut self.scratch;
             l.clear();
@@ -504,9 +508,10 @@ impl Beeps {
                             player.tick(synth.as_mut());
                             *until_tick += player.tick_samples(RATE);
                         }
-                        // Once the sequence has ended no tick comes, and the
-                        // notes die away in one run: a sample at a time, the
-                        // tail's 60 frames cost more than the effect did.
+                        // Once the sequence has ended, no tick comes, and the
+                        // notes die away in one run: rendered one sample at a
+                        // time, the tail's 60 frames cost more than the effect
+                        // did.
                         let chunk = match ended {
                             true => n - done,
                             false => ((until_tick.ceil() as usize).max(1)).min(n - done),
@@ -522,7 +527,7 @@ impl Beeps {
                         false => balance(b.pan),
                     };
                     if !sounded {
-                        // Zeros, which leave the buffers as they are.
+                        // Zeros, which leave the buffers unchanged.
                         if !b.fade.done() {
                             (0..n).for_each(|_| b.fade.step_sample());
                         }
@@ -578,7 +583,7 @@ impl Beeps {
     }
 }
 
-/// Left and right gains that move a stereo sound towards one side: 64
+/// Left and right gains that move a stereo sound toward one side: 64
 /// keeps both, 0 and 127 silence the other side. Only for SoundFonts,
 /// whose synthesizer cannot pan an effect's voices.
 fn balance(pan: i32) -> (f32, f32) {
@@ -586,7 +591,7 @@ fn balance(pan: i32) -> (f32, f32) {
     (((127.0 - p) / 63.5).min(1.0), (p / 63.5).min(1.0))
 }
 
-/// What BEEP plays.
+/// The sound BEEP plays.
 pub enum BeepSound {
     Preset,
     /// SmileBASIC 4's own effect, imported.
@@ -644,7 +649,7 @@ mod tests {
         beeps.stop(h, 0);
         assert!(beeps.beeps[h].is_none());
         assert_eq!(beeps.falling.len(), MAX_VOICES);
-        // A second lot pushes the first out, and the memory stays as it was.
+        // A second set pushes the first out, and the memory stays unchanged.
         let h = beeps.play(224, endless(), 0, 64, 64, true).unwrap();
         render(&mut beeps, 120);
         beeps.stop(h, 0);
@@ -693,8 +698,8 @@ mod tests {
         assert!(beeps.falling.capacity() == 0);
     }
 
-    /// A preset effect that ends dies away in one run of samples a frame:
-    /// to the bit what it gave a sample at a time.
+    /// A preset effect that ends dies away in one run of samples per frame,
+    /// bit for bit the same as it did one sample at a time.
     #[test]
     fn an_effect_dies_away_as_it_did_a_sample_at_a_time() {
         use crate::sound::sampler::tests::{ORGAN, bank};
@@ -708,7 +713,7 @@ mod tests {
         let n = 800;
         let mut beeps = Beeps::new(Some(&instruments));
         beeps.play(0, BeepSound::Sequence(seq.clone()), 0, 64, 64, false);
-        // The loop as it was, which rendered the tail a sample at a time.
+        // The old loop, which rendered the tail one sample at a time.
         let mut synth = instruments.synth(&Decoded::new());
         let mut player = Player::new(seq);
         player.set_pitch(0, synth.as_mut());

@@ -29,8 +29,8 @@ fn arith(
     Ok(Value::Real(real(lhs.to_real()?, rhs.to_real()?)))
 }
 
-/// DIV and MOD: a real operand is checked as a store into an int array
-/// checks it, so 2147483647.5 overflows and a NaN is 0.
+/// DIV and MOD: a real operand is checked the same way as a store into an
+/// int array, so 2147483647.5 overflows and a NaN is 0.
 // UNVERIFIED: a NaN in DIV, and a NaN divisor (0, so Divide by zero), as
 // in MOD.
 fn int_op(lhs: &Value, rhs: &Value, f: impl Fn(i32, i32) -> Result<i32>) -> Result<Value> {
@@ -43,8 +43,8 @@ fn bit_op(lhs: &Value, rhs: &Value, f: impl Fn(i32, i32) -> i32) -> Result<Value
     Ok(Value::Int(f(lhs.to_bits()?, rhs.to_bits()?)))
 }
 
-/// The shift count is taken modulo 32, as the AArch64 shift instructions on
-/// the Switch do.
+/// The shift count is taken modulo 32, the same as the AArch64 shift
+/// instructions on the Switch do.
 fn shift_count(n: i32) -> u32 {
     (n & 31) as u32
 }
@@ -65,7 +65,7 @@ fn compare_with(lhs: &Value, rhs: &Value, accept: fn(Ordering) -> bool) -> Resul
     Ok(bool_value(compare(lhs, rhs)?.is_some_and(accept)))
 }
 
-/// `a+b` for strings; out of line, for arithmetic to stay as short as it is.
+/// `a+b` for strings; out of line, so that arithmetic stays short.
 #[inline(never)]
 fn joined(a: &StrRef, b: &StrRef) -> Result<Value> {
     let (a, b) = (a.borrow(), b.borrow());
@@ -85,8 +85,9 @@ fn repeated(s: &StrRef, count: usize) -> Result<Value> {
     Ok(Value::Str(new_str(s.repeat(count))))
 }
 
-/// What [`binary`] gives for the operators programs mostly use on two
-/// integers, when that is an integer again. `None` leaves it to [`binary`].
+/// Returns the result of [`binary`] for the operators programs use most on
+/// two integers, when that result is also an integer. `None` leaves it to
+/// [`binary`].
 #[inline]
 pub fn binary_ints(op: BinaryOp, a: i32, b: i32) -> Option<i32> {
     use BinaryOp as B;
@@ -112,8 +113,8 @@ pub fn binary_ints(op: BinaryOp, a: i32, b: i32) -> Option<i32> {
     }
 }
 
-/// What [`binary`] gives for the operators programs mostly use on two reals.
-/// `None` leaves it to [`binary`].
+/// Returns the result of [`binary`] for the operators programs use most on
+/// two reals. `None` leaves it to [`binary`].
 #[inline(always)]
 fn binary_reals(op: BinaryOp, a: f64, b: f64) -> Option<Num> {
     use BinaryOp as B;
@@ -133,9 +134,9 @@ fn binary_reals(op: BinaryOp, a: f64, b: f64) -> Option<Num> {
     })
 }
 
-/// What [`binary`] gives on two numbers when it cannot fail and is quick to
-/// work out. `None` leaves it to [`binary`], which says what went wrong, if
-/// anything did.
+/// Returns the result of [`binary`] on two numbers when it cannot fail and is
+/// quick to compute. `None` leaves it to [`binary`], which reports the
+/// error, if there is one.
 #[inline(always)]
 pub fn binary_numbers(op: BinaryOp, lhs: &Value, rhs: &Value) -> Option<Num> {
     match (lhs, rhs) {
@@ -208,8 +209,8 @@ pub fn binary(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value> {
     }
 }
 
-/// What [`unary`] gives on a number when it cannot fail. `None` leaves it to
-/// [`unary`].
+/// Returns the result of [`unary`] on a number when it cannot fail. `None`
+/// leaves it to [`unary`].
 #[inline(always)]
 pub fn unary_number(op: UnaryOp, value: &Value) -> Option<Num> {
     match (op, value) {
@@ -237,7 +238,8 @@ pub fn unary(op: UnaryOp, value: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    /// The integer path must answer as the full one does, or leave it to it.
+    /// The integer path must return the same result as the full one, or leave
+    /// the operation to it.
     #[test]
     fn binary_ints_agrees_with_binary() {
         use BinaryOp as B;
@@ -290,8 +292,8 @@ mod tests {
         }
     }
 
-    /// The quick path on numbers must answer as the full one does, whatever the
-    /// operator, or leave it to it.
+    /// The quick path on numbers must return the same result as the full one
+    /// for any operator, or leave the operation to it.
     #[test]
     fn binary_numbers_agrees_with_binary() {
         use BinaryOp as B;

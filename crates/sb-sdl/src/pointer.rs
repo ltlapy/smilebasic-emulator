@@ -1,7 +1,8 @@
 //! The mouse cursor the emulator draws itself where the system shows
-//! none, as on a handheld whose KMSDRM display has no cursor: an arrow
-//! with its tip at the pointer, over everything else, that fades out when
-//! the pointer stays still, as SmileBASIC 4's does.
+//! none, for example on a handheld whose KMSDRM display has no cursor. It
+//! is an arrow with its tip at the pointer, over everything else, that
+//! fades out when the pointer stays still, the same as SmileBASIC 4's
+//! cursor does.
 
 use std::time::{Duration, Instant};
 
@@ -11,14 +12,15 @@ use sdl3::video::{Window, WindowContext};
 
 type AnyError = Box<dyn std::error::Error>;
 
-/// The variable that picks the cursor: `drawn` for the emulator's own,
-/// `system` for the system's, whatever the video driver.
+/// The variable that picks the cursor: `drawn` for the emulator's own
+/// cursor, `system` for the system cursor, regardless of the video driver.
 pub const CURSOR_VAR: &str = "SB_CURSOR";
 
 /// Whether the emulator draws the cursor itself, by `var` (the value of
-/// [`CURSOR_VAR`]), or else by SDL's video `driver`: KMSDRM, which
+/// [`CURSOR_VAR`]), or else by SDL's video `driver`. KMSDRM, which
 /// handhelds without a desktop use, shows no cursor without a mouse
-/// plugged in, and the emulator's cursor is the same with one or without.
+/// plugged in, and the emulator's cursor is the same with a mouse or
+/// without one.
 pub fn draws_own(driver: &str, var: Option<&str>) -> bool {
     match var {
         Some("drawn") => true,
@@ -33,9 +35,9 @@ const SIDE: u32 = 32;
 /// [`SIDE`]th of.
 const SB4_DISPLAY_H: f32 = 720.0;
 
-/// Our own arrow, not SmileBASIC 4's: `#` black, `o` white, its tip at the
-/// top left corner. The tail starts under the head, by the notch in its
-/// base, as a desktop's arrow does.
+/// Our own arrow, not SmileBASIC 4's arrow: `#` black, `o` white, its tip
+/// at the top left corner. The tail starts under the head, by the notch in
+/// its base, like a desktop arrow.
 const ARROW: [&str; SIDE as usize] = [
     "#",
     "##",
@@ -86,8 +88,8 @@ fn arrow() -> Vec<u32> {
     pixels
 }
 
-/// How long the pointer stays still before the cursor fades, and how long
-/// it takes to go, as on SmileBASIC 4.
+/// The time the pointer stays still before the cursor fades, and the time
+/// the fade takes, as on SmileBASIC 4.
 const IDLE: Duration = Duration::from_millis(5000);
 const FADE: Duration = Duration::from_millis(700);
 
@@ -101,7 +103,7 @@ fn opacity(still: Duration) -> u8 {
     (left * 255 / FADE.as_millis() as u32) as u8
 }
 
-/// When the cursor last moved or came, and where it was.
+/// The time the cursor last moved or appeared, and its position.
 #[derive(Debug, Default)]
 struct Fade {
     at: (i32, i32),
@@ -162,7 +164,7 @@ impl<'a> DrawnCursor<'a> {
         self.on
     }
 
-    /// Lets go of the texture, as when the renderer lost it.
+    /// Drops the texture, for example when the renderer lost it.
     pub fn forget(&mut self) {
         self.texture = None;
     }
@@ -170,7 +172,7 @@ impl<'a> DrawnCursor<'a> {
     /// Draws the cursor if `shown`, with its tip at the pixel `at` of
     /// SmileBASIC 4's display, which is `display` on the canvas and
     /// `display_w` pixels wide (see [`crate::placement::Mapping::lcd`]).
-    /// It is as large there as SmileBASIC 4's is on its own.
+    /// It is as large there as SmileBASIC 4's cursor is on its display.
     pub fn draw(
         &mut self,
         canvas: &mut Canvas<Window>,
@@ -239,7 +241,7 @@ mod tests {
         let pixels = arrow();
         assert_eq!(pixels[0], 0xFF00_0000);
         assert!(ARROW.iter().all(|row| row.len() <= SIDE as usize));
-        // A white inside, outlined in black all round.
+        // A white inside, outlined in black all around.
         let at = |x: usize, y: usize| pixels[y * SIDE as usize + x];
         assert_eq!(at(3, 10), 0xFFFF_FFFF);
         for (y, row) in ARROW.iter().enumerate() {

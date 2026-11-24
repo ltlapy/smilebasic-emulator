@@ -1,7 +1,7 @@
 //! File commands: LOAD, SAVE, FILES, PROJECT, CHKFILE, DELETE, RENAME
 //! and RESULT.
 //!
-//! Failures do not stop the program; they set RESULT() to 0. In direct mode
+//! Failures do not stop the program; they set RESULT() to 0. In DIRECT mode
 //! a message also explains what went wrong.
 
 use sb_core::bytecode::Want;
@@ -76,7 +76,7 @@ fn fill_array(target: &Value, items: Vec<String>) -> Result<()> {
     })
 }
 
-/// What FILES shows while it waits between screens.
+/// The line FILES shows while it waits between screens.
 const LISTING_PROMPT: &str = "=== Press ENTER ===";
 
 impl Runtime {
@@ -234,9 +234,9 @@ impl Runtime {
                 self.finish("RENAME", outcome);
                 Ok(vec![])
             }
-            // SmileBASIC 4 takes a lone argument that is neither
-            // a string nor an array for Type mismatch naming it, whatever
-            // the OUT count.
+            // SmileBASIC 4 reports Type mismatch, naming the argument, for a
+            // lone argument that is neither a string nor an array,
+            // regardless of the OUT count.
             (Command::Files, _, 1) if !matches!(args[0], Value::Str(_) | Value::Array(_)) => {
                 Err(Error::new(ErrorKind::TypeMismatch).of_arg(0))
             }
@@ -269,10 +269,10 @@ impl Runtime {
                 match array {
                     Some(array) => fill_array(array, items)?,
                     None => {
-                        // A file's name (`FILES "TXT:NAME"`) is taken for a
-                        // project's, and a project that is not there prints
-                        // nothing, not even the header.
-                        // UNVERIFIED: the same for a name that is no file's.
+                        // A file name (`FILES "TXT:NAME"`) is taken as a
+                        // project name, and a project that is not there
+                        // prints nothing, not even the header.
+                        // UNVERIFIED: the same for a name that no file has.
                         if items.is_empty() && self.no_such_project(&spec) {
                             return Ok(vec![]);
                         }
@@ -322,7 +322,7 @@ impl Runtime {
 
     /// Prints a page of INSPECT's lines: all the console's rows but two.
     /// Meanwhile the console scrolls above its last row, which is kept
-    /// for the prompt to press Enter. The lines are made as they are
+    /// for the prompt to press Enter. The lines are made when they are
     /// printed, so a huge array costs no more than its pages shown.
     fn inspect_page(&mut self, mut lines: sb_core::inspect::Lines) -> Vec<Value> {
         let console = &mut self.text[CONSOLE];
@@ -347,11 +347,11 @@ impl Runtime {
         vec![]
     }
 
-    /// Goes on with a FILES listing once a key or button is pressed. A
-    /// key held down goes on as it repeats (checked on hardware).
+    /// Continues a FILES listing once a key or button is pressed. A key
+    /// held down continues it each time it repeats (checked on hardware).
     fn show_listing(&mut self, left: VecDeque<Vec<u16>>) -> Vec<Value> {
         if self.keys.pop_front().is_some() || self.input.pressed() != 0 {
-            // UNVERIFIED: that the prompt is taken away.
+            // UNVERIFIED: that the prompt is removed.
             let console = &mut self.text[CONSOLE];
             LISTING_PROMPT.chars().for_each(|_| console.backspace());
             let page = console.size().1.saturating_sub(1);
@@ -363,9 +363,9 @@ impl Runtime {
     }
 
     /// Prints `page` lines of a FILES listing, and waits to print the
-    /// rest, as SmileBASIC 4 does in direct mode and in programs. A page
-    /// is all the console's rows but the last, which says to press Enter,
-    /// however many rows XSCREEN gives it (checked on hardware).
+    /// rest, the same as SmileBASIC 4 does in DIRECT mode and in programs.
+    /// A page is all the console's rows but the last, which says to press
+    /// Enter, however many rows XSCREEN gives it (checked on hardware).
     fn show_listing_page(&mut self, mut lines: VecDeque<Vec<u16>>, page: u32) -> Vec<Value> {
         let console = &mut self.text[CONSOLE];
         for _ in 0..page.max(1) {
@@ -505,8 +505,8 @@ impl Runtime {
             .then(|| format!("{}:{name}", kind.name()))
     }
 
-    /// Of the files there from the start in the folder a program was run
-    /// from, those that writing `file` changes: the file, and when it is
+    /// The files that writing `file` changes, out of those there from the
+    /// start in the folder a program was run from: the file, and when it is
     /// there, the backup it moves to.
     pub(crate) fn originals_of(&self, file: &FileRef, backup: Option<&str>) -> Vec<String> {
         let mut found: Vec<String> = self.storage.original(file).into_iter().collect();
@@ -576,7 +576,7 @@ impl Runtime {
         }
     }
 
-    /// Sets RESULT() from an outcome; in direct mode, also explains a
+    /// Sets RESULT() from an outcome; in DIRECT mode, also explains a
     /// failure on the console. In a program a failure opens a dialog that
     /// the command waits on, as on SmileBASIC 4, when file access asks;
     /// otherwise it is a notice, or nothing when file access is silent.
@@ -598,8 +598,8 @@ impl Runtime {
         }
     }
 
-    /// Explains a failure as [`Runtime::finish`] does, leaving RESULT()
-    /// as it is.
+    /// Explains a failure the same as [`Runtime::finish`] does, leaving
+    /// RESULT() unchanged.
     pub(crate) fn report_failure(&mut self, what: &str, e: &StorageError) {
         if self.direct {
             // SmileBASIC 4 shows its own dialogs instead (see docs/using/differences.md).
@@ -625,8 +625,8 @@ impl Runtime {
 
     /// Loads the current project's TXT file `name`, as listed, into a slot.
     pub(crate) fn load_file(&mut self, name: &str, slot: usize) -> storage::Result<()> {
-        // A listed name may break the naming rules, but is only ever one
-        // file's name.
+        // A listed name may break the naming rules, but is always the name
+        // of one file.
         if name.contains(['/', '\\', ':']) {
             return Err(StorageError::BadName(name.to_string()));
         }
@@ -639,8 +639,8 @@ impl Runtime {
     }
 
     /// Loading over a slot that EXEC ran keeps what its program defined
-    /// until the next EXEC, and a program can LOAD over itself and goes
-    /// on, although the manual says otherwise (checked on hardware).
+    /// until the next EXEC, and a program can LOAD over itself and
+    /// continues, although the manual says otherwise (checked on hardware).
     fn load_ref(&mut self, file: &FileRef, slot: usize) -> storage::Result<()> {
         self.slots[slot] = program_text(&self.storage.read_ref(file)?)?;
         self.slot_changes[slot] += 1;
@@ -709,7 +709,7 @@ impl Runtime {
     /// on hardware: `FILES "DAT:"` lists `DAT:T5A`).
     fn listing(&self, spec: &str) -> storage::Result<Vec<String>> {
         // Projects end in `/`, the workspace is `/` itself, and the system's
-        // `#` projects come twice, as SmileBASIC 4 lists them.
+        // `#` projects appear twice, as SmileBASIC 4 lists them.
         if spec == "//" {
             let mut names: Vec<String> = Vec::new();
             for p in self.storage.projects()? {
@@ -734,14 +734,14 @@ impl Runtime {
     }
 }
 
-/// Whether a file name has a project part: another project's, the
-/// current one's own, or the workspace's `/NAME`.
+/// Whether a file name has a project part: the name of another project or
+/// of the current one, or the workspace's `/NAME`.
 fn has_project(spec: &str) -> bool {
     parse_read_name(spec, FileKind::Txt).is_ok_and(|f| f.project.is_some())
 }
 
 /// RENAME and DELETE take no name with a project part, in a program, a
-/// subprogram or at the prompt: Can't access other project in this mode.
+/// subprogram or in DIRECT mode: Can't access other project in this mode.
 fn refuse_project(spec: &str) -> Result<()> {
     match has_project(spec) {
         true => Err(ErrorKind::CantAccessOtherProject.into()),
@@ -751,7 +751,7 @@ fn refuse_project(spec: &str) -> Result<()> {
 
 /// RENAME keeps a file's type: a second name of another type is File
 /// type mismatch, before anything is asked. A second name without a
-/// type takes the first's.
+/// type takes the type of the first.
 fn same_type(from: &str, to: &str) -> Result<()> {
     let kind_of = |spec| storage::split_name(spec).map(|parts| parts.kind);
     let (Some(kind), Some(Some(to_kind))) = (kind_of(from), kind_of(to)) else {
@@ -789,7 +789,7 @@ fn name_error(error: NameError, spec: &str) -> Error {
 /// LOADG, SAVEG, DELETE or RENAME: Illegal format where SmileBASIC 4's
 /// parser fails or no file is named, as `CHKFILE("TXT:A:B")`,
 /// `SAVE "NUL/A"` and `DELETE "TXT:"`, and File name is too long for a
-/// project's or file's name of over 32 characters, both numbering the
+/// project or file name of over 32 characters, both numbering the
 /// argument (`(CHKFILE:1)`).
 pub(crate) fn check_file_name(spec: &str, arg: usize) -> Result<()> {
     match storage::file_name_error(spec) {
@@ -800,9 +800,9 @@ pub(crate) fn check_file_name(spec: &str, arg: usize) -> Result<()> {
 
 /// FILES' `[TYPE:][PROJECT][/]`, refused as [`check_file_name`] refuses
 /// a file's name, also when empty, or when it names a file in a project.
-/// `//` lists the projects. Unlike other commands' names, FILES' are
-/// refused naming no argument.
-// UNVERIFIED: for FILES() as for the command.
+/// `//` lists the projects. Unlike a name given to other commands, a FILES
+/// name is refused without the argument's number.
+// UNVERIFIED: the same for FILES() as for the command.
 fn check_listing_name(spec: &str) -> Result<()> {
     match storage::listing_name_error(spec) {
         Some(error) if spec != "//" => Err(name_error(error, spec)),
@@ -811,9 +811,9 @@ fn check_listing_name(spec: &str) -> Result<()> {
 }
 
 /// EXEC's file, refused as [`check_file_name`] refuses a name but without
-/// the argument's number. A name SmileBASIC 4's parser takes, but of
-/// another type than a program's, is File type mismatch before the rest
-/// is checked: `EXEC "DAT:",1` is error 77, not 71.
+/// the argument's number. A name SmileBASIC 4's parser takes, but of a
+/// type other than TXT, is File type mismatch before the rest is checked:
+/// `EXEC "DAT:",1` is error 77, not 71.
 pub(crate) fn check_exec_name(spec: &str) -> Result<()> {
     let error = match storage::split_name(spec) {
         None => Some(NameError::Illegal),
@@ -830,8 +830,8 @@ pub(crate) fn check_exec_name(spec: &str) -> Result<()> {
 
 /// LOAD and SAVE take only text files, before anything is asked: another
 /// type of file (`DAT:`, `PNG:`) is File type mismatch, whether there is
-/// such a file or not. A type that is none (`GRP0:`) is refused before,
-/// by [`check_file_name`].
+/// such a file or not. An unknown type (`GRP0:`) is refused earlier, by
+/// [`check_file_name`].
 fn program_type(spec: &str) -> Result<()> {
     match storage::split_name(spec).and_then(|parts| parts.kind) {
         None | Some(NamedKind::File(FileKind::Txt)) => Ok(()),

@@ -1,6 +1,6 @@
-//! What the emulator draws over the screens and the editor: each
-//! window's UI, on a frame in that window's pixels, and the focus's
-//! border on the window itself.
+//! The emulator's drawing over the screens and the editor: the UI
+//! of each window, on a frame in the pixels of that window, and the
+//! focus border on the window itself.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
@@ -20,29 +20,29 @@ use crate::toast::Toasts;
 use crate::ui::{self, Rect};
 use crate::{Beside, Choice, FileDialog, Screens, Side, corner};
 
-/// The debugger's panel as a trip shows it: where it is, what it shows,
-/// and the size of the screens in it, if it shows them.
+/// The debugger's panel as an iteration shows it: where it is, what it
+/// shows, and the size of the screens in it, if it shows them.
 pub type Debug = Option<(Rect, View, Option<(u32, u32)>)>;
-/// The chosen sprite's outline: the frame it lies on, where that frame
-/// is on this UI, and what it is clipped to.
+/// The chosen sprite's outline: the frame it is on, where that frame is
+/// on this UI, and what it is clipped to.
 pub type Outlined = Option<(Outline, (u32, u32), (f64, f64, f64, f64), Rect)>;
 
-/// The UI of one window for a trip round the loop: what is open, and
-/// which parts go on this window.
+/// The UI of one window for an iteration of the loop: what is open, and
+/// which parts are drawn on this window.
 pub struct Ui<'a> {
-    /// The window: 0 for the main one, 1 for the editor's own. `ui` is
-    /// the one with the menu bar and the emulator's windows, `ed` the one
-    /// the editor and its panels are in, `side_on` the one with the help
-    /// or the index.
+    /// The window: 0 for the main window, 1 for the editor window. `ui`
+    /// is the window with the menu bar and the emulator's windows, `ed`
+    /// the window with the editor and its panels, and `side_on` the window
+    /// with the help or the index.
     pub window: usize,
     pub ui: usize,
     pub ed: usize,
     pub side_on: usize,
-    /// The emulator's windows go on a layer of their own here.
+    /// On this window, the emulator's windows are on a separate layer.
     pub windows_on_layer: bool,
-    /// A dialog or the like dims what is behind it.
+    /// A dialog or a similar window dims what is behind it.
     pub dim: bool,
-    /// Where the debugger's panel is on this window, if it is.
+    /// The place of the debugger's panel on this window, if it is there.
     pub panel: Option<Rect>,
     pub debug: &'a Debug,
     pub outline: &'a Outlined,
@@ -58,8 +58,8 @@ pub struct Ui<'a> {
     pub toasts: &'a Toasts,
     pub menu: &'a MenuBar,
     pub context: Context,
-    /// The menu bar shows on this window; its menus are apart from the
-    /// display, on a layer of their own; and the bar's place here.
+    /// The menu bar shows on this window; its menus are separate from
+    /// the display, on their own layer; and the place of the bar here.
     pub bar_shown: bool,
     pub menus_apart: bool,
     pub bar: Rect,
@@ -72,10 +72,10 @@ pub struct Ui<'a> {
 }
 
 impl Ui<'_> {
-    /// Draws the UI on `fb`: all of it, or, where the emulator's windows
-    /// go on a layer of their own, those if `windows` and the rest if
-    /// not. `inside` is whether the debugger's panel is drawn with it
-    /// rather than on a layer of its own.
+    /// Draws all of the UI on `fb`, but when the emulator's windows are on
+    /// a separate layer, draws those if `windows` and the rest if not.
+    /// `inside` is whether the debugger's panel is drawn with the UI
+    /// rather than on a separate layer.
     pub fn draw(
         &self,
         fb: &mut Framebuffer,
@@ -102,10 +102,10 @@ impl Ui<'_> {
         if let (0, Some((outline, frame, place, clip))) = (i, self.outline) {
             debug_panel::sprites::draw_outline(fb, outline, *frame, *place, *clip, 2);
         }
-        // The notices go under the rest of the emulator's UI, and
-        // not at all while its screens are up, which they would
-        // only be in the way of. The Simple UI's go on a layer of
-        // their own.
+        // The notices are drawn under the rest of the emulator's UI.
+        // They are not drawn while its screens are open, because they
+        // would only be in the way. The notices of the Simple UI are
+        // on a separate layer.
         if self.notices {
             corner::draw(fb, font, self.key_hint, self.slow_hint, false);
         }
@@ -115,7 +115,7 @@ impl Ui<'_> {
             Some(Side::Index(index, _)) => index.draw(fb, font, self.side.focus),
             None => {}
         }
-        // Windows over the editor go over its panels too.
+        // Windows over the editor also cover its panels.
         if let (true, Some(open)) = (i == ui && over, &self.screens.manager) {
             open.draw(fb, font, cursor_on);
         }
@@ -169,10 +169,10 @@ impl Ui<'_> {
     }
 }
 
-/// Shows where the focus has just gone: a yellow line on the edge of the
-/// rectangle `place` gives (see [`crate::placement::border_place`]), one
-/// pixel out and two in, then a dark band two pixels wide, both at
-/// `alpha`, so that they fade out together.
+/// Shows where the focus has just moved: a yellow line on the edge of the
+/// rectangle that `place` gives (see [`crate::placement::border_place`]),
+/// one pixel outside and two inside, then a dark band two pixels wide.
+/// Both are drawn at `alpha`, so that they fade out together.
 pub fn focus_border(
     canvas: &mut Canvas<Window>,
     place: ([i32; 4], (f32, f32), (f32, f32)),

@@ -1,6 +1,6 @@
-//! Getting through a renderer's failure with nothing lost. Programs and pages live
-//! on the CPU, so a new renderer only has to be given them again; and if the emulator
-//! has to end for a failure, what was not saved goes to files first.
+//! Recovery from a renderer failure with nothing lost. Programs and pages are kept
+//! on the CPU, so a new renderer only has to be given them again. If the emulator
+//! has to end because of a failure, the unsaved programs are saved to files first.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -11,30 +11,31 @@ use sb_runtime::storage::{FileKind, Storage};
 use sdl3::render::{Canvas, TextureCreator};
 use sdl3::video::{Window, WindowContext};
 
-/// Failures in a row after which a driver is passed over, and after which the
-/// emulator ends rather than go on trying: enough to go through every driver.
+/// Failures in a row after which a driver is skipped, and after which the emulator
+/// ends instead of trying again: enough to try every driver.
 const AVOID_AFTER: u32 = 2;
 const MOST_FAILURES: u32 = 8;
 /// Frames shown in a row that make the drivers trusted again.
 const GOOD_FRAMES: u32 = 120;
-/// In the data directory: what the next start has to tell.
+/// In the data directory: the message for the next start.
 const NOTICE_FILE: &str = "recovery.txt";
 
-/// How long between tries to make a renderer, with none to draw on.
+/// The time between tries to make a renderer, while there is none to draw on.
 pub const RETRY: Duration = Duration::from_secs(1);
 /// With no renderer for this long, the user is told.
 pub const TELL_AFTER: Duration = Duration::from_secs(5);
-/// How far the wall clock has to get ahead of the monotonic one to count as a suspend.
+/// The lead over the monotonic clock that the wall clock needs to count as a suspend.
 const SLEPT: Duration = Duration::from_secs(1);
 
-/// Whether the computer was suspended, for a GL context may have lost its textures then
-/// without a word. The wall clock goes on through a suspend and `Instant` does not, on
-/// Linux and macOS, so it is the difference between them that tells, and a main loop
-/// merely held up (a window dragged about holds it for seconds) moves both alike.
+/// Whether the computer was suspended, because a GL context may have silently lost
+/// its textures then. On Linux and macOS the wall clock continues through a suspend
+/// and `Instant` does not, so the difference between them shows a suspend. A main loop
+/// that is only blocked (dragging a window blocks it for seconds) moves both equally.
 ///
-/// On Windows `Instant` goes on through a suspend as well, so this never fires there:
-/// Direct3D reports what it lost itself, and a GL context there keeps its textures.
-/// The wall clock being set forward looks the same, which costs a tenth of a second.
+/// On Windows `Instant` also continues through a suspend, so this never fires there:
+/// Direct3D itself reports what it lost, and a GL context there keeps its textures.
+/// A wall clock set forward looks the same as a suspend, which costs a tenth of a
+/// second.
 pub struct SuspendWatch {
     wall: SystemTime,
     monotonic: Instant,
@@ -60,8 +61,8 @@ impl SuspendWatch {
         wall_gap.is_ok_and(|gap| gap.saturating_sub(monotonic_gap) >= SLEPT)
     }
 
-    /// Stands for a suspend, for the bench: as if the wall clock had gone on by `time`
-    /// while the monotonic one stood.
+    /// Simulates a suspend for the bench, as if the wall clock had moved on by `time`
+    /// while the monotonic one stood still.
     pub fn pretend(&mut self, time: Duration) {
         self.wall -= time;
     }
@@ -103,7 +104,7 @@ pub struct RendererWatch {
 }
 
 impl RendererWatch {
-    /// A renderer on `driver` failed. False if that is the end of trying.
+    /// Notes that a renderer on `driver` failed. Returns false if no tries are left.
     pub fn failed(&mut self, driver: &str) -> bool {
         self.failures += 1;
         self.good_frames = 0;
@@ -113,7 +114,7 @@ impl RendererWatch {
         self.failures < MOST_FAILURES
     }
 
-    /// A frame went to the window with nothing failing.
+    /// Notes a frame shown in the window with no failure.
     pub fn frame_shown(&mut self) {
         if self.failures > 0 {
             self.good_frames += 1;
@@ -129,12 +130,13 @@ impl RendererWatch {
     }
 }
 
-/// What gets a failing emulator's unsaved programs to files.
+/// The state that saves a failing emulator's unsaved programs to files.
 pub struct Recovery {
-    /// The data directory, for what a project cannot take and for the notice.
+    /// The data directory, for programs that a project cannot take and for the
+    /// notice.
     data: PathBuf,
-    /// The number in this session's file names, so that files of an earlier failure
-    /// that nobody has looked at stay.
+    /// The number in the file names of this session, so that files of an earlier
+    /// failure that nobody has looked at are kept.
     session: Option<u32>,
 }
 
@@ -158,9 +160,10 @@ impl Recovery {
         (1..).find(|&session| !taken(session)).unwrap_or(1)
     }
 
-    /// Saves every slot with unsaved edits, beside the current project's files, or
-    /// in the data directory if it takes none. Gives what to tell the user, a line
-    /// each, or nothing if nothing was unsaved. The next start tells it too.
+    /// Saves every slot with unsaved edits beside the files of the current project,
+    /// or in the data directory if the project takes none. Returns the message for
+    /// the user as lines, or `None` if nothing was unsaved. The next start shows it
+    /// too.
     pub fn save(&mut self, machine: &Machine) -> Option<Vec<String>> {
         let programs = machine.unsaved_programs();
         if programs.is_empty() {
@@ -209,7 +212,7 @@ impl Recovery {
         Some(lines)
     }
 
-    /// What a failure left to tell at this start, which is told once.
+    /// Returns the message that a failure left for this start. It is returned once.
     pub fn take_notice(&self) -> Option<Vec<String>> {
         let path = self.data.join(NOTICE_FILE);
         let text = std::fs::read_to_string(&path).ok()?;
@@ -231,7 +234,7 @@ fn write_notice(data: &Path, lines: &[String]) {
 mod tests {
     use super::*;
 
-    /// A watch and the clocks' readings, moved by hand.
+    /// Returns a watch and the readings of its clocks, which the tests move by hand.
     fn watch() -> (SuspendWatch, SystemTime, Instant) {
         let (wall, monotonic) = (SystemTime::now(), Instant::now());
         (SuspendWatch { wall, monotonic }, wall, monotonic)
@@ -249,7 +252,7 @@ mod tests {
         let (mut watch, wall, monotonic) = watch();
         let (slept, ran) = (Duration::from_secs(60), Duration::from_millis(16));
         assert!(watch.woke_at(wall + slept + ran, monotonic + ran));
-        // Told once.
+        // Reported once.
         let wall = wall + slept + ran + ran;
         assert!(!watch.woke_at(wall, monotonic + ran + ran));
     }
@@ -382,7 +385,8 @@ mod tests {
         let m = machine_with_changes(&dir.0, &[(0, "SECOND\n")]);
         let mut recovery = Recovery::new(dir.0.clone());
         recovery.save(&m);
-        // Saved again in one session, as when the failure goes on, the file is the same.
+        // Saved again in one session, for example when the failure continues: the file
+        // is the same.
         let m = machine_with_changes(&dir.0, &[(0, "THIRD\n")]);
         recovery.save(&m);
         let storage = &m.rt.storage;

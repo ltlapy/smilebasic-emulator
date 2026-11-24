@@ -1,9 +1,9 @@
-//! The effector: a reverb on a bus of its own that EFCWET and BGMWET send
+//! The effector: a reverb on its own bus, which EFCWET and BGMWET send
 //! part of each sound to. SmileBASIC 4 hands this to the console's audio
-//! library; this is a small reverb of the emulator's own with the same
-//! settings, early reflections from a few taps and a tail from four comb
-//! filters and two all-pass filters a side, in the manner of Freeverb.
-//! It sounds like a room, a hall or a cave, but not like the console's.
+//! library. This is the emulator's own small reverb with the same
+//! settings: early reflections from a few taps, and a tail from four comb
+//! filters and two all-pass filters per side, as in Freeverb. It sounds
+//! like a room, a hall or a cave, but not like the console's reverb.
 
 use super::RATE;
 
@@ -20,19 +20,19 @@ pub(crate) struct Settings {
     pub(crate) late_gain: f32,
     /// Seconds the tail takes to fall by 60 dB.
     pub(crate) decay: f32,
-    /// How much of the treble each pass of the tail keeps, 0.1 to 1.
+    /// The share of the treble each pass of the tail keeps, 0.1 to 1.
     pub(crate) hf_decay: f32,
-    /// How dense the tail is, 0 to 1.
+    /// The density of the tail, 0 to 1.
     pub(crate) coloration: f32,
-    /// The reverb's input, its output, and how much of the bus passes by
-    /// it unchanged.
+    /// The reverb's input, its output, and the share of the bus that
+    /// passes by it unchanged.
     pub(crate) input: f32,
     pub(crate) output: f32,
     pub(crate) dry: f32,
 }
 
 impl Settings {
-    /// What every preset starts from.
+    /// The settings every preset starts from.
     const BASE: Settings = Settings {
         early_mode: 0,
         early_gain: 0.6,
@@ -51,7 +51,7 @@ impl Settings {
     /// Each is fitted to SmileBASIC 4's response to a sine sweep sent from
     /// PCMSTREAM: a small room whose tail falls by 60 dB in about half a
     /// second, a hall as loud as the sound sent that falls by about 35 dB
-    /// a second, and a long tail after a tenth of a second of silence.
+    /// per second, and a long tail after a tenth of a second of silence.
     pub(crate) fn preset(n: i32) -> Option<Settings> {
         let b = Settings::BASE;
         match n {
@@ -116,25 +116,25 @@ const TAPS: [(f32, f32, f32); 6] = [
     (19.7, 0.30, 0.45),
     (27.2, 0.12, 0.10),
 ];
-/// Freeverb's comb and all-pass delays, in ms, and how much the right side's
-/// are longer.
+/// Freeverb's comb and all-pass delays, in ms, and how much longer the right
+/// side's delays are.
 const COMBS_MS: [f32; 4] = [25.3, 26.9, 29.0, 30.7];
 const ALLPASSES_MS: [f32; 2] = [12.6, 5.1];
 const SPREAD: usize = 23;
 /// The tail's input, so that four combs ringing together at a tail volume
-/// of 1 come near the level of what goes in.
+/// of 1 come near the input level.
 const COMB_INPUT: f32 = 0.24;
-/// How much of what BEEP and BGM send reaches the reflections and the
-/// tail, against what PCMSTREAM sends. UNVERIFIED: on SmileBASIC 4 their
-/// reverb starts much quieter against its tail than PCMSTREAM's, and
-/// these shares are a fit to that.
+/// The share of the sound BEEP and BGM send that reaches the reflections
+/// and the tail, relative to the sound PCMSTREAM sends. UNVERIFIED: on
+/// SmileBASIC 4 their reverb starts much quieter relative to its tail than
+/// PCMSTREAM's does, and these shares are fitted to that.
 const OTHER_EARLY: f32 = 0.2;
 const OTHER_LATE: f32 = 0.9;
 /// The longest predelay EFCSET takes, and the reflections after it.
 const MAX_PREDELAY: f32 = 0.3;
 const MAX_TAP: f32 = 0.08;
 
-/// How far apart each reflection mode spreads its taps.
+/// The spread of the taps for each reflection mode.
 fn early_scale(mode: i32) -> Option<f32> {
     match mode {
         0 => Some(0.4),
@@ -145,7 +145,7 @@ fn early_scale(mode: i32) -> Option<f32> {
     }
 }
 
-/// How long each echo mode's combs are.
+/// The length of the combs for each echo mode.
 fn late_scale(mode: i32) -> f32 {
     match mode {
         0 => 0.7,
@@ -218,7 +218,7 @@ impl Allpass {
 #[derive(Clone, Debug)]
 pub(crate) struct Reverb {
     settings: Settings,
-    /// What went in, for the reflections, and for the predelay of the
+    /// The input so far, for the reflections, and for the predelay of the
     /// tail.
     history: Vec<f32>,
     late_history: Vec<f32>,
@@ -258,7 +258,7 @@ impl Reverb {
                 })
                 .collect()
         });
-        // A power of two long, to go round it with a mask.
+        // A power of two long, to wrap around it with a mask.
         let longest = samples(MAX_PREDELAY + MAX_TAP * early_scale(3).unwrap_or(1.0));
         let history = vec![0.0; (longest + 1).next_power_of_two()];
         Reverb {
@@ -277,8 +277,8 @@ impl Reverb {
         self.settings
     }
 
-    /// The reverb's own share of what PCMSTREAM sends it, which passes by
-    /// it unchanged: the rest of what PCMSTREAM sends leaves the mix.
+    /// The reverb's own share of the sound PCMSTREAM sends it, which passes
+    /// by it unchanged. The rest of what PCMSTREAM sends leaves the mix.
     pub(crate) fn dry(&self) -> f32 {
         self.settings.dry
     }
@@ -359,8 +359,8 @@ mod tests {
         assert!(energy(&l) < 1e-9);
     }
 
-    /// What BEEP and BGM send rings in the tail about as much as what
-    /// PCMSTREAM sends, but reaches the reflections less.
+    /// The sound BEEP and BGM send rings in the tail about as much as the
+    /// sound PCMSTREAM sends, but reaches the reflections less.
     #[test]
     fn beep_and_bgm_reach_the_reflections_less() {
         let n = RATE as usize;

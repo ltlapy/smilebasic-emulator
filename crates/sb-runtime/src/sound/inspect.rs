@@ -1,10 +1,11 @@
-//! What the BGM tracks and BEEP's handles play, for the debugger: a
-//! snapshot taken only when asked for, so that playing costs nothing more.
+//! The sounds that the BGM tracks and BEEP's handles play, for the
+//! debugger: a snapshot taken only when asked for, so that playing costs
+//! nothing more.
 //! SmileBASIC 4 shows none of this; programs only have BGMCHK and BGMVAR.
 
 use std::rc::Rc;
 
-/// How a track plays.
+/// The play state of a track.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     /// Started on an idle sound system, waiting for it to wake up.
@@ -27,7 +28,8 @@ pub struct TrackInfo {
     pub song: i32,
     /// A user song's MML as the program gave it.
     pub source: Option<Rc<str>>,
-    /// A preset that plays silence, as the preset songs were not imported.
+    /// A preset that plays silence, because the preset songs were not
+    /// imported.
     pub silent: bool,
     pub state: State,
     /// The fade's gain, 0 to 1.
@@ -35,7 +37,7 @@ pub struct TrackInfo {
     /// BGMVOL, and BGMPITCH in cents.
     pub volume: i32,
     pub pitch: i32,
-    /// Quarter notes a minute, and ticks in one.
+    /// Quarter notes per minute, and ticks per quarter note.
     pub tempo: u32,
     pub quarter: u32,
     /// Ticks played since the song started.
@@ -60,16 +62,16 @@ pub struct ChannelInfo {
     pub pan: i32,
     /// The notes sounding, as MIDI keys (O4C is 60).
     pub keys: Vec<i32>,
-    /// Notes started so far, wrapping: a change tells of a new note.
+    /// Notes started so far, wrapping: a change signals a new note.
     pub notes: u32,
     /// The channel has run out of commands.
     pub ended: bool,
 }
 
-/// What a BEEP handle plays.
+/// The kind of sound a BEEP handle plays.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BeepKind {
-    /// A preset effect that plays nothing, as the effects were not
+    /// A preset effect that plays nothing, because the effects were not
     /// imported.
     Silent,
     /// A preset effect.

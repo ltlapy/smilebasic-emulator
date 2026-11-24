@@ -15,11 +15,12 @@ use crate::ui::{
     outline, window,
 };
 
-/// Around a picture, and under its transparent pixels.
+/// The color around a picture and under its transparent pixels.
 const BACKDROP: u32 = 0xFF10_1010;
-/// The most values a table is made of; a larger array shows its first.
+/// The maximum number of values in a table. A larger array shows its
+/// first values.
 const MOST_VALUES: usize = 100_000;
-/// The widest a table's cell is, in characters.
+/// The maximum width of a table cell, in characters.
 const MOST_CELL: usize = 16;
 const ERROR: u32 = 0xFFFF_8080;
 
@@ -35,8 +36,9 @@ struct Table {
     head: Vec<String>,
     /// Each row's label, then its cells.
     rows: Vec<(String, Vec<String>)>,
-    /// Characters to a cell, and to the labels.
+    /// The width of a cell, in characters.
     cell: usize,
+    /// The width of the labels, in characters.
     label: usize,
 }
 
@@ -51,9 +53,10 @@ pub struct Viewer {
     mouse: Option<(i32, i32)>,
 }
 
-/// The table of `data`'s values: the rows and columns of a 2D array; a
-/// row of the last index each for more dimensions; and for one, as many
-/// columns as fit in `chars`, labelled by the index each row starts at.
+/// Returns the table of the values of `data`. A 2D array gives its rows
+/// and columns. With more dimensions, each row holds the values along the
+/// last index. With one dimension, a row has as many columns as fit in
+/// `chars`, and each row is labeled by the index it starts at.
 fn table(data: &Data, chars: usize) -> Table {
     let count = preview::value_count(data).min(MOST_VALUES);
     let cells: Vec<String> = (0..count)
@@ -76,7 +79,8 @@ fn table(data: &Data, chars: usize) -> Table {
     let (columns, label_of): (usize, Box<dyn Fn(usize) -> String>) = match &data.dims[..] {
         [_] => {
             let label = digits(count.saturating_sub(1)) + 1;
-            // A round number to a row, for the labels to count up evenly.
+            // A round number of values per row, so that the labels count up
+            // evenly.
             let fit = (chars.saturating_sub(label) / cell).max(1);
             let columns = [64, 32, 16, 10, 8, 4, 2, 1]
                 .into_iter()
@@ -190,7 +194,7 @@ impl Viewer {
         }
     }
 
-    /// Rows that fit, under a table's headings.
+    /// The number of rows that fit, under the headings for a table.
     fn rows_shown(&self) -> usize {
         let rows = (self.body_rect().h / LINE) as usize;
         match self.body {
@@ -207,7 +211,7 @@ impl Viewer {
         }
     }
 
-    /// The most columns there are to scroll past.
+    /// The maximum number of columns to scroll past.
     fn column_count(&self) -> usize {
         let chars = (self.body_rect().w.saturating_sub(2 * PAD) / CHAR) as usize;
         match &self.body {
@@ -255,8 +259,8 @@ impl Viewer {
         false
     }
 
-    /// A controller: the pad scrolls, the shoulder buttons by pages, and
-    /// A or B closes. Returns true when it closes.
+    /// Handles a controller button: the D-pad scrolls, the shoulder buttons
+    /// scroll by pages, and A or B closes. Returns true when it closes.
     pub fn pad(&mut self, button: Button) -> bool {
         let key = match button {
             Button::DPadUp => Keycode::Up,

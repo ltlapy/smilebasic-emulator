@@ -1,4 +1,4 @@
-//! Converts the fallback font into 8x8 console cells.
+//! Builds the font tables and the version string that the crate embeds.
 //!
 //! - `$OUT_DIR/fallback_font.bin`, from the GalmuriMono7 BDF: one 10-byte
 //!   record per character, sorted by code: u16 code (little-endian), then
@@ -37,8 +37,8 @@ const OVERRIDES: &str = "fonts/galmuri/overrides.txt";
 const SYMBOLS: &str = "fonts/symbols.txt";
 const IZUMI: &str = "fonts/izumi/izumi16.hex";
 const UNIFONT: &str = "fonts/unifont/unifont_jp-18.0.01.hex.gz";
-/// How the bold of the 16-pixel dot glyphs treats the cell's side
-/// columns: `Plain`, `KeepEdge`, `KeepEdgeInward` or
+/// The bolding rule for the cell's side columns of the 16-pixel dot
+/// glyphs: `Plain`, `KeepEdge`, `KeepEdgeInward` or
 /// `KeepEdgeInwardShifted` (see `dot_bold::EdgeRule`).
 const BOLD_EDGE: dot_bold::EdgeRule = dot_bold::EdgeRule::KeepEdgeInwardShifted;
 const MISAKI: &str = "fonts/misaki/misaki_gothic_2nd.bdf";
@@ -284,7 +284,8 @@ fn write_table(path: &Path, cell: u32, bits: u8, glyphs: &BTreeMap<u32, Vec<u8>>
     std::fs::write(path, packed).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 }
 
-/// Writes a table of 1-bit 16x16 cells, laid out as [`write_table`]'s.
+/// Writes a table of 1-bit 16x16 cells, laid out the same way as the
+/// tables of [`write_table`].
 fn write_cells(path: &Path, glyphs: &BTreeMap<u32, dot_bold::Cell16>) {
     let mut out = Vec::new();
     out.extend_from_slice(&(glyphs.len() as u32).to_le_bytes());
@@ -333,7 +334,7 @@ fn gunzip(path: &str, bytes: &[u8]) -> Vec<u8> {
 /// The glyphs of a GNU Unifont .hex file (a code in hex, a colon, then
 /// 16 rows of 8 or 16 pixels in hex): each code, whether it is
 /// half-width, and its rows with column `x` in bit `x`, half-width ones in
-/// columns 0 to 7. Glyphs of other widths are left out.
+/// columns 0 to 7. Glyphs of other widths are skipped.
 fn parse_hex(path: &str, text: &str) -> Vec<(u32, bool, dot_bold::Cell16)> {
     let mut glyphs = Vec::new();
     for (n, line) in text.lines().enumerate() {
@@ -368,10 +369,10 @@ fn drawn(code: u32) -> bool {
 type Cells = BTreeMap<u32, dot_bold::Cell16>;
 
 /// The 16-pixel dot glyphs, made bold: Izumi Gothic 16, then Unifont JP
-/// for what it lacks, half-width glyphs centered as `bdf_cell` places
-/// them. Then Unifont JP's half-width forms (U+FF00-U+FFEF) as drawn, in
-/// columns 0 to 7: the half-width kana and the few symbols NeoDunggeunmo
-/// lacks are all among them.
+/// for the characters it lacks, half-width glyphs centered the same way
+/// `bdf_cell` places them. Then Unifont JP's half-width forms
+/// (U+FF00-U+FFEF) unchanged, in columns 0 to 7: the half-width kana and
+/// the few symbols NeoDunggeunmo lacks are all among them.
 fn dot_cells(read: &dyn Fn(&'static str) -> String) -> (Cells, Cells) {
     use dot_bold::{Face, embolden};
     let mut cells = BTreeMap::new();
@@ -397,7 +398,8 @@ fn dot_cells(read: &dyn Fn(&'static str) -> String) -> (Cells, Cells) {
     (cells, halves)
 }
 
-/// Writes the editor's tables. `galmuri7` is what GalmuriMono7 draws.
+/// Writes the editor's tables. `galmuri7` is the set of codes
+/// GalmuriMono7 draws.
 fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7: &BTreeSet<u32>) {
     let (cells, halves) = dot_cells(read);
     write_cells(&out_dir.join("extra_dot16.bin"), &cells);
@@ -414,10 +416,10 @@ fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7:
     write_table(&out_dir.join("extra_misaki8.bin"), 8, 1, &misaki);
     write_table(&out_dir.join("extra_fusion8.bin"), 8, 1, &fusion);
 
-    // Drawn as the 16-pixel M PLUS 1p Bold glyphs are, in the 16 steps of
-    // gray of SmileBASIC 4's font page, which also packs smaller. The
-    // antialiased set takes Noto Sans SC right after M PLUS 1p Bold; the
-    // pixel set has every GB2312 character before it.
+    // Drawn the same way as the 16-pixel M PLUS 1p Bold glyphs, in the 16
+    // steps of gray of SmileBASIC 4's font page, which also packs smaller.
+    // The antialiased set takes Noto Sans SC right after M PLUS 1p Bold;
+    // the pixel set has every GB2312 character before it.
     let bytes = std::fs::read(NOTO_SC).unwrap_or_else(|e| panic!("{NOTO_SC}: {e}"));
     let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("Noto Sans SC");
     let lacking = |c: u32| !mplus.contains(&c);

@@ -21,7 +21,7 @@ pub enum Kind {
 /// The program's DATA and READ's place in it, for [`Kind::Data`].
 pub struct Data<'a> {
     pub(crate) program: &'a Compiled,
-    /// The DEF of `program` running, whose labels come first.
+    /// The running DEF of `program`, whose labels come first.
     pub(crate) def: Option<u32>,
     pub(crate) pos: &'a mut usize,
     /// Whether a RESTORE has moved READ's place into `program`.
@@ -59,8 +59,8 @@ impl Data<'_> {
     }
 }
 
-/// How a builtin is being called. A name can have both forms (`RGB(...)`
-/// and `RGB C OUT R,G,B`).
+/// The form of a builtin call. A name can have both forms (`RGB(...)` and
+/// `RGB C OUT R,G,B`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Form {
     Function,
@@ -78,26 +78,26 @@ pub struct Builtin {
 }
 
 /// The numbers of OUT variables a builtin takes, and when it looks at
-/// them; a call as a function has one. SmileBASIC 4's handlers check the
-/// count themselves, as the call runs, some before the number of
+/// them. A call as a function has one. The handlers of SmileBASIC 4 check
+/// the count themselves while the call runs, some before the number of
 /// arguments and some after.
 #[derive(Clone, Copy)]
 pub struct Outs {
     /// Bit n is set if n OUT variables are taken.
     counts: u16,
     /// The count is looked at before the number of arguments. A builtin
-    /// with two forms then takes the form from it, so arguments that only
-    /// the other form takes are a `Wrong number of arguments`.
+    /// with two forms then takes its form from the count, so arguments that
+    /// only the other form takes are a `Wrong number of arguments`.
     pub first: bool,
-    /// With [`Outs::first`], no arguments at all are looked at before the
-    /// count.
+    /// With [`Outs::first`], a call with no arguments has its number of
+    /// arguments looked at before the count.
     pub none_first: bool,
 }
 
 impl Outs {
-    /// A function's: one value.
+    /// The count of a function: one value.
     pub const FUNCTION: Outs = Outs::of(&[1]);
-    /// A command's: none.
+    /// The count of a command: none.
     pub const NONE: Outs = Outs::of(&[0]);
     /// Any count, which the command checks itself.
     pub const OWN: Outs = Outs {
@@ -120,7 +120,7 @@ impl Outs {
         }
     }
 
-    /// The same, looked at before the arguments.
+    /// The same counts, looked at before the arguments.
     pub const fn first(self) -> Outs {
         Outs {
             first: true,
@@ -128,8 +128,8 @@ impl Outs {
         }
     }
 
-    /// The same, looked at before the arguments but after there being
-    /// any: SORT OUT Q is a `Wrong number of arguments`.
+    /// The same counts, looked at before the arguments but after the check
+    /// that there are any: SORT OUT Q is a `Wrong number of arguments`.
     pub const fn first_unless_none(self) -> Outs {
         Outs {
             first: true,
@@ -146,9 +146,9 @@ impl Outs {
 const VARIADIC: u8 = u8::MAX;
 
 /// Name, argument counts, kind and the function that runs it, then the
-/// OUT counts when they are not the kind's usual ([`Outs::FUNCTION`] or
-/// [`Outs::NONE`]). Which handlers look at the OUT count first is from
-/// SmileBASIC 4's.
+/// OUT counts when they differ from the usual ones of the kind
+/// ([`Outs::FUNCTION`] or [`Outs::NONE`]). The handlers that look at the
+/// OUT count first are the ones that do so in SmileBASIC 4.
 macro_rules! table {
     ($($name:literal $min:literal..=$max:tt $kind:ident $f:expr $(, $outs:expr)?;)*) => {
         static BUILTINS: &[Builtin] = &[
@@ -255,8 +255,8 @@ pub fn get(id: u16) -> &'static Builtin {
     &BUILTINS[usize::from(id)]
 }
 
-/// Functions that only look at their arguments and give a number: no
-/// memory taken, no state read or changed. Running one again after it
+/// Functions that only look at their arguments and return a number: they
+/// take no memory and read or change no state. Running one again after it
 /// failed fails the same way, so [`crate::fuse`] may call them and leave a
 /// failure to the VM's single steps.
 const PURE: &[&str] = &[
@@ -266,7 +266,7 @@ const PURE: &[&str] = &[
 ];
 
 /// Whether the call of builtin `id` with `argc` arguments, as a function,
-/// is one of [`PURE`]'s.
+/// is a call of one of the [`PURE`] functions.
 pub fn is_pure_call(id: u16, argc: usize) -> bool {
     let b = get(id);
     matches!(b.kind, Kind::Function(_)) && b.accepts(argc) && PURE.contains(&b.name)
@@ -288,8 +288,8 @@ impl Builtin {
 // ---- argument helpers ----
 
 /// `Type mismatch` of `v`. When `v` is one of the call's arguments, as
-/// it is for an argument of the wrong type, the error names it as
-/// SmileBASIC 4 does: `Q=LEN(1)` is `(LEN:1)`.
+/// it is for an argument of the wrong type, the error names it the same
+/// way as SmileBASIC 4 does: `Q=LEN(1)` is `(LEN:1)`.
 #[cold]
 fn mismatch(v: &Value) -> Error {
     Error::new(ErrorKind::TypeMismatch).of_value(v)
@@ -302,8 +302,8 @@ fn text(v: &Value) -> Result<Str> {
     }
 }
 
-/// A new string for a function to give; what it takes goes on the memory
-/// estimate.
+/// A new string for a function to return. The memory it takes is added
+/// to the memory estimate.
 fn string(s: Str) -> Value {
     crate::memory::charge(crate::memory::string_bytes(s.len()));
     Value::Str(new_str(s))
@@ -382,11 +382,10 @@ fn atan(args: &[Value]) -> Result<Value> {
     }))
 }
 
-/// MIN/MAX over the arguments, or over the elements of a single array.
-/// The winning value keeps its type.
-/// MIN and MAX of an array, or of two numbers or more. SmileBASIC 4
-/// refuses one number, naming it, an empty array with
-/// Illegal function call and a string array, both naming nothing.
+/// MIN and MAX of an array, or of two numbers or more. The winning value
+/// keeps its type. SmileBASIC 4 refuses one number and names it. It
+/// refuses an empty array with Illegal function call and a string array
+/// with Type mismatch, naming nothing.
 fn extreme(args: &[Value], want: std::cmp::Ordering) -> Result<Value> {
     let elements: Vec<Value>;
     let values = match args {
@@ -459,7 +458,7 @@ fn pad_left(mut s: Str, width: usize, fill: char) -> Str {
     s
 }
 
-/// VAL reads the text's first item as SmileBASIC 4 does: spaces
+/// VAL reads the first item of the text the way SmileBASIC 4 does: spaces
 /// and tabs before it are skipped, and it ends at a comma or a line break.
 /// An item that is not a number reads as 0, and so does one with spaces
 /// after it: `VAL(" 12")` is 12, `VAL(" 12 ")` 0.
@@ -475,9 +474,10 @@ fn val(args: &[Value]) -> Result<Value> {
     Ok(parse_number(&item[..end]).unwrap_or(Value::Int(0)))
 }
 
-/// Reads a number as VAL and INPUT do: decimal, `&H` hex or `&B` binary,
-/// whose digits take underscores as in a program (`&H_FF_`), though at
-/// least one digit is needed. `None` if the text is not a number.
+/// Reads a number the way VAL and INPUT do: decimal, `&H` hex or `&B`
+/// binary. Hex and binary digits may have underscores, as in a program
+/// (`&H_FF_`), but at least one digit is needed. `None` if the text is
+/// not a number.
 pub fn parse_number(text: &[u16]) -> Option<Value> {
     let s = String::from_utf16_lossy(text);
     let s = s.as_str();
@@ -497,9 +497,8 @@ pub fn parse_number(text: &[u16]) -> Option<Value> {
     }
 }
 
-/// CHR$: `CHR$(-1)` is U+FFFF.
-/// CHR$: no range check, the code is the int's low 16 bits, so -1 is
-/// U+FFFF, 65601 is "A" and 65536 a one-character string holding U+0000.
+/// CHR$ has no range check: the code is the low 16 bits of the int, so -1
+/// is U+FFFF, 65601 is "A" and 65536 a one-character string holding U+0000.
 fn chr(args: &[Value]) -> Result<Value> {
     let code = args[0].to_int()? as u16;
     Ok(string(vec![code]))
@@ -555,9 +554,10 @@ fn instr(args: &[Value]) -> Result<Value> {
     Ok(Value::Int(found.map_or(-1, |i| (start + i) as i32)))
 }
 
-/// The first place `needle` starts in `haystack`, in time linear in their
-/// lengths (Knuth-Morris-Pratt): comparing at each place in turn takes
-/// their product for text such as "AAAA...AB".
+/// The first place where `needle` starts in `haystack`, found in time
+/// linear in their lengths (Knuth-Morris-Pratt). Comparing at each place
+/// in turn takes time proportional to their product for text such as
+/// "AAAA...AB".
 fn find_text(haystack: &[u16], needle: &[u16]) -> Option<usize> {
     let Some(&first) = needle.first() else {
         return Some(0);
@@ -568,8 +568,8 @@ fn find_text(haystack: &[u16], needle: &[u16]) -> Option<usize> {
     if needle.len() == 1 {
         return haystack.iter().position(|&c| c == first);
     }
-    // For each length of `needle` matched so far, the longest shorter
-    // start of it that the match also ends with.
+    // For each length of `needle` matched so far, the length of the
+    // longest proper prefix of the match that is also a suffix of it.
     let mut short = [0usize; 16];
     let mut long = Vec::new();
     let border = match short.get_mut(..needle.len()) {
@@ -668,7 +668,7 @@ fn format(args: &[Value]) -> Result<Value> {
             while at(*i).is_some_and(|c| c.is_ascii_digit()) {
                 *i += 1;
             }
-            // Digits past any size are over the limit, not absent.
+            // A number too large to parse is over the limit, not absent.
             (*i > start).then(|| {
                 String::from_utf16_lossy(&fmt[start..*i])
                     .parse::<usize>()
@@ -703,7 +703,7 @@ fn format(args: &[Value]) -> Result<Value> {
             room,
         };
         let done = match conversion {
-            // The precision only limits the string: it is no size of its own.
+            // The precision only limits the string: it is not a separate size.
             Some('S') => text(value).and_then(|s| {
                 let shown = &s[..precision.map_or(s.len(), |p| p.min(s.len()))];
                 pad.apply(&mut out, "", shown)
@@ -718,12 +718,12 @@ fn format(args: &[Value]) -> Result<Value> {
     Ok(string(out))
 }
 
-/// The most characters FORMAT$ can give: it writes into a buffer of this
-/// size.
+/// The most characters FORMAT$ can return: it writes into a buffer of
+/// this size.
 const MOST_FORMATTED: usize = 1024;
 
-/// One character of the format string itself, whose overflow has no
-/// argument to name.
+/// Pushes one character of the format string itself. An overflow here has
+/// no argument to name.
 #[inline]
 fn push_formatted(out: &mut Str, c: u16) -> Result<()> {
     if out.len() >= MOST_FORMATTED {
@@ -736,7 +736,7 @@ fn push_formatted(out: &mut Str, c: u16) -> Result<()> {
     Ok(())
 }
 
-/// How one conversion of FORMAT$ fills its width, and the room left.
+/// The padding of one FORMAT$ conversion to its width, and the room left.
 #[derive(Clone, Copy)]
 struct Padding {
     width: usize,
@@ -746,8 +746,8 @@ struct Padding {
 }
 
 impl Padding {
-    /// `sign` and `body` padded to the width, if that fits. A width too
-    /// large to fit is refused here, before anything is made of it.
+    /// Writes `sign` and `body` padded to the width, if that fits. A width
+    /// too large to fit is refused here, before anything is written.
     fn apply(self, out: &mut Str, sign: &str, body: &[u16]) -> Result<()> {
         let filled = sign.len() + body.len();
         let total = self.width.max(filled);
@@ -788,8 +788,8 @@ fn format_numeric(
     if conversion == 'F' {
         let negative = value.to_real()? < 0.0;
         let digits = precision.unwrap_or(6);
-        // At least a digit and the point before them: no need to make what
-        // will be refused.
+        // At least one digit and the point come before the decimals: there
+        // is no need to build what will be refused.
         if digits.saturating_add(2) >= pad.room {
             return Err(field_too_long(digits.saturating_add(2)));
         }
@@ -800,7 +800,7 @@ fn format_numeric(
             false if space => " ",
             false => "",
         };
-        // It is written by a routine that wants room for a character more.
+        // It is written by a routine that needs room for one more character.
         let pad = Padding {
             room: pad.room.saturating_sub(1),
             ..pad
@@ -822,8 +822,8 @@ fn format_numeric(
         'X' => ("", format!("{:X}", n as u32)),
         _ => ("", format!("{:b}", n as u32)),
     };
-    // Zero has no digits of its own, only the one the least precision of 1
-    // asks for; `%D` shows no sign for it then either.
+    // Zero itself has no digits, only the one that the least precision of
+    // 1 asks for. With a precision of 0, `%D` shows no sign for it either.
     let digits = if n == 0 { "" } else { digits.as_str() };
     let sign = if n == 0 && precision == Some(0) {
         ""
@@ -1040,9 +1040,10 @@ fn hsv_out(args: &[Value], outs: usize, unit: bool) -> Result<Vec<Value>> {
 
 // ---- arrays ----
 
-/// ARRAY%, ARRAY# and ARRAY$. SmileBASIC 4 gives Out of memory
-/// as soon as the sizes so far reach 2^30 elements, and a 0 in an array
-/// of more than one dimension as Subscript out of range, naming it.
+/// ARRAY%, ARRAY# and ARRAY$. SmileBASIC 4 gives Out of memory as soon as
+/// the product of the sizes so far reaches 2^30 elements. A size of 0 in an
+/// array of more than one dimension is Subscript out of range, naming the
+/// 0.
 fn new_array(args: &[Value], elem: ElemType) -> Result<Value> {
     let mut dims = Vec::with_capacity(args.len());
     let mut total = 1usize;
@@ -1097,9 +1098,10 @@ fn check_1d(a: &Array) -> Result<()> {
     Ok(())
 }
 
-/// Before an element goes onto `len` others of `size` bytes. An array's
-/// block changes size each 64 bytes, and the new one has to fit beside the
-/// old. The element itself is looked at when the VM next counts memory.
+/// Checks memory before an element is added to `len` others of `size`
+/// bytes. The block of an array changes size every 64 bytes, and the new
+/// block has to fit next to the old one. The element itself is looked at
+/// when the VM next counts memory.
 #[inline]
 fn room_for_one(len: usize, size: usize, elem: ElemType) -> Result<()> {
     if len.wrapping_mul(size) & 63 == 0 {
@@ -1163,9 +1165,9 @@ fn put(target: &Value, value: Value, end: End) -> Result<()> {
     Ok(())
 }
 
-/// Before an element comes off `len` others of `size` bytes: whether the
-/// array may shrink. Its block changes size each 64 bytes, and a smaller
-/// block is a new one that has to fit beside the old.
+/// Whether the array may shrink, before one of its `len` elements of
+/// `size` bytes comes off. Its block changes size every 64 bytes, and a smaller
+/// block is a new one that has to fit next to the old one.
 #[inline]
 fn can_shrink(len: usize, size: usize, elem: ElemType) -> Result<bool> {
     if (len - 1).wrapping_mul(size) & 63 == 0 {
@@ -1182,9 +1184,9 @@ fn smaller_block(elem: ElemType, len: usize) -> Result<bool> {
     )
 }
 
-/// POP or SHIFT of what cannot shrink: the length stays and there is no
-/// error, but the element is still given, and SHIFT has still moved the
-/// rest down, leaving the last one twice.
+/// POP or SHIFT of a value that cannot shrink: the length stays and there
+/// is no error. The element is still returned, and SHIFT still moves the
+/// rest down, which leaves the last one twice.
 #[cold]
 fn take_keeping_length<T: Clone>(v: &mut [T], end: End) -> T {
     let last = v.len() - 1;
@@ -1209,7 +1211,7 @@ fn take(target: &Value, end: End) -> Result<Value> {
             if len == 0 {
                 return Err(ErrorKind::SubscriptOutOfRange.into());
             }
-            // A string's block changes size each 64 characters.
+            // A string's block changes size every 64 characters.
             if (len - 1) & 63 == 0
                 && !crate::memory::shrink(
                     crate::memory::string_bytes(len),
@@ -1476,12 +1478,12 @@ mod tests {
         );
     }
 
-    /// With little memory free, by a count just made.
+    /// Records a count, made just now, that leaves little memory free.
     fn little_free(free: usize) {
         crate::memory::counted_bytes(crate::memory::TOTAL as usize - free, true);
     }
 
-    /// With plenty free, by a count made a while ago.
+    /// Records a count, made a while ago, that leaves plenty free.
     fn plenty_free() {
         crate::memory::counted_bytes(0, false);
     }
@@ -1525,7 +1527,7 @@ mod tests {
     #[test]
     fn taking_asks_for_a_count_before_changing_anything() {
         let a = int_array(40001);
-        // What is known says it may not fit, with no count behind it.
+        // The estimate says it may not fit, with no exact count behind it.
         crate::memory::counted_bytes(crate::memory::TOTAL as usize, false);
         for name in ["POP", "SHIFT"] {
             let e = call(name, std::slice::from_ref(&a)).unwrap_err();
@@ -1619,7 +1621,7 @@ mod tests {
         if let Value::Array(r) = &a {
             r.borrow_mut().system = true;
         }
-        // The wrong number of sizes comes after.
+        // The wrong number of sizes is checked after.
         for args in [
             vec![a.clone(), Value::Int(8)],
             vec![a.clone(), Value::Int(1), Value::Int(2)],
@@ -1825,7 +1827,7 @@ mod tests {
         ] {
             assert_eq!(show(f, v), shown, "{f} of {v}");
         }
-        // It counts towards the limit, and is refused before it is made.
+        // It counts toward the limit, and is refused before it is made.
         assert_eq!(show("%.1024D", 5).len(), 1024);
         for f in [
             "%.1025D",
@@ -1854,7 +1856,7 @@ mod tests {
         // The precision only limits the string: it can be any size.
         assert_eq!(show("[%.2000S]", &abc), "[ABC]");
         assert_eq!(show("[%.99999999S]", &abc), "[ABC]");
-        // Not every code is a character of its own in Rust's strings.
+        // Not every code is a character by itself in Rust's strings.
         let lone = Value::Str(crate::value::new_str(vec![0xD800, 0x41]));
         let got = call("FORMAT$", &[s("%3S"), lone]).unwrap();
         let Value::Str(got) = got else { panic!() };

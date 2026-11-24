@@ -1,4 +1,4 @@
-//! Sound: BGM tracks playing MML on a SoundFont, mixed a frame at a time
+//! Sound: BGM tracks playing MML on a SoundFont, mixed one frame at a time
 //! into stereo samples for the frontend to play.
 
 pub mod bank;
@@ -34,9 +34,9 @@ use talk::Talk;
 use track::{AfterFade, Fresh, Track};
 use wave::Waves;
 
-/// Samples a second.
+/// Samples per second.
 pub const RATE: u32 = 48_000;
-/// Samples in one frame at 60 frames a second.
+/// Samples in one frame at 60 frames per second.
 pub const FRAME_SAMPLES: usize = (RATE / 60) as usize;
 /// BGM tracks 0 to 15.
 pub const TRACKS: usize = 16;
@@ -48,7 +48,7 @@ pub const PRESET_SONGS: i32 = 73;
 /// The highest preset sound effect: 4.4.5 added 156.
 pub const PRESET_BEEPS: i32 = 156;
 
-/// A gain moving to a target in a straight line, a sample at a time.
+/// A gain moving to a target in a straight line, one sample at a time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Ramp {
     pub(crate) value: f64,
@@ -65,7 +65,7 @@ impl Ramp {
         }
     }
 
-    /// Moves to `target` over `frames` frames, at once for 0.
+    /// Moves to `target` over `frames` frames, or immediately for 0.
     pub(crate) fn to(&mut self, target: f64, frames: u32) {
         self.target = target;
         if frames == 0 {
@@ -94,10 +94,11 @@ impl Ramp {
 }
 
 /// A level that SNDMVOL and SNDMSBAL move to a target over whole seconds,
-/// a step each frame, in single precision as SmileBASIC 4 keeps it: the
-/// time passed grows by 1/60 a frame and the level is the straight line's
-/// value there, until the time passed reaches the whole. From 0 to 1 over
-/// a second it is just under 1 at the 60th frame, and 1 at the 61st.
+/// one step per frame, in single precision like SmileBASIC 4. The time
+/// passed grows by 1/60 per frame, and the level is the value of the
+/// straight line at that time, until the time passed reaches the whole
+/// time. From 0 to 1 over a second it is just under 1 at the 60th frame,
+/// and 1 at the 61st.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Fade {
     moving: bool,
@@ -121,7 +122,8 @@ impl Fade {
         }
     }
 
-    /// Moves from where it is to `target` over `seconds`, at once for 0.
+    /// Moves from the current level to `target` over `seconds`, or
+    /// immediately for 0.
     pub(crate) fn to(&mut self, target: f32, seconds: f32) {
         self.moving = true;
         self.from = self.value;
@@ -147,28 +149,29 @@ impl Fade {
         }
     }
 
-    /// What SNDMVOL() and SNDMSBAL() read: 0 to 127, rounded down.
+    /// Returns the value SNDMVOL() and SNDMSBAL() read: 0 to 127, rounded
+    /// down.
     pub(crate) fn read(&self) -> i32 {
         (self.value * 127.0) as i32
     }
 }
 
-/// A volume or balance of 0 to 127 as the level [`Fade`] keeps.
+/// Converts a volume or balance of 0 to 127 to the level [`Fade`] keeps.
 fn level(n: i32) -> f32 {
     n as f32 / 127.0
 }
 
-/// SNDMVOL's level, and the gain a sample at a time that follows it from
-/// frame to frame.
+/// SNDMVOL's level, and the per-sample gain that follows it from frame to
+/// frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Master {
     pub(crate) level: Fade,
     gain: Ramp,
 }
 
-/// SNDMVOL's level for a gain of 1, which it starts at and goes back to:
+/// SNDMVOL's level for a gain of 1, which it starts at and returns to:
 /// 0.7, which SNDMVOL() reads as 88. The output is linear in the level, so
-/// 127 plays at 1.43 times the start's level.
+/// 127 plays at 1.43 times the starting level.
 const MASTER_UNITY: f32 = 0.7;
 
 impl Master {
@@ -181,7 +184,7 @@ impl Master {
         },
     };
 
-    /// The gain the level gives.
+    /// Returns the gain for the level.
     fn level_gain(&self) -> f64 {
         f64::from(self.level.value / MASTER_UNITY)
     }
@@ -199,15 +202,16 @@ impl Master {
     }
 }
 
-/// The furthest a sample going into the effector may reach: well beyond
-/// full scale, which only a sum that would clip anyway comes near.
+/// The largest magnitude of a sample sent into the effector: well beyond
+/// full scale. Only a sum that would clip anyway comes near it.
 const MOST_SENT: f32 = 8.0;
 
-/// Silences samples that are not numbers, which `clamp` lets through.
-/// Looking first keeps this out of the way of the mix's own loops.
+/// Silences NaN samples, which `clamp` lets through. Checking for them
+/// first keeps this out of the way of the mix's own loops.
 #[inline(never)]
 fn silence_nans(samples: &mut [f32]) {
-    // All of them, not stopping at the first: several at a time.
+    // All of them, without stopping at the first, so that several are
+    // checked at a time.
     if samples.iter().fold(false, |nan, s| nan | s.is_nan()) {
         samples
             .iter_mut()
@@ -216,8 +220,8 @@ fn silence_nans(samples: &mut [f32]) {
     }
 }
 
-/// Adds `from` times `gain` into `to`, sample by sample: the loop of a
-/// sound whose gain does not move, which the compiler can do several
+/// Adds `from` times `gain` into `to`, sample by sample: the loop for a
+/// sound with a constant gain, which the compiler can run on several
 /// samples at a time.
 #[inline(always)]
 pub(crate) fn add_scaled(to: &mut [f32], from: &[f32], gain: f32) {
@@ -226,7 +230,7 @@ pub(crate) fn add_scaled(to: &mut [f32], from: &[f32], gain: f32) {
     }
 }
 
-/// Seconds, as BGMSTOP and friends take them, in frames.
+/// Converts seconds, as BGMSTOP and similar commands take them, to frames.
 pub(crate) fn frames(seconds: f64) -> u32 {
     (seconds * 60.0).round().clamp(0.0, f64::from(u32::MAX)) as u32
 }
@@ -234,25 +238,25 @@ pub(crate) fn frames(seconds: f64) -> u32 {
 /// RECSTART's recording of what plays, as 16-bit samples.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Recorder {
-    /// The buffer, which RECSTART leaves as it was: what a recording has
-    /// not reached yet holds older recordings. It only grows.
+    /// The buffer, which RECSTART leaves unchanged: the part a recording
+    /// has not reached yet holds older recordings. It only grows.
     buffer: Vec<[i16; 2]>,
     /// The samples this recording takes, from the buffer's start.
     len: usize,
     pub(crate) pos: usize,
     pub(crate) recording: bool,
-    /// Without a time, recording goes round the buffer until RECSTOP.
+    /// Without a time, recording wraps around the buffer until RECSTOP.
     pub(crate) ring: bool,
     /// Whether it has taken a sample yet.
     pub(crate) begun: bool,
-    /// Where the last frame's samples went in the buffer and how many it
-    /// took, for [`Sound::hear_sub`].
+    /// The position of the last frame's samples in the buffer, and their
+    /// number, for [`Sound::hear_sub`].
     frame_start: usize,
     taken: usize,
 }
 
 impl Recorder {
-    /// RECSTART: `len` samples, round and round with `ring`.
+    /// RECSTART: `len` samples, looping with `ring`.
     pub(crate) fn start(&mut self, len: usize, ring: bool) {
         if self.buffer.len() < len {
             self.buffer.resize(len, [0, 0]);
@@ -264,7 +268,7 @@ impl Recorder {
         self.begun = false;
     }
 
-    /// The samples RECSTART asked for, the older ones in what this
+    /// The samples RECSTART asked for, with older samples in the part this
     /// recording has not reached.
     pub(crate) fn samples(&self) -> &[[i16; 2]] {
         &self.buffer[..self.len]
@@ -289,23 +293,23 @@ impl Recorder {
     }
 }
 
-/// SNDMSBAL's balance, which moves to a new one a step each frame when it
-/// is given a time.
+/// SNDMSBAL's balance, which moves to a new one, one step per frame, when
+/// it is given a time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Balance {
-    /// Where it is, 0 to 1. A subprogram starts halfway, at 0.5, which
-    /// SNDMSBAL reads as 63; the manual calls 64 even.
+    /// The current balance, 0 to 1. A subprogram starts halfway, at 0.5,
+    /// which SNDMSBAL reads as 63; the manual calls 64 even.
     level: Fade,
 }
 
 impl Balance {
-    /// Halfway, where the subprogram's sound and the main program's are
-    /// each as loud as the main program's alone.
+    /// Halfway, where the sounds of the subprogram and the main program
+    /// each play as loud as the main program's sound alone.
     pub(crate) const START: Balance = Balance {
         level: Fade::at(0.5),
     };
 
-    /// SNDMSBAL: moves to `balance` over `seconds`, at once for 0.
+    /// SNDMSBAL: moves to `balance` over `seconds`, or immediately for 0.
     pub(crate) fn to(&mut self, balance: i32, seconds: f32) {
         self.level.to(level(balance.clamp(0, 127)), seconds);
     }
@@ -314,14 +318,14 @@ impl Balance {
         self.level.step_frame();
     }
 
-    /// What SNDMSBAL reads: where it is now, rounded down.
+    /// Returns the value SNDMSBAL reads: the current balance, rounded down.
     pub(crate) fn read(&self) -> i32 {
         self.level.read()
     }
 
-    /// The main and the sub interpreter's gains here: b/127 and
-    /// (127-b)/127 of the output for a balance b, twice over, so that
-    /// halfway, where each subprogram starts, both play as loud as the
+    /// The gains of the main and the sub interpreter at this balance:
+    /// b/127 and (127-b)/127 of the output for a balance b, doubled, so
+    /// that halfway, where each subprogram starts, both play as loud as the
     /// main program alone.
     fn gains(&self) -> (f32, f32) {
         let b = self.level.value;
@@ -334,7 +338,7 @@ impl Balance {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Effector {
     pub(crate) on: bool,
-    /// EFCSET's reverb, which #EFCOFF leaves as it is.
+    /// EFCSET's reverb, which #EFCOFF leaves unchanged.
     pub(crate) settings: Option<reverb::Settings>,
     /// BEEP, BGM, TALK and PCM's wetness, all 127 to begin with.
     pub(crate) wet: [i32; 4],
@@ -344,8 +348,8 @@ impl Default for Effector {
     fn default() -> Self {
         Effector {
             on: false,
-            // UNVERIFIED: that the effector starts with #EFCROOM, as
-            // SNDSTOP leaves it.
+            // UNVERIFIED: that the effector starts with #EFCROOM, the same
+            // as SNDSTOP leaves it.
             settings: reverb::Settings::preset(1),
             wet: [127; 4],
         }
@@ -357,8 +361,8 @@ const BEEP_SEND: usize = 0;
 const BGM_SEND: usize = 1;
 const TALK_SEND: usize = 2;
 const PCM_SEND: usize = 3;
-/// How loud the output plays BEEP and BGM, and what EFCWET 127 sends of
-/// them.
+/// The output gain for BEEP and BGM, and the share of them that EFCWET
+/// 127 sends.
 const HALF: f32 = 0.5;
 
 pub struct Sound {
@@ -391,7 +395,8 @@ pub struct Sound {
     part: [Vec<f32>; 2],
     /// PCMSTREAM's samples this frame, kept out of a recording.
     pcm_part: [Vec<f32>; 2],
-    /// RECSTART's recording: the sub interpreter shares the main one's.
+    /// RECSTART's recording, which the sub interpreter shares with the main
+    /// one.
     pub(crate) recorder: Rc<RefCell<Recorder>>,
     /// This is the sub interpreter's sound, which never records.
     pub(crate) sub: bool,
@@ -399,19 +404,20 @@ pub struct Sound {
     /// interpreter share one from the sub's first frame on.
     balance: Rc<Cell<Balance>>,
     /// SNDMVOL: 0.7 at its start, which SNDMVOL() reads as 88, and the
-    /// gain that gives. The sub interpreter's follows the main one's.
+    /// gain for it. In the sub interpreter it follows the main
+    /// interpreter's SNDMVOL.
     pub(crate) master: Master,
     /// SNDSTOPs so far, shared by the main and the sub interpreter: either
     /// one's SNDSTOP stops every sound of both.
     stops: Rc<Cell<u32>>,
-    /// The SNDSTOPs this interpreter's sound has taken.
+    /// The SNDSTOPs this interpreter's sound has seen.
     stops_seen: u32,
     /// Mixed samples, left and right in turn, not yet taken.
     out: Vec<f32>,
     scratch: [Vec<f32>; 2],
     mix: [Vec<f32>; 2],
-    /// Each track's MML variables as the program sees them: as they were
-    /// when the last frame's sound was made.
+    /// Each track's MML variables as the program sees them: their values
+    /// when the last frame's sound was mixed.
     shown: [[i32; 8]; TRACKS],
 }
 
@@ -450,7 +456,7 @@ impl Default for Sound {
 }
 
 impl Sound {
-    /// Where instruments come from; without any, BGM is silent.
+    /// Sets the source of instruments; without any, BGM is silent.
     pub fn set_instruments(&mut self, instruments: Option<Instruments>) {
         self.beeps = Beeps::sharing(instruments.as_ref(), &self.decoded);
         self.waves.borrow_mut().set_bank(match &instruments {
@@ -489,7 +495,7 @@ impl Sound {
         self.tracks.iter_mut().flatten()
     }
 
-    /// A VSYNC that went straight on.
+    /// A VSYNC that continued without waiting.
     pub fn synced(&mut self) {
         for t in self.tracks.iter_mut().flatten() {
             if t.fresh == Fresh::Started {
@@ -507,17 +513,17 @@ impl Sound {
     pub(crate) fn play(&mut self, n: usize, song: Option<Rc<Song>>, volume: i32, fade: u32) {
         let t = self.track(n);
         t.play(song, volume, fade);
-        // UNVERIFIED: that BGMPLAY sends the track to the effector as
-        // EFCWET last said, forgetting a BGMWET from before. On SmileBASIC
-        // 4 a BGMWET before BGMPLAY changed nothing that could be heard.
+        // UNVERIFIED: that BGMPLAY sends the track to the effector by the
+        // last EFCWET and forgets an earlier BGMWET. On SmileBASIC 4 a
+        // BGMWET before BGMPLAY made no audible change.
         t.wet = None;
     }
 
     pub(crate) fn stop(&mut self, n: usize, fade: u32) {
         if let Some(t) = self.tracks[n].as_mut() {
-            // Stopped with a fade in the frame it started in, a song
-            // never sounds. BGMCHK says 0 a frame on, or two after a
-            // VSYNC that did not wait (checked on hardware).
+            // A song stopped with a fade in the frame it started in never
+            // sounds. BGMCHK says 0 one frame later, or two frames later
+            // after a VSYNC that did not wait (checked on hardware).
             if fade == 0 || t.fresh != Fresh::No {
                 let synced = t.fresh == Fresh::Synced;
                 t.stop();
@@ -567,7 +573,7 @@ impl Sound {
         self.shown[n][var]
     }
 
-    /// What the tracks that play or are paused play, for the debugger.
+    /// Returns what each playing or paused track plays, for the debugger.
     pub fn inspect_tracks(&self) -> Vec<TrackInfo> {
         (self.tracks.iter().enumerate())
             .filter_map(|(n, t)| t.as_ref()?.inspect(n))
@@ -584,14 +590,15 @@ impl Sound {
         self.tracks.iter().flatten().all(|t| !t.playing)
     }
 
-    /// Holds a song just started on an idle sound system back for the
-    /// frames it takes to wake up: on hardware a song's first variable
-    /// showed four frames after the first BGMPLAY of a run, but within
-    /// two for later ones. Any BGMPLAY to an idle system waits, the first
-    /// of a run or not, and its sound waits with it; the program does not.
-    /// On hardware the sound began about 1276 samples after the call, 1.6
-    /// frames, where here it waits two whole frames: the variables' timing
-    /// above, which rhythm games follow, matches with two.
+    /// Holds back a song just started on an idle sound system for the
+    /// frames the system takes to wake up. On hardware a song's first
+    /// variable showed four frames after the first BGMPLAY of a run, but
+    /// within two frames for later ones. Any BGMPLAY to an idle system
+    /// waits, whether it is the first of a run or not, and its sound waits
+    /// with it; the program does not wait. On hardware the sound began
+    /// about 1276 samples after the call, 1.6 frames, while here it waits
+    /// two whole frames: the timing of the variables above, which rhythm
+    /// games follow, matches with two.
     pub(crate) fn wake(&mut self, n: usize) {
         self.track(n).hold = WAKE_FRAMES;
     }
@@ -605,7 +612,7 @@ impl Sound {
         }
     }
 
-    /// SNDMVOL: moves to `volume` over `seconds`, at once for 0.
+    /// SNDMVOL: moves to `volume` over `seconds`, or immediately for 0.
     pub(crate) fn set_master(&mut self, volume: i32, seconds: f32) {
         self.master.level.to(level(volume), seconds);
         if seconds == 0.0 {
@@ -613,25 +620,25 @@ impl Sound {
         }
     }
 
-    /// What SNDMVOL() reads: the volume now, rounded down.
+    /// Returns the value SNDMVOL() reads: the current volume, rounded down.
     pub(crate) fn master_volume(&self) -> i32 {
         self.master.level.read()
     }
 
-    /// RUN puts SNDMVOL back at its start.
+    /// RUN puts SNDMVOL back at its start value.
     pub(crate) fn run_started(&mut self) {
         self.master = Master::START;
     }
 
     /// SNDSTOP's reset of the mixer: SNDMVOL and the shared SNDMSBAL go
-    /// back to their start, from either program.
+    /// back to their start values, from either program.
     pub(crate) fn reset_mixer(&mut self) {
         self.master = Master::START;
         self.balance.set(Balance::START);
     }
 
     /// SNDSTOP: every sound of both programs stops, and the mixer and the
-    /// effector go back to their start.
+    /// effector go back to their start values.
     pub(crate) fn sndstop(&mut self) {
         self.stop_all();
         self.reset_mixer();
@@ -649,12 +656,12 @@ impl Sound {
         }
     }
 
-    /// What SNDMSBAL() reads, the same in either program.
+    /// Returns the value SNDMSBAL() reads, the same in either program.
     pub(crate) fn balance(&self) -> i32 {
         self.balance.get().read()
     }
 
-    /// SNDSTOP: every sound stops at once.
+    /// SNDSTOP: every sound stops immediately.
     pub fn stop_all(&mut self) {
         for t in self.tracks() {
             t.stop();
@@ -664,7 +671,7 @@ impl Sound {
         self.talk.stop();
     }
 
-    /// The main and the sub interpreter's gains for this subprogram's
+    /// The gains of the main and the sub interpreter for this subprogram's
     /// balance.
     pub(crate) fn balance_gains(&self) -> (f32, f32) {
         self.balance.get().gains()
@@ -676,7 +683,7 @@ impl Sound {
     }
 
     /// EFCWET's sends, which RECSTART sets to 0 and SNDSTOP to 127. New
-    /// ones send every track as EFCWET says, over its BGMWET.
+    /// values send every track as EFCWET sets, in place of its BGMWET.
     pub(crate) fn set_sends(&mut self, wet: [i32; 4]) {
         let mut e = self.effector.get();
         if e.wet != wet {
@@ -730,8 +737,9 @@ impl Sound {
             self.stop_all();
             self.master = Master::START;
         }
-        // The sub interpreter moves the shared balance, once a frame, and
-        // the main one SNDMVOL, which the sub's follows.
+        // The sub interpreter moves the shared balance once per frame, and
+        // the main interpreter moves SNDMVOL, which the sub interpreter
+        // follows.
         if self.sub {
             let mut b = self.balance.get();
             b.step_frame();
@@ -744,16 +752,16 @@ impl Sound {
         left.resize(n, 0.0);
         right.clear();
         right.resize(n, 0.0);
-        // Each kind of sound sends part of itself to the effector, as
-        // EFCWET (or a track's BGMWET) asks; with the effector off, what is
-        // sent passes it unchanged. BEEP and BGM keep all of their sound
-        // and send a copy, so that EFCWET 127 with the effector off plays
-        // them twice as loud as EFCWET 0, while RECSTART records only what
-        // they keep. What PCMSTREAM and TALK send leaves their own sound,
-        // so they play the same with the effector off; with it on
-        // PCMSTREAM keeps the reverb's own dry share, and what TALK sends
-        // never comes out. The output plays BEEP and BGM at half, the
-        // start's EFCWET 127 as loud as their sound.
+        // Each kind of sound sends part of itself to the effector, as set
+        // by EFCWET (or a track's BGMWET). With the effector off, the sent
+        // part passes through it unchanged. BEEP and BGM keep all of their
+        // sound and send a copy, so EFCWET 127 with the effector off plays
+        // them twice as loud as EFCWET 0, while RECSTART records only the
+        // part they keep. The part PCMSTREAM and TALK send leaves their own
+        // sound, so they play the same with the effector off. With it on,
+        // PCMSTREAM keeps the reverb's own dry share, and the part TALK
+        // sends never comes out. The output plays BEEP and BGM at half: at
+        // the starting EFCWET 127 they play as loud as their sound.
         // UNVERIFIED: that EFCEN 1 with #EFCOFF passes the sends unchanged.
         let e = self.effector.get();
         if self.reverb.as_ref().map(reverb::Reverb::settings) != e.settings {
@@ -775,8 +783,8 @@ impl Sound {
                 aux.resize(n, 0.0);
             }
         }
-        // With the effector off and BEEP and BGM sending alike, as they
-        // start, what they send passes as a gain on them.
+        // With the effector off and BEEP and BGM sending the same share,
+        // as they do at the start, the sent part passes as a gain on them.
         let passed = (!effect
             && sends[BEEP_SEND] == sends[BGM_SEND]
             && self.tracks.iter().flatten().all(|t| t.wet.is_none()))
@@ -796,7 +804,7 @@ impl Sound {
         let [late_l, late_r] = &mut self.aux_late;
         let [whole_l, whole_r] = &mut self.whole;
         // A recording not yet begun waits with a song that waits for the
-        // sound system to wake, and so begins with it. The sub
+        // sound system to wake, and so begins with the song. The sub
         // interpreter's sound reaches the main one's recording through
         // `hear_sub`.
         let record = !self.sub && {
@@ -806,8 +814,8 @@ impl Sound {
             rec.taken = 0;
             rec.recording && (rec.begun || !waking)
         };
-        // RECSTART does not hear PCMSTREAM, which goes in after the
-        // recording, still sending to the effector.
+        // RECSTART does not hear PCMSTREAM, which is mixed in after the
+        // recording and still sends to the effector.
         let pcm_apart = record && self.pcm.playing;
         // Whether PCMSTREAM or TALK may write into `whole` this frame.
         let whole_used = self.pcm.playing && !pcm_apart || self.talk.sounding();
@@ -836,8 +844,8 @@ impl Sound {
             t.render(left, right, &mut self.scratch, aux);
         }
         let [part_l, part_r] = &mut self.part;
-        // A sound that sends part of itself: what it keeps goes to `to`,
-        // what it sends to `bus`.
+        // A sound that sends part of itself: the part it keeps goes to
+        // `to`, and the part it sends to `bus`.
         let mut mix = |s: f32,
                        keep: f32,
                        to: [&mut Vec<f32>; 2],
@@ -884,10 +892,10 @@ impl Sound {
             [&mut *aux_l, &mut *aux_r],
             &mut |l, r| self.talk.render(l, r),
         );
-        // What the effector adds, in place of what was sent to it.
-        // RECSTART records the sound before it.
+        // The effector adds its output in place of what was sent to it.
+        // RECSTART records the sound before the effector.
         if let Some(r) = self.reverb.as_mut().filter(|_| effect) {
-            // A tail remembers what goes in: one bad sample would ring on.
+            // A tail keeps its input: one bad sample would keep ringing.
             for aux in [&mut *aux_l, &mut *aux_r, &mut *late_l, &mut *late_r] {
                 silence_nans(aux);
                 aux.iter_mut()
@@ -896,7 +904,7 @@ impl Sound {
             r.process(aux_l, aux_r, [late_l, late_r]);
         }
         // The mix, as RECSTART and the main program hear it. Without
-        // PCMSTREAM or TALK this adds zeros, which leave it as it is.
+        // PCMSTREAM or TALK this adds zeros, which leave it unchanged.
         if whole_used {
             for (to, from) in [(&mut *left, &*whole_l), (&mut *right, &*whole_r)] {
                 to.iter_mut().zip(from).for_each(|(t, &x)| *t += x);
@@ -923,14 +931,15 @@ impl Sound {
             true => [aux_l, aux_r],
             false => [late_l, late_r],
         };
-        // BEEP and BGM at half, or with what they pass; the rest as it is.
+        // BEEP and BGM at half, or with the gain they pass; the rest
+        // unchanged.
         let keep = passed.unwrap_or(HALF);
         let rest = 1.0 - keep;
         let mut rec = self.recorder.borrow_mut();
         if !record && self.master.gain.done() {
             // The loop below with its gain fixed and nothing to record:
-            // the same sums, in loops the compiler can do several samples
-            // at a time.
+            // the same sums, in loops the compiler can run on several
+            // samples at a time.
             let gain = self.master.gain.value as f32;
             self.out.resize(start + 2 * n, 0.0);
             let out = &mut self.out[start..];
@@ -987,11 +996,11 @@ impl Sound {
         silence_nans(&mut self.out[start..]);
     }
 
-    /// What the sub interpreter mixed this frame, which RECSTART in the
-    /// main program hears with the main program's own sound, as the
-    /// subprogram's SNDMSBAL balances them. The sub interpreter shares the
-    /// main one's recorder: its RECSAVE reads what the main program
-    /// recorded last.
+    /// Lets RECSTART in the main program hear what the sub interpreter
+    /// mixed this frame, together with the main program's own sound,
+    /// balanced by the subprogram's SNDMSBAL. The sub interpreter shares
+    /// the main interpreter's recorder: its RECSAVE reads what the main
+    /// program recorded last.
     pub(crate) fn hear_sub(&mut self, sub: &mut Sound) {
         if !Rc::ptr_eq(&sub.recorder, &self.recorder) {
             sub.recorder = Rc::clone(&self.recorder);
@@ -1034,7 +1043,7 @@ mod tests {
     use super::*;
 
     /// The main program's recording hears the subprogram's sound too, both
-    /// as SNDMSBAL balances them.
+    /// balanced by SNDMSBAL.
     #[test]
     fn recording_hears_the_subprogram_as_sndmsbal_balances_it() {
         let heard = |balance: i32| {
@@ -1060,7 +1069,7 @@ mod tests {
 
     /// The main program's SNDMSBAL does nothing, and both programs read
     /// the subprogram's balance once it has had a frame; SNDSTOP in either
-    /// puts it back halfway, and SNDMVOL back at 88.
+    /// program puts it back to halfway, and SNDMVOL back to 88.
     #[test]
     fn the_balance_is_shared_and_sndstop_resets_the_mixer() {
         let (mut main, mut sub) = (Sound::default(), Sound::default());
@@ -1082,8 +1091,9 @@ mod tests {
     }
 
     /// A fade of SNDMVOL or SNDMSBAL over a second from 0 reads 126 at the
-    /// 60th frame and 127 at the 61st, as single precision steps of 1/60
-    /// add up to just under 1; it moves in a straight line before that.
+    /// 60th frame and 127 at the 61st, because single precision steps of
+    /// 1/60 add up to just under 1; it moves in a straight line before
+    /// that.
     #[test]
     fn fades_reach_their_target_a_frame_after_the_last_step() {
         let (mut main, mut sub) = (Sound::default(), Sound::default());
@@ -1128,10 +1138,10 @@ mod tests {
         assert!(!sub.playing(0));
     }
 
-    /// The mix's loops for a gain that does not move give what its loop
-    /// a sample at a time gives, which a recording takes: to the bit,
-    /// through fades of the song and of SNDMVOL, sends to the effector and
-    /// the silence after the song.
+    /// The mix's loops for a constant gain give the same samples as its
+    /// per-sample loop, which a recording takes, to the bit: through fades
+    /// of the song and of SNDMVOL, sends to the effector and the silence
+    /// after the song.
     #[test]
     fn the_mix_is_the_same_recorded_or_not() {
         let song = Rc::new(mml::parse("T150@219L8O4CDE@220GAB<C>R2").unwrap());
@@ -1161,7 +1171,7 @@ mod tests {
     }
 
     /// A track that has played and stopped, and BEEP with nothing to play,
-    /// do no work a sample at a time: they leave their buffers untouched.
+    /// do no per-sample work: they leave their buffers untouched.
     #[test]
     fn idle_sounds_do_nothing_a_sample_at_a_time() {
         let mut s = Sound::default();

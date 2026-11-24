@@ -2,8 +2,8 @@
 //! or at 1x where the display is scaled below (see
 //! [`crate::window::menu_place`]). Its menus open within the room it is
 //! given. It stays hidden until the mouse reaches the top edge or F8 shows it,
-//! so it takes no keys away from programs; while one runs, only F8 shows
-//! it, as the top of the screen is the program's.
+//! so it takes no keys away from programs. While one runs, only F8 shows it,
+//! because the top of the screen belongs to the program.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::editor::EditorSize;
@@ -23,7 +23,7 @@ const ROW_HEIGHT: u32 = 24;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Projects,
-    /// Ctrl+S's and Ctrl+L's windows.
+    /// The windows of Ctrl+S and Ctrl+L.
     SaveSlot,
     LoadSlot,
     OpenFolder,
@@ -38,18 +38,18 @@ pub enum Action {
     SelectAll,
     Comment,
     Uncomment,
-    /// Run PRG0, as F5 does.
+    /// Run PRG0, the same as F5 does.
     Run,
     Stop,
     /// Pause or resume the program, with the menu bar shown (F8).
     Pause,
     /// Give the keys and controls to the subprogram, or back to the main
-    /// program, as ENVFOCUS does.
+    /// program, the same as ENVFOCUS does.
     SwitchFocus,
     /// SUBSTOP.
     StopSub,
     ToggleEditor,
-    /// Show the editor in a window of its own.
+    /// Show the editor in a separate window.
     ToggleEditorWindow,
     ToggleTidyOnEnd,
     EditSlot(usize),
@@ -91,10 +91,10 @@ pub enum Action {
     ClearBreakpoints,
     /// Run the program RUN last started again.
     Restart,
-    /// Put the debugger's panel away, or show it again.
+    /// Hide the debugger's panel, or show it again.
     DebugPanel,
     ToggleDebugOpenEditor,
-    /// How large the debugger panel's text is drawn.
+    /// The text size of the debugger panel.
     DebugTextSize(u32),
     /// The help for the command at the editor's cursor (F1).
     Help,
@@ -103,15 +103,15 @@ pub enum Action {
     About,
 }
 
-/// What the menu bar needs to know of the emulator to enable its items.
+/// The state of the emulator that the menu bar needs to enable its items.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Context {
     pub running: bool,
     pub editing: bool,
-    /// A program is stopped where it can go on.
+    /// A program is stopped where it can continue.
     pub paused: bool,
-    /// The editor shows in a window of its own, and can open while a
-    /// program runs.
+    /// The editor shows in its own window, and can open while a program
+    /// runs.
     pub detached: bool,
     /// A subprogram runs beside the main program.
     pub sub: bool,
@@ -133,7 +133,7 @@ impl Action {
     fn mark(self, settings: &Settings, context: Context) -> &'static str {
         let check = |on: bool| if on { "[x]" } else { "[ ]" };
         match self {
-            // The window's own state, as the system may change it too.
+            // The window's own state, because the system may change it too.
             Action::ToggleFullscreen => check(context.fullscreen),
             Action::WindowSize(i) if context.window_size == Some(i) => "(*)",
             Action::WindowSize(_) => "( )",
@@ -196,9 +196,10 @@ impl Action {
         *flag = !*flag;
     }
 
-    /// Stop needs a running program; the editor and the project manager
-    /// cannot open during one. Editing text needs the editor open; the
-    /// commands that open the editor need no program running.
+    /// Stop needs a running program; the project manager cannot open
+    /// during one. Editing text needs the editor open. The commands that
+    /// open the editor need no program running, but they work during one
+    /// when the editor shows in its own window.
     fn enabled(self, context: Context) -> bool {
         match self {
             Action::Stop | Action::Pause => context.running,
@@ -461,7 +462,7 @@ const MENUS: &[Menu] = &[
     },
 ];
 
-/// What a click did.
+/// The result of a click.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Click {
     /// The click was not on the menu bar; pass it on.
@@ -489,7 +490,8 @@ fn has_marks(items: &[Item]) -> bool {
     (items.iter()).any(|i| matches!(i.entry, Entry::Do(a) if a.mark(&settings, context) != "   "))
 }
 
-/// What goes on an item's right: its keys, or the arrow of a submenu.
+/// Returns the text on an item's right: its keys, or the arrow of a
+/// submenu.
 fn item_keys(item: &Item) -> &'static str {
     match item.entry {
         Entry::Sub(_) => ">",
@@ -504,7 +506,7 @@ fn item_height(item: &Item) -> u32 {
     }
 }
 
-/// How far down a list item `i` starts.
+/// Returns the top of item `i`, measured from the top of the list.
 fn item_top(items: &[Item], i: usize) -> u32 {
     items[..i].iter().map(item_height).sum()
 }
@@ -540,11 +542,12 @@ fn sub_items(item: &Item) -> &'static [Item] {
     }
 }
 
-/// Where a submenu `w` x `h` pixels large opens beside its parent item
-/// at `p`, in `room` pixels under a bar: to the right of the parent's
-/// list, or to its left where the right has no room, or against the
-/// room's right edge where neither side has; level with the parent, or
-/// higher where it would go past the bottom, but not over the bar.
+/// Returns the position where a submenu of `w` x `h` pixels opens beside
+/// its parent item at `p`, in `room` pixels under a bar. It opens to the
+/// right of the parent's list, or to its left where the right has no
+/// room, or against the room's right edge where neither side has room. It
+/// is level with the parent, or higher where it would go past the bottom,
+/// but not over the bar.
 fn sub_origin(p: Rect, (w, h): (u32, u32), (room_w, room_h): (u32, u32)) -> (u32, u32) {
     let x = if p.x + p.w + w <= room_w {
         p.x + p.w
@@ -568,7 +571,7 @@ fn last_first(items: &[Item], room_h: u32) -> usize {
 }
 
 /// Draws a small triangle pointing up or down in the right margin of an
-/// item at `r`, where a list too tall for the window goes on.
+/// item at `r`, where a list too tall for the window continues.
 fn draw_more(fb: &mut Framebuffer, r: Rect, up: bool) {
     let (x, y) = (r.x + r.w - PAD, r.y + r.h / 2 - 2);
     for row in 0..4 {
@@ -585,8 +588,8 @@ fn draw_more(fb: &mut Framebuffer, r: Rect, up: bool) {
 
 /// Fits the text at the bar's right into `room` pixels: whole, or with
 /// its start cut and "..." in its place, keeping the end, which says
-/// whether a program runs and which slot is edited. Nothing where fewer
-/// than 4 of its characters fit.
+/// whether a program runs and which slot is edited. Returns `None` where
+/// fewer than 4 of its characters fit.
 fn fit_status(status: &str, room: u32) -> Option<String> {
     if text_width(status) < room {
         return Some(status.to_string());
@@ -604,15 +607,15 @@ pub struct MenuBar {
     open: Option<usize>,
     /// The item of the open menu whose submenu is open.
     sub: Option<usize>,
-    /// The bar stays shown, as over the editor, which leaves room for it.
+    /// The bar stays shown: over the editor, which leaves room for it.
     pub pinned: bool,
     /// F8 shows the bar, and pauses a running program, until pressed
     /// again.
     pub shown: bool,
     /// A program runs, so the mouse at the top edge leaves the bar hidden.
     pub running: bool,
-    /// What the emulator is doing, on the bar's right: the project, the
-    /// slot, a running or paused program.
+    /// The emulator's status, on the bar's right: the project, the slot, a
+    /// running or paused program.
     pub status: String,
     /// The room the bar's menus have, in its pixels, from the bar's top
     /// left corner: they open within it. `None` for no limit.
@@ -648,9 +651,9 @@ impl MenuBar {
         item >= first && (item == first || r.y + r.h <= self.room().1)
     }
 
-    /// Where item `item` of `menu`'s list is: under the menu's title,
-    /// moved left where the list would go past the room's right edge, and
-    /// up by the items scrolled past. Those have no height.
+    /// Returns the rectangle of item `item` in the list of `menu`: under
+    /// the menu's title, moved left where the list would go past the room's
+    /// right edge, and up by the items scrolled past. Those have no height.
     fn item_rect(&self, menu: usize, item: usize) -> Rect {
         let items = MENUS[menu].items;
         let w = list_width(items);
@@ -684,7 +687,7 @@ impl MenuBar {
 
     /// Scrolls the open menu's list by `notches` of the wheel, up for
     /// more than 0, if `at` is over it and it is too tall for its room.
-    /// True if the wheel was over the list, which then takes it.
+    /// Returns true if the wheel was over the list, which then takes it.
     pub fn wheel(&mut self, at: (i32, i32), notches: i32) -> bool {
         let Some(menu) = self.open else {
             return false;
@@ -753,8 +756,8 @@ impl MenuBar {
         let (Some(menu), Some(at)) = (self.open, position) else {
             return;
         };
-        // An open submenu can lie over its parent's list in a narrow
-        // window, and keeps the pointer then.
+        // An open submenu can cover its parent's list in a narrow window,
+        // and then keeps the pointer.
         if let Some((menu, parent, items)) = self.submenu()
             && (0..items.len()).any(|i| self.sub_rect(menu, parent, i).contains(at))
         {
@@ -774,8 +777,8 @@ impl MenuBar {
         self.first = 0;
     }
 
-    /// Forgets the pointer and closes the open menu, as when the bar's
-    /// window loses the keys.
+    /// Forgets the pointer and closes the open menu, for example when the
+    /// bar's window loses the keys.
     pub fn leave(&mut self) {
         self.mouse = None;
         self.close();
@@ -846,7 +849,7 @@ impl MenuBar {
     pub const HEIGHT: u32 = ROW_HEIGHT;
 
     /// Draws the bar onto a transparent frame as wide as the display; the
-    /// open menus go apart, with [`MenuBar::draw_lists`].
+    /// open menus are drawn separately, with [`MenuBar::draw_lists`].
     pub fn draw_bar(&self, fb: &mut Framebuffer, font: &Font) {
         let bar = Rect {
             x: 0,
@@ -895,7 +898,7 @@ impl MenuBar {
             .collect();
         let rects: Vec<Rect> = (0..items.len()).map(|i| self.item_rect(open, i)).collect();
         self.draw_list(fb, font, settings, context, items, &rects, &shown, self.sub);
-        // Where the list is cut, a mark says it goes on.
+        // Where the list is cut, a mark shows that it continues.
         if let (Some(&top), Some(&bottom)) = (shown.first(), shown.last()) {
             if top > 0 {
                 draw_more(fb, rects[top], true);
@@ -1008,7 +1011,7 @@ mod tests {
         ((r.x + 1) as i32, (r.y + 1) as i32)
     }
 
-    /// Where an item is with room enough for every list.
+    /// The rectangle of an item when there is room enough for every list.
     fn item_rect(menu: usize, item: usize) -> Rect {
         MenuBar::default().item_rect(menu, item)
     }
@@ -1272,7 +1275,7 @@ mod tests {
 
     #[test]
     fn menus_stay_in_a_small_window() {
-        // 640x480 at 1x: every list and submenu fits as it is.
+        // 640x480 at 1x: every list and submenu fits unchanged.
         for space in [(640, 480), (800, 600), (720, 720), (1024, 768)] {
             let mut bar = MenuBar {
                 space: Some(space),

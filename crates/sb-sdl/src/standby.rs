@@ -1,9 +1,9 @@
 //! A thread that runs the program's frames while the main thread is held up
-//! in a call to the system, as `SDL_PumpEvents` is for seconds while a window
-//! is dragged on GNOME. The machine stays the main thread's; the loop lends it
-//! for such a call with [`Standby::hold`], and the standby thread runs a frame
-//! only once one is a whole frame late and the call has taken [`HELD_UP`].
-//! See `docs/development/frame-thread.md`.
+//! in a call to the system, for example in `SDL_PumpEvents` for seconds while
+//! a window is dragged on GNOME. The machine belongs to the main thread. The
+//! loop lends it for such a call with [`Standby::hold`], and the standby
+//! thread runs a frame only once one is a whole frame late and the call has
+//! taken [`HELD_UP`]. See `docs/development/frame-thread.md`.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -17,13 +17,13 @@ use crate::audio::Sink;
 use crate::pacing::Clock;
 use crate::toast::Toasts;
 
-/// A call that has taken this long holds the loop up. A shorter one, as
+/// A call that has taken this long holds up the loop. A shorter call, which
 /// draining the events nearly always is, leaves the loop's frames to the
-/// loop, also while it runs a frame behind: the loop then chooses between
-/// the frame and its drawing, which this thread cannot.
+/// loop, also while the loop runs a frame behind. The loop then chooses
+/// between the frame and its drawing, which this thread cannot do.
 pub const HELD_UP: Duration = Duration::from_millis(4);
 
-/// What the loop lends for a call.
+/// The values the loop lends for a call.
 pub struct Lend<'a> {
     pub machine: &'a mut Machine,
     pub guard: &'a mut FrameGuard,
@@ -31,8 +31,8 @@ pub struct Lend<'a> {
     pub clock: &'a mut Clock,
     /// Whether frames may run at all: not while the program is paused.
     pub frames: bool,
-    /// How long each frame runs a program that does not wait for the next
-    /// one, as the loop's frames do.
+    /// The time each frame runs a program that does not wait for the next
+    /// one, the same time that the loop's frames give it.
     pub run_time: Duration,
 }
 
@@ -66,9 +66,9 @@ struct Job {
 // as long as the job exists, and only one thread uses them at a time: the
 // standby thread between setting `Slot::busy` and clearing it, under the mutex,
 // and the main thread not at all until `hold` has taken the job back. The
-// `Rc`s and `RefCell`s inside the machine (why it is not `Send`) move with it.
-// The calls lent for are SDL's and touch none of them, including those shared
-// with something outside the machine, such as the help.
+// `Rc`s and `RefCell`s inside the machine (the reason it is not `Send`) move
+// with it. The calls lent for are SDL calls and touch none of them, including
+// those shared with something outside the machine, such as the help.
 unsafe impl Send for Job {}
 
 #[derive(Default)]
@@ -113,9 +113,9 @@ impl Standby {
         Standby { shared, thread }
     }
 
-    /// Makes `call`, with frames run on the standby thread meanwhile if it
-    /// holds the main thread up. Gives what `call` gave and the frames kept;
-    /// the clock comes back as the frames left it.
+    /// Calls `call`, with frames run on the standby thread meanwhile if it
+    /// holds up the main thread. Returns the result of `call` and the frames
+    /// kept. The clock comes back in the state the frames left it in.
     pub fn hold<R>(&self, lend: Lend<'_>, call: impl FnOnce() -> R) -> (R, Kept) {
         if !lend.frames || self.thread.is_none() {
             return (call(), Kept::default());
@@ -217,8 +217,8 @@ fn serve(shared: &Shared, sink: &Sink) {
         // SAFETY: `busy` is set, so the main thread waits in `Back::take` and
         // keeps the borrows the pointers came from (see `Job`).
         let (machine, guard, toasts) = unsafe { (&mut *machine, &mut *guard, &mut *toasts) };
-        // FrameGuard catches a panic in the frame; this one anything else, so
-        // that `busy` is always cleared.
+        // FrameGuard catches a panic in the frame, and this catches any other
+        // panic, so that `busy` is always cleared.
         let _ = catch_unwind(AssertUnwindSafe(|| {
             machine.time_limit = Some(run_time);
             guard.run(machine, toasts, |m| {
@@ -295,10 +295,10 @@ mod tests {
         let (mut guard, mut toasts) = (FrameGuard::default(), Toasts::default());
         // A busy computer can make the sleep below take longer than
         // `HELD_UP`, and such a call is held up: only the calls that came
-        // back in time say anything.
+        // back in time are checked.
         let mut short = 0;
         for _ in 0..400 {
-            // Two frames behind, as a loop whose drawing came back late.
+            // Two frames behind, like a loop whose drawing came back late.
             let mut clock = Clock::new(Instant::now() - 2 * FRAME);
             let lend = Lend {
                 machine: &mut m,
@@ -332,7 +332,7 @@ mod tests {
         let before = count(&mut m);
         let held = Duration::from_millis(500);
         let (kept, clock) = hold_for(&standby, &mut m, held);
-        // One frame late before the first, then one a frame.
+        // One frame late before the first, then one per frame.
         let expected = (held.as_nanos() / FRAME.as_nanos()) as u32 - 1;
         assert!(
             // A busy machine may wake the thread late, never early.
@@ -410,7 +410,7 @@ mod tests {
             })
         }));
         assert!(panicked.is_err());
-        // The standby thread has let go: the next lend works.
+        // The standby thread has released the machine: the next lend works.
         let (kept, _) = hold_for(&standby, &mut m, Duration::from_millis(60));
         assert!(kept.frames > 0);
     }

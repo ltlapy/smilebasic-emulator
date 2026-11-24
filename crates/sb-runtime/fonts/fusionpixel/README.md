@@ -14,5 +14,6 @@ font has, mostly the Simplified Chinese characters of GB2312 and beyond.
 - The zh_hans build draws CJK characters shared with Japanese in their
   Simplified Chinese forms, so it comes after every other 8-pixel source.
 - The build script (`build.rs`) places each glyph in an 8x8 cell at the
-  size it was drawn. Only the cells of characters the 8-pixel sources
-  before it lack go into the program: the editor never draws the others.
+  size it was drawn. Only the cells of characters that the earlier
+  8-pixel sources lack go into the program: the editor never draws the
+  others.

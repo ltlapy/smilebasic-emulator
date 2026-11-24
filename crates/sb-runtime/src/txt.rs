@@ -1,4 +1,4 @@
-//! Commands on what text screens hold: TPUT, TFILL, SCROLL, CHKCHR,
+//! Commands on the contents of text screens: TPUT, TFILL, SCROLL, CHKCHR,
 //! TCOORD, TCOPY, TSAVE, TLOAD, TARRAY and TUPDATE; and their animations,
 //! variables and callbacks: TANIM, TSTART, TSTOP, TCHK, TVAR and TFUNC.
 
@@ -33,8 +33,8 @@ fn codes(v: &Value) -> Result<Vec<u16>> {
     })
 }
 
-/// An ATTR value, or the screen's own when omitted. One out of range is
-/// named after its argument, `(TPUT:5)`.
+/// An ATTR value, or the screen's own attribute when omitted. A value out
+/// of range is named after its argument, `(TPUT:5)`.
 fn attr_arg(v: Option<&Value>, screen: &TextScreen) -> Result<u16> {
     match v {
         None | Some(Value::Default) => Ok(screen.attr),
@@ -68,13 +68,13 @@ fn offsets_on(x: i64, y: i64, w: i64, h: i64, t: &TextScreen) -> (Range<i64>, Ra
     (on_screen(x, w, sw), on_screen(y, h, sh))
 }
 
-/// The most cells TSAVE and TLOAD take at once.
+/// The most cells TSAVE and TLOAD take in one call.
 const MOST_CELLS: i64 = sb_core::memory::TOTAL as i64 / 8;
 
 /// X,Y,width,height; the whole screen when `args` is empty. It may reach
 /// off the screen (checked on hardware: TSAVE reads empty cells there).
-// A rectangle past what memory holds is Out of range here, standing in for
-// SmileBASIC 4's own error, as for GSAVE.
+// A rectangle larger than memory can hold is Out of range here, in place of
+// SmileBASIC 4's own error, the same as for GSAVE.
 fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
     let (w, h) = screen.size();
     if args.is_empty() {
@@ -89,8 +89,8 @@ fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
         format!("{},{},{},{}", v[0], v[1], v[2], v[3]),
     );
     // A width or height under 1 is named by its argument (TLOAD:4 and
-    // TLOAD:5); too many cells in all names none. UNVERIFIED: TSAVE is
-    // taken to number them the same way.
+    // TLOAD:5); too many cells in total names no argument.
+    // UNVERIFIED: TSAVE is taken to number them the same way.
     Err(match (v[2] < 1, v[3] < 1) {
         (true, _) => e.of_value(&args[2]),
         (_, true) => e.of_value(&args[3]),
@@ -99,7 +99,7 @@ fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
 }
 
 /// Display coordinates to the screen's own pixels, which TOFS, THOME,
-/// TROT and TSCALE place. An axis scaled to nothing gives the home point.
+/// TROT and TSCALE place. An axis with a scale of 0 gives the home point.
 fn screen_dots(screen: &TextScreen, x: f64, y: f64) -> (f64, f64) {
     let (dx, dy) = (x - screen.pos.0, y - screen.pos.1);
     let (sin, cos) = screen.rot.to_radians().sin_cos();
@@ -233,7 +233,7 @@ impl Runtime {
                     n => return Err(out_of_range("mode", n)),
                 })
             }
-            // What reaches off either screen is left out.
+            // The part that reaches off either screen is skipped.
             (Command::Tcopy, Want::Outs(0), 7 | 8) => {
                 let dest = screen_id(&args[0])?;
                 let (src, rest) = match args.len() {
@@ -318,7 +318,7 @@ impl Runtime {
             (Command::Tanim, Want::Outs(0), 2) => {
                 let id = screen_id(&args[0])?;
                 let n = anim_id(&args[1])?;
-                // As with SPANIM, a number ANIMDEF never set starts nothing.
+                // As with SPANIM, an ANIMDEF number never set starts nothing.
                 if let Some(anim) = self.sprites.anim_defs[n].clone() {
                     self.start_text_anim(id, anim);
                 }
@@ -390,7 +390,8 @@ impl Runtime {
     }
 
     /// Text screens ignore "UV" and "I"; TCHK reports nothing for them
-    /// (checked on hardware). Their animations start in step with sprites'.
+    /// (checked on hardware). Their animations start in step with those of
+    /// sprites.
     // Such an animation is not set at all.
     fn start_text_anim(&mut self, id: usize, anim: Anim) {
         if matches!(anim.mode.target, Target::Uv | Target::I) {
@@ -518,8 +519,8 @@ mod tests {
         screens(&mut rt, &mut next);
         let (w, h) = rt.text[0].size();
         let before = cells(&rt, 0);
-        // All of screen 0 onto itself, in as large a rectangle as can be
-        // asked for.
+        // All of screen 0 onto itself, in the largest rectangle a program can
+        // ask for.
         for far in [FAR, i32::MAX] {
             let args = ints(&[0, -far, -far, far, far, -far, -far]);
             rt.text_command(Command::Tcopy, &args, Want::Outs(0))
@@ -531,7 +532,8 @@ mod tests {
         rt.text_command(Command::Tcopy, &args, Want::Outs(0))
             .unwrap();
         assert_eq!(cells(&rt, 0), before);
-        // The characters from the rectangle's corner, here the screen's.
+        // The characters start at the rectangle's corner, here the screen
+        // corner.
         let codes = Value::Str(sb_core::value::new_str(vec![65, 66, 67]));
         let mut args = ints(&[0, 0, 0, i32::MAX, 0]);
         args.push(codes.clone());
@@ -540,7 +542,7 @@ mod tests {
         for x in 0..w {
             assert_eq!(rt.text[0].cell(x, 0).code, 65 + (x % 3) as u16);
         }
-        // The string starts at the clipped corner and goes on row by row.
+        // The string starts at the clipped corner and continues row by row.
         let mut args = ints(&[0, i32::MIN, i32::MIN, i32::MAX, i32::MAX]);
         args.push(codes);
         rt.text_command(Command::Tfill, &args, Want::Outs(0))

@@ -6,8 +6,8 @@ use sb_runtime::sprites::{DEF_BYTES, DEFS, FIRST_RELEASE_DEFS, defs_from_bytes};
 /// Finds SmileBASIC 4's built-in template table in its executable's
 /// read-only data: it starts with 16x16 cells at (0,0) and (16,0). Returns
 /// the table's bytes. The first release has only the first
-/// [`FIRST_RELEASE_DEFS`] templates; the rest are left empty, as unused
-/// templates are in later releases.
+/// [`FIRST_RELEASE_DEFS`] templates; the rest are left empty, the same as
+/// unused templates in later releases.
 pub fn find_default_defs(ro: &[u8]) -> Option<Vec<u8>> {
     let start: Vec<u8> = [0u16, 0, 16, 16, 0, 0, 0, 16, 0, 16, 16, 0, 0, 0]
         .iter()

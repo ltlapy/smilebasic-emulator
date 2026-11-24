@@ -1,4 +1,4 @@
-//! The whole computer: direct mode, the editor, the program slots, and the
+//! The whole computer: DIRECT mode, the editor, the program slots, and the
 //! program running on the [`Runtime`]. Frontends feed it keys, call
 //! [`Machine::frame`] once per frame and show [`Machine::render`].
 
@@ -27,21 +27,21 @@ use crate::text::CONSOLE;
 
 /// Instructions a frame runs for code that does not VSYNC, when the
 /// frame has no time limit (see [`Machine::time_limit`]), so that tests
-/// and headless runs come out the same each time.
+/// and headless runs give the same result each time.
 pub const FRAME_BUDGET: u32 = 1_000_000;
-/// With a time limit, how many instructions run between looks at the
-/// clock.
+/// With a time limit, the number of instructions run between checks of
+/// the clock.
 const SLICE: u32 = 20_000;
-/// The frames the border marking the focus shows whole, and then takes
-/// to fade out.
+/// The number of frames the focus border stays fully opaque, and then the
+/// number it takes to fade out.
 pub const FLASH_HOLD: u32 = 14;
 pub const FLASH_FADE: u32 = 15;
-/// With a time limit, the part of a frame's that a subprogram is sure of:
-/// a quarter.
+/// With a time limit, the smallest share of a frame's time limit that a
+/// subprogram gets: a quarter.
 const SUB_SHARE: u32 = 4;
-/// The longest trip round a program's main loop that
+/// The longest iteration of a program's main loop that
 /// [`Machine::keep_frames`] keeps in one frame, under a time limit: four
-/// frames' time. Longer ones, such as loading, let frames go by as usual.
+/// frames' time. Longer ones, such as loading, let frames pass as usual.
 pub const KEEP_LONGEST: Duration = Duration::from_nanos(4 * 1_000_000_000 / 60);
 /// The same without a time limit, in calls of [`Machine::frame`] of
 /// [`FRAME_BUDGET`] instructions each.
@@ -51,23 +51,23 @@ const KEY_C: u8 = 0x06;
 /// Shown by FREEMEM on SmileBASIC 4.4.9 right after start-up.
 pub const FREE_MEMORY: u32 = sb_core::memory::TOTAL;
 
-/// What [`Machine::sub_screen`] gives.
+/// The result of [`Machine::sub_screen`].
 pub struct SubScreen<'a> {
     pub frame: &'a Framebuffer,
-    /// A backend drew the frame and holds it, so that `frame` is not it.
+    /// A backend drew the frame and holds it, so `frame` does not contain it.
     pub on_backend: bool,
     /// XSUBSCREEN's rectangle, as x, y, width and height.
     pub area: [i32; 4],
-    /// Where the frame goes in it, at XSCREEN's aspect ratio. It is scaled
-    /// smoothly whatever XSCREEN's mode.
+    /// The frame's rectangle in the area, at XSCREEN's aspect ratio. It is
+    /// scaled smoothly in every XSCREEN mode.
     pub quad: [f32; 4],
     /// BACKCOLOR, which fills the rest of the area unless clear.
     pub back: u32,
 }
 
 impl SubScreen<'_> {
-    /// The two bars of the area that the frame leaves, if any: BACKCOLOR's
-    /// color plus the display times 1 - its alpha.
+    /// The two bars of the area that the frame does not cover, if any:
+    /// BACKCOLOR's color plus the display times 1 - its alpha.
     pub fn bars(&self) -> Option<[[f32; 4]; 2]> {
         if self.back >> 24 == 0 {
             return None;
@@ -84,8 +84,8 @@ impl SubScreen<'_> {
     }
 }
 
-/// Where a subprogram's frame goes in XSUBSCREEN's rectangle: fitted at
-/// the aspect ratio, as x, y, width and height.
+/// Fits a subprogram's frame into XSUBSCREEN's rectangle at the aspect
+/// ratio, and returns its x, y, width and height.
 fn sub_quad([x, y, w, h]: [i32; 4], aspect: f64) -> [f32; 4] {
     let (x, y, w, h) = (x as f32, y as f32, w as f32, h as f32);
     let aspect = aspect as f32;
@@ -102,27 +102,27 @@ fn rounded(quad: [f32; 4]) -> [i32; 4] {
     quad.map(|v| v.round() as i32)
 }
 
-/// Frames in which a running program missed part of its trip round its
-/// main loop, by why, for measuring how a slow computer runs it.
+/// Frames in which a running program missed part of an iteration of its
+/// main loop, by reason, for measuring how a slow computer runs it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Missed {
-    /// The frame ran out of time part-way through the trip, which then
-    /// takes the next frame too.
+    /// The frame ran out of time part-way through an iteration of the
+    /// program's main loop, which then takes the next frame too.
     pub cut: u64,
     /// The frame left the program at its VSYNC, to catch up.
     pub held: u64,
-    /// A VSYNC that was behind waited for the next frame rather than go
-    /// straight on as on SmileBASIC 4, as the trip after it would not end
-    /// in the frame's time.
+    /// A VSYNC that was behind waited for the next frame, because the
+    /// iteration of the program's main loop after it would not end in the
+    /// frame's time. On SmileBASIC 4 it would continue immediately.
     pub deferred: u64,
 }
 
 /// VSYNC's rule: `VSYNC frames` waits until that many frames after the
 /// one the last VSYNC waited for, `last`. Reached in frame `frame`, it
-/// gives the frame the next VSYNC counts from, and how many frames to
-/// wait, or `None` when that frame has gone by: the VSYNC is behind and
-/// counts from now. `reached` is `frame`, or the one before while the
-/// frame's job has yet to raise MAINCNT.
+/// returns the frame the next VSYNC counts from and the number of frames
+/// to wait, or `None` when that frame has passed: the VSYNC is behind and
+/// counts from now. `reached` is `frame`, or the frame before it while the
+/// frame's job has not raised MAINCNT yet.
 fn vsync_wait(last: Option<u64>, frames: u32, frame: u64, reached: u64) -> (u64, Option<u32>) {
     let until = last.map(|at| at + u64::from(frames));
     match until {
@@ -139,53 +139,58 @@ pub struct Machine {
     wait: u32,
     /// Frames run so far.
     frame: u64,
-    /// The frame the last VSYNC waited for, none being long ago, which the next one counts
-    /// from.
+    /// The frame the last VSYNC waited for, which the next one counts from.
+    /// `None` means long ago.
     vsync_at: Option<u64>,
     /// VSYNCs the program has reached.
     vsyncs: u64,
     /// Whether the program stopped at a VSYNC or WAIT and has run no
-    /// further: the screens show a whole trip round its main loop.
+    /// further: the screens show a whole iteration of its main loop.
     at_sync: bool,
-    /// The running time of the last trip from one VSYNC to the next, and
-    /// of the one under way, whatever frames it took. Kept only under a
-    /// time limit.
+    /// The running time of the last iteration of the program's main loop,
+    /// from one VSYNC to the next, and of the current one, however many
+    /// frames it took. Kept only under a time limit.
     loop_time: Duration,
     loop_so_far: Duration,
-    /// A frame leaves a program that [`Machine::at_sync`] where it is,
-    /// for a frame run to catch up that has no time for a whole trip.
+    /// A frame leaves a program that is [`Machine::at_sync`] where it is.
+    /// This is for a catch-up frame that has no time for a whole iteration
+    /// of the program's main loop.
     pub hold_at_sync: bool,
     /// Frames are not spent while the program's main loop is part-way
-    /// through, so that each trip round it gets one frame however slow
-    /// the computer: a frame that runs out of time with the program
-    /// between VSYNCs goes on at the next [`Machine::frame`], which then
-    /// starts no new frame (no animation step, MAINCNT, sound or new
-    /// input), and a frame [`Machine::hold_at_sync`] would leave the
-    /// program out of does not happen. The program runs slower than 60
-    /// trips a second instead of missing frames, and the sound has gaps.
-    /// Only for a loop that started at a VSYNC or WAIT and has run less
-    /// than [`KEEP_LONGEST`] (or [`KEEP_MOST_CALLS`] calls without a time
-    /// limit), at unlimited speed, with no subprogram, editor or step.
+    /// through, so that each iteration of its main loop gets one frame
+    /// however slow the computer is. A frame that runs out of time with the
+    /// program between VSYNCs continues at the next [`Machine::frame`],
+    /// which then starts no new frame (no animation step, MAINCNT, sound or
+    /// new input). A frame in which [`Machine::hold_at_sync`] would not run
+    /// the program does not happen. The program runs slower than 60
+    /// iterations of its main loop per second instead of missing frames,
+    /// and the sound has gaps. This applies only to a loop that started at
+    /// a VSYNC or WAIT and has run less than [`KEEP_LONGEST`] (or
+    /// [`KEEP_MOST_CALLS`] calls without a time limit), at unlimited speed,
+    /// with no subprogram, editor or step.
     ///
     /// SmileBASIC 4 gives a program that takes longer than a frame fewer
-    /// trips than frames, as this does when it is off. On a slow computer
-    /// that is far more often, as the emulator's frames carry the drawing
-    /// too and give the program part of a frame (see `time_limit`).
-    /// Programs that count their trips as frames then go wrong, such as
-    /// a relative SPANIM started again every N calls of CALL SPRITE.
+    /// iterations of its main loop than frames, the same as the emulator
+    /// does when this is off. On a slow computer that happens far more
+    /// often, because the emulator's frames also carry the drawing and give
+    /// the program part of a frame (see `time_limit`). Programs that count
+    /// the iterations of their main loop as frames then go wrong, such as a
+    /// relative SPANIM started again every N calls of CALL SPRITE.
     pub keep_frames: bool,
     /// The last frame ran out of time part-way through a loop that
-    /// [`Machine::keep_frames`] lets go on in the same frame.
+    /// [`Machine::keep_frames`] lets continue in the same frame.
     keep_going: bool,
-    /// The trip round the loop under way started at a VSYNC or WAIT and
-    /// is short enough for [`Machine::keep_frames`] to keep in a frame.
+    /// The current iteration of the program's main loop started at a VSYNC
+    /// or WAIT and is short enough for [`Machine::keep_frames`] to keep in
+    /// a frame.
     keepable: bool,
     /// Calls of [`Machine::frame`] the frame being kept has had so far.
     kept_calls: u32,
-    /// Frames a program missed part of its trip in, so far.
+    /// Frames in which a program missed part of an iteration of its main
+    /// loop, so far.
     pub missed: Missed,
-    /// Globals of the last program and the direct-mode lines since, kept
-    /// for the next direct-mode line; each line adds its own.
+    /// Globals of the last program and of the lines typed in DIRECT mode
+    /// since, kept for the next such line. Each line adds its own globals.
     vars: HashMap<String, Value>,
     /// The editor's two sides. Without a split display only the active
     /// one is shown. When both show the same slot, the other one mirrors
@@ -195,11 +200,11 @@ pub struct Machine {
     split: bool,
     /// The sides are one above the other rather than side by side.
     split_rows: bool,
-    /// Whether the editor is shown instead of direct mode.
+    /// Whether the editor is shown instead of DIRECT mode.
     editing: bool,
     /// The slot whose program is running, if one is.
     running_slot: Option<usize>,
-    /// Where the last program error happened, for LIST ERR and F4: the
+    /// The location of the last program error, for LIST ERR and F4: the
     /// slot, line and column of the statement.
     last_error: Option<(usize, u32, u32)>,
     /// The last error that stopped a program, until
@@ -208,7 +213,7 @@ pub struct Machine {
     /// The program that STOP, the + button or an error stopped, kept for
     /// CONT; `rt.stopped` says which.
     halted: Option<Vm>,
-    /// How long a frame may run code that does not VSYNC: programs run
+    /// The time a frame may run code that does not VSYNC. Programs run
     /// as fast as the computer allows rather than at SmileBASIC 4's
     /// speed, which no program needs. `None` runs [`FRAME_BUDGET`]
     /// instructions instead.
@@ -221,39 +226,39 @@ pub struct Machine {
     kept: HashMap<String, BTreeMap<u32, Option<Rc<Watch>>>>,
     /// Watches that stop programs when their values change.
     changes: Vec<Rc<Watch>>,
-    /// Why the stopped program stopped.
+    /// The reason the stopped program stopped.
     stop_reason: Option<StopReason>,
     /// A debugger's step started from the editor, which stays shown
     /// while it runs unless the program waits for input.
     stepping: Option<Step>,
-    /// The step running has waited for input, so it shows the screen
-    /// until it stops.
+    /// The running step has waited for input, so the screen shows until
+    /// the step stops.
     step_waited: bool,
     /// The slot RUN last started, for the debugger's restart.
     last_run: Option<usize>,
-    /// The debugger's panel and the stopped line were put away until the
+    /// The debugger's panel and the stopped line were hidden until the
     /// next stop.
     panel_closed: bool,
     /// The debugger's panel was asked for, so it shows with the editor
     /// whether a program is stopped or not.
     panel_pinned: bool,
-    /// Slots whose lines the editor moved since the program started. Its
-    /// code there is the old one, as CONT goes on with it (checked on
-    /// hardware), so it keeps the breakpoints it had.
+    /// Slots whose lines the editor moved since the program started. The
+    /// program's code there is the old code, which CONT continues with
+    /// (checked on hardware), so it keeps the breakpoints it had.
     moved: Vec<bool>,
-    /// A line typed in direct mode failed since the last program: ENVSTAT
-    /// then gives the status of an error.
+    /// A line typed in DIRECT mode failed since the last program: ENVSTAT
+    /// then returns the status of an error.
     direct_failed: bool,
-    /// The editor shows apart from the screens, in a window of its own,
-    /// so that programs and direct mode go on while it is open.
+    /// The editor shows apart from the screens, in a separate window, so
+    /// that programs and DIRECT mode continue while it is open.
     detached: bool,
-    /// The frame the editor fills apart from the screens, as its window's
-    /// size gives it.
+    /// The frame the editor fills apart from the screens, at the size of
+    /// its window.
     editor_area: Option<Area>,
     /// With the editor apart, whether it takes the keys.
     editor_focus: bool,
-    /// The program stopped for the debugger, which says where, so direct
-    /// mode printed nothing; it shows OK once keys go to it.
+    /// The program stopped for the debugger, which says where, so DIRECT
+    /// mode printed nothing. DIRECT mode shows OK once keys go to it.
     quiet_stop: bool,
     /// The slots' change counts the editor's sides last took.
     slot_changes: Vec<u32>,
@@ -266,18 +271,18 @@ pub struct Machine {
     /// The focus on its way to the subprogram (true) or the main
     /// interpreter, and the frames before it gets there.
     focus_moving: Option<(bool, u32)>,
-    /// Where the focus went last (the subprogram: true) and the frames
-    /// since, for the border that marks it.
+    /// The interpreter the focus went to last (true for the subprogram) and
+    /// the frames since, for the border that marks it.
     focus_flash: Option<(bool, u32)>,
-    /// On the sub interpreter, how its last program ended, for the main
-    /// one to tell: `Some(None)` by itself, else with the error or break
-    /// message the main one prints.
+    /// On the sub interpreter, the way its last program ended, for the main
+    /// one to report: `Some(None)` when it ended by itself, else the error
+    /// or break message the main one prints.
     ended: Option<Option<String>>,
     /// Whether the program came from the project manager's Run.
     home: Home,
 }
 
-/// How a stopped program goes on.
+/// The way a stopped program continues.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Resume {
     Cont,
@@ -285,11 +290,11 @@ pub enum Resume {
     Trace,
     /// A debugger's step, stopping before the next statement.
     Step(Step),
-    /// On until the slot's line, or a breakpoint, is about to run.
+    /// Continues until the slot's line, or a breakpoint, is about to run.
     RunTo(usize, u32),
 }
 
-/// What stopped a program: the + button, STOP and TRACE, or a
+/// The reason a program stopped: the + button, STOP and TRACE, or a
 /// breakpoint or a debugger's step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Halt {
@@ -309,7 +314,7 @@ enum Home {
     /// Ended: the frontend reopens the manager.
     Done,
     /// Ended by an error, which stays on the screen until a button is
-    /// pressed. The count is the frames still to go before one counts, so
+    /// pressed. The count is the frames left before a press counts, so
     /// that a button the program was using does not dismiss it.
     Waiting(u8),
 }
@@ -320,7 +325,7 @@ pub const HOME_PROMPT: &str = "=== Press A Button or Enter to return.===";
 /// Frames after the error in which a press does not return yet.
 const HOME_GRACE: u8 = 20;
 
-/// Why the stopped program stopped, for the debugger's panel.
+/// The reason the stopped program stopped, for the debugger's panel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StopReason {
     /// The Break key or the + button.
@@ -331,8 +336,8 @@ pub enum StopReason {
     RanTo,
     /// A breakpoint, with its condition when it has one.
     Breakpoint(Option<String>),
-    /// A watch's value changed from one to the other, written as a note
-    /// shows values.
+    /// A watch's value changed from one to the other, written the way a
+    /// note shows values.
     Changed {
         watch: String,
         from: String,
@@ -342,7 +347,7 @@ pub enum StopReason {
     ConditionFailed(String),
 }
 
-/// What a direct-mode LIST asks for.
+/// The target of a LIST typed in DIRECT mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum List {
     /// A slot (the edited one when `None`) and a 1-based line.
@@ -350,10 +355,10 @@ enum List {
     Error,
 }
 
-/// What a line typed in DIRECT mode is.
+/// The kind of a line typed in DIRECT mode.
 #[derive(Debug, PartialEq, Eq)]
 enum Direct {
-    /// A line that compiles and runs as a program does.
+    /// A line that compiles and runs the same way a program does.
     Line,
     /// A command of DIRECT mode, as the line that runs it: the command
     /// and the arguments it read, without the rest of the line.
@@ -378,7 +383,7 @@ enum Token<'a> {
     Other,
 }
 
-/// Reads the token at the start of `s` and gives the text after it.
+/// Reads the token at the start of `s` and returns the text after it.
 fn token(s: &str) -> (Token<'_>, &str) {
     let s = s.trim_start_matches([' ', '\t']);
     let bytes = s.as_bytes();
@@ -451,11 +456,11 @@ fn token(s: &str) -> (Token<'_>, &str) {
     }
 }
 
-/// Sorts out a line typed in DIRECT mode. RUN, CONT, NEW, CLEAR, LIST,
+/// Classifies a line typed in DIRECT mode. RUN, CONT, NEW, CLEAR, LIST,
 /// TRACE, BACKTRACE, SUBRUN, SUBSTOP, SUBSHOW and SUBHIDE are commands
 /// only as the line's first word. Each reads its own arguments, which are
 /// literals, not expressions, and the rest of the line is not read: `RUN
-/// 1+2` runs slot 1, `CONT:?1` only goes on. Anywhere else on a line these
+/// 1+2` runs slot 1, `CONT:?1` only continues. Anywhere else on a line these
 /// names do not compile.
 fn parse_direct(line: &str) -> Result<Direct, Error> {
     let (Token::Word(word), rest) = token(line) else {
@@ -467,12 +472,12 @@ fn parse_direct(line: &str) -> Result<Direct, Error> {
         "CONT" | "CLEAR" | "TRACE" | "BACKTRACE" | "SUBSTOP" | "SUBSHOW" | "SUBHIDE" => {
             word.clone()
         }
-        // UNVERIFIED for NEW: that it reads its slot as RUN does.
+        // UNVERIFIED for NEW: that it reads its slot the same way RUN does.
         "RUN" | "NEW" => match token(rest).0 {
             Token::End => word.clone(),
             // `RUN -3` runs slot 0 (checked on hardware). UNVERIFIED: that
-            // a lone minus reads as 0, the number after it not read, and
-            // that NEW differs.
+            // a lone minus reads as 0 and the number after it is not read,
+            // and that NEW differs.
             Token::Other if word == "RUN" && rest.trim_start().starts_with('-') => {
                 format!("{word} 0")
             }
@@ -498,8 +503,8 @@ fn parse_direct(line: &str) -> Result<Direct, Error> {
 }
 
 /// Reads LIST's arguments: none, ERR, a line, or a slot, `:` and an
-/// optional line, each an integer literal. A real is a Syntax error as
-/// the first, and anything but a line number after the `:` is a Type
+/// optional line, each an integer literal. A real as the first is a
+/// Syntax error, and anything but a line number after the `:` is a Type
 /// mismatch (checked on hardware: `LIST 1.5`, `LIST 1:A`).
 fn parse_list(rest: &str) -> Result<List, Error> {
     let error = |kind, detail: &str| Error::with_detail(kind, format!("LIST: {detail}"));
@@ -536,7 +541,8 @@ fn parse_list(rest: &str) -> Result<List, Error> {
     }
 }
 
-/// ASCII to full-width forms, as SmileBASIC writes its own messages.
+/// Converts ASCII to full-width forms, the way SmileBASIC writes its own
+/// messages.
 fn full_width(text: &str) -> Vec<u16> {
     text.encode_utf16()
         .map(|c| match c {
@@ -602,9 +608,9 @@ impl Machine {
         }
     }
 
-    /// Prints the start-up message and waits for a direct-mode line.
+    /// Prints the start-up message and waits for a line in DIRECT mode.
     pub fn boot(&mut self) {
-        // KEY starts from the settings; programs change only this run's.
+        // KEY starts from the settings. Programs change only this run's keys.
         let keys = &self.rt.settings.function_keys;
         self.rt.input.function_keys = keys.clone().map(|k| k.encode_utf16().collect());
         let version = crate::VERSION;
@@ -638,37 +644,37 @@ impl Machine {
         }
     }
 
-    /// Whether a program or direct-mode line is executing.
     /// Instructions the running program has executed.
     pub fn executed(&self) -> u64 {
         self.vm.as_ref().map_or(0, Vm::executed)
     }
 
     /// VSYNCs the program has reached, for timing how often its main loop
-    /// comes round.
+    /// repeats.
     pub fn vsyncs(&self) -> u64 {
         self.vsyncs
     }
 
     /// Whether the program stopped at a VSYNC or WAIT and has run no
-    /// further, so that a frame drawn now shows a whole trip round its
+    /// further, so that a frame drawn now shows a whole iteration of its
     /// main loop.
     pub fn at_sync(&self) -> bool {
         self.at_sync
     }
 
     /// Whether the program is part-way between VSYNCs: out of time rather
-    /// than waiting. What is on the screens is then partly made.
+    /// than waiting. The screens are then only partly drawn.
     pub fn mid_loop(&self) -> bool {
         self.is_running() && !self.at_sync && self.wait == 0
     }
 
-    /// How long the program last took between two VSYNCs, not counting
+    /// The time the program last took between two VSYNCs, not counting
     /// the time between frames. Known only under a time limit.
     pub fn loop_time(&self) -> Duration {
         self.loop_time
     }
 
+    /// Whether a program or DIRECT mode line is executing.
     pub fn is_running(&self) -> bool {
         self.vm.is_some()
     }
@@ -677,9 +683,9 @@ impl Machine {
         self.editing
     }
 
-    /// Shows the editor apart from the screens, or in their place. Put
-    /// back in their place while a program runs, it closes. The area
-    /// given for the one place does not carry over to the other.
+    /// Shows the editor apart from the screens, or in their place. When it
+    /// is put back in their place while a program runs, it closes. The
+    /// area given for one place does not carry over to the other.
     pub fn set_detached(&mut self, detached: bool) {
         if self.detached == detached {
             return;
@@ -696,23 +702,23 @@ impl Machine {
         self.detached
     }
 
-    /// The frame the editor draws: as many rows and columns as `area`
-    /// holds, as in a window of its own or a main window the frontend
+    /// Sets the frame the editor draws: as many rows and columns as `area`
+    /// holds, for a separate window or for a main window that the frontend
     /// lays it out for, instead of SmileBASIC 4's rows at the screen's
-    /// shape. `None`, or a change of [`Machine::set_detached`], goes back
-    /// to those.
+    /// shape. `None`, or a change of [`Machine::set_detached`], returns to
+    /// SmileBASIC 4's rows.
     pub fn set_editor_area(&mut self, area: Option<Area>) {
         self.editor_area = area;
     }
 
     /// With the editor apart, whether keys go to it rather than to the
-    /// program or direct mode.
+    /// program or DIRECT mode.
     pub fn focus_editor(&mut self, focused: bool) {
         self.editor_focus = focused;
     }
 
     /// Whether the editor is open and takes the keys: not while a
-    /// subprogram beside it has the focus.
+    /// subprogram running at the same time has the focus.
     pub fn editor_has_keys(&self) -> bool {
         self.editing && (!self.detached || self.editor_focus) && !self.sub_has_focus()
     }
@@ -723,8 +729,8 @@ impl Machine {
         self.vm.is_none() || self.detached
     }
 
-    /// Switches between direct mode and the editor, as F4 does. Entering
-    /// the editor shows the last error's line once, like LIST ERR.
+    /// Switches between DIRECT mode and the editor, the same as F4 does.
+    /// Entering the editor shows the last error's line once, like LIST ERR.
     pub fn toggle_editor(&mut self) {
         if !self.can_edit() {
             return;
@@ -761,7 +767,7 @@ impl Machine {
         self.split && self.editors[0].slot() == self.editors[1].slot()
     }
 
-    /// Opens the editor on a slot, from direct mode or from another slot
+    /// Opens the editor on a slot, from DIRECT mode or from another slot
     /// (Ctrl+1 to Ctrl+6, like SmileBASIC 4's EDIT0 to EDIT3). A slot that
     /// the other side of a split display shows gets the keys there.
     pub fn edit_slot(&mut self, slot: usize) {
@@ -781,7 +787,7 @@ impl Machine {
         self.open_editor(slot, None);
     }
 
-    /// Lets the active side go of its slot, which the other side keeps
+    /// Closes the slot on the active side. The other side keeps the slot
     /// if it shows it too.
     fn leave_slot(&mut self) {
         let a = self.active;
@@ -803,7 +809,7 @@ impl Machine {
         self.rt.edit_slot = slot;
         let (a, o) = (self.active, self.other());
         if self.split && !self.editing {
-            // Back from direct mode, the other side shows its slot again.
+            // Back from DIRECT mode, the other side shows its slot again.
             let shown = self.editors[o].slot();
             self.editors[o].open(shown, &self.rt.slots[shown], None);
         }
@@ -835,7 +841,7 @@ impl Machine {
         }
     }
 
-    /// The sides of the editor with text of their own: not one that
+    /// The sides of the editor with their own text: not a side that
     /// mirrors the other.
     fn own_sides(&self) -> [Option<usize>; 2] {
         let other = (self.split && !self.mirrors()).then_some(self.other());
@@ -912,7 +918,7 @@ impl Machine {
         self.split && self.split_rows
     }
 
-    /// Which side of a split display takes the keys: 0 for the left.
+    /// The side of a split display that takes the keys: 0 for the left.
     pub fn active_side(&self) -> usize {
         self.active
     }
@@ -951,7 +957,7 @@ impl Machine {
         self.edit().mouse_down(x, y, extend);
     }
 
-    /// Which side of the editor's frame a point is on.
+    /// The side of the editor frame that a point is on.
     fn side_at(&self, x: i32, y: i32) -> usize {
         let along = if self.split_rows { y } else { x };
         match self.rt.split_at {
@@ -983,7 +989,7 @@ impl Machine {
         self.edit().mouse_drag(x, y);
     }
 
-    /// A point of the editor's frame on the active side's.
+    /// Converts a point of the editor frame to a point of the active side.
     fn on_side(&self, x: i32, y: i32) -> (i32, i32) {
         match self.rt.split_at {
             Some(at) if self.split && self.active == 1 && self.split_rows => (x, y - at as i32),
@@ -1042,7 +1048,8 @@ impl Machine {
             .collect()
     }
 
-    /// What the slots with unsaved edits hold, with the editors' changes.
+    /// The programs in the slots with unsaved edits, with the editors'
+    /// changes.
     pub fn unsaved_programs(&self) -> Vec<(usize, String)> {
         let shown = |side: usize| self.editing && (side == self.active || self.split);
         let edited = |slot: usize| {
@@ -1059,7 +1066,7 @@ impl Machine {
             .collect()
     }
 
-    /// Starts the program in a slot, as RUN does.
+    /// Starts the program in a slot, the same as RUN does.
     pub fn run_slot(&mut self, slot: usize) {
         // Running a program ends PRGEDIT's editing.
         self.rt.prg_edit = None;
@@ -1095,8 +1102,8 @@ impl Machine {
         outcome
     }
 
-    /// Loads the current project's `name` into PRG0 and runs it, as
-    /// SmileBASIC 4's menu runs a project's MAIN.PRG.
+    /// Loads the current project's `name` into PRG0 and runs it, the same
+    /// way SmileBASIC 4's menu runs a project's MAIN.PRG.
     pub fn run_file(&mut self, name: &str) -> storage::Result<()> {
         self.home = Home::Off;
         self.stop();
@@ -1126,7 +1133,7 @@ impl Machine {
     }
 
     /// Whether the program that Projects ran has ended, so that the
-    /// manager is to reopen. True once.
+    /// manager should reopen. True once.
     pub fn home_done(&mut self) -> bool {
         let done = self.home == Home::Done;
         if done {
@@ -1141,8 +1148,9 @@ impl Machine {
         matches!(self.home, Home::Waiting(_))
     }
 
-    /// A fresh press of A or Enter while waiting. True when it returns,
-    /// which leaves direct mode as after any end; the manager is to open.
+    /// A new press of A or Enter while waiting. True when it returns,
+    /// which leaves DIRECT mode as after any end. The manager should then
+    /// open.
     pub fn home_press(&mut self) -> bool {
         if self.home != Home::Waiting(0) {
             return false;
@@ -1152,8 +1160,8 @@ impl Machine {
         true
     }
 
-    /// The manager opens some other way while waiting: back to direct
-    /// mode.
+    /// When the manager opens some other way while waiting, returns to
+    /// DIRECT mode.
     pub fn home_leave(&mut self) {
         if self.home_waiting() {
             self.home = Home::Off;
@@ -1162,14 +1170,14 @@ impl Machine {
     }
 
     /// The + button (F5): stops a running program, or jumps to its ON
-    /// BREAK GOTO label, or runs PRG0 from direct mode or the editor.
+    /// BREAK GOTO label, or runs PRG0 from DIRECT mode or the editor.
     pub fn sysreq(&mut self) {
         if self.vm.is_some() && self.both_in_dialog() {
             self.break_sub();
         }
         if let Some(vm) = &mut self.vm {
             if vm.take_break(&mut self.rt) {
-                // Whatever the program waited for is left behind.
+                // Anything the program waited for is canceled.
                 self.wait = 0;
                 self.rt.cancel_input();
                 self.rt.cancel_confirm();
@@ -1185,12 +1193,12 @@ impl Machine {
         self.run_slot(0);
     }
 
-    /// Ctrl+C on a keyboard, as it goes down: in a running program a
-    /// break, which jumps to its ON BREAK GOTO label as the + button does,
-    /// or else stops it; it also stops a DIRECT mode line. Unlike +, it
-    /// never starts PRG0. KEYBOARD sees Ctrl held but not C's press, only
-    /// its release, and C types nothing. UNVERIFIED: whether it also ends
-    /// a SUBRUN subprogram; it does what + does.
+    /// Ctrl+C on a keyboard, when it goes down: in a running program a
+    /// break, which jumps to its ON BREAK GOTO label the same as the +
+    /// button does, or else stops it. It also stops a DIRECT mode line.
+    /// Unlike +, it never starts PRG0. KEYBOARD sees Ctrl held but not C's
+    /// press, only its release, and C types nothing. UNVERIFIED: whether it
+    /// also ends a SUBRUN subprogram; it does what + does.
     pub fn keyboard_break(&mut self) {
         self.rt.input.hide_press(KEY_C);
         if let Some(sub) = &mut self.sub {
@@ -1202,10 +1210,10 @@ impl Machine {
         }
     }
 
-    /// Stops the running program or direct-mode line, as the Break key
-    /// does, and returns to direct mode.
+    /// Stops the running program or DIRECT mode line, the same as the
+    /// Break key does, and returns to DIRECT mode.
     ///
-    /// While both interpreters wait on the one dialog, a stop is the
+    /// While both interpreters wait on the same dialog, a stop is the
     /// dialog's stop answer, which both callers get: the subprogram stops
     /// too. [`Machine::sysreq`] and [`Machine::stop_sub`] do the same.
     pub fn stop(&mut self) {
@@ -1216,15 +1224,16 @@ impl Machine {
     }
 
     /// After a panic out of [`Machine::frame`], which the frontend caught:
-    /// back to direct mode, with what the panic says on the console. The
-    /// programs in the slots and the editors' text stay, as neither is
-    /// taken apart while a frame runs.
+    /// returns to DIRECT mode, with the panic message on the console. The
+    /// programs in the slots and the editors' text stay, because neither
+    /// is taken apart while a frame runs.
     ///
     /// The programs that were running are gone rather than stopped, with
-    /// their variables and without CONT, as they stopped at no statement.
-    /// What they had already changed (screens, sprites, sounds, arrays
-    /// shared with direct mode) stays as the panic left it: safe to touch,
-    /// since no borrow outlives the unwinding, but maybe half done.
+    /// their variables and without CONT, because they stopped at no
+    /// statement. The things they had already changed (screens, sprites,
+    /// sounds, arrays shared with DIRECT mode) stay as the panic left them:
+    /// safe to touch, since no borrow outlives the unwinding, but maybe
+    /// half done.
     pub fn recover_from_panic(&mut self, why: &str) {
         self.home = Home::Off;
         if let Some(sub) = &mut self.sub {
@@ -1252,8 +1261,8 @@ impl Machine {
         self.rt.cancel_confirm();
         self.rt.clear_input();
         self.rt.sound.stop_all();
-        // The name SmileBASIC 4 has for code 1, which no ErrorKind stands
-        // for as nothing but a panic comes to it.
+        // The name SmileBASIC 4 has for code 1. No ErrorKind stands for it,
+        // because only a panic leads to it.
         let text: Vec<u16> = format!("Internal Error ({why})").encode_utf16().collect();
         self.print_line(&text);
         self.ready();
@@ -1261,7 +1270,7 @@ impl Machine {
 
     /// Stops, naming `line` rather than the one about to run.
     fn stop_on(&mut self, line: Option<u32>, how: Halt) {
-        // A subprogram has no direct mode to stop in: it ends, and the
+        // A subprogram has no DIRECT mode to stop in: it ends, and the
         // main interpreter prints why.
         if self.rt.env_type == 1 {
             if let Some(vm) = &self.vm {
@@ -1279,7 +1288,7 @@ impl Machine {
         };
         self.vars.extend(vm.globals());
         let program = self.running_slot.is_some();
-        // Not a break the debugger takes, nor a step's.
+        // Not a break that the debugger takes, nor the stop of a step.
         let home = program
             && self.home == Home::Running
             && self.stepping.is_none()
@@ -1297,13 +1306,13 @@ impl Machine {
         self.rt.running_slot = None;
         self.rt.take_requests();
         self.rt.cancel_confirm();
-        // A direct-mode line counts as slot 0's line 1 (checked on
+        // A DIRECT mode line counts as slot 0's line 1 (checked on
         // hardware, as is the program's form, which a forced stop shares).
         let slot = vm.slot().unwrap_or(0);
         let line = line.unwrap_or(vm.line());
         // A stop the debugger shows in the editor leaves the console to
-        // the program: no Break line, note or OK, as the panel says where
-        // and why.
+        // the program: no Break line, note or OK, because the panel says
+        // where and why.
         let opens =
             self.stepping.is_some() || how == Halt::Debug && self.rt.settings.debug_open_editor;
         let debugging = matches!(how, Halt::Trace | Halt::Debug)
@@ -1317,7 +1326,7 @@ impl Machine {
         };
         if !quiet {
             let text: Vec<u16> = format!("{what} on {slot}:{line}").encode_utf16().collect();
-            // It follows whatever the line printed, as after INPUT's prompt.
+            // It follows anything the line printed, as after INPUT's prompt.
             let console = &mut self.rt.text[CONSOLE];
             console.print(&text);
             console.newline();
@@ -1344,7 +1353,7 @@ impl Machine {
             }
             (Halt::Debug, Some(DebugNote::Step) | None) => StopReason::Stepped,
         };
-        // Those the screen alone does not tell are noted after the line.
+        // Reasons the screen alone does not show are noted after the line.
         let note = match &reason {
             StopReason::Changed { watch, from, to } => {
                 Some(format!("{watch} changed: {from} -> {to}"))
@@ -1357,7 +1366,7 @@ impl Machine {
             let note: Vec<u16> = note.encode_utf16().collect();
             self.print_line(&note);
         }
-        // A line typed in direct mode cannot go on.
+        // A line typed in DIRECT mode cannot continue.
         if program {
             // A STOP or a break leaves ENVSTAT no error, argument 0, slot
             // and place -1 and line 0 (checked on hardware). UNVERIFIED:
@@ -1385,7 +1394,7 @@ impl Machine {
         }
     }
 
-    /// Opens the editor at the line the stopped program goes on from,
+    /// Opens the editor at the line the stopped program continues from,
     /// keeping what is being edited.
     fn show_paused(&mut self) {
         if let Some((slot, line)) = self.paused_at() {
@@ -1393,7 +1402,7 @@ impl Machine {
         }
     }
 
-    /// Shows a slot's 1-based line in the editor, opening it if need be.
+    /// Shows a slot's 1-based line in the editor, opening it if needed.
     pub fn show_line(&mut self, slot: usize, line: u32) {
         if !self.can_edit() || slot >= SLOTS {
             return;
@@ -1425,8 +1434,8 @@ impl Machine {
         self.rt.backtrace.clear();
     }
 
-    /// Goes on with the stopped program, with the variables as direct
-    /// mode left them.
+    /// Continues the stopped program, with the variables as DIRECT mode
+    /// left them.
     fn resume(&mut self, how: Resume) {
         let Some(mut vm) = self.halted.take() else {
             return self.ready();
@@ -1453,9 +1462,9 @@ impl Machine {
         self.vsync_at = Some(self.frame + 1);
     }
 
-    /// Goes on with a program that STOP, the + button or the debugger
-    /// stopped, as CONT does from direct mode. False when there is none
-    /// that can go on.
+    /// Continues a program that STOP, the + button or the debugger
+    /// stopped, the same as CONT does from DIRECT mode. False when there
+    /// is none that can continue.
     /// From the editor, CONT shows the screen again, while a step leaves
     /// the editor shown until the program waits for input.
     pub fn debug(&mut self, how: Resume) -> bool {
@@ -1502,7 +1511,7 @@ impl Machine {
     }
 
     /// Whether the stopped program was stopped by an error, so that it
-    /// cannot go on.
+    /// cannot continue.
     pub fn stopped_by_error(&self) -> bool {
         self.rt.stopped == Stopped::Error
     }
@@ -1513,14 +1522,14 @@ impl Machine {
         self.editing && (self.panel_pinned || !self.panel_closed && self.panel_screens())
     }
 
-    /// Whether the panel has screens to show: those a stopped program, or
-    /// one a step runs, left.
+    /// Whether the panel has screens to show: the screens left by a
+    /// stopped program or by a program that a step runs.
     pub fn panel_screens(&self) -> bool {
         self.halted.is_some() || self.stepping.is_some()
     }
 
-    /// Shows the debugger's panel with the editor from now on, or puts it
-    /// and the stopped line away until the next stop.
+    /// Shows the debugger's panel with the editor from now on, or hides it
+    /// and the stopped line until the next stop.
     pub fn show_panel(&mut self, shown: bool) {
         self.panel_pinned = shown;
         self.panel_closed = !shown;
@@ -1531,8 +1540,8 @@ impl Machine {
         self.panel_shown()
     }
 
-    /// Where the debugger's panel starts on the frame [`Machine::render`]
-    /// last returned, when it shows.
+    /// The start of the debugger's panel on the frame that
+    /// [`Machine::render`] last returned, when it shows.
     pub fn panel_at(&self) -> Option<u32> {
         self.rt.panel_at.filter(|_| self.panel_shown())
     }
@@ -1566,8 +1575,9 @@ impl Machine {
         }
     }
 
-    /// Makes the stopped program go on from a line of its slot, in the
-    /// same DEF, or outside DEFs as it is. False when it cannot.
+    /// Makes the stopped program continue from a line of its slot, in the
+    /// same DEF, or outside DEFs if it is outside them. False when it
+    /// cannot.
     pub fn jump_to(&mut self, line: u32) -> bool {
         let slot = self.paused_at().map(|at| at.0);
         if self.rt.stopped != Stopped::Paused || slot.is_none_or(|slot| self.lines_moved(slot)) {
@@ -1579,7 +1589,7 @@ impl Machine {
         if !vm.jump_to(line) {
             return false;
         }
-        // What stopped it is no longer where it is.
+        // The cause of the stop is no longer at the program's line.
         self.stop_reason = None;
         if let Some(top) = self.rt.backtrace.first_mut() {
             top.1 = line;
@@ -1587,7 +1597,7 @@ impl Machine {
         true
     }
 
-    /// Why the stopped program stopped, while it can go on.
+    /// The reason the stopped program stopped, while it can continue.
     pub fn stop_reason(&self) -> Option<&StopReason> {
         let paused = self.halted.is_some() && self.rt.stopped == Stopped::Paused;
         self.stop_reason.as_ref().filter(|_| paused)
@@ -1600,15 +1610,15 @@ impl Machine {
         self.rt.backtrace.first().copied()
     }
 
-    /// Where the stopped program goes on: its slot and the line about to
-    /// run.
+    /// The point the stopped program continues from: its slot and the line
+    /// about to run.
     pub fn paused_at(&self) -> Option<(usize, u32)> {
         let vm = self.halted.as_ref()?;
         Some((vm.slot()?, vm.line()))
     }
 
-    /// The stopped or running program's top level and DEFs and GOSUBs
-    /// under way, the innermost last.
+    /// The stopped or running program's top level and the DEFs and GOSUBs
+    /// in progress, the innermost last.
     pub fn calls(&self) -> Vec<Call> {
         self.inspected().map(Vm::calls).unwrap_or_default()
     }
@@ -1626,12 +1636,12 @@ impl Machine {
             .map_or_else(Vec::new, |vm| vm.frame_locals(frame))
     }
 
-    /// The globals of a slot of the stopped or running program, with
-    /// what direct mode has changed since it stopped; without one, direct
-    /// mode's.
+    /// The globals of a slot of the stopped or running program, with the
+    /// changes DIRECT mode made since it stopped. Without a program, the
+    /// variables of DIRECT mode.
     pub fn slot_globals(&self, slot: usize) -> Vec<(String, Value)> {
         let Some(vm) = self.inspected() else {
-            // Without a program, direct mode's variables, as slot 0's.
+            // Without a program, slot 0 gets DIRECT mode's variables.
             let mut vars: Vec<_> = match slot {
                 0 => self
                     .vars
@@ -1685,7 +1695,7 @@ impl Machine {
         if !vm.set_slot_global(slot, name, value.clone()) {
             return false;
         }
-        // CONT gives the running slot direct mode's values.
+        // CONT gives the running slot DIRECT mode's values.
         if vm.slot() == Some(slot) {
             self.vars.insert(name.to_string(), value);
         }
@@ -1756,9 +1766,9 @@ impl Machine {
     }
 
     /// Sets the watch expressions that stop programs, before the
-    /// statement after the one that changed one of their values; those
-    /// that do not parse are left out. Setting the same ones again keeps
-    /// the values changes are told from.
+    /// statement after the one that changed one of their values.
+    /// Expressions that do not parse are skipped. Setting the same ones
+    /// again keeps the values that changes are compared against.
     pub fn set_changes(&mut self, sources: &[&str]) {
         let same = sources.len() == self.changes.len()
             && sources
@@ -1776,16 +1786,16 @@ impl Machine {
     }
 
     /// Whether the editor moved a slot's lines since the program
-    /// started, so that the stopped program's lines are not the text's.
+    /// started, so that the stopped program's lines differ from the text.
     pub fn lines_moved(&mut self, slot: usize) -> bool {
         self.follow_edits();
         self.moved.get(slot).copied().unwrap_or(false)
     }
 
     /// Moves the breakpoints with the lines the editor, PRGINS and PRGDEL
-    /// moved, and drops those of lines they took out. A program LOAD or
-    /// NEW replaced keeps its own for its file, and a file loaded again
-    /// gets back those it had.
+    /// moved, and drops the breakpoints of lines they removed. A program
+    /// that LOAD or NEW replaced keeps its breakpoints for its file, and a
+    /// file loaded again gets back the ones it had.
     fn follow_edits(&mut self) {
         let edits: Vec<_> = (self.editors.iter_mut())
             .flat_map(|e| e.take_shifts())
@@ -1809,7 +1819,7 @@ impl Machine {
     fn arm(&mut self, vm: &mut Vm) {
         self.follow_edits();
         give_breakpoints(&self.breakpoints, &self.moved, vm);
-        // Direct mode's lines stop at no breakpoint, and on no change.
+        // Lines typed in DIRECT mode stop at no breakpoint, and on no change.
         if vm.slot().is_some() {
             vm.set_changes(&self.changes);
         }
@@ -1849,17 +1859,18 @@ impl Machine {
     }
 
     /// Pasted text: into the editor, or typed as keys, with line breaks
-    /// as Enter and letters as they are.
+    /// as Enter and letters unchanged.
     pub fn paste(&mut self, text: &str) {
         if self.editor_has_keys() {
             self.edit().paste(text);
             return;
         }
-        // A line that does not fit is left out whole, as SmileBASIC 4 does.
-        // Text with line ends is typed a line at a time, with Enter between
-        // them, so that many lines can be pasted at once. SmileBASIC 4's
-        // paste puts the line ends into the one line, where they show as
-        // line breaks, and Enter runs it all; the PASTE key does that here.
+        // A line that does not fit is skipped whole, the same as
+        // SmileBASIC 4 does. Text with line ends is typed a line at a time,
+        // with Enter between them, so that many lines can be pasted
+        // together. SmileBASIC 4's paste puts the line ends into the single
+        // line, where they show as line breaks, and Enter runs it all. The
+        // PASTE key does that here.
         let one_line = !text.contains(['\r', '\n']);
         let room = text.chars().filter(|&c| c >= ' ' || c == '\t').count();
         if one_line && !self.rt.line_has_room(room) {
@@ -1900,8 +1911,8 @@ impl Machine {
         }
     }
 
-    /// Ctrl+F1 to F5: types what KEY set for function key `n`, 1 to 5,
-    /// as it is.
+    /// Ctrl+F1 to F5: types the text KEY set for function key `n`, 1 to 5,
+    /// unchanged.
     pub fn type_function_key(&mut self, n: usize) {
         let keys = self.rt.input.function_keys[n - 1].clone();
         for code in keys {
@@ -1909,8 +1920,8 @@ impl Machine {
         }
     }
 
-    /// Runs one frame: the program, the editor, or direct-mode line
-    /// editing, and then the subprogram, if one runs.
+    /// Runs one frame: the program, the editor, or line editing in DIRECT
+    /// mode, and then the subprogram, if one runs.
     pub fn frame(&mut self) {
         if self.keeping_frames() && self.hold_at_sync && self.at_sync && self.wait <= 1 {
             // The frame would leave the program waiting at its VSYNC.
@@ -1923,7 +1934,7 @@ impl Machine {
             *age += 1;
         }
         self.move_focus();
-        // A frame kept for a loop that goes on reads no new input.
+        // A frame kept for a loop that continues reads no new input.
         if !self.keep_going {
             let beside = self.sub.as_ref().map(|sub| sub.rt.input.live);
             let editor = self.editor_has_keys();
@@ -1943,8 +1954,8 @@ impl Machine {
         self.link_dialogs();
         self.time_limit = limit;
         if self.sub_running() {
-            // A subprogram's HELPINFO OUT looks at the editor's cursor as
-            // it is now.
+            // A subprogram's HELPINFO OUT looks at the editor's current
+            // cursor.
             let (line, col) = self.editors[self.active].cursor_line();
             if self.rt.help_cursor.1 != col || self.rt.help_cursor.0 != line {
                 self.rt.help_cursor = (line.to_vec(), col);
@@ -1964,9 +1975,10 @@ impl Machine {
     }
 
     /// Whether the program, out of time part-way through a loop that
-    /// started at a VSYNC or WAIT, goes on in this frame at the next call;
-    /// see [`Machine::keep_frames`]. A trip found too long to keep is not
-    /// kept again until the program reaches a VSYNC or WAIT.
+    /// started at a VSYNC or WAIT, continues in this frame at the next
+    /// call; see [`Machine::keep_frames`]. An iteration of the program's
+    /// main loop found too long to keep is not kept again until the
+    /// program reaches a VSYNC or WAIT.
     fn keeps_loop(&mut self) -> bool {
         if !self.mid_loop() {
             return false;
@@ -1982,7 +1994,7 @@ impl Machine {
     /// One frame of this interpreter; `main` is the main interpreter's
     /// runtime when this is the sub interpreter.
     fn run_frame(&mut self, mut main: Option<&mut Runtime>) {
-        // A loop kept in its frame goes on without a new frame's work.
+        // A loop kept in its frame continues without a new frame's work.
         let resume = std::mem::take(&mut self.keep_going) && main.is_none() && self.vm.is_some();
         if resume {
             self.kept_calls += 1;
@@ -1996,7 +2008,7 @@ impl Machine {
     }
 
     /// Starts a frame of this interpreter: MAINCNT, input, sound,
-    /// animations, the editor or direct mode. Gives whether the program
+    /// animations, the editor or DIRECT mode. Returns whether the program
     /// is to run in this frame.
     fn start_frame(&mut self, main: Option<&mut Runtime>) -> bool {
         self.frame += 1;
@@ -2005,8 +2017,8 @@ impl Machine {
         // A console's speed misses what the console would.
         self.rt.input.carry = self.mid_loop() && self.rt.meter.is_none();
         self.rt.begin_frame();
-        // The subprogram's SNDMVOL does nothing: the main program's sets
-        // the level of both.
+        // The subprogram's SNDMVOL does nothing: the main program's SNDMVOL
+        // sets the level of both.
         // UNVERIFIED: that the main program's SNDMVOL reaches the
         // subprogram's sound.
         if let Some(main) = main.as_deref() {
@@ -2016,7 +2028,7 @@ impl Machine {
         if let Some(main) = main {
             main.sound.hear_sub(&mut self.rt.sound);
         }
-        // Animations play in direct mode too, and go on while the editor
+        // Animations play in DIRECT mode too, and continue while the editor
         // hides the screen (checked on hardware).
         self.rt.animate();
         if self.editing {
@@ -2066,7 +2078,7 @@ impl Machine {
         if let Some(meter) = &mut self.rt.meter {
             meter.begin_frame(self.frame, vm.work());
         }
-        // A VSYNC that is behind goes on within the frame's budget.
+        // A VSYNC that is behind continues within the frame's budget.
         let mut start = vm.executed();
         let mut began = self.time_limit.map(|_| Instant::now());
         let deadline = began.zip(self.time_limit).map(|(now, limit)| now + limit);
@@ -2110,7 +2122,7 @@ impl Machine {
             match status {
                 Ok(Status::Running) => {
                     // EXEC, PRGINS and the like changed slots: the program
-                    // runs on with their breakpoints moved.
+                    // continues with their breakpoints moved.
                     if !self.rt.slot_edits.is_empty() {
                         let edits = std::mem::take(&mut self.rt.slot_edits);
                         let (lines, kept, moved) =
@@ -2123,8 +2135,8 @@ impl Machine {
                     }
                 }
                 Ok(Status::Retry) => self.wait = 1,
-                // WAIT, WAIT 0 too, starts VSYNC's count anew; INPUT does
-                // not (checked on hardware).
+                // WAIT, WAIT 0 too, restarts VSYNC's count. INPUT does not
+                // (checked on hardware).
                 Ok(Status::Wait {
                     frames,
                     vsync: false,
@@ -2147,10 +2159,10 @@ impl Machine {
                     self.at_sync = true;
                 }
                 // VSYNC n waits until n frames after the one the last VSYNC
-                // waited for. When that has gone by, it goes straight on
-                // and counts from now (checked on hardware: a second
-                // behind, ten VSYNCs took nine frames, and VSYNC 200 took
-                // 140).
+                // waited for. When that frame has passed, it continues
+                // immediately and counts from now (checked on hardware: a
+                // second behind, ten VSYNCs took nine frames, and VSYNC 200
+                // took 140).
                 Ok(Status::Wait {
                     frames,
                     vsync: true,
@@ -2164,8 +2176,8 @@ impl Machine {
                         self.loop_so_far = Duration::ZERO;
                         began = Some(now);
                     }
-                    // Past XSCREEN or ACLS, the frame job has yet to raise
-                    // MAINCNT, which is what the count looks at.
+                    // After XSCREEN or ACLS, the frame job has not raised
+                    // MAINCNT yet, and MAINCNT is what the count looks at.
                     let reached = self.frame - u64::from(self.rt.in_frame_job);
                     self.rt.in_frame_job = false;
                     let (mark, wait) = vsync_wait(self.vsync_at, frames, self.frame, reached);
@@ -2174,10 +2186,11 @@ impl Machine {
                         self.wait = wait;
                     } else {
                         self.rt.sound.synced();
-                        // SmileBASIC 4 goes straight on, and so does a
-                        // headless run. In a window, a trip that cannot
-                        // end in the frame's time would only leave the
-                        // screens half made when the frame is drawn.
+                        // SmileBASIC 4 continues immediately, and so does a
+                        // headless run. In a window, an iteration of the
+                        // program's main loop that cannot end in the
+                        // frame's time would only leave the screens
+                        // unfinished when the frame is drawn.
                         // if has_time(vm, &self.rt, start) {
                         //     continue;
                         // }
@@ -2196,8 +2209,8 @@ impl Machine {
                 Ok(Status::Ended) | Err(_) => {
                     let (work, ran) = (vm.work(), vm.executed().wrapping_sub(start));
                     let error = status.err();
-                    // A direct-mode line's CONT goes on in the frame the
-                    // line ran in, with what is left of its time.
+                    // The CONT of a DIRECT mode line continues in the frame
+                    // the line ran in, with the rest of its time.
                     if self.finish(error)
                         && let Some(next) = self.vm.as_mut()
                     {
@@ -2207,7 +2220,8 @@ impl Machine {
                             meter.end_frame(&work);
                             meter.begin_frame(self.frame, vm.work());
                         }
-                        // Counted on from where the line left the budget.
+                        // The count continues from where the line left the
+                        // budget.
                         start = vm.executed().wrapping_sub(ran);
                         if has_time(vm, &self.rt, start) {
                             continue;
@@ -2232,9 +2246,10 @@ impl Machine {
             self.missed.cut += 1;
         }
         // A step that waits for input shows the screen until it stops: an
-        // INPUT, or one going over lines that read the controls and waited
-        // for a frame.
-        // The editor apart stays open, and gives the keys to the screen.
+        // INPUT, or a step going over lines that read the controls and
+        // waited for a frame.
+        // The editor, when apart from the screens, stays open and gives the
+        // keys to the screen.
         self.sync_slots();
         if let (Some(step), Some(vm)) = (self.stepping, &self.vm)
             && (vm.is_reading_input() || step != Step::Into && vsynced && self.rt.input.polled)
@@ -2257,7 +2272,7 @@ impl Machine {
         self.stepping.is_some() && self.step_waited
     }
 
-    /// How the frame that [`Machine::render`] returns is to be shown. The
+    /// The mode for showing the frame that [`Machine::render`] returns. The
     /// editor keeps the start-up resolution, sampled once.
     pub fn screen_mode(&self) -> ScreenMode {
         if self.editing && !self.detached {
@@ -2267,7 +2282,7 @@ impl Machine {
         }
     }
 
-    /// How the editor's frame is to be shown.
+    /// The mode for showing the editor frame.
     pub fn editor_mode(&self) -> ScreenMode {
         let m = self.rt.startup_mode();
         ScreenMode::new(m.width, m.height)
@@ -2282,10 +2297,10 @@ impl Machine {
         }
     }
 
-    /// The screens. While a program runs on its own, they are drawn again
-    /// only when it may have changed them; in direct mode, under the
-    /// debugger or beside a subprogram, which change them in other ways
-    /// too, every frame.
+    /// The screens. While a program runs by itself, they are drawn again
+    /// only when it may have changed them. In DIRECT mode, under the
+    /// debugger or while a subprogram runs, which change them in other ways
+    /// too, they are drawn every frame.
     fn render_screens_now(&mut self) -> &Framebuffer {
         self.touch_if_due();
         self.rt.render()
@@ -2304,7 +2319,8 @@ impl Machine {
         }
     }
 
-    /// Which frame of the screens [`Machine::render`] gave last.
+    /// The revision of the screens' frame that [`Machine::render`] returned
+    /// last.
     pub fn screen_revision(&self) -> u64 {
         self.rt.revision()
     }
@@ -2330,7 +2346,7 @@ impl Machine {
     }
 
     /// Counts the frames the editor's frame was drawn: while the count
-    /// stays, [`Machine::render_editor`] gives the same pixels.
+    /// stays the same, [`Machine::render_editor`] returns the same pixels.
     pub fn editor_revision(&self) -> u64 {
         self.rt.editor_revision()
     }
@@ -2345,7 +2361,7 @@ impl Machine {
         self.rt.screen_frame()
     }
 
-    /// Runs a line typed in direct mode.
+    /// Runs a line typed in DIRECT mode.
     fn direct(&mut self, line: &str) {
         // Enter on an empty line says OK too.
         if line.trim().is_empty() {
@@ -2365,7 +2381,7 @@ impl Machine {
                 self.rt.direct_input_start();
             }
             // UNVERIFIED: that an argument error of a DIRECT mode command
-            // leaves ENVSTAT's status as it was.
+            // leaves ENVSTAT's status unchanged.
             Err(e) => {
                 self.report(&e.at(1));
                 self.ready();
@@ -2375,7 +2391,7 @@ impl Machine {
         }
     }
 
-    /// Starts a program from `slot`, or a direct-mode line.
+    /// Starts a program from `slot`, or a line typed in DIRECT mode.
     fn start(&mut self, source: &str, slot: Option<usize>) {
         self.rt.cancel_input();
         let (line, col) = self.editors[self.active].cursor_line();
@@ -2395,8 +2411,8 @@ impl Machine {
                 if slot.is_some() {
                     self.follow_edits();
                     self.moved.fill(false);
-                    // RUN sets RESULT to 0 once the program compiles; one
-                    // with a syntax error leaves it.
+                    // RUN sets RESULT to 0 once the program compiles. A
+                    // program with a syntax error leaves it unchanged.
                     if self.rt.env_type == 0 {
                         self.rt.result = 0;
                     }
@@ -2426,10 +2442,10 @@ impl Machine {
                 self.running_slot = None;
                 self.rt.running_slot = None;
                 self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
-                // An error found as a line typed in DIRECT mode compiles,
-                // a Syntax error or a division by zero of constants, leaves
-                // ENVSTAT's status as it was, as a program's compile error
-                // does.
+                // An error found while a line typed in DIRECT mode compiles
+                // (a Syntax error or a division by zero of constants) leaves
+                // ENVSTAT's status unchanged, the same as a program's compile
+                // error does.
                 if let Some(slot) = e.slot {
                     self.rt.env_error = self.error_place(slot as usize, &e);
                 }
@@ -2443,7 +2459,7 @@ impl Machine {
     }
 
     /// With the setting, a program that ended or was stopped with the
-    /// Break key leaves the screens as ACLS does and the sound stopped.
+    /// Break key leaves the screens as after ACLS and the sound stopped.
     /// STOP, errors and the debugger's stops leave everything to look at.
     fn tidy_after_run(&mut self) {
         if self.rt.settings.tidy_on_end && self.rt.env_type == 0 {
@@ -2451,22 +2467,23 @@ impl Machine {
         }
     }
 
-    /// Leaves the screens as ACLS does and the sound stopped, as a program
-    /// that ends does with the setting `tidy_on_end`. The Simple UI does
-    /// this whenever it goes back to its game list, whatever the setting.
+    /// Leaves the screens as after ACLS and the sound stopped, the same as
+    /// a program that ends does with the setting `tidy_on_end`. The Simple
+    /// UI does this every time it returns to its game list, regardless of
+    /// the setting.
     pub fn tidy(&mut self) {
         self.rt.acls(false, false, false, false);
         self.rt.sound.stop_all();
     }
 
-    /// A line typed in direct mode failed: ENVSTAT's status says so, and
-    /// its error, argument, place and line stay as they were.
+    /// A line typed in DIRECT mode failed: ENVSTAT's status says so, and
+    /// its error, argument, place and line stay unchanged.
     fn direct_error(&mut self) {
         self.direct_failed = true;
     }
 
     /// The program or line ended, by itself or with an error. True when
-    /// the line ran CONT and the program it goes on with is to run on.
+    /// the line ran CONT and the program it continues is to keep running.
     fn finish(&mut self, error: Option<Error>) -> bool {
         if let Some(e) = &error
             && self.running_slot.is_some()
@@ -2533,13 +2550,14 @@ impl Machine {
                 let on = how == Resume::Cont && !program;
                 self.resume(how);
                 if on && self.vm.is_some() {
-                    // VSYNC counts from this frame, the one it goes on in.
+                    // VSYNC counts from this frame, the one it continues in.
                     self.vsync_at = Some(self.frame);
                     return true;
                 }
             }
             (None, None) if home => self.home_end(error.is_some()),
-            // The prompt starts by dropping what is waiting, a line's PUSHKEY too.
+            // DIRECT mode first drops the waiting keys, including those from
+            // a line's PUSHKEY.
             (None, None) => {
                 self.rt.clear_keys();
                 self.ready();
@@ -2548,8 +2566,8 @@ impl Machine {
         false
     }
 
-    /// The program that Projects ran ended: the manager is to open, after
-    /// an error once a button is pressed.
+    /// The program that Projects ran ended: the manager should open. After
+    /// an error, it opens once a button is pressed.
     fn home_end(&mut self, error: bool) {
         if error {
             self.print_line(&HOME_PROMPT.encode_utf16().collect::<Vec<_>>());
@@ -2560,7 +2578,7 @@ impl Machine {
         }
     }
 
-    /// Shows OK and waits for the next direct-mode line.
+    /// Shows OK and waits for the next line in DIRECT mode.
     fn ready(&mut self) {
         self.quiet_stop = false;
         self.rt.direct = true;
@@ -2570,15 +2588,15 @@ impl Machine {
 
     /// Prints an error's message, and with localized error messages on,
     /// the Japanese line under it that explains it. The error of a line
-    /// typed in direct mode, which has no slot, names no place.
+    /// typed in DIRECT mode, which has no slot, names no place.
     fn report(&mut self, error: &Error) {
         let text = match error.slot {
             Some(_) => error.to_string(),
             None => error.without_place(),
         };
         let text: Vec<u16> = text.encode_utf16().collect();
-        // It follows whatever the line printed, as Break does, and wraps at
-        // the right edge as PRINT does.
+        // It follows anything the line printed, the same as a Break message
+        // does, and wraps at the right edge the same as PRINT does.
         let console = &mut self.rt.text[CONSOLE];
         console.print(&text);
         console.newline();
@@ -2589,7 +2607,7 @@ impl Machine {
         }
     }
 
-    /// Prints on a line of its own on the console.
+    /// Prints on a separate line of the console.
     fn print_line(&mut self, text: &[u16]) {
         let console = &mut self.rt.text[CONSOLE];
         if console.cursor().0 != 0 {
@@ -2600,8 +2618,8 @@ impl Machine {
     }
 }
 
-/// Moves, keeps and brings back breakpoints as [`Machine::follow_edits`]
-/// says; `slots` are the programs as they are now.
+/// Moves, keeps and restores breakpoints as [`Machine::follow_edits`]
+/// says. `slots` are the current programs.
 fn follow(
     breakpoints: &mut [BTreeMap<u32, Option<Rc<Watch>>>],
     kept: &mut HashMap<String, BTreeMap<u32, Option<Rc<Watch>>>>,
@@ -2626,7 +2644,8 @@ fn follow(
                         false => kept.insert(from, old),
                     };
                 }
-                // The file may have changed since: lines past its end go.
+                // The file may have changed since: lines past its end are
+                // dropped.
                 let count = slots[slot].matches('\n').count() as u32 + 1;
                 let back = to.and_then(|to| kept.remove(&to)).unwrap_or_default();
                 *lines = back
@@ -2634,14 +2653,14 @@ fn follow(
                     .filter(|&(line, _)| line <= count)
                     .collect();
             }
-            // The program runs the code as it is now, so it can have
-            // the breakpoints as they are.
+            // The program runs the current code, so it can have the
+            // current breakpoints.
             SlotEdit::Compiled => {
                 moved[slot] = false;
                 continue;
             }
         }
-        // A running program goes on with the code it had.
+        // A running program continues with the code it had.
         moved[slot] = true;
     }
 }
@@ -2657,8 +2676,8 @@ fn give_breakpoints(breakpoints: &[BTreeMap<u32, Option<Rc<Watch>>>], moved: &[b
     }
 }
 
-/// A value as a debugger's note shows it: numbers as PRINT does, strings
-/// quoted, and arrays by their size.
+/// Formats a value the way a debugger's note shows it: numbers the same
+/// as PRINT shows them, strings quoted, and arrays by their size.
 fn note_value(value: &Value) -> String {
     match value {
         Value::Default => "(none)".to_string(),
@@ -2677,7 +2696,7 @@ fn swap_case(c: char) -> char {
     }
 }
 
-/// The sub interpreter, as the main one runs it.
+/// The sub interpreter, run by the main one.
 impl Machine {
     /// SUBRUN: loads `file`, as `"PROJECT/NAME"` or a name in the current
     /// project, into the sub interpreter's PRG0 and runs it there with the
@@ -2687,7 +2706,7 @@ impl Machine {
         match self.start_sub(file) {
             Ok(()) => {}
             // A name it cannot use, or a file type it cannot run, is the sub
-            // interpreter's error, which the main one then tells of like any
+            // interpreter's error, which the main one then reports like any
             // other.
             Err(e @ (StorageError::BadName(_) | StorageError::BadKind(_))) => {
                 self.sub_ended(false);
@@ -2703,10 +2722,10 @@ impl Machine {
         }
     }
 
-    /// F9 to F11: starts tool `n`, 0 to 2, from the settings as SUBRUN
-    /// does, also while a program runs. Gives false when the setting is
-    /// empty, and the error when the file cannot be loaded, for the
-    /// frontend to show rather than the console.
+    /// F9 to F11: starts tool `n`, 0 to 2, from the settings the same as
+    /// SUBRUN does, also while a program runs. Returns false when the
+    /// setting is empty, and the error when the file cannot be loaded, for
+    /// the frontend to show rather than the console.
     pub fn run_tool(&mut self, n: usize) -> storage::Result<bool> {
         let file = self.rt.settings.tools[n].clone();
         if file.is_empty() {
@@ -2729,8 +2748,8 @@ impl Machine {
         if sub.vm.is_some() {
             sub.stop();
         }
-        // Named as LOAD names a file, so that the name cannot leave its
-        // project's folder.
+        // Named the same way LOAD names a file, so that the name cannot
+        // leave its project's folder.
         let file = storage::parse_read_name(file, FileKind::Txt)?;
         if file.kind != FileKind::Txt {
             return Err(StorageError::BadKind(file.kind.name().to_string()));
@@ -2744,7 +2763,7 @@ impl Machine {
         }
         sub.end_sub(None);
         sub.ended = None;
-        // Its variables, SPFUNC and TFUNC go; the rest stays.
+        // Its variables, SPFUNC and TFUNC are cleared. The rest stays.
         for sprite in sub.rt.sprites.list_mut() {
             sprite.func = None;
         }
@@ -2773,8 +2792,9 @@ impl Machine {
     }
 
     /// When the subprogram has ended, the focus comes back, and the main
-    /// interpreter prints why it ended, if not by itself, between lines
-    /// of its own; `again` takes up the direct-mode line afresh after it.
+    /// interpreter prints why it ended, if not by itself, between a title
+    /// line and a rule line. `again` starts the input of a DIRECT mode line
+    /// again after it.
     fn sub_ended(&mut self, again: bool) {
         let Some(sub) = &mut self.sub else {
             return;
@@ -2820,7 +2840,7 @@ impl Machine {
         self.ended = Some(message);
     }
 
-    /// What ENVSTAT gives for an error in a slot: its number, the
+    /// Returns what ENVSTAT gives for an error in a slot: its number, the
     /// argument that was wrong (from 0, -1 when none or not known), slot,
     /// character of the statement from the start of the program, counting
     /// from 0, and line.
@@ -2848,8 +2868,8 @@ impl Machine {
             status::RUNNING
         } else {
             match self.rt.stopped {
-                // A stopped program's status 1 stays after a direct-mode
-                // error.
+                // A stopped program's status 1 stays after an error in
+                // DIRECT mode.
                 Stopped::No if self.direct_failed => status::ERROR,
                 Stopped::No => status::DIRECT,
                 Stopped::Paused => status::PAUSED,
@@ -2872,7 +2892,7 @@ impl Machine {
             sub.rt.typed.extend(self.rt.typed.drain(..));
             sub.rt.pasted.extend(self.rt.pasted.drain(..));
         }
-        // A dialog answers to the controls wherever the focus is. One press
+        // A dialog responds to the controls wherever the focus is. One press
         // answers the dialogs of both sides, and the side with the focus
         // sees it too.
         let main_asks = self.rt.program_dialog().is_some();
@@ -2906,10 +2926,10 @@ impl Machine {
         };
         sub.time_limit = (self.time_limit).map(|l| l.saturating_sub(used).max(l / SUB_SHARE));
         // Both interpreters read the same MAINCNT; the sub's frame raises
-        // it to the main one's.
+        // it to the main interpreter's value.
         sub.rt.system.frames = self.rt.system.frames.wrapping_sub(1);
         sub.run_frame(Some(&mut self.rt));
-        // The main interpreter's wish first, as it ran first.
+        // The main interpreter's wish comes first, because it ran first.
         let to_sub = match (self.rt.focus_wish.take(), sub.rt.focus_wish.take()) {
             (Some(main_takes), _) => Some(!main_takes),
             (None, sub_takes) => sub_takes,
@@ -2917,7 +2937,8 @@ impl Machine {
         if let Some(to_sub) = to_sub
             && self.focus_moving.is_none()
         {
-            // Giving the focus away took one to three frames, taking it one.
+            // Giving the focus away took one to three frames, and taking it
+            // took one.
             self.focus_moving = Some((to_sub, if to_sub { 1 } else { 2 }));
             sub.rt.focus_busy = true;
             self.rt.focus_busy = true;
@@ -2933,11 +2954,12 @@ impl Machine {
         }
     }
 
-    /// The subprogram's screen and where on the 1280x720 display it
-    /// shows, while it shows. Where its BACKCOLOR is clear, it is too,
-    /// with its colors premultiplied.
-    // SmileBASIC 4's own SMILETOOL ends without hiding its screen, so it
-    // goes when the subprogram ends, as it does after an error or SUBSTOP.
+    /// The subprogram's screen and its position on the 1280x720 display,
+    /// while it shows. Where its BACKCOLOR is clear, the screen is clear
+    /// too, with its colors premultiplied.
+    // SmileBASIC 4's own SMILETOOL ends without hiding its screen, so the
+    // screen is hidden when the subprogram ends, the same as after an
+    // error or SUBSTOP.
     pub fn sub_screen(&mut self) -> Option<SubScreen<'_>> {
         self.sub_screen_with(None)
     }
@@ -2961,14 +2983,14 @@ impl Machine {
         })
     }
 
-    /// Has the subprogram's screen drawn again, as its frame was lost.
+    /// Has the subprogram's screen drawn again, after its frame was lost.
     pub fn touch_sub(&mut self) {
         if let Some(sub) = &mut self.sub {
             sub.rt.touch();
         }
     }
 
-    /// Whether [`Machine::sub_screen`] would give a screen.
+    /// Whether [`Machine::sub_screen`] would return a screen.
     pub fn sub_shows(&self) -> bool {
         let sub = self.sub.as_ref();
         sub.is_some_and(|s| self.sub_shown && s.vm.is_some() && s.rt.sub_screen.is_some())
@@ -2978,7 +3000,7 @@ impl Machine {
     /// back to the main interpreter when a subprogram ends: the
     /// rectangle on the 1280x720 display (the subprogram's screen, or the
     /// whole display for the main interpreter) and its opacity. It shows
-    /// whole for [`FLASH_HOLD`] frames, then fades out over
+    /// fully opaque for [`FLASH_HOLD`] frames, then fades out over
     /// [`FLASH_FADE`].
     pub fn focus_border(&self) -> Option<([i32; 4], u8)> {
         let (to_sub, age) = self.focus_flash?;
@@ -3005,14 +3027,14 @@ impl Machine {
     }
 
     /// Gives the focus to the main interpreter (false) or the subprogram,
-    /// as ENVFOCUS does, for the frontend's menu.
+    /// the same as ENVFOCUS does, for the frontend's menu.
     pub fn focus_sub(&mut self, sub_focus: bool) {
         self.focus_moving = Some((sub_focus, 0));
         self.move_focus();
     }
 
-    /// Counts down the frames before the focus gets where ENVFOCUS sent
-    /// it, and moves it once they are over.
+    /// Counts down the frames before the focus reaches the interpreter
+    /// ENVFOCUS sent it to, and moves it once they are over.
     fn move_focus(&mut self) {
         let Some((to_sub, left)) = self.focus_moving else {
             return;
@@ -3028,9 +3050,9 @@ impl Machine {
             sub.rt.focus = to_sub && sub.vm.is_some();
             self.rt.focus = !sub.rt.focus;
             self.focus_flash = Some((sub.rt.focus, 0));
-            // The keys follow the focus, also those not read yet: a
+            // The keys follow the focus, including those not read yet: a
             // subprogram's PUSHKEY right after ENVFOCUS 0 types into the
-            // main interpreter, as SmileBASIC 4's SMILETOOL has it.
+            // main interpreter, the same as in SmileBASIC 4's SMILETOOL.
             if self.rt.focus {
                 self.rt.keys.extend(sub.rt.keys.drain(..));
                 self.rt.typed.extend(sub.rt.typed.drain(..));
@@ -3040,14 +3062,16 @@ impl Machine {
     }
 
     /// The dialog a program waits on, from either interpreter. The two
-    /// wait on one dialog: when both ask, it shows the later call's.
+    /// wait on the same dialog: when both ask, it shows the later call's
+    /// dialog.
     pub fn program_dialog(&self) -> Option<&ProgramDialog> {
         let sub = self.sub.as_ref();
         (self.rt.program_dialog()).or_else(|| sub.and_then(|s| s.rt.program_dialog()))
     }
 
-    /// Closes the dialog [`Machine::program_dialog`] gives with an answer,
-    /// and the other interpreter's too, as one press closes both.
+    /// Closes the dialog [`Machine::program_dialog`] returns with an
+    /// answer, and the other interpreter's too, because one press closes
+    /// both.
     pub fn answer_dialog(&mut self, answer: DialogAnswer) {
         if let Some(sub) = &mut self.sub {
             sub.rt.answer_dialog(answer.clone());
@@ -3063,8 +3087,8 @@ impl Machine {
         }
     }
 
-    /// Moves the focus of the dialog, in both interpreters, as both watch
-    /// the controls on it.
+    /// Moves the focus of the dialog, in both interpreters, because both
+    /// watch the controls on it.
     pub fn set_dialog_focus(&mut self, i: usize) {
         if let Some(sub) = &mut self.sub {
             sub.rt.set_dialog_focus(i);
@@ -3072,7 +3096,7 @@ impl Machine {
         self.rt.set_dialog_focus(i);
     }
 
-    /// Whether the main program and the subprogram both wait on the one
+    /// Whether the main program and the subprogram both wait on the same
     /// dialog.
     fn both_in_dialog(&self) -> bool {
         self.rt.dialog.is_some() && self.sub.as_ref().is_some_and(|s| s.rt.dialog.is_some())
@@ -3095,14 +3119,15 @@ impl Machine {
         self.substop();
     }
 
-    /// Makes the two interpreters' dialogs one, after either's frame.
+    /// Links the dialogs of the two interpreters into one, after the frame
+    /// of either.
     fn link_dialogs(&mut self) {
         let sub = self.sub.as_mut().map(|sub| &mut sub.rt);
         crate::dialog::link_dialogs(&mut self.rt, sub);
     }
 
     /// The question a command waits on, from either interpreter, the
-    /// subprogram's first as with dialogs.
+    /// subprogram's first.
     pub fn confirmation(&self) -> Option<&Confirm> {
         let sub = self.sub.as_ref();
         (sub.and_then(|s| s.rt.confirmation())).or_else(|| self.rt.confirmation())
@@ -3126,10 +3151,10 @@ impl Machine {
         notices
     }
 
-    /// The last error that stopped a program since this was last asked,
-    /// then the subprogram's, with true for the subprogram's: an error in
+    /// The last error that stopped a program since the last call, then
+    /// the subprogram's error, with true for the subprogram: an error in
     /// running, or in compiling a slot that RUN, EXEC or SUBRUN started.
-    /// Errors in direct-mode lines do not count.
+    /// Errors in lines typed in DIRECT mode do not count.
     pub fn take_program_error(&mut self) -> Option<(Error, bool)> {
         if let Some(e) = self.program_error.take() {
             return Some((e, false));
@@ -3143,8 +3168,9 @@ impl Machine {
     }
 
     /// The running subprogram's runtime, for the debugger to look into,
-    /// and where its screen shows on the 1280x720 display while it does,
-    /// as [`Machine::sub_screen`] gives it but without rendering it.
+    /// and the position of its screen on the 1280x720 display while it
+    /// shows, the same as [`Machine::sub_screen`] gives it but without
+    /// rendering it.
     pub fn sub_runtime(&self) -> Option<(&Runtime, Option<[i32; 4]>)> {
         let sub = self.sub.as_ref().filter(|s| s.vm.is_some())?;
         let place = (sub.rt.sub_screen)
@@ -3154,7 +3180,7 @@ impl Machine {
     }
 
     /// SUBSTOP, for the frontend's menu. While both programs wait on the
-    /// one dialog, the main program stops too (see [`Machine::stop`]).
+    /// same dialog, the main program stops too (see [`Machine::stop`]).
     pub fn stop_sub(&mut self) {
         let both = self.both_in_dialog();
         self.substop();
@@ -3167,9 +3193,9 @@ impl Machine {
         }
     }
 
-    /// The sound mixed since the last call, the subprogram's with the
-    /// main interpreter's as its SNDMSBAL balances them: left and right
-    /// in turn.
+    /// The sound mixed since the last call: the sound of the subprogram
+    /// and of the main interpreter, balanced by the subprogram's SNDMSBAL,
+    /// as left and right samples in turn.
     pub fn take_samples(&mut self) -> Vec<f32> {
         let mut out = self.rt.sound.take_samples();
         let Some(sub) = &mut self.sub else {
@@ -3188,8 +3214,8 @@ impl Machine {
     }
 }
 
-/// What an interpreter without the focus reads: controllers still
-/// connected, but nothing pressed or touched.
+/// The input that an interpreter without the focus reads: controllers
+/// still connected, but nothing pressed or touched.
 fn idle(live: &crate::input::State) -> crate::input::State {
     let mut state = crate::input::State::default();
     for (pad, now) in state.pads.iter_mut().zip(&live.pads) {
@@ -3201,7 +3227,8 @@ fn idle(live: &crate::input::State) -> crate::input::State {
 
 #[cfg(test)]
 mod tests {
-    /// TEST56: 480x272 on the whole display goes at x 4, 2.647 times.
+    /// TEST56: 480x272 on the whole display is placed at x 4, scaled 2.647
+    /// times.
     #[test]
     fn a_subprograms_frame_keeps_its_aspect_in_its_area() {
         let area = [0, 0, 1280, 720];
@@ -3222,19 +3249,20 @@ mod tests {
         assert_eq!(vsync_wait(Some(101), 1, 101, 101), (102, Some(1)));
         // The first VSYNC of a program counts from now.
         assert_eq!(vsync_wait(None, 1, 7, 7), (7, None));
-        // A trip that took a frame too many: behind, and counted from now.
+        // An iteration of the program's main loop that took a frame too
+        // many: behind, and counted from now.
         assert_eq!(vsync_wait(Some(100), 1, 101, 101), (101, None));
         assert_eq!(vsync_wait(Some(100), 1, 103, 103), (103, None));
-        // Past XSCREEN or ACLS the frame's job has yet to count the frame:
-        // a VSYNC that waited for this frame keeps it as its mark.
+        // After XSCREEN or ACLS the frame's job has not counted the frame
+        // yet: a VSYNC that waited for this frame keeps it as its mark.
         assert_eq!(vsync_wait(Some(100), 1, 101, 100), (101, None));
         assert_eq!(vsync_wait(Some(99), 1, 101, 100), (100, None));
     }
 
     #[test]
     fn a_vsync_behind_goes_on_as_on_hardware() {
-        // A second behind, ten VSYNCs take nine frames: the first goes
-        // straight on, and each of the others waits for one.
+        // A second behind, ten VSYNCs take nine frames: the first continues
+        // immediately, and each of the others waits for one.
         let (mut last, mut frame, mut waited) = (Some(40), 100, 0);
         for _ in 0..10 {
             let (mark, wait) = vsync_wait(last, 1, frame, frame);
@@ -3250,8 +3278,8 @@ mod tests {
     use crate::palette::Part;
     use crate::runtime::keys;
 
-    /// Draws the editor's frame as the frontend does, and again from
-    /// scratch for the same frame; true if the two are alike.
+    /// Draws the editor frame the same way the frontend does, and again
+    /// from scratch for the same frame; true if the two are the same.
     fn drawn_alike(m: &mut Machine) -> bool {
         let kept = m.render_editor().pixels().to_vec();
         m.rt.frame = m.rt.frame.wrapping_sub(1);
@@ -3259,7 +3287,8 @@ mod tests {
         kept == m.render_editor().pixels()
     }
 
-    /// A machine that has run `code` as Projects' Run does, to its end.
+    /// A machine that has run `code` to its end, the same as Projects' Run
+    /// does.
     fn home_run(code: &str) -> Machine {
         let mut m = Machine::new(Runtime::for_tests(Font::fallback()));
         m.boot();
@@ -3292,7 +3321,7 @@ mod tests {
         for code in ["?1\nA=1/0", "BOGUS BOGUS BOGUS", "FOR"] {
             let mut m = home_run(code);
             assert!(m.home_waiting() && !m.home_done(), "{code}");
-            // A press at once is the program's, still held.
+            // An immediate press belongs to the program: it is still held.
             assert!(!m.home_press());
             for _ in 0..HOME_GRACE {
                 m.frame();
@@ -3345,7 +3374,7 @@ mod tests {
 
     #[test]
     fn other_routes_are_no_home_run() {
-        // F5 from direct mode after a home run.
+        // F5 from DIRECT mode after a home run.
         let mut m = home_run(LOOP);
         m.stop();
         assert!(m.home_done());
@@ -3359,7 +3388,7 @@ mod tests {
         m.home = Home::Off;
         m.stop();
         assert!(!m.home_done());
-        // A direct-mode line clears it.
+        // A DIRECT mode line clears it.
         let mut m = home_run(LOOP);
         m.rt.settings.debug_open_editor = false;
         m.stop_on(None, Halt::Debug);
@@ -3417,8 +3446,8 @@ mod tests {
                 assert!(drawn_alike(&mut m), "step {i}");
             }
             // Each frame above was also drawn from scratch. The ones kept
-            // for the frontend are drawn again only after the step, as the
-            // cursor blinks, and as a split's outline fades.
+            // for the frontend are drawn again only after the step, when the
+            // cursor blinks, and while a split's outline fades.
             let again = m.editor_revision() - drawn - 60;
             let most = if m.is_split() { 40 } else { 4 };
             assert!(again <= most, "step {i}: drawn again {again} times");

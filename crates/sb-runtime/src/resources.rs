@@ -41,8 +41,8 @@ pub const SEQUENCES: &str = "sequences.bin";
 pub const HELP_INDEX: &str = "HelpData.idx";
 pub const HELP_DATA: &str = "HelpData.dat";
 
-/// The directory SDL's `SDL_GetPrefPath("", DATA_DIR)` gives the emulator,
-/// worked out the same way so tools need no SDL.
+/// The directory that SDL's `SDL_GetPrefPath("", DATA_DIR)` returns for the
+/// emulator, computed the same way so tools do not need SDL.
 pub fn data_dir() -> Result<PathBuf, &'static str> {
     let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
     let base = if cfg!(windows) {

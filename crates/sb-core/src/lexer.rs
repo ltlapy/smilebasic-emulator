@@ -78,7 +78,7 @@ pub enum TokenKind {
 
     Newline,
     Eof,
-    /// Where the source stops lexing, just before [`TokenKind::Eof`]: the
+    /// The point where lexing stops, just before [`TokenKind::Eof`]: the
     /// parse stops there with this error (see [`tokenize_partial`]).
     Invalid(LexErrorKind),
 }
@@ -207,9 +207,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
     }
 }
 
-/// The tokens up to the first error, which stands as
-/// [`TokenKind::Invalid`] before the end, and that error. SmileBASIC 4
-/// reads tokens as it compiles, so the errors before it come first.
+/// Returns the tokens up to the first error, and that error. The error
+/// appears as [`TokenKind::Invalid`] before the end. SmileBASIC 4 reads
+/// tokens as it compiles, so the errors before it come first.
 pub fn tokenize_partial(source: &str) -> (Vec<Token>, Option<LexError>) {
     let mut lexer = Lexer::new(source);
     let mut failed = lexer.run().err();
@@ -278,10 +278,10 @@ impl Lexer {
         LexError { kind, span }
     }
 
-    /// Where the error found reading the token at `at` is placed: at the
-    /// token before it in the statement, as SmileBASIC 4 does (checked on
-    /// hardware: `?1E1000` at `?`, `A=&H_` at `=`), or at the token itself
-    /// when it starts the statement.
+    /// Returns where the error found reading the token at `at` is placed:
+    /// at the token before it in the statement, the same as SmileBASIC 4
+    /// (checked on hardware: `?1E1000` at `?`, `A=&H_` at `=`), or at the
+    /// token itself when it starts the statement.
     #[cold]
     fn place(&self, at: Span) -> Span {
         let before = self.tokens.last();
@@ -305,8 +305,8 @@ impl Lexer {
         }
     }
 
-    /// A `\\` joins its line with the next one, and whatever follows it on
-    /// the line is left out. The reference does not describe this, but
+    /// A `\\` joins its line with the next one, and anything that follows
+    /// it on the line is skipped. The reference does not describe this, but
     /// SmileBASIC 4's bundled programs use it.
     fn continues_line(&mut self) -> bool {
         let mut i = 1;
@@ -412,7 +412,7 @@ impl Lexer {
 
     fn ident(&mut self, start: Span) {
         let name = self.word().expect("caller checked is_ident_start");
-        // `T?` is short for TPRINT, as `?` is for PRINT.
+        // `T?` is short for TPRINT, like `?` for PRINT.
         if name == "T" && self.peek() == Some('?') && self.peek_at(1) != Some('?') {
             self.bump();
             self.push(TokenKind::Keyword(Keyword::Tprint), start);
@@ -451,8 +451,8 @@ impl Lexer {
                 break;
             }
             // Only the Basic Multilingual Plane is supported; the specification
-            // says surrogate pairs are ignored. Lone surrogates the file held
-            // come back as themselves.
+            // says surrogate pairs are ignored. Lone surrogates that the file
+            // held are restored from their stand-ins.
             if let Some(unit) = crate::wtf8::unit_of(c) {
                 text.push(unit);
             } else if c <= '\u{FFFF}' {
@@ -525,7 +525,7 @@ impl Lexer {
             self.bump();
         }
         // Integer literals go up to 2147483647, in up to 10 digits.
-        // Another decimal literal becomes real instead of an error.
+        // Any other decimal literal becomes real instead of an error.
         let int = match is_real || int_digits > 10 {
             true => None,
             false => text.parse::<i32>().ok(),
@@ -568,9 +568,9 @@ impl Lexer {
         let mut digits = 0;
         loop {
             // `_` separates digit groups, as in `&B0000_0001`, and may
-            // also lead and repeat, as in `&H_3F__BF_BF`. Ones that lead
-            // to no digit are left for the next token: `&HFF_` is 255
-            // and `_`.
+            // also lead and repeat, as in `&H_3F__BF_BF`. A run of
+            // underscores with no digit after it is left for the next
+            // token: `&HFF_` is 255 and `_`.
             let mut next = 0;
             while self.peek_at(next) == Some('_') {
                 next += 1;
@@ -600,7 +600,7 @@ impl Lexer {
 
     fn operator(&mut self, c: char, start: Span) -> Result<(), LexError> {
         let rest = &self.chars[self.pos..];
-        // `??` is short for the INSPECT command, as `?` is for PRINT.
+        // `??` is short for the INSPECT command, like `?` for PRINT.
         if rest.starts_with(&['?', '?']) {
             self.bump();
             self.bump();
@@ -835,7 +835,7 @@ mod tests {
                 T::Real(1.5)
             ]
         );
-        // Text after a backslash is left out and the lines are joined.
+        // Text after a backslash is skipped and the lines are joined.
         assert_eq!(kinds("1\\ XYZ\n+2"), [T::Int(1), T::Plus, T::Int(2)]);
     }
 

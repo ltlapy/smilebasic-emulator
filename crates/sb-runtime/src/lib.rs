@@ -9,8 +9,8 @@ pub mod complete;
 pub mod compose;
 pub mod confirm;
 mod devices;
-// build.rs uses it; the crate only tests it.
 pub mod dialog;
+// build.rs uses it; the crate only tests it.
 #[cfg(test)]
 mod dot_bold;
 pub mod editor;
@@ -64,7 +64,7 @@ pub use system::PerfStats;
 
 /// The emulator's version, followed by the commit it was built from when
 /// the build knows it, as in `0.1.0+4e42491`. `SB_COMMIT` at build time
-/// sets the commit, or leaves it out when empty.
+/// sets the commit, or omits it when empty.
 pub const VERSION: &str = env!("SB_VERSION");
 
 /// [`sb_core::BUILD_OPTIONS`]: empty in a default build, `unchecked-vars`

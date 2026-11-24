@@ -33,9 +33,8 @@ pub fn glyph_pixel(font: &Font, grp: &Graphics, code: u16, size: FontSize, x: u3
 }
 
 /// Like [`glyph_pixel`] for any font type: 24 to 64 take glyph number i
-/// from GRP5 at (i % 64, i / 64) cells of that size, as
-/// `#GUIDE/DEFFONT24` lays them out (GPUTCHR drew it on hardware after
-/// `TSCREEN 24`).
+/// from GRP5 at (i % 64, i / 64) cells of that size, in the layout of
+/// `#GUIDE/DEFFONT24` (GPUTCHR drew it on hardware after `TSCREEN 24`).
 pub fn glyph_pixel_px(font: &Font, grp: &Graphics, code: u16, px: u32, x: u32, y: u32) -> u32 {
     match px {
         8 => glyph_pixel(font, grp, code, FontSize::Small, x, y),
@@ -47,8 +46,9 @@ pub fn glyph_pixel_px(font: &Font, grp: &Graphics, code: u16, px: u32, x: u32, y
     }
 }
 
-/// Where [`glyph_pixel_px`] finds a character on the font page, if it
-/// does, to look up only once for all of a glyph's pixels.
+/// The position where [`glyph_pixel_px`] finds a character on the font
+/// page, if it is there, so that the lookup runs only once for all of a
+/// glyph's pixels.
 pub fn glyph_origin_px(font: &Font, code: u16, px: u32) -> Option<(u32, u32)> {
     match px {
         8 => font.origin(code, FontSize::Small),
@@ -57,9 +57,9 @@ pub fn glyph_origin_px(font: &Font, code: u16, px: u32) -> Option<(u32, u32)> {
     }
 }
 
-/// From this many characters PRINT works out the scrolling first. Fewer
-/// take too little time for it to matter, and they are most of what is
-/// printed.
+/// From this many characters on, PRINT computes the scrolling first.
+/// Fewer characters take too little time for it to matter, and they are
+/// most of what is printed.
 const LONG_PRINT: usize = 256;
 
 /// User-defined characters sit in a grid this many characters wide.
@@ -94,8 +94,9 @@ pub mod attr {
     pub const ROTATION: u16 = 0b11;
     pub const REVH: u16 = 0b100;
     pub const REVV: u16 = 0b1000;
-    /// Not ATTR's: on the console, the cell is filled with its color, less
-    /// the glyph. Other text screens keep the bit and show nothing of it.
+    /// Not an ATTR bit: on the console, the cell is filled with its color,
+    /// except for the glyph. Other text screens keep the bit and do not show
+    /// it.
     pub const INVERT: u16 = 0x80;
 }
 
@@ -193,9 +194,9 @@ pub struct TextScreen {
     /// [`attr::INVERT`] does something here: only the console's program
     /// has the flag.
     pub inverts: bool,
-    /// A cell may be inverted, which even an empty one shows. Few programs
-    /// ever have one, so the others are spared looking at each cell's
-    /// attribute to see what to skip.
+    /// A cell may be inverted, which shows even when the cell is empty. Few
+    /// programs ever have one, so the others do not need to check each
+    /// cell's attribute to find what to skip.
     may_invert: bool,
     /// TARRAY's array, kept up to date with every cell written.
     array: Option<ArrayRef>,
@@ -262,7 +263,7 @@ impl TextScreen {
         }
     }
 
-    /// TSCREEN also takes the screen's look back to the start: its
+    /// TSCREEN also resets the screen's look to the start: its
     /// animations stop, THOME, TROT, TSCALE, TCOLOR and TBLEND are undone,
     /// and TOFS goes back to 0,0 at the same depth. TLAYER, TPAGE, TVAR
     /// and TFUNC stay.
@@ -291,7 +292,7 @@ impl TextScreen {
         self.may_invert = self.inverts && blank.attr & attr::INVERT != 0;
         self.cells_changed = true;
         self.cursor = (0, 0);
-        // TARRAY's array takes the new size and goes on following the
+        // TARRAY's array takes the new size and continues to follow the
         // screen (checked on hardware).
         if let Some(array) = &self.array {
             let mut array = array.borrow_mut();
@@ -366,7 +367,7 @@ impl TextScreen {
         cells
     }
 
-    /// Writes row-by-row `cells` into `rect`, skipping what leaves the
+    /// Writes row-by-row `cells` into `rect`, skipping cells off the
     /// screen.
     pub fn load(&mut self, (x, y, w, _): CellRect, cells: &[Cell]) {
         for (i, &cell) in cells.iter().enumerate() {
@@ -376,7 +377,7 @@ impl TextScreen {
     }
 
     /// TARRAY: an array of the cells that follows every write to them;
-    /// TUPDATE brings writes to the array back.
+    /// TUPDATE copies writes to the array back to the cells.
     pub fn array(&mut self) -> ArrayRef {
         if let Some(array) = &self.array {
             return array.clone();
@@ -419,8 +420,8 @@ impl TextScreen {
     }
 
     /// Whether the cells differ from the last time this was asked. Cells
-    /// written over with what they held, as when a program clears the
-    /// screen and prints the same again every frame, do not count.
+    /// overwritten with the same contents, for example when a program clears
+    /// the screen and prints the same text again every frame, do not count.
     pub fn take_changed(&mut self) -> bool {
         if !std::mem::take(&mut self.cells_changed) || self.cells == self.cells_seen {
             return false;
@@ -429,8 +430,8 @@ impl TextScreen {
         true
     }
 
-    /// What TSCREEN and CLS leave in a cell: nothing to show, with COLOR
-    /// and ATTR as they are, which a cell written through TARRAY keeps.
+    /// The cell that TSCREEN and CLS leave: nothing to show, with the current
+    /// COLOR and ATTR, which a cell written through TARRAY keeps.
     fn blank(&self) -> Cell {
         Cell {
             code: 0,
@@ -452,8 +453,8 @@ impl TextScreen {
     /// what is uncovered. The cursor stays.
     pub fn scroll(&mut self, dx: i32, dy: i32) {
         let (w, h) = (self.width as i32, self.height as i32);
-        // A whole screen's shift or more leaves nothing; held to that, the
-        // rectangle below cannot pass the largest coordinate.
+        // A shift of a whole screen or more leaves nothing. Clamped to that,
+        // the rectangle below cannot pass the largest coordinate.
         let (dx, dy) = (dx.clamp(-w, w), dy.clamp(-h, h));
         // Without TARRAY's array to keep in step, the cells can move in
         // place. An inverted cell has set may_invert when it was written.
@@ -465,8 +466,8 @@ impl TextScreen {
         self.load((0, 0, w, h), &moved);
     }
 
-    /// Each cell takes the one `(dx, dy)` away, or empty off the screen.
-    /// The shift is at most the screen's size.
+    /// Each cell takes the value of the cell `(dx, dy)` away, or empty when
+    /// that cell is off the screen. The shift is at most the screen's size.
     fn shift(&mut self, dx: i32, dy: i32) {
         if (dx, dy) == (0, 0) || self.cells.is_empty() {
             return;
@@ -499,10 +500,8 @@ impl TextScreen {
         }
     }
 
-    /// Moves the cursor; `None` keeps that coordinate. Returns false if the
-    /// position is off the screen.
-    /// Moves the cursor, or gives which of X (0) and Y (1) is off the
-    /// screen.
+    /// Moves the cursor; `None` keeps that coordinate. Returns which of X
+    /// (0) and Y (1) is off the screen, if either is.
     pub fn locate(&mut self, x: Option<i32>, y: Option<i32>) -> std::result::Result<(), usize> {
         let x = x.unwrap_or(self.cursor.0 as i32);
         let y = y.unwrap_or(self.cursor.1 as i32);
@@ -559,7 +558,7 @@ impl TextScreen {
             step(&mut end, c);
         }
         let scrolled = end.1.saturating_sub(u64::from(self.height - 1));
-        // Past the height it all leaves the screen, however far it goes.
+        // Past the height, everything leaves the screen, however far it goes.
         if scrolled > 0 {
             self.scroll(0, scrolled.min(u64::from(self.height)) as i32);
         }
@@ -630,13 +629,13 @@ impl TextScreen {
         self.scroll(0, 1);
     }
 
-    /// Plays one frame of the animations, and gives whether the screen
-    /// shows differently.
+    /// Plays one frame of the animations, and returns whether the screen
+    /// looks different.
     pub fn animate(&mut self) -> bool {
         if self.anim_stopped || self.anims.iter().all(Option::is_none) {
             return false;
         }
-        // What TANIM can change besides TVAR's variable.
+        // The properties TANIM can change besides TVAR's variable.
         let place = |t: &TextScreen| (t.pos, t.z, t.rot, t.scale, t.tint);
         let before = place(self);
         let mut tracks = std::mem::take(&mut self.anims);
@@ -651,7 +650,7 @@ impl TextScreen {
         place(self) != before
     }
 
-    /// Where TOFS, THOME, TROT and TSCALE put the screen's pixels.
+    /// The placement of the screen's pixels by TOFS, THOME, TROT and TSCALE.
     pub fn placement(&self) -> Affine {
         Affine::place(self.pos, self.home, self.rot, self.scale)
     }
@@ -715,7 +714,8 @@ impl TextScreen {
 }
 
 /// Text screens have no image to animate: "UV" and "I" do nothing.
-/// Z and the color take the value rounded towards zero, as for sprites.
+/// Z and the color take the value rounded toward zero, the same as for
+/// sprites.
 impl Animated for TextScreen {
     fn value(&self, target: Target) -> [f64; 2] {
         match target {
@@ -750,8 +750,8 @@ mod tests {
         s.encode_utf16().collect()
     }
 
-    /// Moving cells in place against the save and load that TARRAY's array
-    /// still needs.
+    /// Compares moving cells in place with the save and load that TARRAY's
+    /// array still needs.
     #[test]
     fn scroll_in_place_moves_as_save_and_load_do() {
         let (w, h) = (7, 5);
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn scrolling_counts_as_a_change_only_if_cells_differ() {
         let mut s = TextScreen::new(80, 40);
-        // What scrolling uncovers has no COLOR in it, unlike a new screen.
+        // The cells that scrolling uncovers have no COLOR, unlike a new screen.
         s.scroll(80, 40);
         s.take_changed();
         s.scroll(1, 1);

@@ -11,9 +11,9 @@ use crate::graphics::{Blend, Clip, GRP_SIZE, PAGES};
 use crate::runtime::{Command, Runtime, checking, illegal, many, no_form, one, opt_int};
 use crate::text::CONSOLE;
 
-/// The first `N` arguments as integers, in order, the first that is not
-/// one failing: in an array, as a list for a few numbers would be one
-/// allocation a call.
+/// The first `N` arguments as integers, in order; the first that is not
+/// one fails. They come in an array because a list of a few numbers would
+/// take one allocation per call.
 fn ints<const N: usize>(args: &[Value]) -> Result<[i32; N]> {
     let mut v = [0; N];
     for (d, a) in v.iter_mut().zip(&args[..N]) {
@@ -116,7 +116,7 @@ const MOST_PIXELS: i64 = sb_core::memory::TOTAL as i64 / 4;
 
 /// A rectangle given as X,Y,width,height. It may reach off the page, be
 /// wider and taller than it, and be empty (GSAVE reads 0 off the page,
-/// GLOAD drops what falls off it).
+/// GLOAD drops the pixels that fall off it).
 // A rectangle with more pixels than memory holds here is Out of range too,
 // standing in for SmileBASIC 4's Out of memory.
 fn rect_args(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
@@ -127,8 +127,9 @@ fn rect_args(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
     }
     let e = Error::with_detail(ErrorKind::OutOfRange, format!("{x},{y},{w},{h}"));
     // A negative width or height is named by its argument (GLOAD:3 for
-    // the width); too many pixels in all names none. UNVERIFIED: GSAVE is
-    // taken to number them the same way, and a negative height too.
+    // the width); an error for too many pixels in total names none.
+    // UNVERIFIED: GSAVE is taken to number them the same way, and a
+    // negative height too.
     Err(match (w < 0, h < 0) {
         (true, _) => e.of_value(&args[2]),
         (_, true) => e.of_value(&args[3]),
@@ -270,8 +271,8 @@ impl Runtime {
             (Command::Gputchr, Want::Outs(0), 3..=8) => {
                 let v = ints::<2>(args)?;
                 let text = chars_arg(&args[2])?;
-                // Left out, it is the console's font type, 24 and up too
-                // (checked on hardware after TSCREEN 24).
+                // When omitted, it is the console's font type, 24 and up
+                // too (checked on hardware after TSCREEN 24).
                 let px = match args.get(3).map(opt_int).transpose()?.flatten() {
                     None => self.text[CONSOLE].font().0,
                     Some(_) => font_size_arg(args.get(3))? as u32,
@@ -349,7 +350,7 @@ impl Runtime {
                 let pixels = self.grp.save_rect(page, rect);
                 let as_ints = || pixels.iter().map(|&p| p as i32).collect::<Vec<_>>();
                 store_ints(&array, &as_ints())?;
-                // A real array takes the colours unsigned, &HFF000000 as
+                // A real array takes the colors unsigned, &HFF000000 as
                 // 4278190080.
                 if let ArrayData::Real(v) = &mut array.borrow_mut().data {
                     for (d, &p) in v.iter_mut().zip(&pixels) {
@@ -375,8 +376,8 @@ impl Runtime {
                 };
                 let n = (i64::from(rect.2) * i64::from(rect.3)) as usize;
                 let source = numeric_array(&rest[0])?;
-                // An integer array can be read as it is. The page's own
-                // GARRAY array has to be copied, as drawing writes to it.
+                // An integer array can be read directly. The page's own
+                // GARRAY array must be copied, because drawing writes to it.
                 if palette.is_none() && self.grp.load_direct() {
                     let source = source.borrow();
                     if let ArrayData::Int(v) = &source.data
@@ -434,7 +435,7 @@ impl Runtime {
     }
 }
 
-/// GPUTCHR's and GPUTCHRP's text: a string, or a number for one character.
+/// The text of GPUTCHR and GPUTCHRP: a string, or a number for one character.
 fn chars_arg(v: &Value) -> Result<Vec<u16>> {
     checking(v, || {
         Ok(match v {
@@ -444,7 +445,7 @@ fn chars_arg(v: &Value) -> Result<Vec<u16>> {
     })
 }
 
-/// A font type of 8 or 16, 16 when left out.
+/// A font type of 8 or 16, 16 when omitted.
 fn font_size_arg(v: Option<&Value>) -> Result<FontSize> {
     match v.map(opt_int).transpose()?.flatten() {
         None | Some(16) => Ok(FontSize::Large),
@@ -467,7 +468,7 @@ fn scale_args(x: &Value, y: &Value) -> Result<(i32, i32)> {
     Ok((scale(x)?, scale(y)?))
 }
 
-/// GPUTCHRP's space between characters: 0 to 64 pixels, 1 when left out.
+/// GPUTCHRP's space between characters: 0 to 64 pixels, 1 when omitted.
 fn spacing_arg(v: Option<&Value>) -> Result<i32> {
     match v.map(opt_int).transpose()?.flatten() {
         None => Ok(1),

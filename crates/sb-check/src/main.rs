@@ -3,10 +3,10 @@
 //!
 //! Check programs end each part by saving the console's text with SAVEV
 //! into a TXT file whose name starts with `RES` (see
-//! docs/smilebasic4/hardware-tests.md). Run on SmileBASIC 4, in Ryujinx, those files
-//! land in the project's folder; this runs the same parts here, on a copy
-//! of that folder and the projects beside it, and compares them row by
-//! row.
+//! docs/smilebasic4/hardware-tests.md). When the program runs on
+//! SmileBASIC 4 in Ryujinx, those files are saved in the project's folder.
+//! This tool runs the same parts on the emulator, on a copy of that folder
+//! and the projects beside it, and compares the files row by row.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -140,13 +140,13 @@ exit status:
   3  --play, --bench: no error, but STOP left the program stopped at the
      end, printed to stderr as `stop at 0:2`";
 
-/// Result files start with this, after the TXT type letter.
+/// The start of a result file's name: the TXT type letter, then RES.
 const RESULT_PREFIX: &str = "TRES";
-/// How long a part may run, in frames: five minutes at 60 a second.
-/// Frames before the part's number is typed, as a person takes: VSYNC
-/// counts from the VSYNC before INPUT, so `VSYNC 60` right after it
-/// returns at once on hardware.
+/// Frames before the part's number is typed, the time a person takes:
+/// VSYNC counts from the VSYNC before INPUT, so `VSYNC 60` right after it
+/// returns immediately on hardware.
 const TYPING_FRAMES: u32 = 180;
+/// The longest a part may run, in frames: five minutes at 60 per second.
 const FRAME_LIMIT: u32 = 5 * 60 * 60;
 /// Frames after the part's number before --screen takes the picture.
 const SCREEN_AFTER: u32 = 120;
@@ -154,7 +154,7 @@ const SCREEN_AFTER: u32 = 120;
 type AnyError = Box<dyn std::error::Error>;
 
 thread_local! {
-    /// What --speed chose, for every machine the run makes.
+    /// The speed --speed chose, for every machine the run makes.
     static SPEED: std::cell::Cell<Speed> = const { std::cell::Cell::new(Speed::Unlimited) };
 }
 
@@ -188,7 +188,7 @@ struct Outcome {
 }
 
 impl Outcome {
-    /// Prints the errors that stopped programs since last asked to stderr.
+    /// Prints to stderr the errors that stopped programs since the last call.
     fn look(&mut self, m: &mut Machine) {
         while let Some((e, sub)) = m.take_program_error() {
             let from = if sub { "subprogram " } else { "" };
@@ -196,7 +196,7 @@ impl Outcome {
                 .detail
                 .as_ref()
                 .map_or(String::new(), |d| match d.starts_with('(') {
-                    // SmileBASIC 4's own, such as (FILL:2).
+                    // SmileBASIC 4's own detail, such as (FILL:2).
                     true => format!(" {d}"),
                     false => format!(" ({d})"),
                 });
@@ -319,7 +319,7 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
     });
     let _ = std::fs::remove_dir_all(&scratch);
     // The parts' errors show on the console, which the results compare,
-    // so they leave the status as it was.
+    // so they leave the status unchanged.
     outcome.map(|()| 0)
 }
 
@@ -357,8 +357,9 @@ fn check_part(
     scratch: &Path,
     screens: Option<&Path>,
 ) -> Result<(), AnyError> {
-    // Each part starts from the project as SmileBASIC 4 had it, less the
-    // results, so a part that saves nothing here shows as such.
+    // Each part starts from the project as SmileBASIC 4 left it, without
+    // the result files, so a part that saves nothing here is reported as
+    // saving nothing.
     let copy = scratch.join(name);
     let _ = std::fs::remove_dir_all(&copy);
     std::fs::create_dir_all(&copy)?;
@@ -377,7 +378,7 @@ fn check_part(
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     let mut answer = part.map(|p| p.to_string());
     let mut frames = 0;
-    // Frames since the part's number went in, for --screen.
+    // Frames since the part's number was typed, for --screen.
     let mut shown = part.is_none().then_some(0);
     // Frames the program has waited at INPUT.
     let mut asked = 0;
@@ -427,9 +428,8 @@ fn check_part(
     Ok(())
 }
 
-/// Runs a program as the window would, timing each frame's two halves.
-/// `--bench --fixed`: on a fresh copy of the project and those beside it,
-/// so that nothing a run saves changes the next.
+/// Runs [`bench`] for `--bench --fixed`, on a fresh copy of the project and
+/// those beside it, so that nothing a run saves changes the next run.
 fn bench_fixed(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, AnyError> {
     let name = project
         .file_name()
@@ -444,18 +444,18 @@ fn bench_fixed(options: &BenchOptions, project: &Path, program: &str) -> Result<
     outcome
 }
 
-/// How `--bench` runs a program.
+/// The options of a `--bench` run.
 struct BenchOptions<'a> {
     frames: u32,
     png: Option<&'a Path>,
     /// The input to give it.
     steps: Vec<(u32, Action)>,
-    /// Where to write each frame's times.
+    /// The file for each frame's times.
     log: Option<PathBuf>,
-    /// Where to write the sound.
+    /// The file for the sound.
     wav: Option<PathBuf>,
     fixed: bool,
-    /// Whether frames run as the window runs them, on a machine this
+    /// Whether frames run the way the window runs them, on a machine this
     /// many times slower.
     window: Option<f64>,
     /// [`Machine::keep_frames`].
@@ -472,8 +472,8 @@ struct FrameLog {
     end: std::time::Duration,
 }
 
-/// The window's frame and limits (see the frontend's main loop), for
-/// `--bench --window`.
+// The window's frame and limits (see the frontend's main loop), for
+// `--bench --window`.
 const WINDOW_FRAME: std::time::Duration = std::time::Duration::from_nanos(1_000_000_000 / 60);
 const WINDOW_RUN: std::time::Duration = std::time::Duration::from_millis(10);
 const WINDOW_CATCH_UP: std::time::Duration = std::time::Duration::from_millis(1);
@@ -482,17 +482,20 @@ const WINDOW_MOST_UNDRAWN: u32 = 3;
 const WINDOW_MOST_BEHIND: std::time::Duration =
     std::time::Duration::from_nanos(8 * 1_000_000_000 / 60);
 
-/// Frames between the screens a fixed run's checksum takes in: few, as
-/// reading a whole screen would otherwise outweigh what is measured.
+/// Frames between the screens a fixed run adds to its checksum. The
+/// screens are few, because reading a whole screen would otherwise
+/// outweigh what is measured.
 const CHECKSUM_FRAMES: usize = 60;
 
-/// Adds pixels to an FNV-1a checksum, a word at a time.
+/// Adds pixels to an FNV-1a checksum, one word at a time.
 fn add_to_checksum(sum: u64, pixels: &[u32]) -> u64 {
     pixels.iter().fold(sum, |sum, &p| {
         (sum ^ u64::from(p)).wrapping_mul(0x0000_0100_0000_01B3)
     })
 }
 
+/// Runs a program the same way as the window, timing each frame's two
+/// halves.
 fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, AnyError> {
     use std::time::{Duration, Instant};
     let &BenchOptions {
@@ -521,11 +524,12 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
     let started = Instant::now();
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     println!("loaded and compiled in {:?}", started.elapsed());
-    // Only a build with options says so, as in "build unchecked-vars".
+    // Only a build with options prints this line, for example
+    // "build unchecked-vars".
     if !sb_runtime::BUILD_OPTIONS.is_empty() {
         println!("build {}", sb_runtime::BUILD_OPTIONS);
     }
-    // What making the program's native code cost.
+    // The cost of making the program's native code.
     #[cfg(feature = "jit")]
     {
         let s = sb_runtime::jit::stats();
@@ -558,15 +562,15 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
     let mut played = 0;
     let (mut undrawn, mut draw_time) = (0, Duration::ZERO);
     'run: while played < frames && m.is_running() {
-        // As the window's main loop does: a frame, then those that are
-        // due at once, of which only the last is drawn.
+        // The same as the window's main loop: a frame, then the frames
+        // already due, of which only the last is drawn.
         let mut skipped = 0;
         loop {
             if player.step(&mut m, played, shots)? {
                 break 'run;
             }
             if window {
-                // As the window does: see its main loop.
+                // The same as the window does; see its main loop.
                 let whole = 2 * m.loop_time() + draw_time <= 2 * frame_time;
                 m.hold_at_sync = skipped > 0 && !whole;
                 m.time_limit = Some(if skipped == 0 || (whole && m.at_sync()) {
@@ -591,15 +595,15 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
             frame_log.push(FrameLog {
                 run: ran,
                 draw: Duration::ZERO,
-                // None in the frame the program ends in, its count gone
-                // with it.
+                // Zero in the frame the program ends in, because the count
+                // is lost with the program.
                 instructions: m.executed().saturating_sub(before),
                 vsyncs: m.vsyncs() - vsyncs,
                 redrawn: false,
                 end: started.elapsed(),
             });
             run.push(ran);
-            // A call that went on with a kept frame is no new frame.
+            // A call that continued a kept frame is not a new frame.
             if !options.keep_frames || m.rt.main_count() != count {
                 played += 1;
             }
@@ -758,7 +762,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
     Ok(outcome.status(&mut m))
 }
 
-/// What a --play script does at a frame.
+/// One action of a --play script, at a frame.
 #[derive(Clone, Debug, PartialEq)]
 enum Action {
     Key(u16),
@@ -915,7 +919,7 @@ struct Player {
 
 /// Frames the + button is held before it stops a program past ON BREAK
 /// GOTO: the windowed frontend's `FORCED_STOP` of one second, at 60
-/// frames a second.
+/// frames per second.
 const FORCED_STOP_FRAMES: u32 = 60;
 
 /// USB usage IDs of the keys `ctrlc` holds.
@@ -935,14 +939,15 @@ impl Player {
         self.steps.peek().is_some() || self.plus.is_some()
     }
 
-    /// Does what is due before `frame` runs, and sets the input it reads;
-    /// shots go into `dir`. True if the script ends the run.
+    /// Carries out the actions due before `frame` runs, and sets the input
+    /// it reads; shots go into `dir`. Returns true if the script ends the
+    /// run.
     fn step(&mut self, m: &mut Machine, frame: u32, dir: &Path) -> Result<bool, AnyError> {
         while let Some((_, action)) = self.steps.next_if(|(at, _)| *at <= frame) {
             match action {
                 Action::Key(code) => m.rt.key_press(code),
                 Action::Type(text) => m.type_text(&text),
-                // Down and up again before the frame, which only the
+                // Pressed and released before the frame, which only the
                 // frontend's events see.
                 Action::Hold(Hold::Buttons(bits), 0) => {
                     m.rt.input.tap(Tap::Buttons(0, bits), true);
@@ -953,9 +958,10 @@ impl Player {
                     m.rt.input.tap(Tap::Key(usage), false);
                 }
                 Action::Hold(hold, n) => self.held.push((hold, frame + n)),
-                // A new press starts the second again, as in the frontend.
+                // A new press starts the second again, the same as in the
+                // frontend.
                 Action::Plus(n) => self.plus = Some((frame + FORCED_STOP_FRAMES, frame + n)),
-                // As the frontend does: a break while something runs.
+                // The same as the frontend: a break while something runs.
                 Action::CtrlC(n) => {
                     self.held.push((Hold::Usb(KEY_LEFT_CTRL), frame + n));
                     self.held.push((Hold::Usb(KEY_C), frame + n));
@@ -978,10 +984,10 @@ impl Player {
                 Action::End => return Ok(true),
             }
         }
-        // As the frontend does, but without its own windows, which keep a
-        // press from starting while shown: here every press counts, also
-        // during INPUT, a DIALOG or a subprogram, which the machine's
-        // sysreq and stop deal with.
+        // The same as the frontend, but without its own windows, which keep
+        // a press from starting while they are shown. Here every press
+        // counts, also during INPUT, a DIALOG or a subprogram, which the
+        // machine's sysreq and stop handle.
         if let Some((stop_at, release_at)) = self.plus {
             if frame >= stop_at {
                 self.plus = None;
@@ -1035,8 +1041,8 @@ fn play(
         .ok_or("PROJECT must be a project folder")?;
     let parent = project.parent().ok_or("PROJECT must be a project folder")?;
     let mut m = machine(parent.to_path_buf())?;
-    // The script's text is typed as written, not with its case swapped
-    // as keys are when letters type upper case.
+    // The script's text is typed as written, without the case swap that
+    // keys get when letters type upper case.
     m.rt.settings.upper_case_letters = false;
     m.rt.storage
         .set_project(name)
@@ -1046,8 +1052,8 @@ fn play(
     let mut player = Player::new(steps);
     let mut outcome = Outcome::default();
     let mut frame = 0;
-    // Direct mode goes on while the script has more to type, as for
-    // SUBRUN, and while a subprogram runs.
+    // DIRECT mode continues while the script has more to type, for
+    // example a SUBRUN line, and while a subprogram runs.
     while frame < frames && (m.is_running() || m.sub_running() || player.has_more()) {
         if player.step(&mut m, frame, dir)? {
             break;
@@ -1074,8 +1080,8 @@ fn play(
     Ok(outcome.status(&mut m))
 }
 
-/// Opens `--wav`'s file, if asked for, leaving out what was mixed before
-/// the first frame so that the file holds the run's frames alone.
+/// Opens the `--wav` file, if asked for, and discards the sound mixed
+/// before the first frame, so that the file holds only the run's frames.
 fn start_wav(m: &mut Machine, file: Option<&Path>) -> Result<Option<Wav>, AnyError> {
     let Some(file) = file else {
         return Ok(None);
@@ -1085,7 +1091,7 @@ fn start_wav(m: &mut Machine, file: Option<&Path>) -> Result<Option<Wav>, AnyErr
     Ok(Some(wav))
 }
 
-/// Adds a frame's samples to `--wav`'s file.
+/// Adds a frame's samples to the `--wav` file.
 fn write_wav(wav: &mut Option<Wav>, samples: &[f32]) -> Result<(), AnyError> {
     if let Some(w) = wav {
         w.write(samples)?;
@@ -1105,8 +1111,8 @@ fn modifier(usage: u8) -> u32 {
     }
 }
 
-/// Puts the mouse pointer at a screen pixel, and where that is on the
-/// 1280x720 display, taking the screen as stretched over all of it.
+/// Puts the mouse pointer at a screen pixel, and at the matching point of
+/// the 1280x720 display, with the screen stretched over all of it.
 fn set_pointer(state: &mut State, m: &Machine, x: i32, y: i32) {
     let mode = m.screen_mode();
     let scale = |v: i32, from: u32, to: i32| match i32::try_from(from) {
@@ -1153,8 +1159,8 @@ fn machine(storage: PathBuf) -> Result<Machine, AnyError> {
 
 /// The screen as a PNG, as large as XSCREEN made it.
 /// With a subprogram's screen or the border marking the focus shown, the
-/// whole 1280x720 display, the screen stretched to it and the
-/// subprogram's put where XSUBSCREEN puts it.
+/// whole 1280x720 display, with the screen stretched to it and the
+/// subprogram's screen placed where XSUBSCREEN puts it.
 fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
     let fb = m.render();
     let mut image = image::Image {
@@ -1178,8 +1184,8 @@ fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
     Ok(())
 }
 
-/// The border marking where the focus has just gone, as the frontend
-/// draws it: yellow one pixel out and two in, then two dark pixels.
+/// The border marking where the focus has just gone, the same border the
+/// frontend draws: yellow one pixel out and two in, then two dark pixels.
 fn draw_focus_border(image: &mut image::Image, [x, y, w, h]: [i32; 4], alpha: u8) {
     let a = u32::from(alpha);
     for (inset, width, color) in [(-1, 3, 0x00FF_FF00u32), (2, 2, 0)] {
@@ -1202,7 +1208,7 @@ fn draw_focus_border(image: &mut image::Image, [x, y, w, h]: [i32; 4], alpha: u8
     }
 }
 
-/// SmileBASIC 4's display, which XSUBSCREEN and the focus's border are
+/// SmileBASIC 4's display, which XSUBSCREEN and the focus border are
 /// placed on.
 const DISPLAY: (usize, usize) = (1280, 720);
 
@@ -1234,8 +1240,8 @@ fn put_sub_screen(display: &mut image::Image, sub: &SubScreen) {
     let (dw, dh) = DISPLAY;
     let pixels = &mut display.pixels;
     // Premultiplied over, each channel rounded to the nearest and held to
-    // 255 (a clear BACKCOLOR's color can be brighter than its alpha), as a
-    // GPU blends.
+    // 255 (a clear BACKCOLOR's color can be brighter than its alpha), the
+    // same as a GPU blends.
     let over = |d: &mut u32, s: [f32; 4]| {
         let channel = |shift: u32, i: usize| {
             let under = f64::from(*d >> shift & 0xFF) * (255.0 - f64::from(s[3])) / 255.0;
@@ -1290,8 +1296,8 @@ fn put_sub_screen(display: &mut image::Image, sub: &SubScreen) {
 
 /// Copies the projects beside PROJECT into `scratch` once, for parts that
 /// read other projects or the workspace (SmileBASIC 4's `###` folder).
-/// What a part changes in them stays for the next part. An emulator's
-/// own workspace folder there gives way to `###`.
+/// The changes a part makes in them stay for the next part. An emulator's
+/// own workspace folder there is replaced by `###`.
 fn copy_others(project: &Path, name: &str, scratch: &Path) -> Result<(), AnyError> {
     std::fs::create_dir_all(scratch)?;
     let Some(parent) = project.parent().filter(|p| !p.as_os_str().is_empty()) else {

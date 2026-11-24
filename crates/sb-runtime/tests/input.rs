@@ -106,7 +106,7 @@ fn control_style_errors_name_the_argument() {
 }
 
 /// DIALOG checks each form's arguments in order and names the one that
-/// was wrong, as SmileBASIC 4's handler does (4.4.8).
+/// was wrong, the same as SmileBASIC 4's handler does (4.4.8).
 #[test]
 fn dialog_errors_name_the_argument() {
     for (source, kind, arg) in [
@@ -224,7 +224,7 @@ fn controllers() {
         .unwrap(),
         "2102"
     );
-    // TEST63: no colors on one not connected.
+    // TEST63: no colors on a controller that is not connected.
     assert_eq!(run(&[], "CONTROLLER 2 OUT A,B,C:?A;B;C").unwrap(), "000");
     // TEST64, a Pro Controller alone: the default controller has no colors.
     let mut s = State::default();
@@ -331,8 +331,8 @@ fn function_keys_and_pushkey() {
     assert_eq!(err.kind, ErrorKind::StringTooLong);
 }
 
-/// Goes through `frames` as frames do, then reads what INKEY$ has for it:
-/// `?` each key's code.
+/// Runs each state of `frames` as a frame, then reads with `read` and
+/// prints the code of each key with `?`.
 fn typed(frames: &[State], read: &str) -> String {
     let mut rt = Runtime::for_tests(Font::blank());
     for state in frames {
@@ -366,7 +366,7 @@ fn controllers_type_keys_for_inkey() {
         assert_eq!(typed(&down, "INKEY$(0)"), code, "button {button}");
         assert_eq!(typed(&down, "INKEY$(1)"), "", "button {button}");
     }
-    // B's key is none INKEY$ has a character for, as are X's and the others.
+    // INKEY$ has no character for B, nor for X and the others.
     for button in [0, 1, 8, 9, 10, 11, 12, 13] {
         assert_eq!(typed(&[pressed(1 << button)], "INKEY$()"), "");
     }
@@ -385,10 +385,11 @@ fn a_controllers_key_repeats_after_20_frames_then_every_3() {
         .map(|&n| typed(&down[..n], "INKEY$()").split_whitespace().count())
         .collect();
     assert_eq!(counts, [1, 1, 2, 2, 3, 3, 4]);
-    // A press again after letting go.
+    // A press again after a release.
     let again = [pressed(1 << 5), State::default(), pressed(1 << 5)];
     assert_eq!(typed(&again, "INKEY$()"), "31 31");
-    // Another button while the first is held types nothing until all are up.
+    // Another button while the first is held types nothing until all are
+    // released.
     let both = [pressed(1 << 5), pressed(1 << 5 | 1 << 4), pressed(1 << 5)];
     assert_eq!(typed(&both, "INKEY$()"), "31");
 }
@@ -477,7 +478,7 @@ fn hardware_the_emulator_lacks() {
         ok("XCTRLSTYLE 1,1,0,1:IRSTART 2,2:IRREAD 2 OUT S,N,C,D:?C;DIM(D,0)"),
         "4848"
     );
-    // Clustering mode's array is as tall as moment mode's.
+    // The array of clustering mode is as tall as that of moment mode.
     assert_eq!(
         ok("XCTRLSTYLE 1,1,0,1:IRSTART 1,0:IRREAD 1 OUT S,N,C,D:?C;DIM(D,0)"),
         "048"
@@ -534,7 +535,7 @@ fn hardware_the_emulator_lacks() {
 #[test]
 fn vibration_patterns_end() {
     // Pattern 57 lasts 3 frames (TTEST24); the input frame comes with the
-    // machine's.
+    // machine frame.
     let mut m = sb_runtime::machine::Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(0, "VSYNC:VIBRATE 1,57:VSYNC:VSYNC:A=VIBRATE(1,0):VSYNC:B=VIBRATE(1,0):VIBRATE 1,40:VSYNC 200:CLS:?A;B;VIBRATE(1,0)".into());
@@ -547,8 +548,8 @@ fn vibration_patterns_end() {
     assert_eq!(String::from_utf16_lossy(&codes), "57040");
 }
 
-/// A button held when a program ends types nothing into direct mode, however
-/// long it stays down, and a fresh press does.
+/// A button held when a program ends types nothing into DIRECT mode, however
+/// long it stays down, and a new press does.
 #[test]
 fn a_button_held_past_the_end_of_a_program_types_nothing() {
     let a = pressed(1 << 3);
@@ -563,7 +564,7 @@ fn a_button_held_past_the_end_of_a_program_types_nothing() {
     assert_eq!(rt.text[4].cell(0, 0).code, u16::from(b'0'));
 }
 
-/// TEST64: the A that answers a DIALOG doesn't reach INKEY$ after it as
+/// TEST64: the A that answers a DIALOG does not reach INKEY$ after it as
 /// Enter, but its repeats do while it stays down, and BUTTON sees it held
 /// with no press.
 #[test]
@@ -590,9 +591,9 @@ fn the_press_that_answers_a_dialog_types_only_its_repeats() {
     assert_eq!(row.trim_end_matches(['\0', ' ']), "81928 0 81928 1");
 }
 
-/// A wait for buttons answers with #B_RANY and #B_ANY as they go on: A
-/// with L held gives A and #B_RANY, as L had #B_ANY on already, and
-/// leaves L out.
+/// A wait for buttons answers with the #B_RANY and #B_ANY bits that turn on:
+/// A with L held gives A and #B_RANY, because L had turned #B_ANY on
+/// already, and does not include L.
 #[test]
 fn a_wait_for_buttons_answers_with_the_any_bits_going_on() {
     let mut rt = Runtime::for_tests(Font::blank());
@@ -724,7 +725,7 @@ fn a_held_key_types_again_after_19_frames_then_every_3() {
     assert_eq!(typed, "0A 19A 22A");
 }
 
-/// TEST69K: another key going down takes over the repeat, and the first,
+/// TEST69K: pressing another key takes over the repeat, and the first key,
 /// still held, does not repeat again.
 #[test]
 fn another_key_stops_a_held_keys_repeat() {
@@ -734,7 +735,7 @@ fn another_key_stops_a_held_keys_repeat() {
                 rt.input.key_down(A_KEY);
                 rt.type_held(u16::from(b'A'));
             }
-            // B types nothing itself here, as a key whose text has not come.
+            // B itself types nothing here, like a key whose text has not come.
             23 => rt.input.key_down(B_KEY),
             _ => {}
         }
@@ -744,7 +745,7 @@ fn another_key_stops_a_held_keys_repeat() {
             _ => holding(&[A_KEY]),
         };
     });
-    // Repeats at 19 and 22, and none after B went down.
+    // Repeats at 19 and 22, and none after B was pressed.
     assert_eq!(typed, "0A 19A 22A");
 }
 
@@ -754,8 +755,8 @@ const RIGHT_CTRL: u8 = 228;
 const LEFT_ALT: u8 = 226;
 const RIGHT_ALT: u8 = 230;
 
-/// What a key types by the modifiers, as the frontend gives it: `plain`
-/// and `shift`, and with Alt SmileBASIC 4's own character.
+/// The text a key types for each modifier, as the frontend gives it:
+/// `plain` and `shift`, and with Alt SmileBASIC 4's own character.
 fn key_text(usage: u8, plain: u8, shift: u8) -> KeyText {
     let alt = alt_key_code(usage).unwrap_or(0);
     KeyText {
@@ -766,8 +767,8 @@ fn key_text(usage: u8, plain: u8, shift: u8) -> KeyText {
     }
 }
 
-/// Presses `usage` as the frontend does: it types `typed`, and its repeats
-/// type what `text` gives by the modifiers held then.
+/// Presses `usage` the same way the frontend does: it types `typed`, and its
+/// repeats type what `text` gives for the modifiers held at that time.
 fn press_key(rt: &mut Runtime, usage: u8, text: KeyText, typed: u16) {
     rt.input.key_down(usage);
     rt.input.key_text(text);
@@ -779,15 +780,15 @@ fn a_text() -> KeyText {
     key_text(A_KEY, b'A', b'a')
 }
 
-/// TEST69K: Shift going down while a letter is held holds its repeat for 19
-/// frames, and then it repeats in the other case.
+/// TEST69K: pressing Shift while a letter is held holds back its repeat for
+/// 19 frames, and then the letter repeats in the other case.
 #[test]
 fn shift_turns_a_held_letters_repeats_round() {
     let typed = keys_by_frame(52, |i, rt| {
         if i == 0 {
             press_key(rt, A_KEY, a_text(), u16::from(b'A'));
         }
-        // A modifier going down leaves the repeat going.
+        // Pressing a modifier keeps the repeat going.
         if i == 26 {
             rt.input.key_down(LEFT_SHIFT);
         }
@@ -799,7 +800,7 @@ fn shift_turns_a_held_letters_repeats_round() {
     assert_eq!(typed, "0A 19A 22A 25A 45a 48a 51a");
 }
 
-/// Shift going up does the same the other way, here before the first
+/// Releasing Shift does the same the other way, here before the first
 /// repeat, and the other Shift counts as well.
 #[test]
 fn shift_let_go_turns_a_held_letter_back() {
@@ -815,8 +816,8 @@ fn shift_let_go_turns_a_held_letter_back() {
     assert_eq!(typed, "0a 29A 32A 35A 38A");
 }
 
-/// Every key's repeats follow Shift, not only letters': 1 held, then Shift,
-/// types "!" after 19 frames.
+/// The repeats of every key follow Shift, not only those of letters: 1
+/// held, then Shift, types "!" after 19 frames.
 #[test]
 fn shift_turns_a_held_digit_into_its_symbol() {
     let typed = keys_by_frame(36, |i, rt| {
@@ -831,8 +832,8 @@ fn shift_turns_a_held_digit_into_its_symbol() {
     assert_eq!(typed, "01 29! 32! 35!");
 }
 
-/// Ctrl going down holds the repeat back and types nothing while it is
-/// held; going up, it starts the count again, and the key types 19 frames
+/// Pressing Ctrl holds the repeat back and types nothing while Ctrl is
+/// held. Releasing Ctrl starts the count again, and the key types 19 frames
 /// later.
 #[test]
 fn ctrl_down_and_up_start_the_count_again() {
@@ -861,8 +862,8 @@ fn ctrl_down_and_up_start_the_count_again() {
     assert_eq!(typed, "0A 19A 49A 52A 55A 58A");
 }
 
-/// A key pressed with Ctrl held types nothing, but held on once Ctrl is let
-/// go it types 19 frames later.
+/// A key pressed with Ctrl held types nothing, but if it stays held after
+/// Ctrl is released, it types 19 frames later.
 #[test]
 fn a_key_pressed_with_ctrl_types_once_ctrl_goes_up() {
     let typed = keys_by_frame(40, |i, rt| {
@@ -880,7 +881,7 @@ fn a_key_pressed_with_ctrl_types_once_ctrl_goes_up() {
     assert_eq!(typed, "0X 29A 32A 35A 38A");
 }
 
-/// Another key let go while the held one repeats starts its count again.
+/// Releasing another key while the held one repeats starts its count again.
 #[test]
 fn another_key_let_go_starts_the_count_again() {
     let typed = keys_by_frame(50, |i, rt| {
@@ -895,8 +896,9 @@ fn another_key_let_go_starts_the_count_again() {
     assert_eq!(typed, "0A 19A 22A 43A 46A 49A");
 }
 
-/// Alt going down while a key repeats: after 19 frames it repeats what Alt
-/// gives with it, SmileBASIC 4's own character, either Alt alike.
+/// Pressing Alt while a key repeats: after 19 frames the key repeats what
+/// Alt gives with it, SmileBASIC 4's own character. Both Alt keys work the
+/// same way.
 #[test]
 fn alt_turns_a_held_keys_repeats_into_its_own_character() {
     for alt in [LEFT_ALT, RIGHT_ALT] {
@@ -925,7 +927,8 @@ fn alt_turns_a_held_keys_repeats_into_its_own_character() {
     assert_eq!(typed, "03");
 }
 
-/// Keys such as Enter repeat as they typed at the press, with Ctrl held too.
+/// Keys such as Enter repeat the code they typed at the press, with Ctrl
+/// held too.
 #[test]
 fn keys_that_type_a_code_repeat_it_with_ctrl() {
     let typed = keys_by_frame(30, |i, rt| {
@@ -935,11 +938,11 @@ fn keys_that_type_a_code_repeat_it_with_ctrl() {
         }
         rt.input.live = holding(&[ONE_KEY, LEFT_CTRL]);
     });
-    // The Ctrl held from the start is no change.
+    // Ctrl held from the start does not count as a change.
     assert_eq!(typed, "01 191 221 251 281");
 }
 
-/// Enter and Backspace repeat no more while Ctrl is held, and go on once
+/// Enter and Backspace repeat no more while Ctrl is held, and continue once
 /// it is released; the arrow keys repeat all along.
 #[test]
 fn enter_and_backspace_type_nothing_with_ctrl() {
@@ -1006,7 +1009,7 @@ fn ctrl_or_l_or_r_keep_keys_from_typing() {
         ..State::default()
     };
     assert!(ctrl.keys_type_nothing());
-    // Either Ctrl key, as it is held.
+    // Either Ctrl key, while it is held.
     assert!(holding(&[LEFT_CTRL]).keys_type_nothing());
     assert!(holding(&[RIGHT_CTRL]).keys_type_nothing());
     let shift = State {
@@ -1017,7 +1020,7 @@ fn ctrl_or_l_or_r_keep_keys_from_typing() {
 }
 
 /// L or R held while a key repeats keeps the repeats from typing, without
-/// a keyboard key going down or up to start the count again.
+/// a press or release of a keyboard key to start the count again.
 #[test]
 fn l_held_keeps_a_held_key_from_repeating() {
     let typed = keys_by_frame(40, |i, rt| {
@@ -1033,8 +1036,8 @@ fn l_held_keeps_a_held_key_from_repeating() {
     assert_eq!(typed, "0A 19A 31A 34A 37A");
 }
 
-/// Let go before 19 frames, a key types once, and pressing it again starts
-/// its count over.
+/// Released before 19 frames, a key types once, and pressing it again
+/// starts its count over.
 #[test]
 fn a_key_let_go_types_once() {
     let typed = keys_by_frame(40, |i, rt| {
@@ -1051,7 +1054,7 @@ fn a_key_let_go_types_once() {
     assert_eq!(typed, "0A 10A 29A");
 }
 
-/// A key held when a program ends goes on repeating in DIRECT mode.
+/// A key held when a program ends continues repeating in DIRECT mode.
 #[test]
 fn a_key_held_when_a_program_ends_repeats_in_direct_mode() {
     use sb_runtime::machine::Machine;
@@ -1134,9 +1137,9 @@ fn console_rows(m: &sb_runtime::machine::Machine) -> Vec<String> {
         .collect()
 }
 
-/// A key held in the editor types as it does for a program: at the press,
-/// 19 frames later and then every 3, in the machine's frames, though
-/// programs see nothing held while the editor has the keys.
+/// A key held in the editor types the same as it does for a program: at
+/// the press, 19 frames later and then every 3, in the machine's frames,
+/// though programs see nothing held while the editor has the keys.
 #[test]
 fn a_key_held_in_the_editor_repeats_as_for_programs() {
     let mut m = editing();
@@ -1153,12 +1156,13 @@ fn a_key_held_in_the_editor_repeats_as_for_programs() {
     });
     assert_eq!(changed, [0, 19, 22, 25]);
     assert_eq!(m.editor().text(), "AAAA");
-    // Let go, it types no more.
+    // Released, it types no more.
     let changed = editor_changes(&mut m, 30, |_, _| {});
     assert!(changed.is_empty());
 }
 
-/// The editor's repeats follow the modifiers as a program's do.
+/// Repeats in the editor follow the modifiers, the same as repeats in a
+/// program do.
 #[test]
 fn a_key_held_in_the_editor_follows_shift_and_l() {
     let mut m = editing();
@@ -1198,7 +1202,7 @@ fn an_editing_key_held_in_the_editor_repeats_as_for_programs() {
 }
 
 /// A key held in the editor stops repeating once the editor no longer has
-/// the keys, rather than typing into the prompt.
+/// the keys, rather than typing into DIRECT mode.
 #[test]
 fn a_key_held_in_the_editor_stops_when_it_closes() {
     let mut m = editing();
@@ -1217,8 +1221,8 @@ fn a_key_held_in_the_editor_stops_when_it_closes() {
     assert!(!rows.iter().any(|r| r.contains('A')), "{rows:?}");
 }
 
-/// The prompt repeats a held key in frames too, and the Enter that runs a
-/// program goes on repeating into it, 19 frames after the press and then
+/// DIRECT mode repeats a held key in frames too, and the Enter that runs a
+/// program continues repeating into it, 19 frames after the press and then
 /// every 3.
 #[test]
 fn a_key_held_at_the_prompt_repeats_into_the_program_it_runs() {
@@ -1226,8 +1230,8 @@ fn a_key_held_at_the_prompt_repeats_into_the_program_it_runs() {
     use sb_runtime::runtime::keys;
     let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
-    // As TEST70K logs them: the frame from the program's start where
-    // INKEY$ gives Enter.
+    // In the form TEST70K logs them: the frame, counted from the start of
+    // the program, in which INKEY$ gives Enter.
     let source = "T=MAINCNT()\nWHILE 1\nK$=INKEY$()\n\
                   IF K$==CHR$(13) THEN ?\"K\";MAINCNT()-T ELSEIF K$!=\"\" THEN ?K$;\n\
                   VSYNC\nWEND\n";
@@ -1254,7 +1258,7 @@ fn a_key_held_at_the_prompt_repeats_into_the_program_it_runs() {
         m.frame();
     }
     assert!(m.is_running());
-    // The prompt takes the line in the frame of the press, and RUN runs in
+    // DIRECT mode takes the line in the frame of the press, and RUN runs in
     // the next and starts the program in it: 19 frames after the press is
     // the program's frame 18, as on SmileBASIC 4.
     let rows = console_rows(&m);
@@ -1306,7 +1310,7 @@ fn a_chooses_the_right_button_at_first() {
     assert_eq!(focus[1], Some(1));
 }
 
-/// The D-pad's Left and Right move the focus, one button a press and no
+/// The D-pad's Left and Right move the focus, one button per press and no
 /// further than the ends, and A chooses the button with the focus.
 #[test]
 fn the_d_pad_moves_the_focus_that_a_chooses() {
@@ -1328,7 +1332,7 @@ fn the_d_pad_moves_the_focus_that_a_chooses() {
     assert_eq!(at(3), Some(0));
 }
 
-/// B chooses the left button of two wherever the focus is.
+/// B chooses the left button of two, regardless of the focus.
 #[test]
 fn b_chooses_the_left_button_whatever_the_focus() {
     let source = "DIALOG \"Q\",2:?RESULT()";
@@ -1338,8 +1342,8 @@ fn b_chooses_the_left_button_whatever_the_focus() {
     assert_eq!(row, "-1");
 }
 
-/// The left stick moves the focus once each time it goes past halfway,
-/// and not at all if it was over when the dialog opened.
+/// The left stick moves the focus once each time it is pushed past halfway,
+/// and not at all if it was already past halfway when the dialog opened.
 #[test]
 fn the_left_stick_moves_the_focus() {
     let stick = |x: f64| {
@@ -1362,7 +1366,7 @@ fn the_left_stick_moves_the_focus() {
         (Some(1), Some(0), Some(1), Some(0))
     );
 
-    // Over to the left from before the dialog, it moves nothing.
+    // Pushed to the left from before the dialog opened, it moves nothing.
     let (row, _) = dialog_frames(source, |f| match f {
         0..=9 => stick(-1.0),
         10..=11 => pad_at(f, &[(10..12, A_BUTTON)]),
@@ -1407,7 +1411,7 @@ fn the_frontend_sets_the_focus() {
 fn moving_the_focus_leaves_nothing_for_the_program() {
     let source = "DIALOG \"Q\",1:P=BUTTON(0,-1,2):N=0:REPEAT:VSYNC:INC N:UNTIL N==30\n\
                   K$=INKEY$():?RESULT();\" \";P;\" \";LEN(K$)";
-    // Left is still held as A closes the dialog, and let go after it.
+    // Left is still held as A closes the dialog, and released after it.
     let (row, _) = dialog_frames(source, |f| pad_at(f, &[(2..8, LEFT), (5..7, A_BUTTON)]));
     assert_eq!(row, "-1 0 0");
 }

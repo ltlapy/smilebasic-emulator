@@ -1,48 +1,52 @@
 //! Fused instructions: a second form of a program's code that runs faster.
 //!
-//! [`Compiled::code`] stays as the compiler made it, and everything that needs
-//! to see single instructions uses it: the debugger, TRACE, errors, line
-//! numbers. Beside it, [`Compiled::fast`] has one entry for each address, which
-//! does what the instructions from there do, usually several at once.
+//! [`Compiled::code`] is kept as the compiler made it, and everything that
+//! needs to see single instructions uses it: the debugger, TRACE, errors,
+//! line numbers. Next to it, [`Compiled::fast`] has one entry for each
+//! address. Each entry does what the instructions from its address do,
+//! usually several instructions in one.
 //!
-//! An entry does its work only when nothing can go wrong and nothing can be
-//! seen to happen part way: numbers and no failure. Anything else, the VM runs
-//! from `code` one instruction at a time, from the same address. So there is
-//! one meaning for each instruction, and an error names what it always named.
-//! An entry counts as the instructions it stands for, so that time slices end
-//! where they would.
+//! An entry does its work only when nothing can go wrong and no partial work
+//! can be seen: numbers and no failure. In any other case, the VM runs
+//! `code` one instruction at a time, from the same address. So each
+//! instruction has one meaning, and an error names what it always named.
+//! An entry counts as the instructions it stands for, so that time slices
+//! end where they would.
 //!
 //! Calls are the exception. A DEF call or return of the running slot is made
-//! in the fused code, as `code`'s would be, when the call fits the DEF; the
-//! fuser checks that once. A builtin's or host's call, [`FastOp::Call`] and
-//! [`FastOp::Host`], is made by the code `code`'s instruction uses, and what
-//! it does or fails with is what that instruction does or fails with.
-//! A chain may take in the call of a function whose body is one RETURN of
-//! numbers ([`FastOp::CallChain`]): its steps work the body out on the
-//! arguments where they are, and anything else leaves the call to `code`.
+//! in the fused code, the same as in `code`, when the call fits the DEF. The
+//! fuser checks that once. A call of a builtin or of the host,
+//! [`FastOp::Call`] and [`FastOp::Host`], is made by the same code that the
+//! instruction in `code` uses, so it has the same effects and errors as
+//! that instruction. A chain may include the call of a function whose body
+//! is one RETURN of numbers ([`FastOp::CallChain`]): its steps compute the
+//! value of the body from the arguments in place, and anything else leaves
+//! the call to `code`.
 //!
-//! Most entries are a few stack instructions in one. A [`FastOp::Chain`]
+//! Most entries combine a few stack instructions. A [`FastOp::Chain`]
 //! stands for whole statements instead: the stack code of their expressions
-//! worked out again as three-address [`Micro`] steps, which read variables
-//! and constants where they are and keep what they make in hidden places
-//! after the constants, so that the values never go through the stack. Its
-//! steps write nothing the program can see until a statement's last, and a
-//! [`Micro::Commit`] after each statement but the last says where `code`
-//! goes on from if a later one cannot do its work. Each address takes the
-//! entry or chain that costs least, by rough instruction counts, on to the
-//! next jump.
+//! is rewritten as three-address [`Micro`] steps. The steps read
+//! variables and constants in place and keep their results in hidden places
+//! after the constants, so that the values never go through the stack. They
+//! write nothing the program can see until the last step of a statement. A
+//! [`Micro::Commit`] after each statement except the last says where `code`
+//! continues if a later step cannot do its work. Each address takes the
+//! entry or chain that costs least up to the next jump, by rough
+//! instruction counts.
 //!
 //! An operator with a constant number on its right, or on its left where
 //! the sides can change places, carries the number in its entry or step
-//! (`AddInt`, `JumpLessInt`, `AddStoreInt`, ...), as reading it from its
-//! place costs as much as reading a variable. What it works out is what
-//! the constant's place would give: constants are never written.
+//! (`AddInt`, `JumpLessInt`, `AddStoreInt`, ...), because reading it from
+//! its place costs as much as reading a variable. The result is what
+//! reading the place of the constant would give: constants are never
+//! written.
 //!
 //! [`check`] runs on every program the VM takes: it bounds the global
-//! places entries name, and works out each entry's [`Fast::need`] of the
-//! running DEF's variables. With the `unchecked-vars` feature, the VM
-//! counts on both to read and write those places without checking each
-//! against its table's length (`crate::vars`).
+//! places that entries name, and computes the [`Fast::need`] of each entry,
+//! the number of the running DEF's variables it needs. With the
+//! `unchecked-vars` feature, the VM relies on both to read and write those
+//! places without checking each against the length of its table
+//! (`crate::vars`).
 
 use std::collections::HashMap;
 
@@ -52,7 +56,7 @@ use crate::value::Num;
 
 /// A number's place, for [`FastOp`]s: a variable of the running DEF or of the
 /// slot, or a constant. Constants follow the globals in the VM's table of
-/// them, so that reading any of the three is the same few instructions.
+/// globals, so that reading any of the three is the same few instructions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Var(u16);
 
@@ -70,7 +74,7 @@ impl Var {
         }
     }
 
-    /// Which table: 0 for globals and constants, 1 for locals.
+    /// Returns the table: 0 for globals and constants, 1 for locals.
     #[inline(always)]
     pub fn table(self) -> usize {
         usize::from(self.0 >> 15)
@@ -82,8 +86,9 @@ impl Var {
     }
 }
 
-/// What an entry does. Stack effects as in [`Op`]; a [`Var`] stands for the
-/// `Int`, `Real` or `Load` that pushed it. `Slow` runs from `code`.
+/// The operation of an entry. Stack effects are written as in [`Op`], and a
+/// [`Var`] stands for the `Int`, `Real` or `Load` that pushed it. `Slow` runs
+/// from `code`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FastOp {
     Slow,
@@ -113,8 +118,9 @@ pub enum FastOp {
     /// RETURN from a GOSUB of the running slot, or from a DEF called there.
     Return,
     /// A call of a DEF of the running slot with fixed numbers of arguments
-    /// and OUTs, that fits them: `cost` is what it takes of the stack calls
-    /// share. A call that does not fit is left to `code`, which fails.
+    /// and OUTs, that fits them: `cost` is the amount of the shared call
+    /// stack that it takes. A call that does not fit is left to `code`,
+    /// which fails.
     CallDef {
         def: u32,
         argc: u8,
@@ -122,8 +128,8 @@ pub enum FastOp {
         cost: u32,
     },
     /// `CallDef` of one to three arguments that are each a variable or a
-    /// number, `argc` of `args` in order, read where they are instead of
-    /// pushed: `a, CallDef`, `b, a, Swap, CallDef` or `c, b, a, Reverse(3),
+    /// number, `argc` of `args` in order, read in place instead of pushed:
+    /// `a, CallDef`, `b, a, Swap, CallDef` or `c, b, a, Reverse(3),
     /// CallDef`.
     CallArgs {
         def: u16,
@@ -134,26 +140,27 @@ pub enum FastOp {
     },
     /// RETURN with a value from a DEF called in the running slot.
     ReturnValue,
-    /// A string of [`Compiled::strings`] pushed, as a new string, as
-    /// `code`'s instruction does: a DEF's name for SPVAR, CALL or a
-    /// callback's lookup.
+    /// A string of [`Compiled::strings`] pushed as a new string, the same as
+    /// the instruction in `code` does: a DEF's name for SPVAR, CALL or a
+    /// callback lookup.
     Str(u32),
     /// CALLIDX().
     CallIdx,
     /// The next callback of CALL SPRITE or CALL TEXT, which
-    /// [`crate::vm::Vm`] makes as `code`'s instruction does, outside the
-    /// fused loop, as it asks the host.
+    /// [`crate::vm::Vm`] makes the same way as the instruction in `code`,
+    /// outside the fused loop, because it asks the host.
     CallbackNext(Addr),
     /// A call of a builtin that [`FastOp::Builtin`] does not stand for, which
-    /// [`crate::vm::Vm`] makes as `code`'s instruction does, without leaving
-    /// the fused code.
+    /// [`crate::vm::Vm`] makes the same way as the instruction in `code`,
+    /// without leaving the fused code.
     Call {
         id: u16,
         argc: u8,
         want: Want,
     },
     /// A call of a host's command or function, which [`crate::vm::Vm`]
-    /// makes as `code`'s instruction does, without leaving the fused code.
+    /// makes the same way as the instruction in `code`, without leaving
+    /// the fused code.
     Host {
         id: u32,
         argc: u8,
@@ -186,7 +193,7 @@ pub enum FastOp {
         to: Var,
     },
     /// `VarsStore` of `+`, `-` and `*`, which programs use most, with the
-    /// operator in the entry's own kind.
+    /// operator encoded in the entry kind.
     AddStore(Var, Var, Var),
     SubStore(Var, Var, Var),
     MulStore(Var, Var, Var),
@@ -194,11 +201,11 @@ pub enum FastOp {
     AddStoreInt(Var, i32, Var),
     SubStoreInt(Var, i32, Var),
     MulStoreInt(Var, i32, Var),
-    /// `AddStore` with a constant real on the right, as [`real_bits`] keeps
-    /// it: an `f64` would make every entry 4 bytes longer.
+    /// `AddStore` with a constant real on the right, in the form that
+    /// [`real_bits`] returns: an `f64` would make every entry 4 bytes longer.
     AddStoreReal(Var, [u32; 2], Var),
-    /// `VarsJump` of a comparison, with the operator in the entry's kind:
-    /// a jump unless `a op b`.
+    /// `VarsJump` of a comparison, with the operator encoded in the entry
+    /// kind: a jump unless `a op b`.
     UnlessEq(Var, Var, Addr),
     UnlessNotEq(Var, Var, Addr),
     UnlessLess(Var, Var, Addr),
@@ -276,17 +283,18 @@ pub enum FastOp {
         step: Var,
         exit: Addr,
     },
-    /// A [`Micro`] chain: `count` of [`Compiled::micro`] from `first`, then on
-    /// to `next` unless one of them jumps.
+    /// A [`Micro`] chain: `count` of [`Compiled::micro`] from `first`, then
+    /// the code at `next` unless one of them jumps.
     Chain {
         first: u32,
         count: u16,
         next: Addr,
     },
-    /// A `Chain` that makes calls of DEFs in its steps, the bodies worked
-    /// out on the arguments where they are (see `inline`). It runs only when
-    /// the stack has room for a call that takes `cost`, the most any of
-    /// them takes, as those calls would fail on it: else `code` runs it.
+    /// A `Chain` that makes DEF calls in its steps, with the values of the
+    /// bodies computed from the arguments in place (see `inline`). It runs
+    /// only when the stack has room for a call that takes `cost`, the most
+    /// that any of them takes, because those calls would fail without that
+    /// room. Otherwise `code` runs it.
     CallChain {
         first: u32,
         count: u16,
@@ -303,27 +311,27 @@ pub enum FastOp {
         to: Var,
         to_slot: Var,
         exit: Addr,
-        /// Whether `step` and `to` are places apart from `var`, `step_slot`
-        /// and `to_slot`, as nearly always, so that reading them before
-        /// any of those is written reads the same.
+        /// Whether `step` and `to` are places separate from `var`,
+        /// `step_slot` and `to_slot`, which is nearly always true, so that
+        /// reading them before any of those is written gives the same values.
         apart: bool,
     },
     /// The start of a loop compiled to native code, the region of this
     /// number in [`Compiled::native`]. Where native code does not run,
-    /// `step` runs the instruction, and the entries after it go on. Only
+    /// `step` runs the instruction, and the entries after it continue. Only
     /// the VM puts it there, after [`check`].
     #[cfg(feature = "jit")]
     Native(u32),
 }
 
 /// One three-address step of a [`FastOp::Chain`]. A chain stands for one or
-/// more statements of stack code, each ending in one thing that can be seen:
+/// more statements of stack code, each ending in one effect that can be seen:
 /// a store, a jump, or a value left on the stack. Its steps read their
 /// operands from variables and constants, and before a statement's last step
 /// they write only the chain's own places, hidden variables after the
-/// constants. So a step that cannot do its work leaves the statement as it
-/// was, and `code` runs it from its start. Each common operator has its own
-/// kind, `a op b` with `a` the left side and the result last.
+/// constants. So when a step cannot do its work, the statement has had no
+/// visible effect, and `code` runs it from its start. Each common operator
+/// has its own kind, `a op b` with `a` the left side and the result last.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Micro {
     Add(Var, Var, Var),
@@ -418,14 +426,14 @@ pub enum Micro {
     JumpLessEqInt(JumpInt),
     JumpGreaterInt(JumpInt),
     JumpGreaterEqInt(JumpInt),
-    /// The statements before are done: a later step that cannot do its
+    /// The statements before it are done: a later step that cannot do its
     /// work leaves the rest to `step` from `to`, with `charged` of the
     /// chain's instructions run.
     Commit {
         to: Addr,
         charged: u8,
     },
-    /// `a` as 0 or 1, as [`Op::Truthy`].
+    /// `a` as 0 or 1, like [`Op::Truthy`].
     Truthy(Var, Var),
     /// One of the chain's last steps: `a`, a hidden place, left on the
     /// stack.
@@ -450,7 +458,7 @@ pub struct JumpInt {
     pub when: bool,
 }
 
-/// A real as [`FastOp::AddStoreReal`] keeps it.
+/// Splits a real into the form that [`FastOp::AddStoreReal`] keeps.
 pub fn real_bits(x: f64) -> [u32; 2] {
     let bits = x.to_bits();
     [bits as u32, (bits >> 32) as u32]
@@ -475,9 +483,9 @@ pub enum Selector {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fast {
     pub op: FastOp,
-    /// How many instructions of `code` it stands for.
+    /// The number of instructions of `code` it stands for.
     pub len: u8,
-    /// How many of the running DEF's variables it needs: one more than the
+    /// The number of the running DEF's variables it needs: one more than the
     /// highest index of the locals it and its chain name, 0 for none. With
     /// the `unchecked-vars` feature, the VM reads and writes an entry's
     /// places without checking each, after checking this against the DEF's
@@ -539,8 +547,8 @@ impl Constants<'_> {
     }
 }
 
-/// Offers each form the code from its start can take, with the instructions
-/// each stands for.
+/// Offers each form the code from its start can take, with the number of
+/// instructions each stands for.
 fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
     use FastOp as F;
     let store = |op: Option<&Op>| match op {
@@ -816,11 +824,11 @@ fn call_args(
     }
 }
 
-/// How many hidden places a chain has for the values it makes.
+/// The number of hidden places a chain has for the values it makes.
 pub(crate) const TEMPS: usize = 8;
 
 /// A chain being built: the places of the values a stack machine would
-/// have, and which hidden places hold one still to be used.
+/// have, and the hidden places that hold a value still to be used.
 #[derive(Clone)]
 struct Chain {
     micro: Vec<Micro>,
@@ -860,8 +868,8 @@ impl Chain {
         Var::global(self.temps + k)
     }
 
-    /// `n` free hidden places in a row: none for more than there are, as
-    /// for `MAX` of nine arguments.
+    /// `n` free hidden places in a row: none when `n` is more than there
+    /// are, such as for `MAX` of nine arguments.
     fn alloc_run(&mut self, n: usize) -> Option<Var> {
         if n > TEMPS {
             return None;
@@ -880,7 +888,8 @@ impl Chain {
         Some(())
     }
 
-    /// Where the last step puts its result, if that is `v`.
+    /// Returns the place where the last step puts its result, if that place
+    /// is `v`.
     fn made_last(&mut self, v: Var) -> Option<&mut Var> {
         use Micro as M;
         let to = match self.micro.last_mut()? {
@@ -924,8 +933,8 @@ impl Chain {
 }
 
 /// The operators whose sides can change places with the same result, to
-/// bring a constant to the right: for reals too, as only one side can be
-/// NaN, a constant being none.
+/// bring a constant to the right: for reals too, because only one side can
+/// be NaN. A constant never is.
 fn commutes(op: BinaryOp) -> bool {
     use BinaryOp as B;
     matches!(
@@ -935,7 +944,7 @@ fn commutes(op: BinaryOp) -> bool {
 }
 
 /// `a op b` to `to`, with a constant `b` carried in the step. Comparisons
-/// keep their places, which a jump after them takes in.
+/// keep their places, so that a jump after them can include the comparison.
 fn binary_micro(c: &Constants, op: BinaryOp, a: Var, b: Var, to: Var) -> Micro {
     use BinaryOp as B;
     use Micro as M;
@@ -992,11 +1001,11 @@ fn binary_micro(c: &Constants, op: BinaryOp, a: Var, b: Var, to: Var) -> Micro {
 /// A chain the code from an address can take.
 struct Candidate {
     steps: Vec<Micro>,
-    /// How many instructions of `code` from the address it stands for,
+    /// The number of instructions of `code` from the address it stands for,
     len: usize,
-    /// and how many it counts as run: more when it makes calls.
+    /// and the number it counts as run: more when it makes calls.
     charge: usize,
-    /// Where it goes on.
+    /// The address where it continues.
     next: Addr,
     calls: Calls,
 }
@@ -1006,10 +1015,10 @@ struct Candidate {
 struct Calls {
     /// The instructions of the DEFs' bodies, their RETURNs included.
     run: usize,
-    /// The most of the stack one of them takes, 0 for none.
+    /// The most stack that any one of them takes, 0 for none.
     cost: u16,
-    /// What they save against the entries that would make them, in
-    /// [`chain_cost`]'s units.
+    /// Their saving against the entries that would make them, in the units
+    /// of [`chain_cost`].
     saving: u32,
 }
 
@@ -1023,18 +1032,18 @@ impl Calls {
     }
 }
 
-/// The longest chain a chain may be, in instructions: [`Fast::len`].
+/// The longest a chain may be, in instructions: [`Fast::len`].
 const MAX_CHAIN: usize = 200;
 
-/// The most values a chain's stack holds. Expressions need few; a deeper
-/// stack is most likely a run of pushes such as an array literal's,
-/// which no chain takes, and looking for one from each of its addresses
+/// The most values a chain's stack holds. Expressions need few. A deeper
+/// stack is most likely a run of pushes such as those of an array literal,
+/// which no chain takes, and looking for a chain from each of its addresses
 /// would cost that many steps each.
 const MAX_CHAIN_STACK: usize = 32;
 
 /// The chains for the code from `code[0]` at `pc`, each a statement longer
 /// than the one before. `temps` is the first of its hidden places. `whole`
-/// is all of the code, which the bodies of DEFs it calls are in.
+/// is all of the code, which holds the bodies of the DEFs it calls.
 fn chains(
     code: &[Op],
     pc: usize,
@@ -1048,17 +1057,17 @@ fn chains(
     found
 }
 
-/// What [`Chain::expression`] made of an instruction.
+/// The result of [`Chain::expression`] for an instruction.
 enum Worked {
     Done,
-    /// One of an expression's that the chain cannot work out.
+    /// An instruction of an expression that the chain cannot compute.
     Failed,
-    /// Not one of an expression's.
+    /// Not an instruction of an expression.
     Other,
 }
 
 impl Chain {
-    /// Works an instruction of an expression into the chain's steps.
+    /// Translates an instruction of an expression into the chain's steps.
     fn expression(&mut self, op: &Op, c: &mut Constants) -> Worked {
         match self.expression_or_fail(op, c) {
             Some(worked) => worked,
@@ -1148,32 +1157,33 @@ impl Chain {
     }
 }
 
-/// The most instructions of a DEF's body [`inline`] takes in.
+/// The most instructions of a DEF's body that [`inline`] accepts.
 const MOST_INLINED: usize = 48;
 
-/// What a call made in a chain saves, in [`chain_cost`]'s units, besides
-/// the steps of its body: the call's entry, its RETURN's, and frames made
-/// and ended, about 300 aarch64 instructions.
+/// The saving of a call made in a chain, in the units of [`chain_cost`],
+/// besides the steps of its body: the entry of the call, the entry of its
+/// RETURN, and the frames made and ended, about 300 aarch64 instructions.
 const CALL_SAVING: u32 = 30;
 
-/// `ch` with the call of DEF `def` on the `argc` values on top of its
-/// stack made in its steps, and what that adds to the chain, for a
-/// function whose body is one RETURN of a value worked out, as a chain
-/// works out an expression, from its arguments, the slot's globals and
-/// constants. Nothing of a call can be seen but its value, with these:
+/// Returns `ch` with the call of DEF `def` made in its steps, on the `argc`
+/// values on top of its stack, and what that call adds to the chain. It is
+/// for a function whose body is one RETURN of a value computed from its
+/// arguments, the slot's globals and constants, the same way a chain
+/// computes an expression. Under these conditions, nothing of a call can be
+/// seen except its value:
 ///
-/// - The arguments are read where they are. A chain's steps write nothing
-///   but its hidden places before its statement's last, so they hold what
-///   the call would have taken.
+/// - The arguments are read in place. Before the last step of its
+///   statement, a chain's steps write only its hidden places, so the
+///   arguments still hold the values the call would have taken.
 /// - A step of the body that cannot do its work leaves the statement to
 ///   `code`, which makes the call: errors in the body come from there,
 ///   naming its lines.
 /// - The chain counts the instructions of the body and its RETURN as run,
 ///   and runs whole or not at all, so time slices end where they would.
 /// - It runs only when the stack has room for the call
-///   ([`FastOp::CallChain`]); else `code` fails on the call.
-/// - The DEF has no variables but its arguments, so there are none to
-///   start, and it calls nothing, so it makes no calls in turn.
+///   ([`FastOp::CallChain`]); otherwise `code` fails on the call.
+/// - The DEF has no variables except its arguments, so there are none to
+///   initialize, and it calls nothing, so it makes no further calls.
 fn inline(
     ch: &Chain,
     c: &mut Constants,
@@ -1253,12 +1263,13 @@ fn chain(
     };
     let mut calls = Calls::default();
     let addr = |at: usize| Addr::try_from(pc + at).ok();
-    // A store or a jump ends it. A Jump right after a store goes with it.
+    // A store or a jump ends it. A Jump right after a store is included
+    // with it.
     let after_store = |at: usize| match code.get(at + 1) {
         Some(&Op::Jump(target)) => Some((at + 2, target)),
         _ => Some((at + 1, addr(at + 1)?)),
     };
-    // After a store, the chain may go on to the next statement.
+    // After a store, the chain may continue with the next statement.
     let mut stored = |ch: &mut Chain, at: usize, calls: Calls| -> Option<bool> {
         let (len, next) = after_store(at)?;
         if len > MAX_CHAIN {
@@ -1282,8 +1293,8 @@ fn chain(
     // No candidate is longer than MAX_CHAIN, so there is nothing to find
     // past it. Without this limit, a run of pushes with no store or jump
     // between, such as an array literal of thousands of numbers, was
-    // walked to its end from each of its addresses: time squared in its
-    // length, two seconds for 16000 numbers.
+    // walked to its end from each of its addresses: time proportional to
+    // the square of its length, two seconds for 16000 numbers.
     for (at, op) in code.iter().enumerate().take(MAX_CHAIN + 1) {
         match ch.expression(op, c) {
             Worked::Done => continue,
@@ -1342,7 +1353,7 @@ fn chain(
                     return None;
                 }
                 let when = matches!(op, Op::JumpIfTrue(_));
-                // A comparison made just now jumps on its own.
+                // A comparison made by the last step becomes the jump.
                 let compared = match ch.micro.last() {
                     Some(
                         &(Micro::Eq(a, b, to)
@@ -1354,7 +1365,7 @@ fn chain(
                     ) if to == cond => Some(Jump { a, b, target, when }),
                     _ => None,
                 };
-                // With a constant integer on the right, it carries that.
+                // With a constant integer on the right, the jump carries it.
                 let int = compared.and_then(|j| {
                     let k = c.int(j.b)?;
                     Some(JumpInt {
@@ -1402,8 +1413,9 @@ fn chain(
         }
     }
     // A value made for what follows, or the values of calls made in the
-    // chain, such as the arguments of a builtin that cannot be. Each is in
-    // a hidden place, which holds a number, so none of the pushes fails.
+    // chain, such as the arguments of a builtin call that the chain cannot
+    // make. Each is in a hidden place, which holds a number, so none of the
+    // pushes fails.
     let values = ch.stack.clone();
     let made = !values.is_empty() && values.iter().all(|&v| ch.temp(v).is_some());
     if made && end <= MAX_CHAIN && (values.len() == 1 || calls.cost > 0) {
@@ -1419,12 +1431,12 @@ fn chain(
     Some(())
 }
 
-/// What an entry costs, in tens of aarch64 instructions: about 70 with the
-/// 20 that choose it.
+/// The cost of an entry, in tens of aarch64 instructions: about 70,
+/// including the 20 that choose it.
 const ENTRY_COST: u32 = 7;
 
-/// A chain costs an entry's choosing and setting out, and about 60 a step,
-/// but 20 for a [`Micro::Commit`].
+/// A chain costs the choosing and setup of an entry, plus about 60 per
+/// step, but 20 for a [`Micro::Commit`].
 fn chain_cost(steps: &[Micro]) -> u32 {
     let commits = steps
         .iter()
@@ -1433,18 +1445,18 @@ fn chain_cost(steps: &[Micro]) -> u32 {
     3 + STEP_COST * (steps.len() as u32 - commits) + 2 * commits
 }
 
-/// A chain's step, as [`chain_cost`] weighs it. With the `jit` feature a
-/// chain that stands for two entries or more wins: native code has chains'
-/// forms, but not those of entries that work on the stack.
+/// The cost of a chain's step, as [`chain_cost`] weighs it. With the `jit`
+/// feature, a chain that stands for two or more entries wins: native code
+/// has the forms of chains, but not those of entries that work on the stack.
 const STEP_COST: u32 = if cfg!(feature = "jit") { 5 } else { 6 };
 
-/// Works out [`Compiled::fast`], [`Compiled::micro`] and
+/// Computes [`Compiled::fast`], [`Compiled::micro`] and
 /// [`Compiled::constants`]. Each address takes the form that costs least to
-/// run on to the next jump.
+/// run up to the next jump.
 pub fn fuse(program: &mut Compiled) {
     let code = &program.code;
     let mut constants = Vec::new();
-    // The chains' hidden places come first, as places of their own.
+    // The hidden places of the chains come first, as separate places.
     let temps = program.globals.len();
     constants.extend((0..TEMPS).map(|_| Literal::Int(0)));
     let mut c = Constants {
@@ -1511,7 +1523,7 @@ pub fn fuse(program: &mut Compiled) {
         if let Some(steps) = chosen {
             micro.extend(steps);
         }
-        // A Nop goes along with what follows it.
+        // A Nop joins the entry that follows it.
         if best.op == FastOp::Nop
             && fast
                 .get(pc + 1)
@@ -1536,11 +1548,11 @@ pub fn global_places(program: &Compiled) -> usize {
     program.globals.len() + program.constants.len()
 }
 
-/// Works out each entry's [`Fast::need`] from the places it names, and
-/// makes sure every global place is within [`global_places`]. This runs on
-/// every program before the VM does, whatever made it: if anything is out
-/// of place, the program runs without its fused code. A build with the
-/// `unchecked-vars` feature counts on both to read and write places
+/// Computes each entry's [`Fast::need`] from the places it names, and
+/// checks that every global place is within [`global_places`]. This runs on
+/// every program before the VM runs it, regardless of what made it. If any
+/// check fails, the program runs without its fused code. A build with the
+/// `unchecked-vars` feature relies on both to read and write places
 /// unchecked.
 pub fn check(program: &mut Compiled) {
     let globals = global_places(program);
@@ -1562,9 +1574,9 @@ pub fn check(program: &mut Compiled) {
     }
 }
 
-/// Calls `place` with each place `op` reads or writes, and with how many
-/// places from there on it takes (more than one for a builtin's
-/// arguments). False if a chain's steps are not all there.
+/// Calls `place` with each place `op` reads or writes, and with the number
+/// of places from there on that it takes (more than one for a builtin's
+/// arguments). Returns false if some of a chain's steps are missing.
 fn places(op: &FastOp, micro: &[Micro], place: &mut dyn FnMut(Var, usize)) -> bool {
     use FastOp as F;
     let mut one = |v: Var| place(v, 1);
@@ -1680,7 +1692,7 @@ fn places(op: &FastOp, micro: &[Micro], place: &mut dyn FnMut(Var, usize)) -> bo
                 micro_places(m, place);
             }
         }
-        // Native code of another VM's: this program runs unfused.
+        // Native code that belongs to another VM: this program runs unfused.
         #[cfg(feature = "jit")]
         F::Native(_) => return false,
     }

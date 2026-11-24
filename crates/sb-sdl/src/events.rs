@@ -1,8 +1,8 @@
-//! What each of the emulator's own screens does with an event. The
+//! The handling of an event by each of the emulator's own screens. The
 //! frontend's loop gives an event to the screen that is open, in the
-//! order they lie over each other: a dialog first, then the welcome
-//! screen, and so on down to the program. A screen that takes the event
-//! ends its handling.
+//! order they are stacked: a dialog first, then the welcome screen, and
+//! so on down to the program. A screen that takes the event ends its
+//! handling.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,16 +41,16 @@ use crate::{
     toggle_fullscreen, use_instruments,
 };
 
-/// What the loop does once a screen has taken an event.
+/// The loop's next step once a screen has taken an event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Taken {
-    /// Goes on to the next event.
+    /// Continues with the next event.
     Next,
     /// Leaves the loop: the emulator quits.
     Quit,
 }
 
-/// What every screen's handling is given besides its own state.
+/// The values that every screen's handling gets besides its own state.
 pub struct Ctx<'a> {
     pub machine: &'a mut Machine,
     pub toasts: &'a mut Toasts,
@@ -74,8 +74,8 @@ pub struct Choosers<'a> {
     pub folder: &'a Sender<(PathBuf, Transfer)>,
 }
 
-/// The open dialog's: it takes all input. `to_display` gives the
-/// display's pixel under a window position.
+/// The open dialog: it takes all input. `to_display` returns the display
+/// pixel under a window position.
 pub fn dialog(
     event: &Event,
     screens: &mut Screens,
@@ -150,8 +150,8 @@ pub fn dialog(
     Taken::Next
 }
 
-/// The welcome screen's. It takes the button pressed for A as A, by its
-/// place, and keeps that and that it was shown.
+/// The welcome screen. It takes the button pressed for A as A, by its
+/// place, and keeps that choice and the fact that it was shown.
 pub fn welcome(event: &Event, screens: &mut Screens, cx: Ctx) {
     let Ctx { machine, quit, .. } = cx;
     let Some(open) = &mut screens.welcome else {
@@ -185,9 +185,9 @@ pub fn welcome(event: &Event, screens: &mut Screens, cx: Ctx) {
     }
 }
 
-/// The Simple UI's game list's: it takes all input but a dialog's.
-/// `memory` keeps where the list was when a program is run from it, and
-/// `ran` the program, for Restart.
+/// The Simple UI's game list: it takes all input except what goes to a
+/// dialog. `memory` keeps where the list was when a program is run from
+/// it, and `ran` keeps the program, for Restart.
 pub fn game_list(
     event: &Event,
     screens: &mut Screens,
@@ -235,8 +235,8 @@ pub fn game_list(
     }
 }
 
-/// The projects': they take all input but a dialog's. `memory` keeps
-/// where they were when Run leaves them, for the return.
+/// The projects: they take all input except what goes to a dialog.
+/// `memory` keeps where they were when Run leaves them, for the return.
 pub fn manager(
     event: &Event,
     screens: &mut Screens,
@@ -461,8 +461,8 @@ pub fn file_dialog(
         file_dialogs::Outcome::Save(name) => {
             screens.file_dialog = None;
             let own = machine.rt.slot_names[slot] == name;
-            // A file of the folder the program was run from
-            // asks the first time, even when it is the slot's.
+            // A file in the folder the program was run from asks the
+            // first time, even when it is the slot's own file.
             let originals = machine.rt.original_txt(&name);
             if (!own && machine.rt.txt_exists(&name)) || !originals.is_empty() {
                 let mut lines = vec![
@@ -540,7 +540,7 @@ pub fn shortcuts_window(
     }
 }
 
-/// The settings window's: it takes the event. `bank` is SmileBASIC 4's
+/// The settings window: it takes the event. `bank` is SmileBASIC 4's
 /// instruments, if they are imported.
 pub fn settings_window(
     event: Event,
@@ -617,7 +617,7 @@ pub fn settings_window(
     }
 }
 
-/// The editor colors window's: it takes the event.
+/// The editor colors window: it takes the event.
 pub fn color_window(
     event: Event,
     screens: &mut Screens,
@@ -700,10 +700,10 @@ pub fn color_window(
 
 /// The Simple UI's hotkeys, ahead of every screen. Select+A, or F8, opens
 /// and closes the pause menu, over a dialog too; that A goes nowhere else.
-/// Select+Start quits as the menu's Quit does, and the release of that
-/// Start is not the + button's. The welcome screen opens no menu.
-/// `restart` says whether the menu offers Restart. True when the event
-/// went to one of these.
+/// Select+Start quits the same as the menu's Quit does, and the release
+/// of that Start does not count as a release of the + button. The welcome
+/// screen opens no menu. `restart` says whether the menu offers Restart.
+/// Returns true when the event went to one of these.
 pub fn pause_hotkeys(
     event: &Event,
     inputs: &mut Inputs,
@@ -762,7 +762,7 @@ pub fn pause_hotkeys(
     ) && !inputs.hotkeys.start_up()
 }
 
-/// The Simple UI's pause menu's: it takes the event. `memory` is where
+/// The Simple UI's pause menu: it takes the event. `memory` is where
 /// the game list was left, and `ran` the program it ran last, which
 /// Restart runs again.
 pub fn pause_menu(
@@ -789,10 +789,9 @@ pub fn pause_menu(
         Event::GamepadButtonDown { button, .. } => open.pad(button),
         _ => None,
     };
-    // Shown at once, behind the menu, and kept. A button held
-    // as the swap changes reads as the other from the next
-    // event on, and the program sees neither: the menu has
-    // the controls.
+    // Shown immediately, behind the menu, and kept. A button held as the
+    // swap changes reads as the other from the next event on, and the
+    // program sees neither: the menu has the controls.
     let settings = open.settings();
     match chosen {
         Some(simple_ui::Choice::Resume) => screens.pause_menu = None,
@@ -825,9 +824,9 @@ pub fn pause_menu(
     }
 }
 
-/// A program's DIALOG's, in the main window. It takes clicks on it,
-/// Enter and typing, and leaves the rest to the menu bar and the stop
-/// keys: true if it took the event.
+/// A program's DIALOG, in the main window. It takes clicks on it, Enter
+/// and typing, and leaves the rest to the menu bar and the stop keys.
+/// Returns true if it took the event.
 pub fn program_dialog(
     event: &Event,
     open: &mut ProgramView,
@@ -861,8 +860,8 @@ pub fn program_dialog(
     taken
 }
 
-/// The pointer's on the help or the index beside the editor, in the
-/// window that panel is in: true if the wheel turned over it.
+/// The pointer on the help or the index beside the editor, in the window
+/// that panel is in. Returns true if the wheel turned over it.
 pub fn side_pointer(
     event: &Event,
     side: &mut Beside,
@@ -887,10 +886,10 @@ pub fn side_pointer(
     false
 }
 
-/// The debugger's, for an event of the window the editor is in: the
-/// wheel over its panel, its menu, and typing into the panel. `places`
-/// give the display's and the menus' pixel under a window position.
-/// True if it took the event.
+/// The debugger, for an event of the window the editor is in: the wheel
+/// over its panel, its menu, and typing into the panel. `places` give the
+/// display pixel and the menu pixel under a window position. Returns true
+/// if it took the event.
 pub fn debugger(
     event: &Event,
     debugger: &mut Debugger,
@@ -967,8 +966,8 @@ pub fn debugger(
     false
 }
 
-/// The keys' of the help or the index beside the editor, while it has
-/// them: true if it took the event.
+/// The keys of the help or the index beside the editor, while it has
+/// them. Returns true if it took the event.
 pub fn side_keys(event: &Event, side: &mut Beside, machine: &mut Machine) -> bool {
     let Some(open) = &mut side.open else {
         return false;
@@ -1009,7 +1008,8 @@ pub fn side_keys(event: &Event, side: &mut Beside, machine: &mut Machine) -> boo
     taken
 }
 
-/// The clipboard, the help and who draws, for what the menu bar starts.
+/// The clipboard, the help and the renderer name, for the actions that
+/// the menu bar starts.
 pub struct Tools<'a> {
     pub clipboard: &'a ClipboardUtil,
     pub help: Option<&'a Help>,
@@ -1017,9 +1017,9 @@ pub struct Tools<'a> {
     pub drawn_by: &'a str,
 }
 
-/// The main window, for the View menu's items: the profile's display,
-/// what keeps the window's shape, and whether the window is the display
-/// of a console without a desktop.
+/// The main window, for the items of the View menu: the profile's
+/// display, the helper that keeps the window's shape, and whether the
+/// window is the display of a console without a desktop.
 pub struct MainWindow<'a> {
     pub window: &'a mut Window,
     pub display: (u32, u32),
@@ -1139,7 +1139,7 @@ pub fn menu_action(
         Action::ToggleKeepShape => {
             let on = !machine.rt.settings.keep_16_9;
             machine.rt.settings.keep_16_9 = on;
-            // Put right at once where the window is not 16:9.
+            // Corrected immediately where the window is not 16:9.
             let free = !on || main.kms || shape_free(main.window);
             let room = main_room(main.window);
             if let Some((w, h)) = main
@@ -1200,8 +1200,8 @@ pub fn panel_click(
     }
 }
 
-/// The menu bar's item that a key with Ctrl in the editor stands for, if
-/// it stands for one: the key does what the item does. `shift` is whether
+/// Returns the menu bar item that a key with Ctrl in the editor stands
+/// for, if any: the key does what the item does. `shift` is whether
 /// Shift is held too.
 pub fn editor_ctrl_action(key: Keycode, shift: bool) -> Option<Action> {
     Some(match key {
@@ -1225,7 +1225,7 @@ pub fn editor_ctrl_action(key: Keycode, shift: bool) -> Option<Action> {
     })
 }
 
-/// A key with Ctrl in the editor that is no item of the menu bar (see
+/// A key with Ctrl in the editor that is not an item of the menu bar (see
 /// [`editor_ctrl_action`]). `room` is the window the editor shows in, for
 /// its sizes.
 pub fn editor_ctrl_key(key: Keycode, room: (u32, f32), machine: &mut Machine) {

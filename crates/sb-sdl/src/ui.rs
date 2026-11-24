@@ -11,8 +11,8 @@ use sb_runtime::half_width::is_half_width;
 use sb_runtime::settings::UiFont;
 use sb_runtime::ui_glyphs::UiGlyphs;
 
-/// Glyphs are the console's 16x16 font or smooth outlines that size (see
-/// [`set_font`]); text drawn at an odd scale takes its 8x8 one.
+/// Glyphs are the console's 16x16 font or smooth outlines of that size
+/// (see [`set_font`]). Text drawn at an odd scale takes its 8x8 font.
 const GLYPH_SCALE: u32 = 2;
 pub const CHAR: u32 = 8 * GLYPH_SCALE;
 pub const PAD: u32 = 8;
@@ -25,7 +25,7 @@ pub const TEXT: u32 = 0xFFFF_FFFF;
 pub const DISABLED: u32 = 0xFF80_8080;
 pub const BORDER: u32 = 0xFF80_8080;
 /// The face of a dialog's button with the focus: a lighter blue than
-/// [`HIGHLIGHT`], the title bar's.
+/// [`HIGHLIGHT`], the color of the title bar.
 pub const FOCUS: u32 = 0xFF4A_88E0;
 /// The face of a dialog's button under the mouse without the focus: a
 /// lighter gray than [`BORDER`], so that it never looks like the focus.
@@ -89,7 +89,7 @@ impl Rect {
     }
 }
 
-/// Either rectangle, or the smallest around both.
+/// Returns either rectangle, or the smallest one around both.
 pub fn union(a: Option<Rect>, b: Option<Rect>) -> Option<Rect> {
     match (a, b) {
         (Some(a), Some(b)) => Some(a.union(b)),
@@ -97,24 +97,24 @@ pub fn union(a: Option<Rect>, b: Option<Rect>) -> Option<Rect> {
     }
 }
 
-/// What a dry run of drawing gathers: a fingerprint of what would be
-/// drawn, and around where.
+/// The data that a dry run of drawing gathers: a fingerprint of what
+/// would be drawn, and the area around it.
 struct Dry {
     state: DefaultHasher,
     bounds: Option<Rect>,
     translucent: Option<Rect>,
 }
 
-/// What a dry run found would be drawn.
+/// The result of a dry run: what would be drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Drawn {
     /// A fingerprint of everything drawn, in order: drawing that gives
     /// the same one draws the same pixels on the same ones.
     pub key: u64,
-    /// Around everything drawn.
+    /// The rectangle around everything drawn.
     pub bounds: Option<Rect>,
-    /// Around what is filled partly see-through, which lets what is
-    /// under the frame show.
+    /// The rectangle around the translucent fills, which let what is
+    /// under the frame show through.
     pub translucent: Option<Rect>,
 }
 
@@ -144,7 +144,8 @@ pub fn dry_run(draw: impl FnOnce()) -> Drawn {
 
 /// During a dry run, notes that `what` would be drawn on `area` of
 /// `fb`, and returns true for the caller to draw nothing; otherwise
-/// false. `what` must tell apart whatever draws differently there.
+/// returns false. `what` must differ for anything that draws differently
+/// there.
 pub fn dry(fb: &Framebuffer, area: Rect, what: impl Hash) -> bool {
     DRY.with_borrow_mut(|dry| {
         let Some(dry) = dry else {
@@ -170,18 +171,18 @@ pub fn clear(fb: &mut Framebuffer, color: u32) {
     }
 }
 
-/// How wide [`draw_text`] draws `text`: half-width characters take half
-/// a [`CHAR`].
+/// Returns the width of `text` drawn by [`draw_text`]: half-width
+/// characters take half a [`CHAR`].
 pub fn text_width(text: &str) -> u32 {
     text.encode_utf16().map(unit_width).sum()
 }
 
-/// How wide [`draw_text`] draws one UTF-16 unit.
+/// Returns the width of one UTF-16 unit drawn by [`draw_text`].
 fn unit_width(unit: u16) -> u32 {
     if is_half_width(unit) { CHAR / 2 } else { CHAR }
 }
 
-/// How wide [`draw_text`] draws `c`.
+/// Returns the width of `c` drawn by [`draw_text`].
 pub fn char_width(c: char) -> u32 {
     c.encode_utf16(&mut [0; 2])
         .iter()
@@ -250,8 +251,8 @@ pub fn focus_face(fb: &mut Framebuffer, r: Rect, focused: bool, hovered: bool) {
 }
 
 /// Draws text in `color`, keeping the background's alpha. Half-width
-/// characters are drawn half as wide as the rest, as the emulator's own
-/// windows are not SmileBASIC's.
+/// characters are drawn half as wide as the rest, because the emulator's
+/// own windows are not SmileBASIC screens.
 pub fn draw_text(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, color: u32) {
     draw_glyphs(fb, font, (x, y), text, color, GLYPH_SCALE, true);
 }
@@ -262,8 +263,8 @@ pub fn draw_text_double(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text:
     draw_glyphs(fb, font, (x, y), text, color, 2 * GLYPH_SCALE, true);
 }
 
-/// The font of UI text, as [`UiFont`] as u8: the 16-pixel and smooth
-/// fonts are drawn where text is drawn at an even scale.
+/// The font of UI text, a [`UiFont`] stored as u8. The 16-pixel and
+/// smooth fonts are used when text is drawn at an even scale.
 static UI_FONT: AtomicU8 = AtomicU8::new(UiFont::Large as u8);
 
 /// Picks the font of the UI, as the ui_font setting says.
@@ -279,7 +280,7 @@ fn ui_font() -> UiFont {
 }
 
 thread_local! {
-    /// The bundled glyphs, made as text wants them.
+    /// The bundled glyphs, made when text needs them.
     static GLYPHS: UiGlyphs = UiGlyphs::default();
 }
 
@@ -291,9 +292,9 @@ pub fn set_bundled_glyphs(set: BundledSet) {
 
 /// Draws text in cells `8 * scale` pixels high: the 16x16 or smooth glyphs
 /// `scale / 2` times their size if `scale` is even, else the 8x8 ones
-/// `scale` times. Every
-/// character takes a whole cell, as on SmileBASIC's screens: the help and the
-/// debugger show SmileBASIC's text laid out for that.
+/// `scale` times. Every character takes a whole cell, as on SmileBASIC's
+/// screens: the help and the debugger show SmileBASIC text laid out for
+/// that.
 pub fn draw_text_scaled(
     fb: &mut Framebuffer,
     font: &Font,
@@ -306,8 +307,8 @@ pub fn draw_text_scaled(
     draw_glyphs(fb, font, (x, y), text, color, scale, false);
 }
 
-/// Draws text a glyph at a time, half-width characters at half width if
-/// `half`.
+/// Draws text one glyph at a time, half-width characters at half width
+/// if `half`.
 fn draw_glyphs(
     fb: &mut Framebuffer,
     font: &Font,
@@ -345,11 +346,11 @@ fn draw_glyphs(
     };
     let smooth = font_choice == UiFont::Smooth && even;
     let halves = font.half_glyphs();
-    // The 16-pixel glyphs keep their gray edges, as SmileBASIC 4 draws
-    // its own 16-pixel font: cut to one bit, their strokes come out
-    // uneven. SmileBASIC's 8-pixel ones are dot drawings and stay sharp.
-    // The bundled glyphs keep their gray at both sizes, as the editor
-    // draws them.
+    // The 16-pixel glyphs keep their gray edges, the same way SmileBASIC 4
+    // draws its own 16-pixel font: cut to one bit, their strokes come out
+    // uneven. SmileBASIC's 8-pixel glyphs are dot drawings and stay sharp.
+    // The bundled glyphs keep their gray at both sizes, the same way the
+    // editor draws them.
     let font_gray = size == FontSize::Large;
     let put = |fb: &mut Framebuffer, px: u32, py: u32, a: u32, gray: bool| {
         let a = match gray {
@@ -363,9 +364,9 @@ fn draw_glyphs(
             fb.set(px, py, (dst & 0xFF00_0000) | blend(dst, color, a));
         }
     };
-    // An imported font shows what it lacks as a box: those characters
-    // take the editor's bundled glyphs of the size drawn, as in the
-    // editor. The stand-in font draws as before.
+    // An imported font shows a box for each character it lacks: those
+    // characters take the editor's bundled glyphs of the size drawn, as
+    // in the editor. The stand-in font draws as before.
     let fill_gaps = font.is_smilebasic() && !smooth;
     let draw = |fb: &mut Framebuffer, glyph: &[u8], side: u32, (left, w): (u32, u32), gray| {
         for py in 0..cell {
@@ -436,9 +437,9 @@ fn is_low(unit: u16) -> bool {
     (0xDC00..0xE000).contains(&unit)
 }
 
-/// Where a side panel (the help, the index) goes on a display of `w` x
-/// `h`: half of it beside the editor, or `min_w` if that is wider, below
-/// the menu bar, which stays shown over the editor.
+/// Returns the rectangle of a side panel (the help, the index) on a
+/// display of `w` x `h`: half of the display beside the editor, or `min_w`
+/// if that is wider, below the menu bar, which stays shown over the editor.
 pub fn side_rect((w, h): (u32, u32), left: bool, min_w: u32) -> Rect {
     let pw = (w / 2).max(min_w).min(w);
     Rect {
@@ -556,8 +557,9 @@ fn content_width(mark: Option<Mark>, label: &str) -> u32 {
     mark.map_or(0, |_| CHAR + gap) + text_width(label)
 }
 
-/// A button with `mark` left of `label`, both centred; `state` is
-/// whether it is under the mouse and whether it can be pressed.
+/// A button with `mark_drawn` left of `label`, both centered;
+/// `(hovered, enabled)` is whether it is under the mouse and whether it can
+/// be pressed.
 pub fn mark_button(
     fb: &mut Framebuffer,
     font: &Font,
@@ -583,7 +585,7 @@ pub fn mark_button(
 
 /// Draws `pixels`, `w` wide and row by row, with its top left at `x`,
 /// `y`, blending by their alpha. `key` must differ for pixels that
-/// differ, for dry runs, which do not look at them.
+/// differ, because dry runs do not look at the pixels.
 pub fn image(fb: &mut Framebuffer, x: u32, y: u32, w: u32, pixels: &[u32], key: u64) {
     let h = pixels.len() as u32 / w.max(1);
     if dry(fb, Rect { x, y, w, h }, ("image", x, y, w, key)) {
@@ -603,8 +605,8 @@ pub fn image(fb: &mut Framebuffer, x: u32, y: u32, w: u32, pixels: &[u32], key: 
     }
 }
 
-/// Draws `pixels` as [`image`] does, each as a `scale` x `scale` square,
-/// with no copy of them made larger.
+/// Draws `pixels` the same way as [`image`], each as a `scale` x `scale`
+/// square, without making a larger copy of them.
 pub fn image_scaled(
     fb: &mut Framebuffer,
     (x, y): (u32, u32),
@@ -639,7 +641,7 @@ pub fn image_scaled(
     }
 }
 
-/// `src` over `dst` at alpha `a` of 255, by channel.
+/// Returns `src` over `dst` at alpha `a` out of 255, per channel.
 fn blend(dst: u32, src: u32, a: u32) -> u32 {
     let mix = |shift: u32| {
         let (d, s) = ((dst >> shift) & 0xFF, (src >> shift) & 0xFF);
@@ -670,7 +672,8 @@ mod tests {
     #[test]
     fn bundled_glyphs_fill_what_an_imported_font_lacks() {
         // A page font that has every glyph blank below U+AC00 and none
-        // from there, as SmileBASIC 4's font lacks Hangul and surrogates.
+        // from there, like SmileBASIC 4's font, which lacks Hangul and
+        // surrogates.
         let font = Font::blank_from(0xAC00);
         for scale in [2, 3, 4] {
             let cell = 8 * scale;

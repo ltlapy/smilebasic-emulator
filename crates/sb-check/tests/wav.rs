@@ -7,7 +7,7 @@ use std::process::{Command, Output};
 /// A pulse-wave tune, which plays without the sound archive.
 const SONG: &str = "BGMPLAY \"T150@216L8CDEFGAB<C\"\nWAIT 600\n";
 
-/// A project folder `P` holding `MAIN`, in a fresh folder of its own.
+/// A project folder `P` holding `MAIN`, in its own fresh folder.
 fn project(test: &str, main: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "smilebasic-check-wav-{}-{test}",
@@ -19,7 +19,8 @@ fn project(test: &str, main: &str) -> PathBuf {
     dir
 }
 
-/// Runs the tool on `dir`'s project, kept from the user's data folder.
+/// Runs the tool on the project in `dir`, kept out of the user's data
+/// folder.
 fn run(dir: &Path, args: &[&str], after: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_smilebasic-check"))
         .args(args)
@@ -41,7 +42,8 @@ fn u32_at(b: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
 }
 
-/// Checks the header of a 48 kHz 16-bit stereo file and gives its samples.
+/// Checks the header of a 48 kHz 16-bit stereo file and returns its
+/// samples.
 fn samples(bytes: &[u8]) -> Vec<i16> {
     assert_eq!(&bytes[0..4], b"RIFF");
     assert_eq!(u32_at(bytes, 4) as usize, bytes.len() - 8);
@@ -68,7 +70,7 @@ fn play_writes_the_frames_sound() {
     assert!(out.status.success(), "{out:?}");
     let first = std::fs::read(&wav).unwrap();
     let s = samples(&first);
-    // 800 stereo samples for each of the 90 frames at 60 a second.
+    // 800 stereo samples for each of the 90 frames at 60 per second.
     assert_eq!(s.len(), 90 * 800 * 2);
     assert!(s.iter().any(|&v| v != 0));
     let out = run(&dir, &["--play", "90"], &args);

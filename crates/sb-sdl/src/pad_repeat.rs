@@ -9,17 +9,17 @@ use sdl3::gamepad::Button;
 
 /// Held this long, a direction starts repeating.
 const DELAY: Duration = Duration::from_millis(300);
-/// Steps a second when the repeat starts, and after `FAST_AT` held.
+/// Steps per second when the repeat starts, and after `FAST_AT` held.
 const SLOW_RATE: f32 = 8.0;
 const FAST_RATE: f32 = 20.0;
-/// The rate rises in a line from `SLOW_RATE` to `FAST_RATE` by this time
+/// The rate rises linearly from `SLOW_RATE` to `FAST_RATE` by this time
 /// since the press, in seconds.
 const FAST_AT: f32 = 1.5;
 /// The most steps one tick gives, so that a stalled frame does not skip
 /// the whole list.
 const MOST_STEPS: u32 = 4;
-/// A stick is pushed over at this share of its travel, and let go of
-/// under the lower one; between them it keeps what it was.
+/// A stick counts as pushed over at this share of its travel, and as
+/// released under the lower one. Between them it keeps its last state.
 const PRESS: f32 = 0.7;
 const RELEASE: f32 = 0.4;
 
@@ -48,12 +48,12 @@ impl Dir {
 
 #[derive(Default)]
 pub struct PadRepeat {
-    /// The direction repeating, up or down, and for how long it has been
+    /// The repeating direction, up or down, and the time it has been
     /// held (`credit` is the part of a step owed).
     held: Option<Dir>,
     time: Duration,
     credit: f32,
-    /// Which of Up and Down a D-pad button holds.
+    /// Up and Down, each true while a D-pad button holds it.
     dpad: [bool; 2],
     /// The direction the left stick is pushed over, if any.
     stick: Option<Dir>,
@@ -61,7 +61,7 @@ pub struct PadRepeat {
 }
 
 impl PadRepeat {
-    /// A D-pad button went down; the caller takes the single step.
+    /// A D-pad button was pressed; the caller takes the single step.
     pub fn down(&mut self, dir: Dir) {
         if dir.vertical() {
             self.dpad[usize::from(dir == Dir::Down)] = true;
@@ -89,16 +89,16 @@ impl PadRepeat {
         self.stick_moved()
     }
 
-    /// Stops the repeat and forgets the buttons held, as a screen closes
-    /// or changes: what is held acts again only when pressed again. A
-    /// stick stays pushed over until it is let go.
+    /// Stops the repeat and forgets the buttons held, for when a screen
+    /// closes or changes: what is held acts again only when it is
+    /// pressed again. A stick stays pushed over until it is released.
     pub fn reset(&mut self) {
         self.held = None;
         self.dpad = [false; 2];
     }
 
-    /// Time passed: the direction to step in and how many times, if the
-    /// repeat is due.
+    /// Adds the time passed, `dt`. Returns the direction to step in and
+    /// the number of steps, if the repeat is due.
     pub fn tick(&mut self, dt: Duration) -> Option<(Dir, u32)> {
         let dir = self.held?;
         let before = self.time;
@@ -106,8 +106,9 @@ impl PadRepeat {
         if self.time < DELAY {
             return None;
         }
-        // The first step is due as the delay ends, then the rate rises
-        // over the span of this tick, taken at its middle.
+        // The first step is due when the delay ends. After that the rate
+        // rises, and the rate for this tick is taken at the middle of its
+        // span.
         let from = before.max(DELAY);
         if before < DELAY {
             self.credit = 1.0;
@@ -182,7 +183,7 @@ mod tests {
 
     const FRAME: Duration = Duration::from_micros(16_667);
 
-    /// Runs frames for `secs` seconds; the steps given.
+    /// Runs frames for `secs` seconds and returns the number of steps.
     fn run(r: &mut PadRepeat, secs: f32) -> u32 {
         let frames = (secs * 60.0).round() as u32;
         (0..frames)
@@ -213,7 +214,7 @@ mod tests {
         run(&mut r, 0.7);
         let late = run(&mut r, 0.5);
         assert!(late > early * 3 / 2, "{early} {late}");
-        // Past the speed-up it holds about 20 steps a second.
+        // Past the speed-up it holds about 20 steps per second.
         assert!((19..=21).contains(&run(&mut r, 1.0)));
     }
 
@@ -234,7 +235,7 @@ mod tests {
         r.down(Dir::Up);
         assert_eq!(run(&mut r, 0.28), 0);
         assert_eq!(r.tick(Duration::from_millis(30)), Some((Dir::Up, 1)));
-        // Letting go of the first one does not stop the second.
+        // Releasing the first one does not stop the second.
         r.up(Dir::Down);
         assert!(run(&mut r, 0.5) > 0);
     }
@@ -269,7 +270,7 @@ mod tests {
         assert!(run(&mut r, 0.5) > 0);
         assert_eq!(r.stick_y(at(-0.3)), None);
         assert_eq!(run(&mut r, 1.0), 0);
-        // Having let go, it has to go past the press threshold again.
+        // After a release, it has to go past the press threshold again.
         assert_eq!(r.stick_y(at(-0.6)), None);
         assert_eq!(r.stick_y(at(-0.8)), Some(Dir::Up));
     }
@@ -297,11 +298,11 @@ mod tests {
         r.down(Dir::Down);
         r.reset();
         assert_eq!(run(&mut r, 1.0), 0);
-        // Letting go and pressing again works.
+        // Releasing and pressing again works.
         r.up(Dir::Down);
         r.down(Dir::Down);
         assert!(run(&mut r, 1.0) > 0);
-        // A stick still pushed over does not act until it is let go.
+        // A stick still pushed over does not act until it is released.
         let mut r = PadRepeat::default();
         assert_eq!(r.stick_y(at(0.9)), Some(Dir::Down));
         r.reset();

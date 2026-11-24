@@ -16,8 +16,8 @@ pub enum ParseErrorKind {
     /// A keyword that is only valid somewhere else, such as `THEN` with no
     /// `IF`.
     Misplaced(Keyword),
-    /// An error SmileBASIC 4 gives a code of its own as it compiles, such
-    /// as `FOR without NEXT` or `Nested DEF`.
+    /// An error that has its own code in SmileBASIC 4, given as it
+    /// compiles, such as `FOR without NEXT` or `Nested DEF`.
     Compile(ErrorKind),
     /// Nesting deeper than [`MAX_DEPTH`].
     TooDeep,
@@ -26,14 +26,15 @@ pub enum ParseErrorKind {
 }
 
 /// Limit on nested expressions and blocks, so hostile input cannot overflow
-/// the stack. Ours; SmileBASIC's own limit shows only in hostile programs.
+/// the stack. The emulator's own limit; SmileBASIC's limit shows only in
+/// hostile programs.
 pub const MAX_DEPTH: u32 = 256;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParseError {
     pub kind: ParseErrorKind,
     pub span: Span,
-    /// Where the innermost statement around the error starts.
+    /// The start of the innermost statement around the error.
     pub stmt: Option<Span>,
 }
 
@@ -101,11 +102,11 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
     }
 }
 
-/// Parses up to the first statement that does not parse, which becomes
-/// [`StmtKind::Unparsed`] in the blocks around it, and gives its error.
-/// SmileBASIC 4 compiles a statement at a time, so a compile error in the
-/// statements before it comes first. `direct` for a line typed in DIRECT
-/// mode, which refuses some statements as they start.
+/// Parses up to the first statement that does not parse, and returns its
+/// error. That statement becomes [`StmtKind::Unparsed`] in the blocks
+/// around it. SmileBASIC 4 compiles a statement at a time, so a compile
+/// error in the statements before it comes first. `direct` is set for a
+/// line typed in DIRECT mode, which refuses some statements as they start.
 pub fn parse_partial(source: &str, direct: bool) -> (Program, Option<ParseError>) {
     let (tokens, _) = lexer::tokenize_partial(source);
     let mut parser = Parser {
@@ -121,12 +122,12 @@ pub fn parse_partial(source: &str, direct: bool) -> (Program, Option<ParseError>
         direct,
         constant_value: false,
     };
-    // statement() keeps every error, so a block gives none of its own.
+    // statement() keeps every error, so a block gives no separate error.
     let stmts = parser.block(&[]).unwrap_or_else(|e| {
         parser.failed.get_or_insert(e);
         Vec::new()
     });
-    // A lexer error stands at its token, not at its statement.
+    // A lexer error is placed at its token, not at its statement.
     if let Some(e) = &mut parser.failed
         && matches!(e.kind, ParseErrorKind::Lex(_))
     {
@@ -167,29 +168,29 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     in_def: bool,
-    /// In a DEF that gives no value of its own, with or without OUT.
+    /// In a DEF that returns no value itself, with or without OUT.
     in_command_def: bool,
     depth: u32,
     /// The closing keywords of the loops being parsed, innermost last.
     loops: Vec<Keyword>,
-    /// The blocks being parsed, innermost last, but for DEF.
+    /// The blocks being parsed, innermost last, except DEF.
     open: Vec<Open>,
     /// In a one-line IF, where the blocks it holds end with the line.
     one_line: bool,
-    /// The error of the statement that did not parse. The parse then
-    /// stands at the end of the input, and the blocks around it close
+    /// The error of the statement that did not parse. The parser then
+    /// moves to the end of the input, and the blocks around it close
     /// without their closing keywords.
     failed: Option<ParseError>,
     /// Parsing a line typed in DIRECT mode.
     direct: bool,
-    /// Parsing a value of CONST, ENUM or DATA, worked out as the program
+    /// Parsing a value of CONST, ENUM or DATA, computed as the program
     /// compiles.
     constant_value: bool,
 }
 
-/// A block being parsed. SmileBASIC 4 names the innermost one when the
-/// program or the DEF around it ends before the block closes, or a DEF
-/// starts inside it, by its error and the line its statement starts on.
+/// A block being parsed. When the program or the DEF around it ends
+/// before the block closes, or a DEF starts inside it, SmileBASIC 4 names
+/// the innermost block by its error and the line its statement starts on.
 #[derive(Clone, Copy, Debug)]
 struct Open {
     unclosed: ErrorKind,
@@ -254,10 +255,10 @@ impl Parser {
         self.tokens[self.pos].span
     }
 
-    /// Where the first operand of the expression ahead stands, past any
-    /// `(` and unary operators. Operations on constants keep their first
-    /// operand's place in SmileBASIC 4.
-    // UNVERIFIED: that `(` and a unary operator are tokens of their own
+    /// Returns the position of the first operand of the expression ahead,
+    /// past any `(` and unary operators. In SmileBASIC 4, operations on
+    /// constants keep the place of their first operand.
+    // UNVERIFIED: that `(` and a unary operator are separate tokens
     // there, so a value such as `-1.5` is placed at `1.5`.
     fn operand_span(&self) -> Span {
         let mut i = self.pos;
@@ -275,11 +276,11 @@ impl Parser {
         self.tokens[i].span
     }
 
-    /// Where a `#constant` at the token ahead stands for its errors: at
-    /// the token before it in the statement, as SmileBASIC 4 places
-    /// constants it does not know (checked on hardware: `?#ZZ` at `?`,
-    /// `A=#NONE` at `=`), but at itself in a value of CONST or ENUM
-    /// (`CONST #A=#NONE`).
+    /// Returns where the errors of a `#constant` at the token ahead are
+    /// placed: at the token before it in the statement, where SmileBASIC 4
+    /// places the errors of constants it does not know (checked on
+    /// hardware: `?#ZZ` at `?`, `A=#NONE` at `=`), but at the constant
+    /// itself in a value of CONST or ENUM (`CONST #A=#NONE`).
     // UNVERIFIED: in DATA.
     fn constant_span(&self) -> Span {
         let before = self.pos.checked_sub(1).map(|i| &self.tokens[i]);
@@ -406,8 +407,8 @@ impl Parser {
             }
             match self.peek() {
                 TokenKind::Eof => return Ok(stmts),
-                // A one-line IF ends with its line, and the blocks inside
-                // it with it.
+                // A one-line IF ends with its line, and so do the blocks
+                // inside it.
                 TokenKind::Newline => return Ok(stmts),
                 TokenKind::Keyword(k) if until.contains(k) => return Ok(stmts),
                 // END closes a DEF; at top level it is the END statement.
@@ -430,9 +431,9 @@ impl Parser {
         Ok(body)
     }
 
-    /// The keyword that closes `block`, whose `body` the end of the
-    /// program or DEF cuts short without it. A block cut short by a
-    /// statement that did not parse goes without.
+    /// The keyword that closes `block`. Without it, the end of the
+    /// program or DEF cuts `body` short. A block cut short by a statement
+    /// that did not parse does not need the keyword.
     fn close(&mut self, end: Keyword, block: Open, body: &mut Vec<Stmt>) {
         if self.failed.is_none() && !self.eat_keyword(end) {
             self.cut(body, compile_error(block.unclosed, block.at));
@@ -455,8 +456,8 @@ impl Parser {
         self.pos = self.tokens.len() - 1;
     }
 
-    /// The error for a DEF starting or ending inside a block: the
-    /// innermost block's.
+    /// The error for a DEF starting or ending inside a block: the error
+    /// of the innermost block.
     fn inside_block(&self) -> Option<ParseError> {
         let block = self.open.last()?;
         Some(compile_error(block.unclosed, block.at))
@@ -491,8 +492,8 @@ impl Parser {
         stmts
     }
 
-    /// The blocks of an IF or ELSE that goes on past its line, which may
-    /// stand in a one-line IF: `IF A THEN IF B THEN` ends with an ENDIF.
+    /// The blocks of an IF or ELSE that continues past its line, which may
+    /// be inside a one-line IF: `IF A THEN IF B THEN` ends with an ENDIF.
     fn lines<T>(&mut self, parse: impl FnOnce(&mut Self) -> PResult<T>) -> PResult<T> {
         let one_line = std::mem::replace(&mut self.one_line, false);
         let parsed = parse(self);
@@ -619,8 +620,8 @@ impl Parser {
             K::Break => StmtKind::Break,
             K::Continue => StmtKind::Continue,
             // Inside an IF or another block of the loop, its closing
-            // keyword goes on with the next turn (`IF A THEN NEXT`), as
-            // SmileBASIC Debugger describes.
+            // keyword starts the next iteration of the loop
+            // (`IF A THEN NEXT`), as SmileBASIC Debugger describes.
             K::Next | K::Wend | K::Endloop if self.loops.last() == Some(&keyword) => {
                 if keyword == K::Next && matches!(self.peek(), TokenKind::Ident { .. }) {
                     self.lvalue()?;
@@ -681,7 +682,7 @@ impl Parser {
                 };
                 self.command(name)?
             }
-            // A closing keyword with no block of its own to close. ELSE
+            // A closing keyword with no matching block to close. ELSE
             // and ELSEIF are a Syntax error on the line of the block they
             // are in.
             K::Else | K::Elseif => {
@@ -715,9 +716,9 @@ impl Parser {
             unreachable!("caller checked for an identifier");
         };
         let next = self.peek_at(1).clone();
-        // CONST and ENUM are keywords to SmileBASIC 4, OPTION and STOP are
-        // names of commands it knows, refused in DIRECT mode before it
-        // reads what follows them.
+        // SmileBASIC 4 treats CONST and ENUM as keywords and OPTION and
+        // STOP as names of commands it knows. It refuses them in DIRECT
+        // mode before it reads what follows them.
         if self.direct && suffix.is_none() {
             let command = matches!(name.as_str(), "OPTION" | "STOP")
                 && !matches!(next, TokenKind::Assign | TokenKind::LBracket);
@@ -817,7 +818,7 @@ impl Parser {
         }
     }
 
-    /// OUT variables; like arguments, any of them may be left out (`OUT A,,B`).
+    /// OUT variables; like arguments, any of them may be omitted (`OUT A,,B`).
     fn outs(&mut self) -> PResult<Vec<Option<LValue>>> {
         let mut outs = Vec::new();
         if !self.eat_keyword(Keyword::Out) {
@@ -835,7 +836,7 @@ impl Parser {
         }
     }
 
-    /// Comma-separated arguments where any of them may be left out.
+    /// Comma-separated arguments where any of them may be omitted.
     fn args(&mut self, at_end: impl Fn(&Self) -> bool) -> PResult<Vec<Option<Expr>>> {
         let mut args = Vec::new();
         if at_end(self) {
@@ -898,7 +899,7 @@ impl Parser {
         let dims = if !self.eat(&TokenKind::LBracket) {
             None
         } else if *self.peek() == TokenKind::Comma {
-            // `DIM A[,]` compiles; its sizes are no numbers when it runs,
+            // `DIM A[,]` compiles; its sizes are not numbers when it runs,
             // which is Type mismatch.
             let mut n = 1;
             while self.eat(&TokenKind::Comma) {
@@ -954,7 +955,7 @@ impl Parser {
 
     fn input(&mut self, whole_line: bool) -> PResult<StmtKind> {
         // A `,` after the guide string hides the `?`. The guide may be any
-        // string expression, a label among them; a variable is one only
+        // string expression, including a label; a variable is one only
         // when a `;` follows it, as `INPUT A,B` reads two values.
         let start = self.pos;
         let guide = match self.peek() {
@@ -989,8 +990,7 @@ impl Parser {
     }
 
     /// IF, whose statement starts at `at`. Its blocks are named by that
-    /// line whatever branch they are in: ELSEIF and ELSE change only the
-    /// error.
+    /// line in any branch: ELSEIF and ELSE change only the error.
     fn if_statement(&mut self, at: Span) -> PResult<StmtKind> {
         let then = Open {
             unclosed: ErrorKind::ThenWithoutEndif,
@@ -1035,7 +1035,7 @@ impl Parser {
         self.lines(|p| p.if_block(cond, then))
     }
 
-    /// The branches of an IF that goes on past its line.
+    /// The branches of an IF that continues past its line.
     fn if_block(&mut self, cond: Expr, then: Open) -> PResult<StmtKind> {
         let at = then.at;
         let mut branches = Vec::new();
@@ -1236,7 +1236,7 @@ impl Parser {
         })
     }
 
-    /// GOTO's and GOSUB's target, which may be missing until the jump
+    /// The target of GOTO and GOSUB, which may be missing until the jump
     /// runs (checked on hardware: a bare GOTO is a Type mismatch there).
     fn jump_target(&mut self) -> PResult<Target> {
         match self.at_stmt_end() {
@@ -1267,7 +1267,7 @@ impl Parser {
     fn on_statement(&mut self) -> PResult<StmtKind> {
         if self.eat_keyword(Keyword::Break) {
             self.expect_keyword(Keyword::Goto, "GOTO")?;
-            // An empty string takes the handler away.
+            // An empty string removes the handler.
             if let TokenKind::Str(s) = self.peek()
                 && s.is_empty()
             {

@@ -1,10 +1,11 @@
-//! Between the frames' sound and the sound device: the program makes a
+//! Between the frames' sound and the sound device: the program makes one
 //! frame of samples at a time, on its own clock, and the device takes them
-//! in blocks of its own size, on another. This keeps a margin of samples
-//! between them, plays them a little faster or slower to hold the margin
-//! (the two clocks never quite agree, as a 59.98 Hz display paces frames
-//! that the device plays at 60), and when the program falls so far behind
-//! that the margin runs out, fades out and back in rather than clicking.
+//! in blocks of the size it chooses, on another clock. This keeps a margin
+//! of samples between them and plays them a little faster or slower to
+//! hold the margin (the two clocks never quite agree: a 59.98 Hz display
+//! paces frames that the device plays at 60). When the program falls so
+//! far behind that the margin runs out, it fades out and back in rather
+//! than clicking.
 //!
 //! It is plain data, without threads: the frontend shares it between the
 //! loop that pushes and the device's callback that pulls.
@@ -16,18 +17,18 @@ use super::FRAME_SAMPLES;
 /// Samples kept beyond the device's largest block: three frames, so that
 /// the program can be about three frames late before it is heard.
 const MARGIN: usize = 3 * FRAME_SAMPLES;
-/// Samples of fade where the sound stops for want of samples, starts
+/// Samples of fade where the sound stops because samples ran out, starts
 /// again or skips.
 const FADE: usize = 96;
-/// How far from the normal speed the rate may go, as a fraction: 0.5%,
-/// under a tenth of a semitone.
+/// The largest change of the rate from the normal speed, as a fraction:
+/// 0.5%, under a tenth of a semitone.
 const MOST_SKEW: f64 = 0.005;
 /// The skew for a margin off by its whole size.
 const GAIN: f64 = 0.02;
-/// How quickly the averaged fill level follows each block's.
+/// How quickly the averaged fill level follows the level at each block.
 const SMOOTHING: f64 = 0.05;
 /// More than this beyond the target and the oldest samples are skipped,
-/// as when the device stopped taking them for a while.
+/// for example when the device stopped taking them for a while.
 const MOST_OVER: usize = 6 * FRAME_SAMPLES;
 /// The largest block of the device that sets the target.
 const MOST_BLOCK: usize = 4096;
@@ -41,7 +42,7 @@ enum State {
     Skipping,
 }
 
-/// What happened, for measuring.
+/// Counters, for measuring.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
     /// Times the samples ran out while playing.
@@ -108,7 +109,7 @@ impl Output {
         self.queue.len().saturating_sub(3)
     }
 
-    /// The fill level the rate aims at, as the device's block starts.
+    /// The fill level the rate aims at, at the start of a device block.
     pub fn target(&self) -> usize {
         self.block + MARGIN + FRAME_SAMPLES / 2
     }
@@ -204,7 +205,7 @@ mod tests {
 
     /// Runs a producer making a frame every `frame_secs` (late by `late`
     /// seconds at the frames listed) against a device pulling `block`
-    /// samples at 48 kHz, for `secs`; gives the output and the stats.
+    /// samples at 48 kHz, for `secs`; returns the output and the stats.
     fn run(frame_secs: f64, block: usize, secs: f64, late: &[(usize, f64)]) -> (Vec<f32>, Output) {
         let mut o = Output::default();
         let (mut made, mut frames) = (0, 0);
@@ -246,7 +247,7 @@ mod tests {
         let (out, o) = run(1.0 / 60.0, 1024, 30.0, &[]);
         assert_eq!(o.stats.ran_out, 0);
         assert_eq!(o.stats.skips, 0);
-        // A 441 Hz sine at 0.5 changes at most 0.029 a sample.
+        // A 441 Hz sine at 0.5 changes at most 0.029 per sample.
         assert!(largest_step(&out[48_000..]) < 0.04);
     }
 

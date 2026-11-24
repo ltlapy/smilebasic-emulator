@@ -1,36 +1,36 @@
-//! Running programs about as fast as a real Switch does, for checking that
+//! Running programs about as fast as on a real Switch, for checking that
 //! a program written on a fast computer keeps up on the console.
 //!
 //! A [`Meter`] charges the work a program does in picoseconds of the
-//! console's time: the VM's counts from [`Work`], each host command by
-//! what it is given (pixels for drawing, cells for text) and each
+//! console's time: the counts the VM keeps in [`Work`], each host command
+//! by the work it is given (pixels for drawing, cells for text) and each
 //! character printed. A frame gives the program one sixtieth of a second
-//! of that time. A program that needs more goes on into the next frame and
-//! misses the frame's `VSYNC` as it would on the console, so `MAINCNT`,
-//! `VSYNC` and the frames a program skips come out as there. `PERFBEGIN`,
-//! `PERFEND` and `MILLISEC` measure the same time.
+//! of that time. A program that needs more continues into the next frame
+//! and misses the frame's `VSYNC`, the same as on the console, so
+//! `MAINCNT`, `VSYNC` and the frames a program skips match the console.
+//! `PERFBEGIN`, `PERFEND` and `MILLISEC` measure the same time.
 //!
 //! The costs come from TPERF's scenes and the loops of TEST65, TEST67,
-//! TEST69 to TEST76, timed on both consoles running
-//! SmileBASIC 4.4.9, and from TEST68 on a Switch 2 (docs/performance/benchmarking.md).
-//! TEST70 finds a Switch 2 as fast in the hand as docked.
+//! TEST69 to TEST76, timed on both consoles running SmileBASIC 4.4.9, and
+//! from TEST68 on a Switch 2 (docs/performance/benchmarking.md). TEST70
+//! finds a Switch 2 as fast handheld as docked.
 //!
 //! A `GFILL` or `GCOPY` whose left edge is not on a 16-pixel boundary
 //! costs more on each row, by its width and the edge's column, and less
-//! on a 4-pixel one (TEST69 to TEST72, most on a Switch 1). A misaligned
-//! or blended `GFILL`, or a `GLINE`, at a place not among the last 64
-//! such places costs more again. Changing sprites in turn costs more once
-//! there are more of them than 64, so the meter remembers the last 64
-//! sprites changed, and some sprite commands cost less while the last 64
-//! are for a few sprites. The first read of each file costs more than the
-//! next ones. UNVERIFIED: that these are the console's memory and storage
-//! at work, and where between 64 and 1000 sprites the sprites' cost
-//! starts.
+//! on a 4-pixel one (TEST69 to TEST72, most of them on a Switch 1). A
+//! misaligned or blended `GFILL`, or a `GLINE`, at a place not among the
+//! last 64 such places costs more on top of that. Changing sprites in turn
+//! costs more once there are more than 64 of them, so the meter remembers
+//! the last 64 sprites changed, and some sprite commands cost less while
+//! the last 64 are for a few sprites. The first read of each file costs
+//! more than the next ones. UNVERIFIED: that these are the console's
+//! memory and storage at work, and the number of sprites between 64 and
+//! 1000 at which the extra sprite cost starts.
 //! Drawing sprites, layers and text screens happens in the frame job, which
 //! TPERF and TEST67 show costs a program nothing, so only the commands are
 //! charged.
 //!
-//! A subprogram's interpreter gets a frame's time of its own.
+//! A subprogram's interpreter gets a separate frame's time.
 
 use std::cell::Cell;
 
@@ -43,8 +43,8 @@ use crate::runtime::{Command, Runtime};
 use crate::sprites::SPRITES;
 use crate::text::USER_CHARS;
 
-/// How fast programs run: as fast as the computer allows, or about as fast
-/// as on a console.
+/// The speed programs run at: as fast as the computer allows, or about as
+/// fast as on a console.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Speed {
     #[default]
@@ -90,8 +90,8 @@ impl Speed {
 /// A frame of the console's time, in picoseconds.
 pub const FRAME_PS: u64 = 1_000_000_000_000 / 60;
 
-/// The most instructions run between looks at what is left of a frame, so
-/// that a slice full of costly commands cannot run far past its end.
+/// The most instructions run between checks of the time left in a frame,
+/// so that a slice full of costly commands cannot run far past its end.
 const SLICE: u64 = 20_000;
 
 /// The most sprites that the last 64 sprite commands can be for while
@@ -99,93 +99,100 @@ const SLICE: u64 = 20_000;
 /// 100 they do not. UNVERIFIED: where between.
 const FEW_SPRITES: u32 = 12;
 
-/// What work costs on one console, in picoseconds.
+/// The cost of work on one console, in picoseconds.
 #[derive(Debug)]
 pub(crate) struct Costs {
-    /// Each VM instruction, and each statement on top.
+    /// Each VM instruction.
     instruction: u64,
+    /// Each statement, on top of its instructions.
     statement: u64,
     /// Taken off each test of a FOR: a NEXT is many of our instructions
-    /// but one step of SmileBASIC 4's.
+    /// but one step on SmileBASIC 4.
     for_credit: u64,
     /// On top, each statement run inside a DEF of the running slot: a
-    /// FOR, a WHILE and `A=A+1` cost a little more a pass in a DEF than
-    /// at the top level, where code that EXEC runs from a DEF costs what
-    /// it does at the top level. UNVERIFIED: that it is each statement.
+    /// FOR, a WHILE and `A=A+1` cost a little more per pass in a DEF than
+    /// at the top level, but code that EXEC runs from a DEF costs the same
+    /// as at the top level. UNVERIFIED: that it is each statement.
     def_statement: u64,
-    /// A DEF call, and each value it sets up: parameters, OUT variables,
-    /// other variables and a result. An empty DEF costs much less than
-    /// TPERF's VDEF's calls, and TEST69's HGIMEUPDATE, with four VARs,
-    /// more. UNVERIFIED: that each of these costs alike.
+    // A DEF call, and each value it sets up: parameters, OUT variables,
+    // other variables and a result. An empty DEF costs much less than
+    // the calls of TPERF's VDEF, and TEST69's HGIMEUPDATE, with four
+    // VARs, costs more. UNVERIFIED: that each of these costs the same.
     def_call: u64,
     def_value: u64,
-    /// Each builtin call and each argument it is given. ON's jump counts
-    /// as a call with none.
+    /// Each builtin call. ON's jump counts as a call with no arguments.
     builtin: u64,
+    /// Each argument a builtin call is given.
     builtin_arg: u64,
-    /// Each array element read or written, and each index past its first.
+    /// Each array element read or written.
     element: u64,
+    /// Each index of an element past its first.
     extra_index: u64,
     /// A character of a string read or written by index, on top of the
     /// element.
     str_element: u64,
     /// An `IF` or `ELSEIF` whose condition is an array element: TEST70's
     /// `IF MB%[ASC(S$[I%])] THEN BREAK` costs that much more than
-    /// `C%=MB%[ASC(S$[I%])]`, where TEST65's `IF V>K THEN` costs what
-    /// `V=A+B` does and TEST69's HGIMEUPDATE, which tests variables,
+    /// `C%=MB%[ASC(S$[I%])]`, whereas TEST65's `IF V>K THEN` costs the
+    /// same as `V=A+B`, and TEST69's HGIMEUPDATE, which tests variables,
     /// `!` and `KEYBOARD()`, needs nothing on top.
     element_test: u64,
     /// Each element `FILL` writes.
     fill_element: u64,
+    /// Each variable, label or DEF found by a name in a string at run time.
     lookup: u64,
+    /// Each string join, before its characters.
     join: u64,
     /// `CHR$`, on top of the call, for TEST68's and TEST69's HGCNV$ and
     /// HGREV$, which make 488 characters with it in 1000. UNVERIFIED:
-    /// that it is making a string that costs, which keeps TPERF's VSTR
-    /// where it was, where TEST71's `U$=CHR$(C)` of an ASCII code costs
-    /// no more than a call.
+    /// that the cost is in making a string, which keeps the cost of
+    /// TPERF's VSTR unchanged, whereas TEST71's `U$=CHR$(C)` of an ASCII
+    /// code costs no more than a call.
     chr: u64,
     /// Each builtin of [`COSTLY`] on top of its call, in that order.
-    /// `SORT` as of 16 elements and `FREEMEM` as with the memory a small
-    /// program leaves: UNVERIFIED how they grow.
+    /// `SORT` costs the same as a `SORT` of 16 elements, and `FREEMEM` the
+    /// same as with the memory a small program leaves: UNVERIFIED how they
+    /// grow.
     costly: [u64; COSTLY.len()],
-    /// Each builtin of [`CHEAP`], which costs no call, and on top for
-    /// `SIN`, `COS` and `TAN` of a number past a quarter of pi either way
-    /// (TEST71, TEST72, TEST74). UNVERIFIED: the console's cost grows
-    /// with the number, from about 1 to 1000000 by half again on a Switch
-    /// 1; this is what angles up to a turn cost.
+    /// Each builtin of [`CHEAP`], which costs no call.
     cheap: [u64; CHEAP.len()],
+    /// On top, `SIN`, `COS` and `TAN` of a number past a quarter of pi
+    /// either way (TEST71, TEST72, TEST74). UNVERIFIED: the console's cost
+    /// grows with the number, by half again from about 1 to 1000000 on a
+    /// Switch 1; this is the cost of angles up to a full turn.
     trig_reduce: u64,
     /// Each character of the string a join makes.
     join_char: u64,
-    /// A comparison of strings, or another operator but `+` with a
+    /// A comparison of strings, or any other operator except `+` with a
     /// string on its left.
     str_compare: u64,
     /// `MAINCNT` and `MILLISEC`.
     clock: u64,
-    /// Host functions, such as `BUTTON` and `SPCHK`, `RND` and `RNDF`.
+    /// Host functions, such as `BUTTON` and `SPCHK`.
     query: u64,
+    /// `RND`.
     rnd: u64,
+    /// `RNDF`.
     rndf: u64,
-    /// Host commands not timed, and those that set one thing, as
-    /// `SPROT`, `SPCOLOR` and `LOCATE` do.
+    /// Host commands not timed, and those that set one thing, such as
+    /// `SPROT`, `SPCOLOR` and `LOCATE`.
     setter: u64,
-    /// Commands TEST71 timed alone: `LOCATE`, `SPSHOW`, `SPVAR`, `SPCHR`,
-    /// `STICK` and `SPOFS` with `OUT`, and `GPSET` and `GPGET`. Then
-    /// `LOCATE` with a screen, which TEST72 times.
+    /// `LOCATE`, which TEST71 timed alone.
     locate: u64,
+    /// `LOCATE` with a screen, which TEST72 times.
     locate_screen: u64,
-    /// `COLOR` of a text color alone, and of a screen and a color, and
-    /// `TOFS`.
+    /// `COLOR` of a text color alone.
     color: u64,
+    /// `COLOR` of a screen and a color.
     color_screen: u64,
+    /// `TOFS`.
     tofs: u64,
-    /// `SPROT`, `SPCOLOR`, `SPHOME`, `SPLINK`, `SPHIDE`, `SPUNLINK`,
-    /// `SPSTOP`, `SPCOL` of a sprite alone and `SPCOLVEC` among sprite
-    /// commands for a few sprites ([`FEW_SPRITES`]), whatever the order.
-    /// Among commands for more each costs `setter`, as TPERF's sprite
-    /// scenes and TEST70's sprite loop over a hundred sprites and more
-    /// need.
+    // `SPROT`, `SPCOLOR`, `SPHOME`, `SPLINK`, `SPHIDE`, `SPUNLINK`,
+    // `SPSTOP`, `SPCOL` of a sprite alone and `SPCOLVEC` among sprite
+    // commands for a few sprites ([`FEW_SPRITES`]), regardless of the
+    // order. Among commands for more sprites each costs `setter`, which
+    // TPERF's sprite scenes and TEST70's sprite loop over a hundred
+    // sprites and more need.
     sprot: u64,
     spcolor: u64,
     sphome: u64,
@@ -195,9 +202,9 @@ pub(crate) struct Costs {
     spstop: u64,
     spcol: u64,
     spcolvec: u64,
-    /// `TROT`, `TSCALE`, `THOME` and `TCOLOR` as commands, `TCOPY` of 4x4
-    /// cells (UNVERIFIED: by the cells), `LCLIP` with a rectangle, and
-    /// `TOUCH` and `DTREAD` with `OUT`.
+    // `TROT`, `TSCALE`, `THOME` and `TCOLOR` as commands, `TCOPY` of 4x4
+    // cells (UNVERIFIED: by the cells), `LCLIP` with a rectangle, and
+    // `TOUCH` and `DTREAD` with `OUT`.
     trot: u64,
     tscale: u64,
     thome: u64,
@@ -206,143 +213,166 @@ pub(crate) struct Costs {
     lclip: u64,
     touch: u64,
     dtread: u64,
+    // Commands TEST71 timed alone: `SPSHOW`, `SPVAR`, `SPCHR`, `STICK` and
+    // `SPOFS` with `OUT`, and `GPSET` and `GPGET`.
     spshow: u64,
     spvar: u64,
     spchr: u64,
     stick: u64,
     spofs_out: u64,
     pixel: u64,
-    /// `GPGET`, where TEST74 finds it cheaper than `GPSET` on a Switch 1.
+    /// `GPGET`, which TEST74 finds cheaper than `GPSET` on a Switch 1.
     pixel_get: u64,
     /// `CHKCHR` and `BGMCHK`, which TEST71 times at less than `BUTTON`.
     peek: u64,
+    /// `SPOFS` without `OUT`.
     spofs: u64,
+    /// `SPSCALE`.
     spscale: u64,
-    /// `SPSET`: the call and each argument, a sprite not in use on top,
-    /// and the search of the function form with each sprite it passes.
+    // `SPSET`: the call and each argument, a sprite not in use on top,
+    // and the search of the function form with each sprite it passes.
     spset: u64,
     spset_arg: u64,
     spset_new: u64,
     spset_search: u64,
     spset_scan: u64,
-    /// `SPCLR` of one sprite, and of a range of 1, 100, 500, 1000, 2000
-    /// and 4096 sprites, in use or not, with straight lines between.
+    /// `SPCLR` of one sprite.
     spclr: u64,
+    /// `SPCLR` of a range of 1, 100, 500, 1000, 2000 and 4096 sprites, in
+    /// use or not, with straight lines between.
     spclr_range: [u64; 6],
-    /// `SPHITSP` and the like, and `SPHITSP` of two sprites, which looks
-    /// at no others.
+    /// `SPHITSP` and the like.
     sphitsp: u64,
+    /// `SPHITSP` of two sprites, which looks at no others.
     sphitsp_pair: u64,
-    /// `SPANIM`, and of a sprite among the last 64 changed (TEST74's
-    /// three on a sprite just set, against TPERF's over 3000 sprites).
+    /// `SPANIM`.
     spanim: u64,
+    /// `SPANIM` of a sprite among the last 64 changed (TEST74's three
+    /// `SPANIM`s on a sprite just set, compared with TPERF's `SPANIM` over
+    /// 3000 sprites).
     spanim_near: u64,
-    /// Each thing `PRINT` prints, and each character of it.
+    /// Each thing `PRINT` prints.
     print: u64,
+    /// Each character `PRINT` prints.
     print_char: u64,
-    /// Each time `PRINT` scrolls the screen, and each cell it moves.
+    /// Each time `PRINT` scrolls the screen.
     print_scroll: u64,
+    /// Each cell a scroll of `PRINT` moves.
     print_scroll_cell: u64,
+    /// `TPUT`.
     tput: u64,
+    /// `TFILL` before its cells.
     tfill: u64,
+    /// Each cell `TFILL` writes.
     tfill_cell: u64,
+    /// Each cell of the screen that `SCROLL` moves, on top of `setter`.
     scroll_cell: u64,
     /// Every GRP command but `GTRI` and `GCOPY`, before its rows and
-    /// pixels, and `GCOPY`'s. `GFILL`, `GCLS` and `GCOPY` also pay each row.
+    /// pixels.
     grp: u64,
+    /// `GCOPY` before its rows and pixels.
     copy: u64,
+    /// Each row of `GFILL`, `GCLS` and `GCOPY`.
     row: u64,
-    /// `GCLS` before its rows and pixels, and `GCLIP` with arguments and
-    /// without.
+    /// `GCLS` before its rows and pixels.
     gcls: u64,
+    /// `GCLIP` with arguments and without.
     clip: [u64; 2],
-    /// Pixels of `GFILL` and `GCLS`, of `GCOPY` and of blended drawing.
-    /// TEST69 finds the same rates with `GCLIP` set smaller than the
-    /// page.
+    // Pixels of `GFILL` and `GCLS`, of `GCOPY` and of blended drawing.
+    // TEST69 finds the same rates with `GCLIP` set smaller than the
+    // page.
     fill_px: u64,
     copy_px: u64,
-    /// A pixel of a `GCOPY` that leaves out the transparent ones. Where
-    /// `key_pattern` is set, such a copy pays by its source's pattern
-    /// rather than by where it draws: each opaque pixel, each row with
-    /// both kinds, and each change from one kind to the other along a
-    /// row, at one rate where the run it ends is as long as the run
-    /// before it (stripes, a checkerboard) and at another elsewhere.
-    /// UNVERIFIED: the console's sprite images cost a little more than
-    /// that gives, a pattern of lines a little less.
+    // A pixel of a `GCOPY` that skips the transparent ones. When
+    // `key_pattern` is set, such a copy pays by its source's pattern
+    // rather than by where it draws: each opaque pixel, each row with
+    // both kinds, and each change from one kind to the other along a
+    // row, at one rate when the run it ends is as long as the run
+    // before it (stripes, a checkerboard) and at another otherwise.
+    // UNVERIFIED: the console's sprite images cost a little more than
+    // that gives, and a pattern of lines a little less.
     copy_key_px: u64,
     key_pattern: bool,
     key_ink_px: u64,
     key_mixed_row: u64,
     key_regular: u64,
     key_irregular: u64,
+    /// A pixel of a blended `GFILL` or `GTRI`.
     alpha_px: u64,
+    /// A pixel of a `GCOPY` in drawing mode 2 or 3.
     copy_alpha_px: u64,
-    /// `GTRI`: the call, each row and each pixel, more for one whose left
-    /// side is not one upright edge. UNVERIFIED: the console's cost also
-    /// goes by which way the left side leans.
+    // `GTRI`: the call, each row and each pixel, more for one whose left
+    // side is not one upright edge. UNVERIFIED: the console's cost also
+    // depends on which way the left side leans.
     tri: u64,
     tri_row: u64,
     tri_px: u64,
     tri_sloped_px: u64,
-    /// `GLINE` before its pixels, each pixel along its longer side and
-    /// each row it goes down, and each pixel of a horizontal one. A steep
-    /// line pays on top for each pixel past four in a column.
-    /// UNVERIFIED: that it is the console's memory cache, of four rows.
-    /// `GCIRCLE`'s outline before its pixels.
+    // `GLINE` before its pixels, each pixel along its longer side and
+    // each row it goes down, and each pixel of a horizontal one. A steep
+    // line pays on top for each pixel past four in a column.
+    // UNVERIFIED: that it is the console's memory cache, of four rows.
     line: u64,
     line_px: u64,
     line_row: u64,
     line_steep: u64,
     line_flat_px: u64,
+    /// `GCIRCLE`'s outline before its pixels.
     circle: u64,
+    /// Each pixel of the outline.
     circle_px: u64,
+    /// A pixel of `GLOAD` and of `GSAVE`.
     load_px: u64,
     /// A pixel of `GLOAD` of an image of palette indices (TEST74).
     load_index_px: u64,
-    /// `LOADG` of an image, each pixel it decodes and each byte of its
-    /// file, which a busy image has more of.
+    /// `LOADG` of an image.
     loadg: u64,
+    /// Each pixel `LOADG` decodes.
     loadg_px: u64,
+    /// Each byte of the file `LOADG` reads, which a busy image has more of.
     loadg_byte: u64,
-    /// A pixel of `GPUTCHR` in the 8-pixel font, and in the 16-pixel one
-    /// (TPERF's 8 characters of 8 pixels, TEST71's one of 16).
+    /// A pixel of `GPUTCHR` in the 8-pixel font (TPERF's 8 characters of 8
+    /// pixels).
     char_px: u64,
+    /// A pixel of `GPUTCHR` in the 16-pixel font (TEST71's one character of
+    /// 16 pixels).
     char16_px: u64,
-    /// A user-defined character of `GPUTCHR` or `GPUTCHRP`, which comes
-    /// from the `TPAGE` page, for each row of its font's cell, and each
-    /// of its pixels, by drawing mode 0 to 4 (TEST73). The modes that
-    /// blend charge SmileBASIC 4's own characters so too.
+    // A user-defined character of `GPUTCHR` or `GPUTCHRP`, which comes
+    // from the `TPAGE` page, for each row of its font's cell, and each
+    // of its pixels, by drawing mode 0 to 4 (TEST73). The modes that
+    // blend charge SmileBASIC 4's own characters this way too.
     user_row: [u64; 5],
     user_char_px: [u64; 5],
-    /// A row and a pixel of SmileBASIC 4's own characters in modes 2 to
-    /// 4, letters and spaces alike, from those of 16 pixels, and in mode 3
-    /// of 8 pixels too. UNVERIFIED: modes 2 and 4 of 8 pixels.
+    // A row and a pixel of SmileBASIC 4's own characters in modes 2 to
+    // 4, letters and spaces alike, from those of 16 pixels, and in mode 3
+    // of 8 pixels too. UNVERIFIED: modes 2 and 4 of 8 pixels.
     own_blend_row: [u64; 3],
     own_blend_px: [u64; 3],
     /// A pixel of a `GCOPY` with a color code, by drawing mode, in place
     /// of the rates above (TEST73).
     copy_color_px: [u64; 5],
-    /// `GPAINT`, and each pixel it fills.
+    /// `GPAINT`.
     paint: u64,
+    /// Each pixel `GPAINT` fills.
     paint_px: u64,
-    /// Each row of a `GFILL` whose left edge is not on a 16-pixel
-    /// boundary, 8, 16, 32, 64 and 128 pixels wide, with straight lines
-    /// between, in proportion below 8 and the same past 128, by the
-    /// edge's column in its 16 ([`by_column`]). Then the share of it a
-    /// blended `GFILL` and a `GCOPY` pay, in percent, `GCOPY` by where
-    /// it draws. UNVERIFIED: the widths `GCOPY` and blending were not
-    /// timed at, other than 32, and the columns TEST71 and TEST72 did not
-    /// time.
+    // Each row of a `GFILL` whose left edge is not on a 16-pixel
+    // boundary, 8, 16, 32, 64 and 128 pixels wide, with straight lines
+    // between, in proportion below 8 and the same past 128, by the
+    // edge's column in its 16 ([`by_column`]). Then the share of it a
+    // blended `GFILL` and a `GCOPY` pay, in percent, `GCOPY` by where
+    // it draws. UNVERIFIED: the widths `GCOPY` and blending were not
+    // timed at, other than 32, and the columns TEST71 and TEST72 did not
+    // time.
     place: [[u64; 5]; 16],
     place_alpha_pct: u64,
     place_copy_pct: u64,
-    /// On top, at a place not among the last 64 a misaligned or blended
-    /// `GFILL` drew at: each row of a misaligned one and each pixel of a
-    /// blended one. TPERF's fills at random places cost that much more
-    /// than fills at one place or at 10 or 64 places in turn (TEST69 to
-    /// TEST71). UNVERIFIED: that it is the console's memory cache, and
-    /// that it holds 64 places: TEST71's 100 fills a call, 37 places on
-    /// from the call before, cost as much again as TPERF's.
+    // On top, at a place not among the last 64 a misaligned or blended
+    // `GFILL` drew at: each row of a misaligned one and each pixel of a
+    // blended one. TPERF's fills at random places cost that much more
+    // than fills at one place or at 10 or 64 places in turn (TEST69 to
+    // TEST71). UNVERIFIED: that it is the console's memory cache, and
+    // that it holds 64 places: TEST71's 100 fills per call, 37 places on
+    // from the call before, cost as much again as TPERF's fills.
     cold_row: u64,
     cold_alpha_px: u64,
     /// The same for each row a `GLINE` goes down: TPERF's lines at random
@@ -350,32 +380,32 @@ pub(crate) struct Costs {
     /// that it is the same cache.
     cold_line_row: u64,
     /// A sprite command for a sprite not among the last 64 changed.
-    /// TEST70 finds SPOFS of 1, 10 and 64 sprites in turn costs the
-    /// same, TEST69 SPOFS over 1000 sprites in order more.
+    /// TEST70 finds that SPOFS of 1, 10 and 64 sprites in turn costs the
+    /// same, and TEST69 that SPOFS over 1000 sprites in order costs more.
     far_sprite: u64,
     /// `LFILTER` and `LMATRIX`.
     layer: u64,
-    /// Compiling for `EXEC`, of a file or of a slot: the call, each token
-    /// of code (a name, a number, a string or a sign) and each character
-    /// of strings and comments. Code of short names compiles faster a
-    /// character than code of long ones.
+    // Compiling for `EXEC`, of a file or of a slot: the call, each token
+    // of code (a name, a number, a string or a sign) and each character
+    // of strings and comments. Code of short names compiles faster per
+    // character than code of long ones.
     exec: u64,
     compile_token: u64,
     compile_text_char: u64,
-    /// Reading a file for `LOAD`, `LOADV` or `EXEC`: the call and each
-    /// byte. `EXEC` of a file reads and compiles it, `LOAD` only reads
-    /// it, `EXEC` of a slot only compiles it.
+    // Reading a file for `LOAD`, `LOADV` or `EXEC`: the call and each
+    // byte. `EXEC` of a file reads and compiles it, `LOAD` only reads
+    // it, `EXEC` of a slot only compiles it.
     read: u64,
     read_byte: u64,
-    /// `LOADV`, on top of reading: each character of a TXT file's string,
-    /// and each element of a GRP or DAT file's array, as the GRP file's
-    /// `LOADG` costs before it. UNVERIFIED: DAT as GRP.
+    // `LOADV`, on top of reading: each character of a TXT file's string,
+    // and each element of a GRP or DAT file's array, after a GRP file
+    // pays what its `LOADG` costs. UNVERIFIED: DAT as GRP.
     loadv_char: u64,
     loadv_element: u64,
-    /// On top: the first read of each file since the emulator started,
-    /// by any of those or `LOADG`, and each of its bytes, and with it the
-    /// first `EXEC` of a file since the program started. The console
-    /// reads a file faster once it has read it.
+    // On top: the first read of each file since the emulator started,
+    // by any of those or `LOADG`, and each of its bytes, and with it the
+    // first `EXEC` of a file since the program started. The console
+    // reads a file faster once it has read it.
     first_exec: u64,
     first_file: u64,
     first_byte: u64,
@@ -413,20 +443,20 @@ const SWITCH2: Costs = Costs {
     join: 85_000,
     chr: 125_000,
     // TEST71's STR$, FORMAT$, VAL, INSTR, HEX$ and MID$, each alone, and
-    // the rest of COSTLY's each alone.
+    // the rest of COSTLY, each alone.
     costly: [
         210_900, 136_700, 89_300, 83_400, 45_900, 67_200, 93_500, 125_500, 6_500, 313_000, 95_000,
         95_000, 83_200, 83_200, 85_300_000,
     ],
-    // TEST71's, TEST72's and TEST74's SIN, COS and SQR alone, and TEST72's
-    // SIN of 1000000.5, and the rest of CHEAP's each alone. UNVERIFIED:
-    // TAN as SIN.
+    // SIN, COS and SQR alone in TEST71, TEST72 and TEST74, TEST72's SIN
+    // of 1000000.5, and the rest of CHEAP, each alone. UNVERIFIED: TAN as
+    // SIN.
     cheap: [
         5_300, 6_800, 5_300, 16_000, 0, 9_000, 22_400, 26_000, 38_700, 38_700,
     ],
     trig_reduce: 39_600,
     join_char: 447,
-    // What a join cost before TEST71: TEST69's HGIMEUPDATE, which tests
+    // The cost of a join before TEST71: TEST69's HGIMEUPDATE, which tests
     // K$!="", within 7%. UNVERIFIED: TEST71's IF S$[I]==K$ costs no
     // more than a comparison of numbers.
     str_compare: 121_000,
@@ -490,11 +520,11 @@ const SWITCH2: Costs = Costs {
     spanim_near: 168_700,
     // TEST71's PRINT of one character, and TEST69's PRINT of 1000
     // characters and TPERF's TPRINT, which TEST72's LOCATE with a screen
-    // leaves 3% fast with 22 ns a character.
+    // leaves 3% fast with 22 ns per character.
     print: 67_000,
     print_char: 22_500,
     // TEST69's PRINT that scrolls a 50x30 console 19 times, 56 us, and
-    // TEST68's and TEST69's that scroll a 25x15 one 25 times.
+    // TEST68's and TEST69's PRINTs that scroll a 25x15 one 25 times.
     print_scroll: 329_000,
     print_scroll_cell: 1_737,
     tput: 128_000,
@@ -504,7 +534,7 @@ const SWITCH2: Costs = Costs {
     // TEST67's GFILL of 8, 32 and 128 pixels.
     grp: 125_000,
     // TEST71's GCOPY 16 to 64 pixels wide at x 16; 128 wide costs 10%
-    // more a pixel.
+    // more per pixel.
     copy: 180_000,
     row: 1_000,
     // TEST70's and TEST71's GCLS under a 100x100 GCLIP, and TEST71's
@@ -513,8 +543,8 @@ const SWITCH2: Costs = Costs {
     clip: [6_700, 47_000],
     fill_px: 458,
     copy_px: 1_120,
-    // TPERF's GCOPY of 48x48 at random places. A Switch 2's costs as
-    // much for any pattern.
+    // TPERF's GCOPY of 48x48 at random places. On a Switch 2 it costs the
+    // same for any pattern.
     copy_key_px: 1_350,
     key_pattern: false,
     key_ink_px: 0,
@@ -538,15 +568,15 @@ const SWITCH2: Costs = Costs {
     load_px: 780,
     load_index_px: 1_233,
     // TEST68's and TEST69's LOADG and HGLOAD of fonts from 512x312 to
-    // 2048x1376 and TEST69's of a 512x512 image of noise (13.9 ms, twice
-    // an empty one): all within 10%. UNVERIFIED: TEST69's empty image,
-    // which SmileBASIC 4 saved itself, took 6.9 ms, half again what the
-    // size of the file the emulator saves for it gives.
+    // 2048x1376 and TEST69's LOADG of a 512x512 image of noise (13.9 ms,
+    // twice an empty one): all within 10%. UNVERIFIED: TEST69's empty
+    // image, which SmileBASIC 4 saved itself, took 6.9 ms, half again what
+    // the size of the file the emulator saves for it gives.
     loadg: 319_000_000,
     loadg_px: 15_150,
     // TEST69's and TEST70's images of noise load as fast as each other on
     // the console, but the emulator saves them 901070 and 725652 bytes
-    // long: the cost a byte between them leaves them 5% slow and 9% fast.
+    // long: the cost per byte between them leaves them 5% slow and 9% fast.
     loadg_byte: 11_500,
     char_px: 4_150,
     char16_px: 8_540,
@@ -554,8 +584,8 @@ const SWITCH2: Costs = Costs {
     // and of 1 at twice the size, in modes 1 to 3, and its screens of 8
     // lines of 16 and of 8 pixels in modes 0 to 4, with spaces. Modes 1
     // and 3 cost by the ink drawn, which the meter does not count: in
-    // mode 1 NotoSans' lines cost 25% more than Galmuri11's, and in mode
-    // 3 Galmuri11's lines cost 15% less than its single Hangul
+    // mode 1 NotoSans' lines cost 25% more than Galmuri11's lines, and
+    // in mode 3 Galmuri11's lines cost 15% less than its single Hangul
     // syllables give.
     user_row: [45_000, 28_000, 51_800, 13_200, 25_100],
     user_char_px: [6_830, 1_620, 15_540, 21_330, 16_850],
@@ -564,14 +594,14 @@ const SWITCH2: Costs = Costs {
     // TEST73's GCOPY with a color of 11x11, 12x16 and 16x16 pixels in
     // modes 1 to 3, and of a box of 11x11 and 16x16 in modes 0 and 4.
     copy_color_px: [5_900, 6_600, 15_860, 20_010, 15_860],
-    // TEST67's GPAINT of 128x128 and 512x512 and TEST69's of 4x4 and
-    // 16x16, all within 7%.
+    // TEST67's GPAINT of 128x128 and 512x512 and TEST69's GPAINT of 4x4
+    // and 16x16, all within 7%.
     paint: 33_500_000,
     paint_px: 7_531,
     // TEST71's GFILL 8 to 128 pixels wide at x 16, 17, 20 and 24, and its
     // GCOPY 32 and 128 at x 17. TEST69's blended GFILL 32 costs no more.
-    // TEST70's 128 wide at 10 places in turn costs 30% more.
-    // TEST72's GFILL 32 at x 18, 22 and 26 cost what one at x 17 does.
+    // TEST70's GFILL 128 wide at 10 places in turn costs 30% more.
+    // TEST72's GFILL 32 at x 18, 22 and 26 cost the same as one at x 17.
     place: by_column(
         [0, 3_850, 1_200, 740, 23_000],
         [0, 3_850, 1_550, 890, 14_000],
@@ -587,20 +617,22 @@ const SWITCH2: Costs = Costs {
     far_sprite: 0,
     layer: 8_000_000,
     // EXEC of slots of 600 to 16000 characters of code after LOAD, and of
-    // HGLIB.PRG with its set-up code; TEST69's of a file of DATA strings.
+    // HGLIB.PRG with its set-up code; TEST69's EXEC of a file of DATA
+    // strings.
     exec: 65_000_000,
     compile_token: 208_200,
     compile_text_char: 28_000,
-    // LOAD of files of 600 to 73914 bytes, and EXEC of files as LOAD and
-    // EXEC of the slot together.
+    // LOAD of files of 600 to 73914 bytes, and EXEC of files taken as LOAD
+    // and EXEC of the slot together.
     read: 305_000_000,
     read_byte: 74_700,
     // LOADV of programs of 2648 to 101357 bytes, and of a 512x352 GRP.
     loadv_char: 55_000,
     loadv_element: 65_000,
     // TEST69's to TEST71's first EXEC and LOADG of each file, TEST70's
-    // and TEST71's of 725652 bytes of noise as the emulator saves it,
-    // and the first LOADV and EXEC of files of 48 to 101357 bytes.
+    // and TEST71's first LOADG of 725652 bytes of noise as the emulator
+    // saves it, and the first LOADV and EXEC of files of 48 to 101357
+    // bytes.
     first_exec: 1_200_000_000,
     first_file: 350_000_000,
     first_byte: 9_250,
@@ -653,7 +685,7 @@ const SWITCH1: Costs = Costs {
     clock: 5_000,
     query: 121_000,
     rnd: 48_200,
-    // TEST71's RNDF() and TEST76's Q#=RNDF(), 117 and 159 ns, between.
+    // Between TEST71's RNDF() and TEST76's Q#=RNDF(), 117 and 159 ns.
     rndf: 72_000,
     setter: 392_900,
     locate: 48_500,
@@ -727,8 +759,8 @@ const SWITCH1: Costs = Costs {
     fill_px: 955,
     copy_px: 2_100,
     // GCOPY of 48x48 boxes of stripes, a checkerboard and sprite images
-    // at x 16, which TPERF's of a pattern of lines at random places fits.
-    // It pays nothing for where it draws.
+    // at x 16, which TPERF's GCOPY of a pattern of lines at random places
+    // fits. It pays nothing for where it draws.
     copy_key_px: 2_977,
     key_pattern: true,
     key_ink_px: 282,
@@ -737,7 +769,8 @@ const SWITCH1: Costs = Costs {
     key_irregular: 20_000,
     alpha_px: 17_500,
     copy_alpha_px: 22_400,
-    // Triangles 40x36 of each shape, thin ones, and TEST71's of 8 rows.
+    // Triangles 40x36 of each shape, thin ones, and TEST71's triangles of
+    // 8 rows.
     tri: 260_000,
     tri_row: 49_100,
     tri_px: 3_040,
@@ -767,14 +800,14 @@ const SWITCH1: Costs = Costs {
     copy_color_px: [13_400, 19_000, 35_740, 51_800, 32_500],
     paint: 93_500_000,
     paint_px: 16_110,
-    // As for the Switch 2: 168 ns a row of 32 pixels at an odd column,
-    // as at x 17, 61 ns on a 4-pixel boundary. At 32 pixels each column
-    // off a 4-pixel boundary costs what GFILL 32 at the four places of
-    // that column from x 0 to 63 cost on average, and column 3 TEST74's
-    // at x 3, 19 and 35 too: the odd columns move by up to a sixth from
-    // one run to the next. TEST69's blended GFILL pays 18% of it, and
-    // its GCOPY at 10 places and TEST70's at 64 65%, where TEST71's at x
-    // 17 pays 138%.
+    // As for the Switch 2: 168 ns per row of 32 pixels at an odd column,
+    // such as x 17, and 61 ns on a 4-pixel boundary. At 32 pixels each
+    // column off a 4-pixel boundary costs the average of GFILL 32 at the
+    // four places of that column from x 0 to 63, and column 3 also
+    // includes TEST74's GFILL 32 at x 3, 19 and 35: the odd columns move
+    // by up to a sixth from one run to the next. TEST69's blended GFILL
+    // pays 18% of it, and its GCOPY at 10 places and TEST70's GCOPY at 64
+    // places pay 65%, whereas TEST71's GCOPY at x 17 pays 138%.
     place: by_column(
         [6_800, 0, 168_000, 235_000, 182_000],
         [1_500, 0, 61_500, 235_000, 182_000],
@@ -801,7 +834,7 @@ const SWITCH1: Costs = Costs {
     // TEST69's SPOFS over 1000 sprites in order, and SPSET and SPCLR.
     far_sprite: 150_000,
     layer: 5_000_000,
-    // As for the Switch 2, but HGLIB.PRG, which this console held in
+    // As for the Switch 2, except HGLIB.PRG, which this console held in
     // another version.
     exec: 110_000_000,
     compile_token: 594_000,
@@ -813,9 +846,9 @@ const SWITCH1: Costs = Costs {
     first_exec: 2_150_000_000,
     first_file: 1_000_000_000,
     first_byte: 30_500,
-    // Three or four frames from RUN to a program's first line, where a
+    // Three or four frames from RUN to a program's first line, whereas a
     // Switch 2 and the emulator take two.
-    // Whole frames, so that the program starts as a frame does.
+    // Whole frames, so that the program starts at the start of a frame.
     run: FRAME_PS * 2,
 };
 
@@ -842,31 +875,31 @@ const fn by_column(off: [u64; 5], on: [u64; 5], w32: &[(usize, u64)]) -> [[u64; 
 pub struct Meter {
     pub(crate) speed: Speed,
     costs: &'static Costs,
-    /// What host commands and printing have cost since the meter started.
+    /// The cost of host commands and printing since the meter started.
     host: u64,
-    /// The VM's counts, as last heard before a host call.
+    /// The VM's counts, as last reported before a host call.
     work: Work,
     /// The counts and `host` when the frame's time began, and the clock
     /// then.
     base_work: Work,
     base_host: u64,
     start: u64,
-    /// The clock at the end of the frame, and where the program's own
-    /// time had got to when the last frame ended.
+    /// The clock at the end of the frame, and the program's own time
+    /// when the last frame ended.
     frame_end: u64,
     busy_until: u64,
     /// The last sprites changed, each in the place its number's low six
     /// bits give.
     sprites_seen: [Cell<i16>; 64],
-    /// The sprites of the last 64 sprite commands, in turn, and where the
-    /// next goes; how many of those each sprite has, and how many sprites
-    /// they are.
+    /// The sprites of the last 64 sprite commands, in turn, and the index
+    /// of the next; the number of those commands for each sprite, and the
+    /// number of sprites they name.
     recent_sprites: [Cell<i16>; 64],
     next_sprite: Cell<usize>,
     sprite_uses: Box<[Cell<u8>]>,
     sprites_in_use: Cell<u32>,
     /// The last places misaligned or blended drawing drew at, in turn,
-    /// and where the next goes.
+    /// and the index of the next.
     places_seen: [Cell<u64>; 64],
     next_place: Cell<usize>,
     /// The files read since the meter started, and whether the program
@@ -874,7 +907,7 @@ pub struct Meter {
     files_read: std::collections::HashSet<String>,
     exec_run: bool,
     /// Whether the code to run was typed in DIRECT mode, as the runtime
-    /// last said, and whether the program that has done nothing yet has
+    /// last reported, and whether the program that has done nothing yet has
     /// paid for its start.
     direct: bool,
     started: bool,
@@ -907,7 +940,7 @@ impl Meter {
         })
     }
 
-    /// What `work` costs.
+    /// The cost of `work`.
     fn vm_cost(&self, work: &Work) -> u64 {
         let c = self.costs;
         let b = &self.base_work;
@@ -973,7 +1006,7 @@ impl Meter {
         self.base_host = self.host;
     }
 
-    /// Ends the frame's time, where the VM got to.
+    /// Ends the frame's time at the point the VM reached.
     pub fn end_frame(&mut self, work: &Work) {
         self.busy_until = self.clock(work);
     }
@@ -983,7 +1016,7 @@ impl Meter {
         self.clock(work) < self.frame_end
     }
 
-    /// The instructions to run before looking again.
+    /// The instructions to run before checking again.
     pub fn slice(&self, work: &Work) -> u32 {
         let left = self.frame_end.saturating_sub(self.clock(work));
         (left / self.costs.instruction).clamp(1, SLICE) as u32
@@ -1022,8 +1055,8 @@ impl Meter {
         self.host += c.exec + tokens * c.compile_token + text * c.compile_text_char;
     }
 
-    /// Charges reading `bytes` from file `name`, as `EXEC` (`exec`) or
-    /// `LOADG` does. `LOADG`'s own costs hold its reading.
+    /// Charges reading `bytes` from file `name` for an `EXEC` (`exec`) or
+    /// a `LOADG`. `LOADG`'s own costs include its reading.
     pub(crate) fn charge_read(&mut self, name: &str, bytes: u64, exec: bool) {
         let c = self.costs;
         let first_exec = exec && !std::mem::replace(&mut self.exec_run, true);
@@ -1037,15 +1070,16 @@ impl Meter {
     }
 
     /// Charges reading `bytes` from file `name`, of `kind` unless the name
-    /// says, as `LOAD` and `LOADV` do, and `more` on top.
+    /// gives one, for `LOAD` and `LOADV`, and `more` on top.
     pub(crate) fn charge_file(&mut self, name: &str, kind: &str, bytes: u64, more: u64) {
         let c = self.costs;
         self.host += c.read + bytes * c.read_byte + more;
         self.first_read(name, kind, bytes);
     }
 
-    /// Charges the first read of file `name` of `bytes`, of `kind` unless
-    /// the name says, since the meter started, and whether it was.
+    /// Charges a read of `bytes` from file `name`, of `kind` unless the
+    /// name gives one, if it is the first read of that file since the
+    /// meter started. Returns whether it was.
     fn first_read(&mut self, name: &str, kind: &str, bytes: u64) -> bool {
         let name = name.to_ascii_uppercase();
         let key = match name.split_once(':') {
@@ -1060,8 +1094,8 @@ impl Meter {
     }
 
     /// Charges a `LOADG` that decoded an image of `pixels` from a file of
-    /// `bytes`. UNVERIFIED: one that loads nothing costs what an untimed
-    /// command does.
+    /// `bytes`. UNVERIFIED: one that loads nothing costs the same as an
+    /// untimed command.
     pub(crate) fn charge_loadg(&mut self, pixels: u64, bytes: u64) {
         let c = self.costs;
         self.host += c.loadg + pixels * c.loadg_px + bytes * c.loadg_byte;
@@ -1108,11 +1142,11 @@ impl Meter {
         false
     }
 
-    /// What `rows` rows of a `GFILL` or `GCOPY` `w` pixels wide cost on
-    /// top for starting at column `x` and row `y`, at `pct` percent of a
-    /// `GFILL`'s. A `GFILL`, blended or not as `fill` says, also pays
-    /// for a place not drawn at lately. UNVERIFIED: that a `GCOPY` does
-    /// not, as TPERF's GCOPY at random places suggests.
+    /// The cost on top for `rows` rows of a `GFILL` or `GCOPY` `w` pixels
+    /// wide that start at column `x` and row `y`, at `pct` percent of the
+    /// cost for a `GFILL`. A `GFILL`, blended or not as `fill` says, also
+    /// pays for a place not drawn at lately. UNVERIFIED: that a `GCOPY`
+    /// does not, as TPERF's GCOPY at random places suggests.
     fn placed(&self, (x, y): (i64, i64), w: u64, rows: u64, pct: u64, fill: Option<bool>) -> u64 {
         let c = self.costs;
         let column = x.rem_euclid(16) as usize;
@@ -1205,7 +1239,7 @@ pub(crate) fn scrolling(cursor: (u32, u32), (w, h): (u32, u32), text: &[u16]) ->
     (scrolls, scrolls * u64::from(w) * u64::from(h))
 }
 
-/// What a `GCOPY` that leaves out transparent pixels meets in its source:
+/// The pattern a `GCOPY` that skips transparent pixels meets in its source:
 /// opaque pixels, rows with both kinds, and changes from one kind to the
 /// other along a row, `regular` where the run that ends is as long as the
 /// run before it in the row.
@@ -1254,13 +1288,13 @@ fn int(args: &[Value], i: usize) -> i64 {
         .map_or(0, i64::from)
 }
 
-/// Whether the blend argument at `i` blends with what is there.
+/// Whether the blend argument at `i` blends with the pixels already there.
 fn blends(args: &[Value], i: usize) -> bool {
     matches!(int(args, i), 2 | 3)
 }
 
 impl Runtime {
-    /// What `command` costs on the console the meter stands for.
+    /// The cost of `command` on the console the meter stands for.
     pub(crate) fn command_cost(&self, command: Command, args: &[Value], value: bool) -> u64 {
         use Command::*;
         let Some(meter) = &self.meter else {
@@ -1368,8 +1402,8 @@ impl Runtime {
                     cost
                 }
                 Spclr => {
-                    // SPCLR with no arguments costs what a range of every
-                    // sprite does.
+                    // SPCLR with no arguments costs the same as a range of
+                    // every sprite.
                     let n = match args.len() {
                         0 => SPRITES as u64,
                         2 => {
@@ -1531,15 +1565,15 @@ impl Runtime {
                         true => (int(args, 4).max(1) * int(args, 5).max(1)) as u64,
                         false => 1,
                     };
-                    // The drawing mode: GPUTCHRP's is 1 when left out.
+                    // The drawing mode: GPUTCHRP's mode is 1 when omitted.
                     let at = if args.len() >= 7 { 7 } else { 5 };
                     let mode = match args.get(at) {
                         None | Some(Value::Default) if command == Gputchrp => 1,
                         _ => int(args, at).clamp(0, 4) as usize,
                     };
                     // In the modes that blend, SmileBASIC 4's own
-                    // characters cost by rows and pixels as user-defined
-                    // ones do, at their own rate.
+                    // characters cost by rows and pixels the same way as
+                    // user-defined ones, at their own rate.
                     let px_each = size * size * scale;
                     let own = match mode {
                         2.. => {
@@ -1612,7 +1646,7 @@ impl Runtime {
             .get(..4)
             .is_some_and(|k| k.eq_ignore_ascii_case("GRP:"))
         {
-            // The image is decoded as LOADG decodes it.
+            // The image is decoded the same way as by LOADG.
             true => {
                 meter.host += c.loadg + n * c.loadg_px + more;
                 meter.first_read(spec, "GRP", 0);

@@ -36,7 +36,7 @@ const MOVEMENTS: [u16; 8] = [
 /// The code of Shift and the first of [`MOVEMENTS`], in the Private Use
 /// Area beside the codes of [`crate::line::commands`].
 const SELECT: u16 = 0xF8E0;
-/// The code of Shift+Tab, which takes the indent away.
+/// The code of Shift+Tab, which removes the indent.
 pub const UNINDENT: u16 = SELECT + MOVEMENTS.len() as u16;
 
 /// The code [`Editor::key`] takes for Shift and a cursor key, so that the
@@ -59,31 +59,31 @@ const FOOTER: usize = 2;
 /// Closes the number tiles on the right.
 const TILE_CAP: u16 = 0xE17F;
 
-// The ruler and the status line keep their colors whatever the palette.
+// The ruler and the status line keep their colors with any palette.
 const TEXT: u32 = 0xFFFF_FFFF;
 const BLACK: u32 = 0xFF00_0000;
 const BAR: u32 = 0xFF30_3040;
 const DIM: u32 = 0xFF70_7080;
 const LINE_NUMBER: u32 = 0xFF80_8080;
 const RETURN_MARK: u32 = 0xFF50_5868;
-/// A breakpoint's line number, and the cursor's.
+/// The line number of a breakpoint, and of one on the cursor's line.
 const BREAKPOINT: u32 = 0xFFDC_2828;
 const BREAKPOINT_CURSOR: u32 = 0xFFFF_7070;
-/// A breakpoint with a condition, and the cursor's.
+/// A breakpoint with a condition, and one on the cursor's line.
 const CONDITIONAL: u32 = 0xFFE0_7818;
 const CONDITIONAL_CURSOR: u32 = 0xFFFF_A860;
-/// The stopped line's background, or a grey one when edits moved the
-/// lines since, taking this much out of 256.
+/// The background of the stopped line, or a gray one when edits have
+/// moved the lines since, mixed in at this much out of 256.
 const STOPPED: u32 = 0xFFFF_DC00;
 const STOPPED_LINE: u32 = 100;
 
-/// What the debugger shows of the slot shown, by 0-based line.
+/// The debugger marks for the slot shown, by 0-based line.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Marks {
     pub breakpoints: Vec<usize>,
     /// Those of the breakpoints that have a condition.
     pub conditional: Vec<usize>,
-    /// The line the stopped program goes on from.
+    /// The line the stopped program continues from.
     pub stopped: Option<usize>,
     /// The program runs code from before the text was edited, so the
     /// stopped line is where it was then.
@@ -102,7 +102,7 @@ const RETURN_GLYPH: [u8; 8] = [
     0b0010_0000,
 ];
 
-/// How large the editor's characters are. SmileBASIC 4 steps through its
+/// The size of the editor's characters. SmileBASIC 4 steps through its
 /// sizes with F2 and Ctrl+B; Tiny is the emulator's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditorSize {
@@ -123,8 +123,8 @@ impl EditorSize {
         }
     }
 
-    /// Lines of code shown. SmileBASIC 4 shows 21, 28 and 43 whatever the
-    /// font (checked on hardware); Tiny fills about 60 rows in all.
+    /// Lines of code shown. SmileBASIC 4 shows 21, 28 and 43 with any font
+    /// (checked on hardware); Tiny fills about 60 rows in all.
     fn code_rows(self) -> u32 {
         match self {
             EditorSize::Large => 21,
@@ -150,7 +150,7 @@ pub fn menu_height(height: u32) -> u32 {
 /// is shown where the screen is, scaled to fit.
 pub fn frame_size((width, height): (u32, u32), font: FontSize, size: EditorSize) -> (u32, u32) {
     let rows = (size.code_rows() + FOOTER as u32) * font as u32;
-    // The menu bar's share of the whole frame, rows and all.
+    // The menu bar's share of the whole frame, including the rows.
     let h = (rows * MENU_SHARE).div_ceil(MENU_SHARE - 1);
     (
         (f64::from(h) * f64::from(width) / f64::from(height)).round() as u32,
@@ -159,7 +159,7 @@ pub fn frame_size((width, height): (u32, u32), font: FontSize, size: EditorSize)
 }
 
 /// A frame of a size the frontend chooses, which the editor fills with
-/// as many rows and columns as fit, as in a window of its own.
+/// as many rows and columns as fit, as in a separate window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Area {
     /// The frame's size in pixels.
@@ -168,7 +168,7 @@ pub struct Area {
     pub top: u32,
 }
 
-/// How the editor is drawn, from the settings.
+/// The editor's drawing options, from the settings.
 #[derive(Clone, Copy, Debug)]
 pub struct Look<'a> {
     /// Long lines wrap instead of scrolling sideways.
@@ -186,7 +186,7 @@ pub struct Look<'a> {
     pub colors: &'a Palette,
     /// Glyphs for the characters `font` lacks.
     pub extra: &'a ExtraGlyphs,
-    /// The source characters are looked for in first.
+    /// The source searched first for characters.
     pub first: FontSource,
     /// Half-width characters are drawn half a cell wide. Each character
     /// still takes one column.
@@ -207,7 +207,7 @@ impl<'a> Look<'a> {
     }
 }
 
-/// Where the editor's character cells are on its frame: `cell` pixels
+/// The layout of the editor's character cells on its frame: `cell` pixels
 /// square, starting `top` pixels down.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Grid {
@@ -258,8 +258,8 @@ impl Grid {
     }
 }
 
-/// How wide the editor draws `line[col]` with half-width characters at
-/// half a cell: columns past the end are as wide as a space.
+/// Returns the width of `line[col]` as the editor draws it with half-width
+/// characters at half a cell: columns past the end are as wide as a space.
 #[inline]
 fn half_cell_width(line: &[u16], col: usize, cell: usize) -> usize {
     match line.get(col) {
@@ -289,7 +289,7 @@ fn half_col_at(line: &[u16], start: usize, x: i32, cell: usize) -> usize {
     }
 }
 
-/// What the editor draws over its screen when half-width characters are
+/// A glyph the editor draws over its screen when half-width characters are
 /// half a cell wide: those characters are not on the screen's grid.
 #[derive(Clone, Copy, Debug)]
 enum Over {
@@ -344,7 +344,7 @@ struct View {
     left: usize,
 }
 
-/// Where the editor was, to go back to: see [`Editor::place`].
+/// A saved editor position to go back to: see [`Editor::place`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Place(View);
 
@@ -355,16 +355,16 @@ pub type Pos = (usize, usize);
 /// first two, one pixel wide each.
 const MAP_PITCH: usize = 3;
 const MAP_BLOCK: usize = 2;
-/// The overview is at most this wide, and a fifth of the frame.
+/// The overview is a fifth of the frame wide, and at most this wide.
 const MAP_WIDTH: usize = 120;
-/// How strongly the overview shows over the background, out of 256.
+/// The opacity of the overview over the background, out of 256.
 const MAP_ALPHA: u32 = 120;
-/// How strongly the lines on screen are filled and outlined in the
+/// The opacity of the fill and the outline of the lines on screen in the
 /// overview, out of 256, in the text's color.
 const VIEW_FILL: u32 = 40;
 const VIEW_EDGE: u32 = 170;
 
-/// Where the overview was drawn: from pixel `x` rightwards and from
+/// The area where the overview was drawn: from pixel `x` rightwards and from
 /// pixel `top` down for `height`, starting with line `first`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Map {
@@ -378,8 +378,8 @@ struct Map {
 /// two texts, in any editor, share one.
 static REVISIONS: AtomicU64 = AtomicU64::new(1);
 
-/// How far, out of 256, the margins of a split display's side without the
-/// keys fade toward the background.
+/// The amount, out of 256, by which the margins fade toward the background
+/// on the side of a split display without the keys.
 const MARGIN_DIM: u32 = 160;
 
 /// `over` mixed into `under` by `alpha` out of 256.
@@ -397,8 +397,8 @@ const UNDO_STEPS: usize = 1000;
 /// Text as the pieces between its line breaks; never empty.
 type Lines = Vec<Vec<u16>>;
 
-/// One change to the text: `removed` taken out at `at` and `inserted`
-/// put there instead.
+/// One change to the text: at `at`, the text `removed` was replaced by
+/// `inserted`.
 #[derive(Clone, Debug)]
 struct Change {
     at: Pos,
@@ -424,7 +424,7 @@ enum Merge {
     Erase,
 }
 
-/// What the editor's keys do: edit the program, or type into the status
+/// The editor's mode: the keys edit the program, or type into the status
 /// line to go to a line, find or replace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mode {
@@ -464,7 +464,7 @@ fn matches_in(line: &[u16], find: &[u16]) -> Vec<usize> {
     at
 }
 
-/// Where text ends that is put at `at`.
+/// Returns the end of text put at `at`.
 fn end_of(at: Pos, text: &Lines) -> Pos {
     let last = text.len() - 1;
     let col = text[last].len() + if last == 0 { at.1 } else { 0 };
@@ -502,12 +502,12 @@ pub struct Editor {
     mode: Mode,
     /// The line number typed after Ctrl+G.
     goto: Vec<u16>,
-    /// What to find, and what to replace it with.
+    /// The text to find, and the text to replace it with.
     find: Vec<u16>,
     with: Vec<u16>,
-    /// Where typing what to find searches from.
+    /// The position the search starts from while the text to find is typed.
     search_from: Pos,
-    /// Shown in the status line until the next key, as "Not found".
+    /// Shown in the status line until the next key, such as "Not found".
     note: Option<String>,
     /// The mouse wheel scrolled away from the cursor, which stays where it
     /// is until it moves.
@@ -528,9 +528,9 @@ pub struct Editor {
     names: Option<Rc<Vec<Item>>>,
     /// The other slots' names, offered after the program's own.
     other_names: Option<Rc<Vec<Item>>>,
-    /// What completion offers; `None` when it is off.
+    /// The completion options; `None` when it is off.
     pub complete: Option<Options>,
-    /// Where each slot was left, restored when it is opened again.
+    /// The view each slot was left at, restored when it is opened again.
     saved: [View; SLOTS],
     screen: TextScreen,
     /// Characters drawn from [`ExtraGlyphs`] over the screen, by column
@@ -541,7 +541,8 @@ pub struct Editor {
     over: Vec<(usize, usize, Over, u32)>,
     /// The last frame drew half-width characters at half a cell.
     half: bool,
-    /// How edits since they were last taken moved the lines, by slot.
+    /// The line shifts of the edits since the last
+    /// [`Editor::take_shifts`], by slot.
     shifts: Vec<(usize, LineShift)>,
     /// Breakpoints and the stopped line, which the machine sets.
     pub marks: Marks,
@@ -550,21 +551,21 @@ pub struct Editor {
     center: bool,
 }
 
-/// How an edit moved a program's lines, for what is kept by line, such
-/// as breakpoints. Lines and columns count from 0.
+/// The way an edit moved a program's lines, for anything kept by line,
+/// such as breakpoints. Lines and columns count from 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineShift {
-    /// The text from `start` to `end`, on a later line, was taken out.
+    /// The text from `start` to `end`, on a later line, was removed.
     Joined { start: Pos, end: Pos },
-    /// `count` line breaks were put in at `at`.
+    /// `count` line breaks were inserted at `at`.
     Broken { at: Pos, count: usize },
 }
 
 impl LineShift {
-    /// Where a line is after the edit, or `None` once it is gone. Text
-    /// taken out from a line's start leaves the line to the one whose
-    /// rest moves there; text put in at a line's start pushes the line
-    /// down.
+    /// Returns where a line is after the edit, or `None` once it is gone.
+    /// Text removed from a line's start gives that line's number to the
+    /// line whose rest moves there; text inserted at a line's start pushes
+    /// the line down.
     pub fn map(self, line: usize) -> Option<usize> {
         match self {
             LineShift::Joined { start, end } => {
@@ -611,7 +612,7 @@ pub(crate) fn split_lines(source: &str) -> Vec<Vec<u16>> {
 
 impl Editor {
     /// An editor for a frame of `screen_w` x `screen_h` pixels in the
-    /// 8-pixel font. [`Editor::draw`] takes on the frame and font it is
+    /// 8-pixel font. [`Editor::draw`] adopts the frame and font it is
     /// given.
     pub fn new(screen_w: u32, screen_h: u32) -> Editor {
         let mut editor = Editor {
@@ -665,8 +666,8 @@ impl Editor {
         self.revision = REVISIONS.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Feeds `state` what [`Editor::draw`] draws from, besides what it is
-    /// given: equal keys draw the same frame.
+    /// Feeds `state` the data [`Editor::draw`] draws from, besides its
+    /// arguments: equal keys draw the same frame.
     pub fn draw_key(&self, state: &mut impl Hasher) {
         (self.revision, self.slot, self.modified).hash(state);
         (self.view, self.followed, self.scrolled, self.center).hash(state);
@@ -753,8 +754,8 @@ impl Editor {
         self.note = None;
     }
 
-    /// How the edits since the last call moved the lines, by slot, in
-    /// order.
+    /// Returns the line shifts of the edits since the last call, by slot,
+    /// in order.
     pub fn take_shifts(&mut self) -> Vec<(usize, LineShift)> {
         std::mem::take(&mut self.shifts)
     }
@@ -851,7 +852,7 @@ impl Editor {
         (anchor != cursor).then(|| (anchor.min(cursor), anchor.max(cursor)))
     }
 
-    /// Takes the text between two places out.
+    /// Removes the text between two places.
     fn take(&mut self, start: Pos, end: Pos) -> Lines {
         self.revise();
         if start.0 == end.0 {
@@ -865,7 +866,7 @@ impl Editor {
         taken
     }
 
-    /// Puts text in at a place; returns where it ends.
+    /// Inserts text at a place; returns where it ends.
     fn put(&mut self, at: Pos, text: &Lines) -> Pos {
         self.revise();
         if text.len() > 1 {
@@ -881,7 +882,7 @@ impl Editor {
         end
     }
 
-    /// Starts a step of edits for Ctrl+Z, or goes on with the last one if
+    /// Starts a step of edits for Ctrl+Z, or continues the last one if
     /// `merge` allows it.
     fn begin(&mut self, merge: Merge) {
         if merge == Merge::Alone || merge != self.merge || self.undo.is_empty() {
@@ -920,7 +921,7 @@ impl Editor {
         after
     }
 
-    /// Takes back the last step of edits (Ctrl+Z).
+    /// Undoes the last step of edits (Ctrl+Z).
     pub fn undo(&mut self) {
         self.names = None;
         while let Some(step) = self.undo.pop() {
@@ -939,7 +940,7 @@ impl Editor {
         }
     }
 
-    /// Makes the last step undone again (Ctrl+Shift+Z).
+    /// Redoes the last undone step (Ctrl+Shift+Z).
     pub fn redo(&mut self) {
         self.names = None;
         if let Some(step) = self.redo.pop() {
@@ -954,8 +955,8 @@ impl Editor {
         }
     }
 
-    /// Puts the cursor somewhere, dropping the selection; the next edit
-    /// starts a step of its own.
+    /// Moves the cursor and drops the selection; the next edit starts a
+    /// new step.
     fn moved_to(&mut self, (line, col): Pos) {
         self.completion = None;
         self.go(line, col);
@@ -991,7 +992,7 @@ impl Editor {
         Some(String::from_utf16_lossy(&text))
     }
 
-    /// Takes the selected text out, for the clipboard.
+    /// Removes the selected text, for the clipboard.
     pub fn cut(&mut self) -> Option<String> {
         let text = self.copy()?;
         self.begin(Merge::Alone);
@@ -1038,10 +1039,10 @@ impl Editor {
     }
 
     /// The lines that line commands work on: those with selected text, or
-    /// the cursor's.
+    /// the cursor's line.
     fn chosen_lines(&self) -> (usize, usize) {
         match self.selection() {
-            // A selection ending at a line's start leaves that line out.
+            // A selection ending at a line's start skips that line.
             Some((start, end)) if end.1 == 0 && end.0 > start.0 => (start.0, end.0 - 1),
             Some((start, end)) => (start.0, end.0),
             None => (self.view.line, self.view.line),
@@ -1049,9 +1050,9 @@ impl Editor {
     }
 
     /// Changes each chosen line in one step: `change` gives the columns
-    /// to replace and what with, or `None` to leave the line alone. Whole
-    /// lines stay selected if any were; the cursor otherwise stays on the
-    /// same text.
+    /// to replace and the new text, or `None` to leave the line unchanged.
+    /// Whole lines stay selected if any were; the cursor otherwise stays on
+    /// the same text.
     fn change_lines(&mut self, change: impl Fn(&[u16]) -> Option<(usize, usize, Vec<u16>)>) {
         let (first, last) = self.chosen_lines();
         let selected = self.selection().is_some();
@@ -1086,7 +1087,7 @@ impl Editor {
         self.change_lines(|_| Some((0, 0, spaces.clone())));
     }
 
-    /// Takes up to TABSTEP's spaces from the start of the chosen lines
+    /// Removes up to TABSTEP's spaces from the start of the chosen lines
     /// (Shift+Tab).
     pub fn unindent(&mut self) {
         let step = self.tab_step.max(1);
@@ -1102,7 +1103,7 @@ impl Editor {
         self.change_lines(|_| Some((0, 0, vec![u16::from(b'\'')])));
     }
 
-    /// Takes the first quote after the indentation off the chosen lines
+    /// Removes the first quote after the indentation from the chosen lines
     /// (Ctrl+Shift+K).
     pub fn uncomment(&mut self) {
         self.change_lines(|text| {
@@ -1111,7 +1112,8 @@ impl Editor {
         });
     }
 
-    /// Puts an empty line below the cursor's and moves to it (Ctrl+Enter).
+    /// Inserts an empty line below the cursor's line and moves to it
+    /// (Ctrl+Enter).
     pub fn insert_line(&mut self) {
         let line = self.view.line;
         let end = self.lines[line].len();
@@ -1154,7 +1156,7 @@ impl Editor {
         }
     }
 
-    /// What the keys do now.
+    /// Returns the current mode of the keys.
     pub fn mode(&self) -> Mode {
         self.mode
     }
@@ -1170,7 +1172,7 @@ impl Editor {
         };
     }
 
-    /// The text was saved as it is.
+    /// Records that the current text was saved.
     pub fn mark_saved(&mut self) {
         self.modified = false;
     }
@@ -1180,9 +1182,9 @@ impl Editor {
         self.note = Some(note);
     }
 
-    /// Starts typing what to find (F3, Ctrl+F) or, with `replace`, what
-    /// to replace it with (Ctrl+H). Text selected on one line becomes
-    /// what to find.
+    /// Starts typing the text to find (F3, Ctrl+F) or, with `replace`, the
+    /// text to replace it with (Ctrl+H). Text selected on one line becomes
+    /// the text to find.
     pub fn start_find(&mut self, replace: bool) {
         self.note = None;
         if let Some((start, end)) = self.selection()
@@ -1194,9 +1196,9 @@ impl Editor {
         self.mode = if replace { Mode::Replace } else { Mode::Find };
     }
 
-    /// Selects the next place that holds what to find, after the cursor
-    /// or, going back, before the selection, going round the program's
-    /// ends. Returns whether there was one.
+    /// Selects the next match after the cursor or, going back, before the
+    /// selection, wrapping around the ends of the program. Returns whether
+    /// there was one.
     pub fn find_next(&mut self, forward: bool) -> bool {
         let from = match (forward, self.selection()) {
             (false, Some((start, _))) => start,
@@ -1206,11 +1208,13 @@ impl Editor {
         self.show_found(found)
     }
 
-    /// The nearest match from `from`, going forward or back, `at` it too
-    /// if `here`, around the ends.
+    /// The nearest match from `from`, going forward or back and wrapping
+    /// around the ends; going forward with `here`, a match at `from` itself
+    /// counts.
     fn search(&self, from: Pos, forward: bool, here: bool) -> Option<Pos> {
         let n = self.lines.len();
-        // One more line than there are, to come back to the first's start.
+        // One more line than there are, to come back to the start of the
+        // line the search began on.
         for i in 0..=n {
             let line = if forward {
                 (from.0 + i) % n
@@ -1282,7 +1286,7 @@ impl Editor {
         let mut count = 0;
         self.begin(Merge::Alone);
         for line in 0..self.lines.len() {
-            // From the right, so that the columns found stay right.
+            // From the right, so that the columns found stay correct.
             for col in matches_in(&self.lines[line], &self.find).into_iter().rev() {
                 let end = (line, col + self.find.len());
                 self.replace((line, col), end, vec![self.with.clone()]);
@@ -1298,7 +1302,7 @@ impl Editor {
         });
     }
 
-    /// A key while typing in the status line.
+    /// Handles a key while typing in the status line.
     fn prompt_key(&mut self, code: u16) {
         self.note = None;
         let printable = !matches!(code, 0..0x20 | 0x7F);
@@ -1341,7 +1345,7 @@ impl Editor {
         }
     }
 
-    /// Finds what is being typed from where typing began.
+    /// Finds the text being typed, starting from where typing began.
     fn find_from_start(&mut self) {
         let found = self.search(self.search_from, true, true);
         if self.show_found(found) {
@@ -1371,7 +1375,7 @@ impl Editor {
     }
 
     /// Moves the cursor with a [`keys`] code while keeping the other end
-    /// of the selection, as Shift does.
+    /// of the selection, the same as Shift does.
     pub fn key_select(&mut self, code: u16) {
         if self.mode != Mode::Edit {
             self.key(code);
@@ -1465,7 +1469,7 @@ impl Editor {
         }
     }
 
-    /// The names the program uses, worked out again after a change, then
+    /// The names the program uses, computed again after a change, then
     /// those of the other slots if given.
     fn program_names(&mut self) -> Rc<Vec<Item>> {
         let (lines, others) = (&self.lines, &self.other_names);
@@ -1741,7 +1745,7 @@ impl Editor {
         true
     }
 
-    /// Where the editor is now, for [`Editor::go_back`].
+    /// Returns the editor's current position, for [`Editor::go_back`].
     pub fn place(&self) -> Place {
         Place(self.view)
     }
@@ -1800,7 +1804,7 @@ impl Editor {
             }
         };
         // The lines on screen, filled and outlined so that the view
-        // stands out of the code around it.
+        // stands out from the code around it.
         let shown =
             self.view.top.saturating_sub(first)..(self.view.top + rows).saturating_sub(first);
         let y = top + shown.start.min(fit) * MAP_PITCH;
@@ -1832,7 +1836,7 @@ impl Editor {
         }
     }
 
-    /// Scrolls by lines without moving the cursor, as the mouse wheel does.
+    /// Scrolls by lines without moving the cursor (the mouse wheel).
     pub fn wheel(&mut self, lines: i32) {
         let top = self.view.top as i64 + i64::from(lines);
         self.view.top = top.clamp(0, self.lines.len() as i64 - 1) as usize;
@@ -1883,8 +1887,8 @@ impl Editor {
             ..
         } = look;
         self.number_tiles = tiles;
-        // The menu bar's share is of the whole frame, whatever is left
-        // below.
+        // The menu bar's share is of the whole frame, including the pixels
+        // left at the bottom.
         let top = look.top.unwrap_or_else(|| menu_height(fb.height()));
         let height = fb.height().saturating_sub(look.bottom);
         self.fit(fb.width(), height, look.font, Some(top));
@@ -2115,7 +2119,7 @@ impl Editor {
             let at = (gutter + x) as u32;
             if tiles {
                 if col == cursor_col {
-                    // On a white tile, as the current line's number.
+                    // On a white tile, like the current line's number.
                     screen.put_at(at, ruler as u32, ruler_tile(col), TEXT);
                 } else if col.is_multiple_of(2) {
                     let color = if col.is_multiple_of(10) { TEXT } else { DIM };
@@ -2202,7 +2206,7 @@ impl Editor {
                 }
             }
         }
-        // How the command being typed is used, above the cursor's line
+        // The forms of the command being typed, above the cursor's line
         // or at the bottom.
         let options = self
             .complete
@@ -2271,8 +2275,8 @@ impl Editor {
 }
 
 impl Editor {
-    /// The status line while typing in it, with the column after what is
-    /// typed, and what the ruler's row shows instead of the ruler.
+    /// The status line while typing in it, with the column after the typed
+    /// text, and the text the ruler's row shows instead of the ruler.
     fn prompt(&self) -> (Option<(String, usize)>, Option<String>) {
         let field = |label: &str, text: &[u16]| {
             let text = String::from_utf16_lossy(text);
@@ -2319,7 +2323,7 @@ pub fn is_movement(code: u16) -> bool {
 }
 
 /// A line number's six digits on three tiles, two digits each, with the
-/// leading zeros dimmed as SmileBASIC 4 does.
+/// leading zeros dimmed, the same as in SmileBASIC 4.
 fn number_tiles(number: usize) -> [u16; 3] {
     let n = number % 1_000_000;
     let pairs = [n / 10_000, n / 100 % 100, n % 100];
@@ -2356,8 +2360,8 @@ fn rows_of(line: &[u16], cols: usize) -> usize {
     line.len() / cols + 1
 }
 
-/// Puts `text` on the editor's screen from column `x` of row `y`, with
-/// the characters `fonts` draws from other sources than the font left
+/// Puts `text` on the editor's screen from column `x` of row `y`. The
+/// characters that `fonts` draws from sources other than the font are left
 /// empty there and added to `extras`.
 fn put_str(
     screen: &mut TextScreen,
@@ -2423,12 +2427,12 @@ mod tests {
     fn line_shifts() {
         let joined = |start, end| LineShift::Joined { start, end };
         let broken = |at, count| LineShift::Broken { at, count };
-        // Whole lines 2 and 3 taken out: 4 takes 2's place.
+        // Whole lines 2 and 3 removed: line 4 becomes line 2.
         let whole = joined((2, 0), (4, 0));
         let mapped: Vec<_> = (0..6).map(|l| whole.map(l)).collect();
         assert_eq!(mapped, [Some(0), Some(1), None, None, Some(2), Some(3)]);
-        // Text up to within line 3 taken from line 2's start, as undoing
-        // a paste there: 3 takes 2's place.
+        // Text from line 2's start to within line 3 removed, as happens
+        // when a paste there is undone: line 3 becomes line 2.
         let undo = joined((2, 0), (3, 3));
         assert_eq!(
             (undo.map(2), undo.map(3), undo.map(4)),
@@ -2440,7 +2444,7 @@ mod tests {
         assert_eq!(mapped, [Some(1), Some(2), None, Some(3)]);
         // Text within a line moves nothing.
         assert_eq!(joined((2, 1), (2, 4)).map(2), Some(2));
-        // Lines put in at a line's start push it down; within it, not.
+        // Lines inserted at a line's start push it down; within it, not.
         assert_eq!(broken((2, 0), 2).map(2), Some(4));
         assert_eq!(broken((2, 3), 2).map(2), Some(2));
         assert_eq!(broken((2, 3), 2).map(3), Some(5));
@@ -2620,18 +2624,19 @@ mod tests {
 
     #[test]
     fn extra_glyphs_fill_one_cell_each() {
-        // The font lacks everything from U+AC00 on, as SmileBASIC 4's lacks
-        // that block and surrogates, and draws nothing for the rest.
+        // The font lacks everything from U+AC00 on, the same as the font of
+        // SmileBASIC 4 lacks that block and surrogates, and draws nothing
+        // for the rest.
         let font = Font::blank_from(0xAC00);
         let mut e = editor("A가𠮷\u{10FFFD}B");
         let mut fb = Framebuffer::new(400, 240);
         e.draw(&mut fb, &font, "", look(true), false);
         // Characters the font has stay on the screen; those drawn from the
-        // extra glyphs leave their cell empty there; a character nothing
-        // has keeps its two units, which the font draws as boxes.
+        // extra glyphs leave their cell empty there; a character that no
+        // source has keeps its two units, which the font draws as boxes.
         let codes: Vec<u16> = (4..11).map(|x| e.screen.cell(x, 0).code).collect();
         assert_eq!(codes, [0x41, 0, 0, 0, 0xDBFF, 0xDFFD, 0x42]);
-        // One cell per UTF-16 unit, as the cursor counts: 가 in column 1,
+        // One cell per UTF-16 unit, the way the cursor counts: 가 in column 1,
         // 𠮷 in column 2 with column 3 empty.
         let top = e.grid.top as u32;
         let back = fb.get(4 * 8, top);
@@ -2833,7 +2838,7 @@ mod tests {
         e.tab_step = 2;
         e.key(UNINDENT);
         assert_eq!(e.text(), "A");
-        // Finding takes it as Tab, which goes on to replacing.
+        // Finding takes it as Tab, which switches to replacing.
         e.start_find(false);
         e.key(UNINDENT);
         assert_eq!(e.mode(), Mode::Replace);
@@ -2889,12 +2894,12 @@ mod tests {
             (e.text().as_str(), e.cursor()),
             ("PRINT 1 23\n\nEND", (2, 0))
         );
-        // A new edit drops what was undone.
+        // A new edit drops the undone steps.
         typing(&mut e, "Y");
         e.redo();
         assert_eq!(e.text(), "PRINT 1 23\nY\nEND");
 
-        // Moving ends a run; a selection typed over goes back in one step.
+        // Moving ends a run; a selection typed over is undone in one step.
         let mut e = editor("ABC\nDEF");
         typing(&mut e, "1");
         e.key(keys::RIGHT);
@@ -2927,7 +2932,7 @@ mod tests {
         e.key(keys::HOME);
         e.key_select(keys::DOWN);
         e.key_select(keys::DOWN);
-        // The selection ends at line 3's start, which is left out.
+        // The selection ends at the start of line 3, so that line is skipped.
         e.key(keys::TAB);
         assert_eq!(e.text(), "  A\n  B\nC");
         assert_eq!(e.copy().as_deref(), Some("  A\n  B"));
@@ -3019,7 +3024,7 @@ mod tests {
         e.undo();
         assert_eq!(e.text(), "PRINT A\n?nt b\nEND\nPRINT C");
 
-        // A selection on one line is what to find.
+        // A selection on one line becomes the text to find.
         e.file_top();
         e.key_select(keys::RIGHT);
         e.start_find(false);
@@ -3209,7 +3214,7 @@ mod tests {
         for _ in 0..3 {
             e.key(keys::RIGHT);
         }
-        // One column per character, as the status and HELPINFO count.
+        // One column per character, the way the status and HELPINFO count.
         assert_eq!(e.pos(), (0, 3));
         half(&mut e, &mut fb);
         let bar = SMILEBASIC[Part::Character];
@@ -3218,7 +3223,7 @@ mod tests {
         assert!((8..16).all(|y| fb.get(48, y) == Some(bar)));
         assert!((8..16).all(|y| fb.get(50, y) != Some(bar)));
         assert_eq!(e.pos(), (0, 3));
-        // Typing goes in at that column.
+        // Typing inserts at that column.
         typing(&mut e, "x");
         assert_eq!(e.text(), "A가Bx漢C");
         // Wrapping still breaks lines by character count.

@@ -84,28 +84,27 @@ impl Affine {
 }
 
 // Frames and layers hold premultiplied colors: each channel already
-// multiplied by the alpha. The alpha is coverage: 255 less the
-// transmittance SmileBASIC 4's render targets keep in theirs, so a clear
-// layer is 0 and an opaque frame 255. In a layer of its own, an
-// additive element adds light without adding alpha, and lights what is
-// under the layer once it is composed.
+// multiplied by the alpha. The alpha is coverage: 255 minus the
+// transmittance that SmileBASIC 4's render targets keep in their alpha,
+// so a clear layer is 0 and an opaque frame is 255. In a layer on its own
+// frame, an additive element adds light without adding alpha, and lights
+// what is under the layer once the layer is composed.
 //
-// A draw is worked out exactly and rounded once, to the nearest, when it
+// A draw is computed exactly and rounded once, to the nearest, when it
 // is stored: an element's color times its tint times its alpha, plus
 // what it leaves of the frame, as one sum. Every denominator here is a
-// power of 255, which is odd, so no exact result lies halfway between
-// two values: rounding half up or half down would give the same pixels,
-// and `(x + (d-1)/2) / d` is the nearest for an odd `d`. A GPU working
-// in floating point may still round a result very near a half either
-// way.
+// power of 255, which is odd, so no exact result is halfway between two
+// values. Rounding half up or half down would give the same pixels, and
+// `(x + (d-1)/2) / d` is the nearest for an odd `d`. A GPU working in
+// floating point may still round a result very near a half either way.
 
-/// 255³, what [`Over3`]'s numerators are over.
+/// 255³, the denominator of the numerators in [`Over3`].
 const D3: u32 = 255 * 255 * 255;
-/// 255⁵, what [`Over5`]'s numerators are over.
+/// 255⁵, the denominator of the numerators in [`Over5`].
 const D5: u64 = 255 * 255 * 255 * 255 * 255;
 
-/// One pixel of an element as it goes on the frame, with what it gives
-/// worked out once, so that drawing it many times costs only the blend.
+/// One pixel of an element, ready to put on the frame, with its result
+/// computed once, so that drawing it many times costs only the blend.
 pub trait Paint: Copy {
     /// The frame pixel `dst` with this put on.
     fn put(&self, dst: u32) -> u32;
@@ -137,15 +136,15 @@ impl Paint for Over1 {
         if self.keep == 0 {
             return self.src;
         }
-        // All four channels at once, 16 bits apiece: each sum is at most
-        // 255 * 255, so none carries into the next.
+        // All four channels at the same time, 16 bits each: each sum is
+        // at most 255 * 255, so none carries into the next.
         let light = spread(self.src | 0xFF00_0000) * (255 - self.keep);
         gather(div255_lanes(light + spread(dst) * self.keep))
     }
 }
 
-/// An element's light added to the frame, each channel held to 255; the
-/// frame's alpha stays as it is.
+/// An element's light added to the frame, each channel held to 255. The
+/// frame's alpha stays unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lit(u64);
 
@@ -157,7 +156,7 @@ impl Lit {
     }
 
     /// Of a straight color tinted by `color`: each channel times the
-    /// other's, times both alphas, rounded once.
+    /// same channel of `color`, times both alphas, rounded once.
     #[inline]
     pub fn tinted(src: u32, color: u32) -> Lit {
         let a = (src >> 24) * (color >> 24);
@@ -168,8 +167,9 @@ impl Lit {
         Lit(spread(c(16) << 16 | c(8) << 8 | c(0)))
     }
 
-    /// Of a straight color tinted by `c1` and then `c2`, as text is by
-    /// its cell's color and TCOLOR: one rounding of the whole product.
+    /// Of a straight color tinted by `c1` and then `c2`, the way text is
+    /// tinted by its cell's color and TCOLOR: one rounding of the whole
+    /// product.
     #[inline]
     pub fn tinted2(src: u32, c1: u32, c2: u32) -> Lit {
         let a = u64::from((src >> 24) * (c1 >> 24)) * u64::from(c2 >> 24);
@@ -204,8 +204,8 @@ impl Over3 {
     pub fn new(src: u32, color: u32) -> Over3 {
         let a = (src >> 24) * (color >> 24);
         let ch = |v: u32, shift: u32| v >> shift & 0xFF;
-        // Opaque, the usual case, covers what is under it: the colors'
-        // product is all there is.
+        // An opaque result, the usual case, covers what is under it:
+        // the product of the colors is the whole result.
         if a == 255 * 255 {
             let c = |shift: u32| div255(ch(src, shift) * ch(color, shift));
             return Over3::solid(0xFF00_0000 | c(16) << 16 | c(8) << 8 | c(0));
@@ -214,7 +214,8 @@ impl Over3 {
     }
 
     /// [`Over3::new`] with `tables` holding each channel times the
-    /// color's, divided by 255 and rounded: blue, green and red.
+    /// same channel of the color, divided by 255 and rounded: blue,
+    /// green and red.
     #[inline]
     pub fn tabled(src: u32, color: u32, tables: &[[u8; 256]; 3]) -> Over3 {
         let a = (src >> 24) * (color >> 24);
@@ -225,7 +226,7 @@ impl Over3 {
         Over3::partial(src, color, a)
     }
 
-    /// What covers what is under it whole.
+    /// A paint that covers what is under it completely.
     #[inline]
     fn solid(pixel: u32) -> Over3 {
         Over3 {
@@ -267,8 +268,8 @@ impl Paint for Over3 {
     }
 }
 
-/// [`Over3`] for a color tinted twice, as text is by its cell's color and
-/// TCOLOR: numerators over 255⁵.
+/// [`Over3`] for a color tinted twice, the way text is tinted by its cell's
+/// color and TCOLOR: numerators over 255⁵.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Over5 {
     /// Blue, green, red and alpha.
@@ -291,8 +292,8 @@ impl Over5 {
         }
     }
 
-    /// The pixel it puts on whatever is under it, when it covers that
-    /// whole.
+    /// The pixel it puts on anything under it, when it covers that
+    /// completely.
     #[cfg(test)]
     fn solid(&self) -> Option<u32> {
         (self.keep == 0).then(|| self.put(0))
@@ -314,8 +315,8 @@ impl Paint for Over5 {
     }
 }
 
-/// Any of the paints, for elements whose pixels each have their own,
-/// such as text screens' cells.
+/// Any of the paints, for elements whose pixels each have their own
+/// paint, such as the cells of text screens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mixed {
     /// Opaque: the pixel itself.
@@ -328,7 +329,7 @@ pub enum Mixed {
 
 impl Mixed {
     /// A straight color tinted by `c1` and then `c2`, put over the frame
-    /// or, with `add`, added to it; `None` if it changes nothing. A white
+    /// or, with `add`, added to it. `None` if it changes nothing. A white
     /// tint changes nothing either, so the cheapest paint that gives the
     /// same pixels is taken.
     pub fn new(src: u32, c1: u32, c2: u32, add: bool) -> Option<Mixed> {
@@ -390,7 +391,7 @@ pub fn over(dst: u32, src: u32) -> u32 {
     Over1::new(src).put(dst)
 }
 
-/// The channels of a color, one to each 16 bits: blue, red, green and
+/// The channels of a color, one per 16 bits: blue, red, green and
 /// alpha from the bottom.
 #[inline]
 fn spread(c: u32) -> u64 {
@@ -398,7 +399,7 @@ fn spread(c: u32) -> u64 {
     c & 0x00FF_00FF | (c >> 8 & 0x00FF_00FF) << 32
 }
 
-/// Back from [`spread`]; the lanes must hold 8 bits.
+/// The inverse of [`spread`]. The lanes must hold 8 bits.
 #[inline]
 fn gather(x: u64) -> u32 {
     (x as u32) | ((x >> 32) as u32) << 8
@@ -407,13 +408,14 @@ fn gather(x: u64) -> u32 {
 /// [`div255`] of each 16-bit lane.
 #[inline]
 fn div255_lanes(x: u64) -> u64 {
-    // Rounds x / 255 to the nearest for x up to 255 * 255, as div255 does.
+    // Rounds x / 255 to the nearest for x up to 255 * 255, the same as
+    // div255 does.
     let t = x + 0x0080_0080_0080_0080;
     ((t + (t >> 8 & LANES)) >> 8) & LANES
 }
 
 /// `src`, an element's straight color, added to `dst` in proportion to
-/// its alpha, leaving `dst`'s alpha as it is.
+/// its alpha, leaving the alpha of `dst` unchanged.
 #[inline]
 pub fn add(dst: u32, src: u32) -> u32 {
     add_light(dst, light(src))
@@ -451,11 +453,12 @@ pub struct Placement<'a> {
     pub add: bool,
 }
 
-/// Draws a `w` x `h` image whose pixels `sample` gives, placed by
-/// `place`, `None` where it is clear. `sample` gets the image point under
-/// each frame pixel's center, which falls between whole pixels when the
-/// frame is finer than the image. The point is [`Placement::sampling`]'s;
-/// add [`Placement::texel_tie`] before reading a texel with it.
+/// Draws a `w` x `h` image placed by `place`, with pixels from `sample`,
+/// which gives `None` where the image is clear. `sample` gets the image
+/// point under each frame pixel's center, which falls between whole pixels
+/// when the frame is finer than the image. The point comes from
+/// [`Placement::sampling`]. Add [`Placement::texel_tie`] to it before
+/// reading a texel with it.
 pub fn draw_image<P: Paint>(
     fb: &mut Framebuffer,
     place: &Placement,
@@ -466,11 +469,11 @@ pub fn draw_image<P: Paint>(
     draw_image_part(fb, place, w, h, (0, 0, w, h), sample);
 }
 
-/// Like [`draw_image`], but only around where the part of the image from
-/// `(x0, y0)` to `(x1, y1)` falls. Pixels just outside the part may still
-/// be sampled, so `sample` must give nothing there; drawing an image part
-/// by part then gives the same frame as drawing it whole, while parts
-/// with nothing in them need not be drawn at all.
+/// Like [`draw_image`], but only around where `part` of the image, given
+/// as `(x0, y0, x1, y1)`, falls. Pixels just outside the part may still
+/// be sampled, so `sample` must give nothing there. Then drawing an image
+/// part by part gives the same frame as drawing it whole, and parts with
+/// nothing in them do not need to be drawn at all.
 pub fn draw_image_part<P: Paint>(
     fb: &mut Framebuffer,
     place: &Placement,
@@ -509,13 +512,14 @@ pub fn draw_image_part<P: Paint>(
     }
 }
 
-/// [`draw_image`] for what reads whole texels: `pixel` gets the point under
-/// each frame pixel's center, moved by `tie` from [`Placement::texel_tie`],
-/// rounded down. That is on the image, or one off it by a tie. Most pixels
-/// take no floating point, which a small CPU feels most: the point is stepped
-/// along a row in fixed point, and only where that lies so near a whole number
-/// that it might round the other way is it worked out as `draw_image` does, so
-/// the same texels are read.
+/// [`draw_image`] for samplers that read whole texels: `pixel` gets the point
+/// under each frame pixel's center, moved by `(tx, ty)` from
+/// [`Placement::texel_tie`] and rounded down. That point is on the image, or
+/// one off it because of a tie. Most pixels need no floating point, which
+/// matters most on a small CPU. The point is stepped along a row in fixed
+/// point. The point is computed the same way as `draw_image` does only where
+/// it is so near a whole number that it might round the other way, so the
+/// same texels are read.
 pub fn draw_texels<P: Paint>(
     fb: &mut Framebuffer,
     place: &Placement,
@@ -528,12 +532,13 @@ pub fn draw_texels<P: Paint>(
     const ONE: f64 = (1u64 << 40) as f64;
     /// The fraction of a fixed point number.
     const FRACTION: i64 = (1 << 40) - 1;
-    /// How near a whole number the fixed point may be off from the exact sum:
-    /// far more than the steps of a frame's width at one unit each, and than the
-    /// exact sum's rounding within the limit below. A tie adds to it.
+    /// How near a whole number the fixed point may be off from the exact sum.
+    /// This is far more than the steps of a frame's width at one unit each,
+    /// and far more than the rounding of the exact sum within the limit
+    /// below. A tie adds to it.
     const NEAR: i64 = 1 << 12;
-    /// Above this, for any term of a sum, the sum's rounding is not small
-    /// enough, or fixed point not large enough.
+    /// Above this, for any term of a sum, the rounding of the sum is too
+    /// large, or the fixed point too small.
     const LIMIT: f64 = 65536.0;
     let Some(inv) = place.sampling() else {
         return;
@@ -593,10 +598,10 @@ pub fn draw_texels<P: Paint>(
     }
 }
 
-/// The columns of the frame's row with centers at `fy`, from `x0` up to but not
-/// including `x1`, that may lie within the given ranges of the image's x and
-/// y under `inv`: only those near where the row crosses them need trying, each
-/// being tested exactly after this.
+/// The columns of the frame row with centers at `fy`, from `x0` up to but not
+/// including `x1`, that may fall within the given ranges of the image's x and
+/// y under `inv`. Only the columns near where the row crosses those ranges
+/// need to be tried, and each is tested exactly after this.
 #[inline]
 fn columns(inv: &Affine, fy: f64, xs: (f64, f64), ys: (f64, f64), x0: u32, x1: u32) -> (u32, u32) {
     let (from, to) = crossing(inv.a, inv.b * fy + inv.tx, xs)
@@ -614,8 +619,8 @@ fn columns(inv: &Affine, fy: f64, xs: (f64, f64), ys: (f64, f64), x0: u32, x1: u
     (from, to.min(x1))
 }
 
-/// Where `k * x + base` lies from `lo` up to `hi`: the range of x, which
-/// may be empty; `None` if it never does.
+/// The range of x where `k * x + base` is from `lo` up to `hi`, which may
+/// be empty; `None` if it never is.
 fn crossing(k: f64, base: f64, (lo, hi): (f64, f64)) -> Option<(f64, f64)> {
     if k == 0.0 {
         return (lo..hi).contains(&base).then_some((f64::MIN, f64::MAX));
@@ -669,10 +674,11 @@ fn span(
     Some((x0 as u32, y0 as u32, x1 as u32, y1 as u32))
 }
 
-/// Where a placement that neither turns nor shears the image takes the
-/// frame: the image x under each frame column from `x0` and the image y
-/// under each row from `y0`, as [`draw_image`] works them out, for the
-/// columns and rows that fall on the image.
+/// The image coordinates under the frame for a placement that neither
+/// turns nor shears the image: the image x under each frame column from
+/// `x0` and the image y under each row from `y0`, computed the same way
+/// as [`draw_image`] does, for the columns and rows that fall on the
+/// image.
 #[derive(Default)]
 pub struct Grid {
     pub x0: u32,
@@ -681,17 +687,18 @@ pub struct Grid {
     pub ys: Vec<f64>,
 }
 
-/// How far a frame pixel's center is moved to settle whether it lies on
-/// the image when it is exactly on an edge: to the right, and then, far
-/// less so that it decides only what the first leaves open, up. An edge
-/// through the center thus takes the pixel if it is the image's left or
-/// bottom edge. Well above what rounding does to a point of the frame.
+/// How far a frame pixel's center is moved to decide whether it is on
+/// the image when it is exactly on an edge. It moves to the right, and
+/// also up by a far smaller amount, so that the move up decides only
+/// what the first move leaves open. So an edge through the center takes
+/// the pixel if it is the left or bottom edge of the image. Both moves
+/// are well above what rounding does to a point of the frame.
 const COVER_NUDGE: (f64, f64) = (1e-8, -1e-10);
-/// How far an image point is moved, along the image, to settle which
-/// texel it reads when it is exactly between two.
+/// How far an image point is moved, along the image, to decide which
+/// texel it reads when it is exactly between two texels.
 const TIE: f64 = 1e-9;
 
-/// Whether a length, up to rounding, is 2 to a whole power.
+/// Whether a length, up to rounding, is a power of two.
 fn is_power_of_two(v: f64) -> bool {
     const FRACTION: u64 = (1 << 52) - 1;
     const ROUNDING: u64 = 1 << 16;
@@ -705,14 +712,14 @@ impl Placement<'_> {
         self.matrix.b == 0.0 && self.matrix.c == 0.0
     }
 
-    /// Whether the placement puts the image's pixels on the frame's, so
-    /// that sampling one to one nothing can tie.
+    /// Whether the placement puts the image's pixels on the frame
+    /// pixels, so that when sampling one to one, nothing can tie.
     pub fn is_aligned(&self) -> bool {
         let m = &self.matrix;
         (m.a, m.b, m.c, m.d) == (1.0, 0.0, 0.0, 1.0) && m.tx.fract() == 0.0 && m.ty.fract() == 0.0
     }
 
-    /// From the frame to the image, for what lies under a frame pixel's
+    /// From the frame to the image, for the point under a frame pixel's
     /// center moved by [`COVER_NUDGE`].
     fn sampling(&self) -> Option<Affine> {
         let mut inv = self.matrix.inverse()?;
@@ -722,14 +729,15 @@ impl Placement<'_> {
         Some(inv)
     }
 
-    /// What to add to an image point from [`Placement::sampling`] to get
-    /// the point whose whole part is the texel it reads, for an image of
-    /// `size` whose page coordinates run along the image as `page` says, from
-    /// [`page_signs`]. An image side and a scale that are both powers of two
-    /// make the arithmetic exact, and a tie goes to the page's higher texel;
-    /// anything else, to the lower. The point may land just off the image,
-    /// which reads the page there. Exactly zero where nothing can tie, so that
-    /// callers may leave out the adding.
+    /// The offset to add to an image point from [`Placement::sampling`] to
+    /// get the point whose whole part is the texel it reads. It is for an
+    /// image of `size` whose page coordinates run along the image as `page`
+    /// says, from [`page_signs`]. An image side and a scale that are both
+    /// powers of two make the arithmetic exact, and a tie goes to the higher
+    /// texel of the page. In any other case it goes to the lower one. The
+    /// point may land just off the image, which reads the page there. The
+    /// offset is exactly zero where nothing can tie, so callers may skip the
+    /// addition.
     pub fn texel_tie(&self, size: (i32, i32), page: (f64, f64)) -> (f64, f64) {
         let m = &self.matrix;
         let (nx, ny) = COVER_NUDGE;
@@ -757,18 +765,18 @@ impl Placement<'_> {
         along((axis(size.0, sx, page.0), axis(size.1, sy, page.1)))
     }
 
-    /// Whether the image's axes lie along the frame's, in either order.
+    /// Whether the image axes are along the frame axes, in either order.
     pub fn is_right_angle(&self) -> bool {
         let m = &self.matrix;
         let none_of = |p: f64, q: f64| p.abs() <= 1e-9 * q.abs();
         (none_of(m.a, m.c) && none_of(m.d, m.b)) || (none_of(m.c, m.a) && none_of(m.b, m.d))
     }
 
-    /// Along which side of each image axis [`Placement::texel_tie`] settles
-    /// a tie, as -1 or 1, for a rasterizer that samples in its own way; 0 for
-    /// both where nothing can tie. Inline, so that a headless build has no
-    /// call to it, which changes what the compiler inlines on the CPU's paths
-    /// (0.4% of TMULTI's instructions, measured).
+    /// Along which side of each image axis [`Placement::texel_tie`] settles a
+    /// tie, as -1 or 1, for a rasterizer that samples in its own way; 0 for
+    /// both where nothing can tie. It is inline so that a headless build has
+    /// no call to it, which changes what the compiler inlines on the CPU
+    /// paths (0.4% of TMULTI's instructions, measured).
     #[inline]
     pub fn tie_sides(&self, size: (i32, i32), page: (f64, f64)) -> (f64, f64) {
         let tie = self.texel_tie(size, page);
@@ -781,7 +789,7 @@ impl Placement<'_> {
     }
 }
 
-/// Which way the page's coordinates run along the two axes of the shown
+/// The direction of the page coordinates along the two axes of the shown
 /// rectangle, as 1 or -1, for an attribute's turn and flips: the image is
 /// flipped, then turned.
 #[inline]
@@ -802,8 +810,8 @@ pub fn grid(fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> Option<Grid>
     grid_in(&mut grid, fb, place, w, h).then_some(grid)
 }
 
-/// [`grid`] in one that already has room, which allocates nothing: this is
-/// for each sprite of a frame. False if the image shows nowhere.
+/// [`grid`] into a grid that already has room, so it allocates nothing:
+/// this is for each sprite of a frame. False if the image shows nowhere.
 pub fn grid_in(grid: &mut Grid, fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> bool {
     debug_assert!(place.is_upright());
     let Some(inv) = place.sampling() else {
@@ -813,9 +821,9 @@ pub fn grid_in(grid: &mut Grid, fb: &Framebuffer, place: &Placement, w: i32, h: 
         return false;
     };
     let (w, h) = (f64::from(w), f64::from(h));
-    // With b and c zero, x depends on the column alone and y on the row
-    // alone, to the bit; both only grow or only shrink along the frame,
-    // so the ones on the image are a run.
+    // With b and c zero, x depends only on the column and y only on the
+    // row, to the bit. Both only grow or only shrink along the frame, so
+    // the values on the image are a run.
     let at = |px: u32, py: u32| inv.apply(f64::from(px) + 0.5, f64::from(py) + 0.5);
     let Some(gx0) = on_image(x0..x1, |px| at(px, y0).0, w, &mut grid.xs) else {
         return false;
@@ -827,8 +835,9 @@ pub fn grid_in(grid: &mut Grid, fb: &Framebuffer, place: &Placement, w: i32, h: 
     true
 }
 
-/// The first frame column or row in `range` on the image, of `len`, where `f`
-/// says what image x or y each shows, with those of the run from there in `run`.
+/// The first frame column or row in `range` on the image of length `len`,
+/// where `f` gives the image x or y that each one shows. The values of the
+/// run from there go into `run`.
 #[inline]
 fn on_image(
     range: std::ops::Range<u32>,
@@ -854,8 +863,8 @@ fn on_image(
     first
 }
 
-/// The smallest and largest x and y that `m` takes the corners of the
-/// rectangle from `(x0, y0)` to `(x1, y1)` to.
+/// The smallest and largest x and y of the corners of the rectangle from
+/// `(x0, y0)` to `(x1, y1)`, mapped by `m`.
 pub(crate) fn bounds(m: &Affine, (x0, y0, x1, y1): (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
     let corners = [
         m.apply(x0, y0),
@@ -879,14 +888,14 @@ pub struct Layer {
     pub clip: Option<Clip>,
     pub matrix: Affine,
     /// LMATRIX's 4x4 form, column by column as OpenGL keeps it, taking
-    /// the layer's coordinates to clip space. It stands instead of
+    /// the layer's coordinates to clip space. It is used instead of
     /// `matrix`.
     pub projection: Option<[f64; 16]>,
 }
 
 impl Layer {
-    /// The layer's settings for a frame with `sample` pixels to one of
-    /// the screen's, as XSCREEN's sampling makes it finer.
+    /// The layer's settings for a frame that XSCREEN's sampling makes
+    /// finer, with `sample` frame pixels per screen pixel.
     pub fn fine(&self, sample: u32) -> Layer {
         let s = sample as i32;
         if s == 1 {
@@ -923,13 +932,14 @@ impl Default for Layer {
     }
 }
 
-/// Puts a layer drawn flat in its own coordinates, `sample` frame pixels
-/// to one of them, onto `dst` through LMATRIX's 4x4 matrix `m`: a point
-/// of the layer goes in as (x, y, 0, 1), and the result's X and Y, divided
-/// by its W, run from -1 to 1 across the screen and up it. Only points in
-/// front (W above 0) with Z / W from -1 to 1 show; `clip` is in frame
-/// pixels. `src`'s top left is the flat frame's pixel `origin`, so it can
-/// hold what lies off the screen. It samples without smoothing.
+/// Puts a layer drawn flat in its own coordinates, with `sample` frame
+/// pixels per unit of them, onto `dst` through LMATRIX's 4x4 matrix `m`.
+/// A point of the layer goes in as (x, y, 0, 1), and the X and Y of the
+/// result, divided by its W, run from -1 to 1 across the screen and up it.
+/// Only points in front (W above 0) with Z / W from -1 to 1 show. `clip`
+/// is in frame pixels. The top left of `src` is the pixel `origin` of the
+/// flat frame, so `src` can hold what is off the screen. It samples
+/// without smoothing.
 pub fn project(
     dst: &mut Framebuffer,
     src: &Framebuffer,
@@ -954,14 +964,14 @@ pub fn project(
     let corners = [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)]
         .map(|(x, y)| ((f64::from(x) + ox) / sample, (f64::from(y) + oy) / sample));
     let (x0, y0, x1, y1) = window(&h, corners, (w, hh), clip);
-    // The layer lies wholly left of the clip, or the clip right of the frame.
+    // The layer is wholly left of the clip, or the clip is right of the frame.
     if x1 <= x0 {
         return;
     }
     let (sw, sh) = (i64::from(src.width()), i64::from(src.height()));
     let width = w as usize;
     let (from, pixels) = (src.pixels(), dst.pixels_mut());
-    // Down a row the homogeneous coordinates change by a constant step.
+    // Along a row the homogeneous coordinates change by a constant step.
     let step = 2.0 / fw;
     for py in y0..y1 {
         let ny = 1.0 - (f64::from(py) + 0.5) / fh * 2.0;
@@ -1019,10 +1029,6 @@ pub fn project(
     }
 }
 
-/// The frame pixels, from `(x0, y0)` up to but not including `(x1, y1)`,
-/// that a quadrilateral of the layer with `corners` may cover through the
-/// homography `h`, within `clip`: only around it when all of it is in
-/// front, with a pixel to spare.
 /// The smallest and largest x and y of the flat frame's pixels that
 /// [`project`] can put on a `w` x `hh` `dst` within `clip`, or None when
 /// nothing can show. Toward the horizon they reach very far.
@@ -1049,8 +1055,9 @@ pub fn source_bounds(
         let at = |r: usize| inv[r][0] * nx + inv[r][1] * ny + inv[r][2];
         (at(0), at(1), at(2))
     });
-    // The window cut at the horizon: q is linear along each edge, so the
-    // part in front is where it stays above a sliver of its largest.
+    // The window cut at the horizon: q is linear along each edge, so
+    // the part in front is where q stays above a small fraction of
+    // its largest value.
     let top = corners.iter().map(|c| c.2).fold(f64::MIN, f64::max);
     if top.partial_cmp(&0.0) != Some(Ordering::Greater) {
         return None;
@@ -1075,6 +1082,10 @@ pub fn source_bounds(
     Some((lo_x, lo_y, hi_x, hi_y))
 }
 
+/// The frame pixels, from `(x0, y0)` up to but not including `(x1, y1)`,
+/// that a quadrilateral of the layer with `corners` may cover through the
+/// homography `h`, within `clip`: only around it when all of it is in
+/// front, with a pixel to spare.
 fn window(
     h: &[[f64; 3]; 3],
     corners: [(f64, f64); 4],
@@ -1108,8 +1119,8 @@ fn window(
     (x0, y0, x1, y1)
 }
 
-/// The homography LMATRIX's 4x4 matrix `m` makes of a layer's plane:
-/// from the layer's (x, y, 1) to clip space's (X, Y, W).
+/// The homography that LMATRIX's 4x4 matrix `m` makes of a layer's
+/// plane: from (x, y, 1) on the layer to (X, Y, W) in clip space.
 fn homography(m: &[f64; 16]) -> [[f64; 3]; 3] {
     [
         [m[0], m[4], m[12]],
@@ -1124,7 +1135,7 @@ pub fn can_project(m: &[f64; 16]) -> bool {
 }
 
 /// X, Y, Z and W of a layer's point through LMATRIX's 4x4 matrix `m`, each as
-/// what the point's `(x, y, 1)` is multiplied by.
+/// the row that the point's `(x, y, 1)` is multiplied by.
 pub fn clip_rows(m: &[f64; 16]) -> [[f64; 3]; 4] {
     [
         [m[0], m[4], m[12]],
@@ -1135,9 +1146,9 @@ pub fn clip_rows(m: &[f64; 16]) -> [[f64; 3]; 4] {
 }
 
 /// The row of LMATRIX's 4x4 matrix `m` that gives a layer point's Z from
-/// (x, y, 1). With (gx, gy, q) the point a screen position maps back to
-/// through the inverse homography, q is 1 / W, so that this row times
-/// them is Z / W, which runs evenly across the screen.
+/// (x, y, 1). With (gx, gy, q) as the point that a screen position maps
+/// back to through the inverse homography, q is 1 / W, so this row times
+/// them is Z / W, which changes linearly across the screen.
 fn depth_row(m: &[f64; 16]) -> [f64; 3] {
     [m[2], m[6], m[14]]
 }
@@ -1160,9 +1171,9 @@ fn depth_span(at: f64, step: f64, n: u32) -> (u32, u32) {
     (from.min(to), to)
 }
 
-/// Where a layer's point `(x, y)` goes on a `w` x `hh` frame through
-/// LMATRIX's 4x4 matrix `m`, as [`project`] puts it, or `None` when it
-/// is not in front.
+/// The position on a `w` x `hh` frame of a layer's point `(x, y)`
+/// through LMATRIX's 4x4 matrix `m`, as [`project`] puts it, or `None`
+/// when the point is not in front.
 pub fn project_point(m: &[f64; 16], (x, y): (f64, f64), (w, hh): (u32, u32)) -> Option<(f64, f64)> {
     let h = homography(m);
     let at = |r: usize| h[r][0] * x + h[r][1] * y + h[r][2];
@@ -1177,11 +1188,12 @@ pub fn project_point(m: &[f64; 16], (x, y): (f64, f64), (w, hh): (u32, u32)) -> 
     ))
 }
 
-/// Draws a `w` x `h` image as [`draw_image`] does, but on a layer with
-/// LMATRIX's 4x4 matrix `m`, as [`project`] puts one: `place` takes the
-/// image to the layer drawn flat, `sample` frame pixels to one of the
-/// layer's. Unlike drawing the layer flat first, this keeps what lies off
-/// the flat screen, as a sprite's corners do on SmileBASIC 4's GPU.
+/// Draws a `w` x `h` image the same way as [`draw_image`], but on a layer
+/// with LMATRIX's 4x4 matrix `m`, put on the frame as [`project`] puts a
+/// layer. `place` maps the image to the layer drawn flat, with `sample`
+/// frame pixels per layer pixel. Unlike drawing the layer flat first, this
+/// keeps what is off the flat screen, the same as SmileBASIC 4's GPU does
+/// with a sprite's corners.
 #[allow(clippy::too_many_arguments)]
 pub fn project_image<P: Paint>(
     dst: &mut Framebuffer,
@@ -1204,7 +1216,7 @@ pub fn project_image<P: Paint>(
     });
     let (fw, fh) = (f64::from(dst.width()), f64::from(dst.height()));
     let (x0, y0, x1, y1) = window(&hm, corners, (dst.width(), dst.height()), place.clip);
-    // From the layer's points straight to the image's.
+    // From layer points straight to image points.
     let back = Affine {
         a: back.a * s,
         b: back.b * s,
@@ -1224,9 +1236,10 @@ pub fn project_image<P: Paint>(
         // The layer point (gx, gy) / q, t pixels along the row.
         let (gx, gy, q) = (at(0, nx0), at(1, nx0), at(2, nx0));
         let (dx, dy, dq) = (inv[0][0] * step, inv[1][0] * step, inv[2][0] * step);
-        // The image point times q is linear in t too, so where it falls
-        // inside the image is found once a row, on either side of where
-        // q changes sign; each pixel is still tested exactly below.
+        // The image point times q is also linear in t, so the range
+        // where it falls inside the image is found once per row, on
+        // either side of where q changes sign. Each pixel is still
+        // tested exactly below.
         let (ax, kx) = (
             back.a * gx + back.b * gy + back.tx * q,
             back.a * dx + back.b * dy + back.tx * dq,
@@ -1296,39 +1309,40 @@ pub fn project_image<P: Paint>(
     }
 }
 
-/// A row of the frame through a homography: the layer's point at pixel `t`
-/// is `(gx + t * dx, gy + t * dy) / (q + t * dq)`, and what it reads is that
-/// point through `to_read`. Two divisions a pixel are what a small CPU feels
-/// most, so what is read is stepped in fixed point between exact points
-/// [`PERSPECTIVE_BLOCK`] pixels apart. A pixel where that may fall on the other
-/// side of a whole number is worked out exactly, with one division, and only
-/// if even that is too close to tell, with the sums added up pixel by pixel as
-/// `plain` expects them; so the same texels are read.
+/// A row of the frame through a homography: the layer's point at pixel `t` is
+/// `(gx + t * dx, gy + t * dy) / (q + t * dq)`, and the point it reads is that
+/// point through `to_read`. Two divisions per pixel are the largest cost on a
+/// small CPU, so the read point is stepped in fixed point between exact points
+/// [`PERSPECTIVE_BLOCK`] pixels apart. A pixel where the stepped point may fall
+/// on the other side of a whole number is computed exactly, with one division.
+/// The pixel is computed with the sums added up pixel by pixel, as `plain`
+/// expects them, only if even that is too close to tell. So the same texels
+/// are read.
 struct Along {
     layer: (f64, f64, f64),
     step: (f64, f64, f64),
     to_read: Affine,
-    /// The row that a point is tested against for lying in front, if that
-    /// is not settled by `q` being above 0.
+    /// The row that a point is tested against to decide whether it is in
+    /// front, if `q` being above 0 does not settle that.
     front: Option<[f64; 3]>,
 }
 
-/// How many pixels are stepped between exact points, as a power of 2.
+/// The number of pixels stepped between exact points, as a power of 2.
 const PERSPECTIVE_SHIFT: u32 = 4;
 const PERSPECTIVE_BLOCK: u32 = 1 << PERSPECTIVE_SHIFT;
-/// Shorter runs go the plain way: they would save less than setting up costs.
+/// Shorter runs take the plain path: they would save less than the setup costs.
 const PERSPECTIVE_SHORTEST: u32 = 6;
 /// One texel, in the fixed point of [`Along`].
 const ALONG_ONE: f64 = (1u64 << 32) as f64;
 
 /// How close to a whole number [`Along`]'s fixed point may be for a run.
 struct AlongRun {
-    /// How close a pixel with an exact point of its own may be.
+    /// How close a pixel with its own exact point may be.
     tight: f64,
-    /// What stepping along a curve adds to that, times the fourth power of
-    /// the smallest `q` of the block.
+    /// The amount that stepping along a curve adds to that, times the
+    /// fourth power of the smallest `q` of the block.
     wander: f64,
-    /// How much each step changes in a block, in fixed point, as x and y, times
+    /// The change of each step in a block, in fixed point, as x and y, times
     /// the cube of a `q` of the block.
     bend: (f64, f64),
 }
@@ -1344,7 +1358,7 @@ fn near_whole(f: i64, near: i64) -> bool {
 impl Along {
     /// Calls `put` with `(t, x, y)` for each pixel `t` from `from` up to but
     /// not including `to` that reads something: `x` from 0 up to `size.0` and
-    /// `y` from 0 up to `size.1`, as `plain` works them out from the sums
+    /// `y` from 0 up to `size.1`, as `plain` computes them from the sums
     /// `layer + t * step` added up pixel by pixel.
     #[inline(always)]
     fn each(
@@ -1354,10 +1368,10 @@ impl Along {
         plain: impl Fn(f64, f64, f64) -> Option<(usize, usize)>,
         mut put: impl FnMut(u32, usize, usize),
     ) {
-        /// What stepping can be off by over a block, by itself, in fixed
-        /// point, with a lot to spare.
+        /// The most that stepping alone can be off by over a block, in
+        /// fixed point, with a large margin.
         const STEPPING: i64 = 1 << 11;
-        /// What a point's own truncations can be off by.
+        /// The most that a point's own truncations can be off by.
         const TRUNCATION: i64 = 4;
         /// This close to a whole number all the time, or closer, a pixel
         /// is not worth stepping to.
@@ -1365,7 +1379,7 @@ impl Along {
         let (gx, gy, q) = self.layer;
         let (dx, dy, dq) = self.step;
         let ft = f64::from(from);
-        // Those sums, added up only as far as a pixel that needs them does.
+        // Those sums, added up only as far as the pixel that needs them.
         let mut sums = (gx + dx * ft, gy + dy * ft, q + dq * ft);
         let mut done = from;
         let mut added_up = |t: u32, put: &mut dyn FnMut(u32, usize, usize)| {
@@ -1396,15 +1410,16 @@ impl Along {
             let inv = f64::max(start.0, end.0);
             let cube = inv * inv * inv;
             let most = run.tight + run.wander * (cube * inv);
-            // Every pixel of the block gets a point of its own otherwise.
+            // Otherwise every pixel of the block gets its own point.
             let near = if most < TOO_CLOSE {
                 most as i64 + STEPPING
             } else {
                 1 << 32
             };
-            // Stepped with the change of the step it has at the block's side
-            // that bends most, so that it leaves the true curve far less than a
-            // straight line would, and hardly a pixel needs a closer look.
+            // Stepped with the change of step at the side of the block that
+            // bends most, so that it moves away from the true curve far less
+            // than a straight line would, and hardly any pixel needs a closer
+            // look.
             let (mut fx, mut fy) = (start.1, start.2);
             let (bend_x, bend_y) = ((run.bend.0 * cube) as i64, (run.bend.1 * cube) as i64);
             let across = i64::from(PERSPECTIVE_BLOCK - 1);
@@ -1414,8 +1429,8 @@ impl Along {
                 .wrapping_sub(bend_y.wrapping_mul(across) >> 1);
             for p in t..t + n {
                 let (cx, cy) = (fx, fy);
-                // Only a block far too bent to go by, whose every pixel is
-                // looked at closely, can run out of bits.
+                // Only a block far too bent to rely on stepping, where
+                // every pixel is looked at closely, can run out of bits.
                 fx = fx.wrapping_add(kx);
                 fy = fy.wrapping_add(ky);
                 kx = kx.wrapping_add(bend_x);
@@ -1439,7 +1454,7 @@ impl Along {
         }
     }
 
-    /// `1 / q` at pixel `t`, and what it reads in fixed point.
+    /// `1 / q` at pixel `t`, and the point it reads, in fixed point.
     #[inline(always)]
     fn point(&self, t: u32) -> (f64, i64, i64) {
         let t = f64::from(t);
@@ -1451,14 +1466,14 @@ impl Along {
     }
 
     /// How close to a whole number the pixels from `from` up to `to` must be
-    /// to be looked at more closely; None if they cannot be stepped: a pixel,
-    /// or what lies a block on from the last, is not surely in front, or too
+    /// to get a closer look. None if they cannot be stepped: a pixel, or the
+    /// point a block past the last one, is not certainly in front, or is too
     /// far out for the fixed point.
     #[inline(never)]
     fn run(&self, from: u32, to: u32) -> Option<AlongRun> {
-        /// Above this what is read has too few fraction bits left.
+        /// Above this, the read point has too few fraction bits left.
         const LIMIT: f64 = (1u64 << 24) as f64;
-        /// This much would look at every pixel more closely.
+        /// At this much, every pixel would get a closer look.
         const TOO_CLOSE: f64 = (1u64 << 30) as f64;
         let (gx, gy, q) = self.layer;
         let (dx, dy, dq) = self.step;
@@ -1466,16 +1481,16 @@ impl Along {
         let (ft, tt) = (f64::from(from), f64::from(to + PERSPECTIVE_BLOCK));
         let far = |a: f64, k: f64| (a + k * ft, a + k * tt);
         let ((x0, x1), (y0, y1), (q0, q1)) = (far(gx, dx), far(gy, dy), far(q, dq));
-        // The added up sums are off from the ideal ones by a rounding for
-        // each addition, of no more than the largest they reach, and a point
-        // here by a few more.
+        // The added up sums differ from the ideal ones by one rounding per
+        // addition, of no more than the largest value they reach, and a
+        // point here differs by a few more.
         let adds = (tt - ft + 8.0) * f64::EPSILON;
         let eq = adds * f64::max(q0.abs(), q1.abs());
         let least = f64::min(q0, q1);
-        // Also false for NaN. Each of the layer point's coordinates, what
-        // is read and what is in front go one way from one end of the run to
-        // the other, there being no pole between, so that their ends bound all
-        // that is between.
+        // Also false for NaN. The coordinates of the layer point, the read
+        // point and the in-front test each change in one direction from one
+        // end of the run to the other, because there is no pole between. So
+        // their values at the ends bound all the values between.
         let in_front = q0 > 2.0 * eq && q1 > 2.0 * eq;
         if !in_front {
             return None;
@@ -1483,12 +1498,12 @@ impl Along {
         let inv = 1.0 / least;
         let lx = f64::max(x0.abs(), x1.abs()) * inv;
         let ly = f64::max(y0.abs(), y1.abs()) * inv;
-        // How far the layer point can be off.
+        // The most that the layer point can be off by.
         let of_x = 2.0 * inv * adds * (f64::max(x0.abs(), x1.abs()) + lx * q1.abs().max(q0.abs()))
             + 4.0 * f64::EPSILON * lx;
         let of_y = 2.0 * inv * adds * (f64::max(y0.abs(), y1.abs()) + ly * q1.abs().max(q0.abs()))
             + 4.0 * f64::EPSILON * ly;
-        // What that does through a row of a matrix, with its own roundings.
+        // The effect of that through a row of a matrix, with its own roundings.
         let through = |r: [f64; 3]| {
             let (p, q) = (r[0].abs(), r[1].abs());
             p * of_x + q * of_y + 8.0 * f64::EPSILON * (p * lx + q * ly + r[2].abs())
@@ -1517,11 +1532,12 @@ impl Along {
         {
             return None;
         }
-        // What is read is (c + k * t) / q. Its second derivative is
-        // 2 * dq * (c * dq - k * q) / q^3 and its third 3 * dq / q of that the
-        // other way, with a bracket that is the same all along the row. Stepped
-        // with the second at some point of a block of n, it leaves the true
-        // curve by at most n^2 / 8 of what the second changes by over the block.
+        // The read point is (c + k * t) / q. Its second derivative is
+        // 2 * dq * (c * dq - k * q) / q^3, and its third is 3 * dq / q of that
+        // with the opposite sign. The bracket is the same along the whole row.
+        // Stepped with the second derivative at some point of a block of n, it
+        // moves away from the true curve by at most n^2 / 8 of the change in
+        // the second derivative over the block.
         let n = f64::from(PERSPECTIVE_BLOCK);
         let bracket = |r: [f64; 3]| {
             let k = r[0] * dx + r[1] * dy + r[2] * dq;
@@ -1542,7 +1558,7 @@ impl Along {
 }
 
 /// `v` rounded down, if that is from 0 up to `n`; without the library
-/// call `f64::floor` makes on processors before SSE4.1.
+/// call that `f64::floor` makes on processors before SSE4.1.
 #[inline]
 fn floor_in(v: f64, n: i64) -> Option<usize> {
     // Also false for NaN; truncation is the floor from here on.
@@ -1601,7 +1617,7 @@ fn over_premultiplied(dst: u32, src: u32) -> u32 {
     held(spread(src) + div255_lanes(spread(dst) * (255 - a)))
 }
 
-/// A rectangle of a frame's pixels, `x1` and `y1` left out.
+/// A rectangle of a frame's pixels, `x1` and `y1` excluded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Area {
     pub x0: u32,
@@ -1711,10 +1727,10 @@ fn div255(x: u32) -> u32 {
 
 /// Puts a layer drawn on its own (transparent, premultiplied) frame over
 /// `dst`, its colors first multiplied by `color`. Each mode is one
-/// rounding of the exact sum, as in [`compose_tinted`]; the frame's alpha
-/// (coverage) grows by the layer's in mode 1, stays in mode 2 and becomes
-/// opaque in modes 3 and 4. `opaque` says `dst` is opaque all over, as
-/// the main screen is, which spares that last step.
+/// rounding of the exact sum, as in [`compose_tinted`]. The frame's alpha
+/// (coverage) grows by the layer's alpha in mode 1, stays the same in mode
+/// 2 and becomes opaque in modes 3 and 4. `opaque` says that `dst` is
+/// opaque all over, like the main screen, which saves that last step.
 pub fn compose(
     dst: &mut Framebuffer,
     layer: &Framebuffer,
@@ -1725,9 +1741,9 @@ pub fn compose(
     compose_pixels(dst.pixels_mut(), layer.pixels(), mode, color, opaque);
 }
 
-/// [`compose`] for the part of a layer that is not clear, which is all it has
-/// to do where the layer is clear only if the frame is to stay as it is
-/// there: not in modes 3 and 4 unless `opaque`.
+/// [`compose`] for the part of a layer that is not clear. That is enough only
+/// if the frame stays unchanged where the layer is clear, which is not the
+/// case in modes 3 and 4 unless `opaque`.
 pub fn compose_area(
     dst: &mut Framebuffer,
     layer: &Framebuffer,
@@ -1755,19 +1771,19 @@ fn compose_pixels(dst: &mut [u32], layer: &[u32], mode: Compose, color: u32, opa
         return compose_tinted(dst, layer, mode, color, opaque);
     }
     match mode {
-        // The usual case, a plain layer, as one blend a pixel.
+        // The usual case, a plain layer, as one blend per pixel.
         Compose::Direct | Compose::Normal => over_pixels(dst, layer),
         Compose::Add => {
-            // Each channel added and held to 255 is a byte's saturating
-            // add, which the compiler does many pixels at a time; adding
-            // nothing where the layer is clear, and to the alpha, changes
-            // nothing.
+            // Adding each channel and holding it to 255 is a saturating
+            // byte add, which the compiler does for many pixels at a time.
+            // Adding nothing where the layer is clear, and nothing to the
+            // alpha, changes nothing.
             for (d, &l) in dst.iter_mut().zip(layer) {
                 let (a, b) = (d.to_le_bytes(), (l & 0x00FF_FFFF).to_le_bytes());
                 *d = u32::from_le_bytes(std::array::from_fn(|i| a[i].saturating_add(b[i])));
             }
         }
-        // Each mode gets its own loop, so that its sum is worked inline.
+        // Each mode gets its own loop, so that its sum is computed inline.
         Compose::Multiply if opaque => {
             compose_each::<false>(dst, layer, plain(|p, d, a| div255(d * (p + 255 - a))))
         }
@@ -1783,7 +1799,7 @@ fn compose_pixels(dst: &mut [u32], layer: &[u32], mode: Compose, color: u32, opa
     }
 }
 
-/// A plain layer's pixels over the frame's.
+/// The pixels of a plain layer over the frame pixels.
 #[inline(never)]
 fn over_pixels(dst: &mut [u32], layer: &[u32]) {
     for (d, &l) in dst.iter_mut().zip(layer) {
@@ -1793,15 +1809,16 @@ fn over_pixels(dst: &mut [u32], layer: &[u32]) {
     }
 }
 
-/// How many pixels [`compose_each`] tests for being clear at once.
+/// The number of pixels that [`compose_each`] tests together for being clear.
 const COMPOSE_RUN: usize = 16;
 
 /// [`compose`] pixel by pixel: `put` gives a frame pixel with a layer pixel
 /// that is not clear put on it. A pixel clear in the layer changes nothing,
-/// but for making the frame opaque with `MAKE_OPAQUE`, which modes 3 and 4 do
-/// over the whole screen. Layers are mostly flat or clear, over frames
-/// that are too, so a stretch of clear pixels takes one test and a pixel
-/// like the last, over the same, the last's result.
+/// except that `MAKE_OPAQUE` makes the frame opaque there, which modes 3 and
+/// 4 do over the whole screen. Layers are mostly flat or clear, over frames
+/// that are also flat or clear. So a stretch of clear pixels takes one test,
+/// and a pixel equal to the last one, over an equal frame pixel, takes the
+/// last result.
 #[inline(always)]
 fn compose_each<const MAKE_OPAQUE: bool>(
     dst: &mut [u32],
@@ -1873,7 +1890,7 @@ fn compose_tinted(dst: &mut [u32], layer: &[u32], mode: Compose, color: u32, opa
         },
         |_, _| 255,
     );
-    // Each mode gets its own loop, so that its sum is worked inline.
+    // Each mode gets its own loop, so that its sum is computed inline.
     match mode {
         Compose::Direct | Compose::Normal => compose_each::<false>(
             dst,
@@ -1899,8 +1916,8 @@ fn compose_tinted(dst: &mut [u32], layer: &[u32], mode: Compose, color: u32, opa
 
 /// A frame pixel for [`compose_each`] under a layer color, by `sum`, which
 /// gives a channel from `P`, the frame's `d` and `A`, as [`compose_tinted`]
-/// calls them; it is held to 255. `alpha` gives the frame's alpha from its
-/// own and `A`.
+/// calls them; it is held to 255. `alpha` gives the frame's alpha from the
+/// frame's own alpha and `A`.
 #[inline(always)]
 fn tinted(
     color: u32,
@@ -1924,7 +1941,8 @@ fn tinted(
 mod tests {
     use super::*;
 
-    /// Texels are read as [`draw_image`] reads them, near whole numbers too.
+    /// Texels are read the same way as [`draw_image`] reads them, also near
+    /// whole numbers.
     #[test]
     fn stepping_reads_the_same_texels() {
         let mut seed = 0x1234_5678_u32;
@@ -2025,8 +2043,8 @@ mod tests {
     }
 
     /// An element's straight color `src` tinted by `c1` and `c2` over the
-    /// premultiplied `dst`, or added to it, worked out exactly in the
-    /// plainest way and rounded once: each 8-bit value is v/255.
+    /// premultiplied `dst`, or added to it, computed exactly in the
+    /// simplest way and rounded once: each 8-bit value is v/255.
     fn reference(dst: u32, src: u32, c1: u32, c2: u32, add: bool) -> u32 {
         let ch = |v: u32, i: usize| u128::from(v >> (8 * i) & 0xFF);
         let d5 = 255u128.pow(5);
@@ -2122,8 +2140,9 @@ mod tests {
         assert_eq!(twice.solid(), Some(0xFF20_2020));
     }
 
-    /// A layer of premultiplied colors over a frame of any, with some
-    /// pixels' light above their coverage, as additive elements leave.
+    /// A layer of premultiplied colors over a frame of any colors,
+    /// with the light of some pixels above their coverage, as additive
+    /// elements leave them.
     fn layer_and_frame(seed: u32) -> (Framebuffer, Framebuffer) {
         let mut next = numbers(seed);
         let mut frame = Framebuffer::new(64, 64);
@@ -2246,7 +2265,7 @@ mod tests {
                 add: false,
             };
             let (x, y) = place.texel_tie((size, size), page);
-            // What matters is the sign of what the point ends up moved by
+            // Only the sign of the point's total move matters, counted
             // from where it was before covering was settled.
             let inv = place.matrix.inverse().unwrap();
             let (nx, ny) = COVER_NUDGE;
@@ -2258,7 +2277,7 @@ mod tests {
         assert_eq!(tie(0.0, 0.5, 16, plain), (1, 1));
         assert_eq!(tie(90.0, 1.0, 32, plain), (1, 1));
         assert_eq!(tie(0.0, 1.0, 16, (-1.0, 1.0)), (-1, 1));
-        // Anything else: the lower, whichever way the image lies.
+        // Anything else: the lower texel, in any orientation of the image.
         assert_eq!(tie(0.0, 1.5, 16, plain), (-1, -1));
         assert_eq!(tie(180.0, 1.5, 16, (-1.0, 1.0)), (1, -1));
         assert_eq!(tie(0.0, 1.0, 15, plain), (-1, -1));
@@ -2337,8 +2356,8 @@ mod tests {
         assert_eq!(source_bounds(&m, 1, (8, 8), None), None);
     }
 
-    /// What [`Along::each`] gives for a row and what going over it with the
-    /// sums added up, pixel by pixel, gives.
+    /// Compares what [`Along::each`] gives for a row with what the sums
+    /// added up pixel by pixel give.
     fn along_both(along: &Along, (from, to): (u32, u32), size: (i64, i64)) {
         let plain = |gx: f64, gy: f64, q: f64| {
             let (lx, ly) = (gx / q, gy / q);
@@ -2419,7 +2438,7 @@ mod tests {
             along_both(&along, (from, from + 40), (64, 64));
         }
         // Points exactly on whole numbers and exactly between, at all sizes
-        // of step, where added up sums and worked out ones may fall either way.
+        // of step, where added up sums and computed ones may fall either way.
         for k in [1.0, 0.5, 0.25, 0.1, 1.0 / 3.0, 3.0, 1e-3, 1e-9] {
             for dq in [0.0, 1e-4, 1e-12, -1e-4] {
                 let along = Along {
@@ -2534,7 +2553,7 @@ mod tests {
 
     #[test]
     fn projection_clips_by_depth() {
-        // An 8x2 frame shows the layer as it is, with Z / W running from
+        // An 8x2 frame shows the layer unchanged, with Z / W running from
         // -1.5 to 2.5 across it.
         let mut m = [0.0; 16];
         (m[0], m[5], m[15]) = (0.25, 1.0, 1.0);
@@ -2590,7 +2609,7 @@ mod tests {
             project(&mut dst, src, (0, 0), &m, 1, Some(&clip));
             dst.pixels().iter().filter(|&&p| p != 0).count()
         };
-        // A clip past the frame's right side: nothing goes on to the next row.
+        // A clip past the frame's right side: nothing wraps to the next row.
         assert_eq!(drawn(&wide, 50, 60), 0);
         // A layer wholly left of the clip.
         assert_eq!(drawn(&narrow, 20, 30), 0);
@@ -2600,7 +2619,7 @@ mod tests {
     #[test]
     fn projection_shows_clip_space() {
         // The identity puts the layer's first unit square on the top right
-        // quarter of the screen, as SmileBASIC 4 does.
+        // quarter of the screen, the same as SmileBASIC 4 does.
         let mut src = Framebuffer::new(8, 8);
         src.clear(0);
         src.set(0, 0, 0xFFFF_0000);

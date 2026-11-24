@@ -34,9 +34,9 @@ pub enum Value {
     Array(ArrayRef),
 }
 
-/// A value known to be a number. A [`Value`] made in parts and then moved whole
-/// makes the processor wait, so the interpreter's quickest paths carry this and
-/// write it in parts where it goes.
+/// A value known to be a number. Building a [`Value`] in parts and then moving
+/// it whole makes the processor wait, so the fastest paths of the interpreter
+/// carry this type and write it in parts at its destination.
 #[derive(Clone, Copy, Debug)]
 pub enum Num {
     Int(i32),
@@ -74,9 +74,9 @@ pub struct Array {
     /// can also be indexed as one-dimensional.
     pub dims: Vec<usize>,
     pub data: ArrayData,
-    /// The array is the system's own memory, as GARRAY's and TARRAY's are:
-    /// RESIZE and RECSAVE refuse it, and LOADV fills it without changing
-    /// its size. Every variable it is assigned to shares it.
+    /// The array is the system's own memory, like the arrays of GARRAY and
+    /// TARRAY: RESIZE and RECSAVE refuse it, and LOADV fills it without
+    /// changing its size. Every variable it is assigned to shares it.
     pub system: bool,
 }
 
@@ -152,10 +152,10 @@ impl Array {
     }
 }
 
-/// Real to integer, dropping the fraction as INT() does.
+/// Real to integer, dropping the fraction the same way INT() does.
 /// Values outside the 32-bit range raise Overflow.
 pub fn real_to_int(x: f64) -> Result<i32> {
-    // Exactly what truncates into the range; a NaN fails both.
+    // Exactly the values that truncate into the range. A NaN fails both tests.
     if x > -2147483649.0 && x < 2147483648.0 {
         return Ok(x as i32);
     }
@@ -268,7 +268,8 @@ impl Value {
     }
 }
 
-/// Number to text as PRINT and STR$ show it: integers in decimal, reals
+/// Number to text as PRINT shows it, and as STR$ shows an integer (STR$ of
+/// a real uses [`format_g`]): integers in decimal, reals
 /// with eight decimals and the trailing zeros removed, never in exponent
 /// form (checked on hardware: 1E20 prints in full, 1/3 as 0.33333333).
 /// NaN shows as `nan` and infinity as `inf`.
@@ -281,7 +282,7 @@ pub fn format_number(value: &Value) -> Str {
     text.encode_utf16().collect()
 }
 
-/// A real as C's `%g` gives it, which is STR$'s form and not PRINT's: six
+/// A real in the form of C's `%g`, which STR$ uses and PRINT does not: six
 /// significant digits, with an exponent when it is -5 or under, or 6 or over.
 pub fn format_g(x: f64) -> String {
     if x.is_nan() {

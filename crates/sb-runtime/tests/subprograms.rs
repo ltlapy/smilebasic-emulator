@@ -42,7 +42,7 @@ fn machine(dir: &TempDir, source: &str) -> Machine {
 fn enter(m: &mut Machine, line: &str) {
     m.type_text(line);
     m.rt.key_press(keys::ENTER);
-    // Keys go on 32 a frame.
+    // Keys arrive at 32 per frame.
     for _ in 0..=line.len() / 32 {
         m.frame();
     }
@@ -100,7 +100,7 @@ fn a_subprogram_runs_beside_direct_mode_and_reaches_the_main_one() {
     assert!(m.sub_running(), "{:?} {:?}", m.rt.take_notices(), rows(&m));
     frames(&mut m, 5);
     // The main interpreter ran the line the subprogram typed: it is the
-    // main one, it was in direct mode, and the slot came across by name.
+    // main one, it was in DIRECT mode, and the slot came across by name.
     assert_eq!(last_rows(&m, 3), ["?ENVTYPE(),0,3", "0   0   3", "OK"]);
     let sub = m.sub_screen().expect("shown");
     assert_eq!(sub.area, [10, 20, 300, 200]);
@@ -153,7 +153,7 @@ fn the_focus_takes_the_keys_and_comes_back_when_the_subprogram_ends() {
     frames(&mut m, 3);
     assert!(!m.sub_running());
     assert!(!m.sub_has_focus());
-    // Nothing reached the main interpreter's direct mode.
+    // Nothing reached the main interpreter's DIRECT mode.
     assert_eq!(last_rows(&m, 1), ["OK"]);
 }
 
@@ -180,10 +180,10 @@ fn subprogram_commands_are_for_direct_mode_and_a_missing_file_fails() {
 fn a_busy_subprogram_keeps_to_the_frames_time() {
     let dir = TempDir::new("busy");
     // About 1.6 million instructions: 80 slices, or two frames for a
-    // subprogram with no time limit of its own.
+    // subprogram without its own time limit.
     let mut m = machine(&dir, "FOR I=1 TO 100000:NEXT\n");
-    // With no time left in the frame, each side runs one slice a frame
-    // whatever the computer's speed, so the count of frames tells.
+    // With no time left in the frame, each side runs one slice per frame
+    // regardless of the computer's speed, so the count of frames tells.
     m.time_limit = Some(std::time::Duration::ZERO);
     enter(&mut m, "subrun \"sub\"");
     m.set_slot(0, "WHILE 1:WEND\n".to_string());
@@ -251,7 +251,7 @@ fn the_side_without_the_focus_shows_darker() {
     enter(&mut m, "backcolor #c_white");
     enter(&mut m, "subrun \"sub\"");
     frames(&mut m, 2);
-    // ENVFOCUS 0: the subprogram's own screen goes darker, not the main.
+    // ENVFOCUS 0: the subprogram's own screen goes darker, not the main one.
     assert_eq!(m.render().get(399, 239), Some(0xFFFF_FFFF));
     frames(&mut m, 8);
     // A subprogram's ENVTYPE parameter, and its XSUBSCREEN before one
@@ -288,8 +288,8 @@ fn errors_carry_their_number_and_a_line_under_them() {
     assert!(rows(&m).iter().any(|r| r == "7   6"), "{:?}", rows(&m));
 }
 
-/// TEST62: a compile error leaves the status at direct mode's, and the rest
-/// as an error that ran.
+/// TEST62: a compile error leaves the status at its DIRECT mode value (0),
+/// and sets the rest the same as an error that ran.
 #[test]
 fn envstat_tells_of_a_compile_error() {
     let dir = TempDir::new("errcompile");
@@ -311,7 +311,8 @@ fn envstat_tells_of_a_compile_error() {
     );
 }
 
-/// TEST64: the subprogram's MAINCNT is the main interpreter's.
+/// TEST64: the subprogram's MAINCNT is the frame count of the main
+/// interpreter.
 #[test]
 fn a_subprogram_reads_the_main_frame_count() {
     let dir = TempDir::new("maincnt");
@@ -444,8 +445,8 @@ fn a_yellow_border_marks_where_the_focus_goes() {
     enter(&mut m, "subrun \"sub\"");
     frames(&mut m, 3);
     assert_eq!(m.focus_border(), Some(([10, 20, 300, 200], 255)));
-    // Long after, it has faded out; when the subprogram ends, the main
-    // interpreter's whole display gets it.
+    // Long after, it has faded out. When the subprogram ends, the whole
+    // display of the main interpreter gets the border.
     frames(&mut m, 28);
     assert!(!m.sub_running());
     assert_eq!(m.focus_border(), Some(([0, 0, 1280, 720], 255)));
@@ -547,7 +548,7 @@ fn a_subprograms_name_cannot_leave_the_storage_folder() {
     let outer = TempDir::new("traversal");
     let dir = TempDir(outer.0.join("root"));
     let mut m = machine(&dir, "END\n");
-    // What the names below would reach if they went through.
+    // The paths the names below would reach if they went through.
     std::fs::create_dir_all(dir.0.join("@WORKSPACE/TA")).unwrap();
     std::fs::create_dir_all(dir.0.join("GAME/TA")).unwrap();
     std::fs::write(outer.0.join("secret"), "WHILE 1:VSYNC:WEND\n").unwrap();
@@ -605,7 +606,8 @@ fn recovering_from_a_panic_ends_a_subprogram_too() {
 #[test]
 fn a_subprogram_types_into_the_editor_beside_it() {
     let dir = TempDir::new("editor");
-    // As SmileBASIC 4's SMILETOOL types what was picked, on a key.
+    // Like SmileBASIC 4's SMILETOOL, which types what was picked when a key
+    // is pressed.
     let mut m = machine(
         &dir,
         "XSUBSCREEN 0,0,1280,720\n\
@@ -632,7 +634,7 @@ fn a_subprogram_types_into_the_editor_beside_it() {
     assert!(m.sub_screen().is_some());
 }
 
-/// Starts `SUB` as tool 1, with the editor open.
+/// Starts `SUB` as the first tool, with the editor open.
 fn enter_sub_from_editor(m: &mut Machine) {
     m.rt.settings.tools[0] = "SUB".to_string();
     assert!(m.run_tool(0).unwrap());
@@ -648,10 +650,10 @@ const TELL_STATUS: &str = "ENVSTAT OUT S,N,A,SL,C,L\n\
      PUSHKEY STR$(S)+\",\"+STR$(N)+\",\"+STR$(A)+\",\"+STR$(SL)+\",\"+STR$(C)+\",\"+STR$(L)+\" \"+STR$(X)+\",\"+STR$(Y)\n\
      LOOP:VSYNC:ENDLOOP\n";
 
-/// TEST70: an error typed in direct mode sets the status to 2 and leaves
-/// the error, its argument, place and line as they were, and clean lines
-/// after it change nothing. An error found as a line typed in DIRECT mode
-/// compiles leaves the status as it was.
+/// TEST70: an error typed in DIRECT mode sets the status to 2 and leaves
+/// the error, its argument, place and line unchanged. Clean lines after it
+/// change nothing. An error found as a line typed in DIRECT mode compiles
+/// leaves the status unchanged.
 #[test]
 fn an_error_in_direct_mode_sets_the_status_and_keeps_the_rest() {
     let told = |program: Option<&str>, lines: &[&str]| {
@@ -677,7 +679,7 @@ fn an_error_in_direct_mode_sets_the_status_and_keeps_the_rest() {
     assert_eq!(told(None, &["?("]), "0,0,0,-1,-1,0");
     assert_eq!(told(None, &["z=0:?1/z", "?("]), "2,0,0,-1,-1,0");
     // TEST72: a division by zero of constants is found as the line
-    // compiles, and leaves the status as a Syntax error does.
+    // compiles, and leaves the status the same as a Syntax error does.
     let clean = Some("?1\n");
     let lines = ["?(", "?1/0", "", "?(", "?1"];
     assert_eq!(told(clean, &lines), "0,0,0,-1,-1,0");
@@ -732,7 +734,8 @@ fn subrun_takes_lower_case_and_a_file_type() {
     }
 }
 
-/// The sub interpreter's console, as [`rows`] gives the main one's.
+/// The console of the sub interpreter, in the form [`rows`] gives for the
+/// main one.
 fn sub_rows(m: &Machine) -> Vec<String> {
     let console = &m.sub_runtime().expect("running").0.text[4];
     let (w, h) = console.size();
@@ -900,8 +903,8 @@ fn two_dialogs_at_once_show_the_main_one_and_close_together() {
     assert_eq!(sub_rows(&m), ["1"]);
 }
 
-/// The main program's DIALOG and the subprogram's, each some frames after
-/// it starts, each printing RESULT() and MAINCNT.
+/// A DIALOG in the main program and one in the subprogram, each some frames
+/// after its program starts, each printing RESULT() and MAINCNT.
 fn two_dialogs(tag: &str, main: (&str, u32), sub: (&str, u32)) -> (TempDir, Machine) {
     let ask = |(dialog, wait): (&str, u32)| {
         format!("WAIT {wait}\n{dialog}\n?RESULT();\" \";MAINCNT()\n{THEN_WAIT}")
@@ -1051,9 +1054,9 @@ fn sub_runs(m: &Machine) -> bool {
     m.sub_runtime().is_some()
 }
 
-/// A stop while both wait is the one dialog's stop answer: both programs
-/// stop, whichever side the stop comes from, and the earlier dialog does
-/// not show again.
+/// A stop while both wait is the stop answer of the one dialog: both
+/// programs stop, regardless of the side the stop comes from, and the
+/// earlier dialog does not show again.
 #[test]
 fn a_stop_while_both_wait_stops_both_programs() {
     for (tag, how) in [("stop-sub", 0), ("stop-main", 1), ("stop-plus", 2)] {
@@ -1218,9 +1221,9 @@ fn a_subprograms_notices_reach_the_frontend() {
     assert!(m.take_notices().is_empty());
 }
 
-/// A subprogram treats project names as a main program does: LOADG loads
-/// a name with a project, its own or another, with or without `GRP:`, and
-/// EXEC refuses one.
+/// A subprogram treats project names the same as a main program does:
+/// LOADG loads a name with a project, its own or another, with or without
+/// `GRP:`, and EXEC refuses one.
 #[test]
 fn a_subprograms_loadg_takes_a_project_name_and_its_exec_refuses_one() {
     let dir = TempDir::new("sub-project-names");
@@ -1262,8 +1265,8 @@ fn a_subprograms_loadg_takes_a_project_name_and_its_exec_refuses_one() {
     assert_eq!(last_rows(&m, 3), block);
 }
 
-/// A subprogram's RECSTART and RECSTOP do nothing, whatever they are
-/// given, and leave the main program's recording going.
+/// A subprogram's RECSTART and RECSTOP do nothing, regardless of what they
+/// are given, and leave the main program's recording going.
 #[test]
 fn a_subprograms_recstart_and_recstop_do_nothing() {
     let dir = TempDir::new("sub-rec");
@@ -1281,9 +1284,9 @@ fn a_subprograms_recstart_and_recstop_do_nothing() {
 }
 
 /// The subprogram's SNDMSBAL sets the one balance both programs read, and
-/// the main program's does nothing; the subprogram's SNDMVOL does nothing,
-/// and it reads the main program's. The main program's SNDSTOP puts the
-/// balance back halfway.
+/// SNDMSBAL in the main program does nothing. The subprogram's SNDMVOL
+/// does nothing, and it reads the main program's volume. SNDSTOP in the
+/// main program puts the balance back halfway.
 #[test]
 fn the_balance_is_the_subprograms_and_sndmvol_the_main_ones() {
     let dir = TempDir::new("sub-mixer");

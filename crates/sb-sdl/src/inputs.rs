@@ -1,5 +1,6 @@
-//! What the frontend keeps of the keys, the mouse and the controllers
-//! between events, and the pad's part in the emulator's own screens.
+//! The state of the keys, the mouse and the controllers that the frontend
+//! keeps between events, and the role of the pad in the emulator's own
+//! screens.
 
 use std::time::{Duration, Instant};
 
@@ -10,8 +11,8 @@ use crate::controls::{self, Controls};
 use crate::pad_repeat::{Dir, PadRepeat};
 use crate::simple_ui;
 
-/// What frontend() keeps of the keys, the mouse and the controllers
-/// between events.
+/// The state of the keys, the mouse and the controllers that frontend()
+/// keeps between events.
 pub struct Inputs {
     pub controls: Controls,
     pub typing: controls::Typing,
@@ -19,14 +20,14 @@ pub struct Inputs {
     pub hotkeys: simple_ui::Hotkeys,
     /// Holding the pad's up or down repeats in the projects, and the left
     /// stick works as the pad there. `pad_screen` is the screen it was
-    /// last ticked for, `pad_tick` when.
+    /// last ticked for, and `pad_tick` the time of that tick.
     pub pad_repeat: PadRepeat,
     pub pad_screen: usize,
     pub pad_tick: Instant,
-    /// The left button went down on the editor and is still held.
+    /// The left button was pressed on the editor and is still held.
     pub dragging: bool,
-    /// When the + button, F5 or a controller's, went down, while it is
-    /// held.
+    /// The time the + button (F5, or the button on a controller) was
+    /// pressed, while it is held.
     pub plus_down: Option<Instant>,
     /// The text of a key that something else took: the space some systems
     /// type for Ctrl+Space, or a digit that chose a slot in a window that
@@ -52,10 +53,12 @@ impl Inputs {
         }
     }
 
-    /// The pad's repeats for this trip on the emulator's screen `screen`
-    /// (see `input_screen`): presses of up or down for as long as it was
-    /// held, once a frame whatever events came. A new screen or mode
-    /// starts without the old hold, and only the lists repeat.
+    /// Returns the pad's repeats for this iteration on the emulator's
+    /// screen `screen` (see `input_screen`): presses of up or down for as
+    /// long as it was held, once per frame regardless of the events that
+    /// came. A new screen or mode starts without the old hold. Only the
+    /// project manager in any mode, the pause menu and the game list
+    /// repeat, not a dialog.
     pub fn repeats(&mut self, screen: usize) -> Vec<Event> {
         let dt = self.pad_tick.elapsed().min(Duration::from_millis(100));
         self.pad_tick = Instant::now();
@@ -82,8 +85,9 @@ impl Inputs {
     }
 
     /// Notes the pad's up and down as held or released, unless the event
-    /// is a repeat of ours, and gives the event to handle: the left stick
-    /// pushed is the pad's press, on the emulator's own screens.
+    /// is one of our repeats, and returns the event to handle. On the
+    /// emulator's own screens, a push of the left stick is a press of the
+    /// pad.
     pub fn pad_event(&mut self, event: Event, repeated: bool, screen: usize) -> Event {
         match event {
             Event::GamepadButtonDown { button, .. } if !repeated => {

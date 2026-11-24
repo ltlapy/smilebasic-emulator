@@ -1,5 +1,6 @@
-// LFILTER's color conversion, as filter::shift_color does it on the CPU: the
-// usual HSV formulas on the premultiplied texel, with the coverage kept.
+// LFILTER's color conversion, the same as filter::shift_color does on the
+// CPU: the usual HSV formulas on the premultiplied texel, with the coverage
+// kept.
 //
 // SDL's bindings for a fragment shader: textures in set 2, uniforms in set 3.
 // The vertex shader is SDL_Renderer's own. See shaders/README.md for how this
@@ -12,8 +13,8 @@ layout(location = 0) out vec4 o_color;
 
 layout(set = 2, binding = 0) uniform sampler2D u_texture;
 layout(set = 3, binding = 0) uniform Shift {
-    // Hue, saturation and value, each as a part of its whole range; w is 1
-    // where a clear pixel is left alone (compose mode 1).
+    // Hue, saturation and value, each as a fraction of its full range. w is 1
+    // when a clear pixel is left unchanged (compose mode 1).
     vec4 u_shift;
 };
 
@@ -37,6 +38,6 @@ void main() {
     float v = clamp(q.x + u_shift.z, 0.0, 1.0);
     vec3 t = clamp(abs(fract(h + vec3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
     vec3 c = v * (1.0 + s * (t - 1.0));
-    // To the nearest, with halves down, as the CPU has it.
+    // Rounds to the nearest, with halves rounded down, like the CPU.
     o_color = vec4(floor(c * 255.0 + 0.499) / 255.0, texel.a);
 }

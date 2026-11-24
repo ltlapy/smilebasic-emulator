@@ -3,26 +3,28 @@
 //!
 //! When the VM takes a program, after [`crate::fuse::check`], [`attach`]
 //! picks the loops whose entries all have a native form, compiles each with
-//! `sb_jit` into one function, and puts [`FastOp::Native`] in the place of
-//! the loop's first entry. `run_fused` calls the function there; it runs
-//! entries until one it does not have, a step that cannot do its work, or
-//! the end of the budget, and leaves `pc` and the budget as the fused
-//! entries would have. A step that cannot do its work ends `run_fused` as a
-//! chain's does, and `step` goes on from the statement's start.
+//! `sb_jit` into one function, and puts [`FastOp::Native`] in place of the
+//! first entry of the loop. `run_fused` calls the function there. The
+//! function runs entries until it reaches an entry it does not have, a step
+//! that cannot do its work, or the end of the budget. It leaves `pc` and
+//! the budget as the fused entries would have left them. A step that cannot
+//! do its work ends `run_fused` the same as a step of a chain does, and
+//! `step` continues from the start of the statement.
 //!
-//! What each entry does natively is worked out here from the same entries
-//! and chain steps the interpreter runs, and the operators' rules are
-//! `ops::binary_numbers`'s: the tests in this file run every operator the
-//! native code has on a table of values both ways.
+//! This file derives the native form of each entry from the same entries
+//! and chain steps that the interpreter runs. The rules of the operators
+//! are those of `ops::binary_numbers`: the tests in this file run every
+//! operator of the native code on a table of values both ways.
 //!
 //! PROTOTYPE LIMITS, each needed by the full version:
-//! - only loops whose every entry is a chain or a stack-free entry of
+//! - only loops in which every entry is a chain or a stack-free entry of
 //!   numbers are compiled: no array elements, builtins, DEF calls, GOSUBs,
 //!   host calls or stack entries;
 //! - a FOR's NEXT has a native form for integers only, and a region that
-//!   keeps failing is left to the interpreter for good, which then runs
-//!   the loop's first instruction with `step` each time round: the full
-//!   version needs the replaced entry back, without a test on every entry;
+//!   keeps failing is left to the interpreter permanently, which then runs
+//!   the first instruction of the loop with `step` each time the loop
+//!   repeats: the full version needs to put the replaced entry back,
+//!   without a test on every entry;
 //! - native code is made for every loop when the VM takes the program, with
 //!   no measure of which loops are hot.
 
@@ -39,8 +41,8 @@ use crate::fuse::{FastOp, Micro, Var};
 use crate::value::Value;
 use crate::vars::Vars;
 
-/// The most entries a region takes. Others are left out of it and reached
-/// through the interpreter.
+/// The most entries a region takes. The others stay outside it and are
+/// reached through the interpreter.
 const MOST_ENTRIES: usize = 64;
 
 /// A region that has failed this often, and on at least one run in
@@ -55,7 +57,7 @@ pub fn set_enabled(on: bool) {
     ENABLED.with(|e| e.set(on));
 }
 
-/// What making native code has cost on this thread.
+/// The cost of making native code on this thread.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
     /// Regions compiled, the entries in them, and the bytes of code.
@@ -64,11 +66,11 @@ pub struct Stats {
     pub bytes: u64,
     /// Regions that did not compile.
     pub refused: u64,
-    /// Time to work out the regions and compile them, in nanoseconds, and
+    /// Time to find the regions and compile them, in nanoseconds, and
     /// the longest for one region.
     pub nanos: u64,
     pub most_nanos: u64,
-    /// Time to describe the machine to Cranelift, once a thread, before
+    /// Time to describe the machine to Cranelift, once per thread, before
     /// the first program: not in `nanos`.
     pub setup_nanos: u64,
 }
@@ -89,7 +91,7 @@ struct Region {
 }
 
 /// A program's native code, kept with it in [`Compiled::native`]. Cloning
-/// the program shares the code. Programs compare equal whatever their
+/// the program shares the code. Programs compare equal regardless of their
 /// native code.
 #[derive(Clone, Default)]
 pub struct Native {
@@ -109,18 +111,18 @@ impl PartialEq for Native {
     }
 }
 
-/// What came of entering native code.
+/// The result of entering native code.
 pub(crate) enum Entered {
-    /// It ran up to `pc`, which the interpreter goes on from.
+    /// It ran up to `pc`, where the interpreter continues.
     Ran { pc: usize, left: u64 },
-    /// A step could not do its work: `step` goes on from `pc`.
+    /// A step could not do its work: `step` continues from `pc`.
     Failed { pc: usize, left: u64 },
-    /// Not entered: `step` runs the instruction, as for a failure.
+    /// Not entered: `step` runs the instruction, the same as for a failure.
     Not,
 }
 
 impl Native {
-    /// How many times native code has been entered.
+    /// Returns the number of times native code has been entered.
     pub fn runs(&self) -> u64 {
         self.regions
             .iter()
@@ -129,7 +131,7 @@ impl Native {
             .sum()
     }
 
-    /// How many regions there are.
+    /// Returns the number of regions.
     pub fn regions(&self) -> usize {
         self.regions.as_ref().map_or(0, |r| r.len())
     }
@@ -155,11 +157,12 @@ impl Native {
             pc: pc as u64,
             left,
         };
-        // SAFETY: the tables are the ones `vars` holds the only borrows of,
-        // for as long as this call, and each has at least the places the
-        // code names, checked just above; `Value` is laid out as `LAYOUT`
-        // says, which the tests below check. The code touches nothing else
-        // (sb_jit) and calls nothing, so nothing can unwind through it.
+        // SAFETY: the tables are the ones `vars` holds the only borrows of
+        // for the duration of this call, and each has at least the places
+        // the code names, checked just above. `Value` is laid out as
+        // `layout()` says, which the tests below check. The code touches
+        // nothing else (sb_jit) and calls nothing, so nothing can unwind
+        // through it.
         let status = unsafe { r.code.run(&mut ctx) };
         r.runs.set(runs + 1);
         let (pc, left) = (ctx.pc as usize, ctx.left);
@@ -173,9 +176,10 @@ impl Native {
     }
 }
 
-/// [`Value`] in memory, as `#[repr(u8)]` makes it: a tag of the variant's
-/// number in declaration order at offset 0, then each variant's fields as
-/// a `#[repr(C)]` struct after the tag would hold them.
+/// Returns the layout of [`Value`] in memory that `#[repr(u8)]` gives: at
+/// offset 0 a tag with the number of the variant in declaration order,
+/// then the fields of each variant where a `#[repr(C)]` struct would hold
+/// them after the tag.
 fn layout() -> j::Layout {
     #[repr(C)]
     struct IntVariant {
@@ -197,14 +201,14 @@ fn layout() -> j::Layout {
     }
 }
 
-/// An entry's native form, and the addresses it can go on to.
+/// An entry's native form, and the addresses that can follow it.
 struct Lowered {
     entry: j::Entry,
     next: Vec<usize>,
 }
 
 /// Compiles the loops of `program` whose entries all have native forms,
-/// and puts [`FastOp::Native`] at each one's start. Runs after
+/// and puts [`FastOp::Native`] at the start of each. Runs after
 /// [`crate::fuse::check`], on a program not yet shared.
 pub(crate) fn attach(program: &mut Compiled) {
     program.native = Native::default();
@@ -223,13 +227,14 @@ pub(crate) fn attach(program: &mut Compiled) {
     let layout = layout();
     let n = program.fast.len();
     let lowered: Vec<Option<Lowered>> = (0..n).map(|pc| lower(program, pc)).collect();
-    // A loop starts where an entry goes back to, and runs to the last entry
-    // that goes back to its start. A region that does not come back to its
-    // start saves less than entering native code costs, and what follows
-    // the loop is another loop's or the interpreter's. Found in one pass:
-    // looking for each loop's end from the program's end took time in the
-    // number of loops times the program's length, 27 seconds for a program
-    // of 20000 short loops.
+    // A loop starts at an entry that some entry goes back to, and runs
+    // to the last entry that goes back to its start. A region that does not
+    // come back to its start saves less than entering native code costs,
+    // and the code after the loop belongs to another loop or to the
+    // interpreter. The ends are found in one pass: looking for the end of
+    // each loop from the end of the program took time proportional to the
+    // number of loops times the program length, 27 seconds for a program of
+    // 20000 short loops.
     let mut ends: Vec<Option<usize>> = vec![None; n];
     for (pc, l) in lowered.iter().enumerate() {
         for &to in l.iter().flat_map(|l| &l.next) {
@@ -632,7 +637,7 @@ fn lower_micro(p: &Places, m: &Micro) -> Option<j::Step> {
             charged: u32::from(charged),
         }),
         // PROTOTYPE LIMIT: array elements and builtins need calls out of
-        // native code, and a pushed value the stack.
+        // native code, and a pushed value needs the stack.
         M::Index1 { .. }
         | M::Index2 { .. }
         | M::Builtin { .. }
@@ -647,7 +652,7 @@ mod tests {
     use super::*;
     use crate::ops;
 
-    /// What `LAYOUT` says of `Value`, checked on the values themselves.
+    /// Checks what `layout()` says about `Value` against the values themselves.
     #[test]
     fn values_are_laid_out_as_native_code_reads_them() {
         let l = layout();
@@ -754,8 +759,8 @@ mod tests {
         }
     }
 
-    /// Runs one entry on `table`: `Ok` with the place the entry wrote
-    /// last, `Err` with where it failed.
+    /// Runs one entry on `table`: `Ok` with the address the interpreter
+    /// continues at, `Err` with where it failed.
     fn run_entry(steps: Vec<j::Step>, table: &mut [Value]) -> Result<u32, (u64, u64)> {
         let region = j::Region {
             entries: vec![j::Entry {
@@ -787,10 +792,10 @@ mod tests {
         j::Place { table: 0, index }
     }
 
-    /// Every operator the native code has, on every pair of values from
-    /// places and with the right side carried in the step: what it gives is
-    /// what `ops::binary_numbers` gives, to the bit, or it leaves the
-    /// statement to the interpreter where `binary_numbers` does.
+    /// Every operator of the native code, on every pair of values, both from
+    /// places and with the right side carried in the step: the result is the
+    /// same as that of `ops::binary_numbers`, to the bit, or the statement is
+    /// left to the interpreter where `binary_numbers` leaves it.
     #[test]
     fn native_operators_agree_with_the_interpreter() {
         if !j::SUPPORTED {

@@ -2,7 +2,7 @@
 //! instruments and key regions, and the waveforms still compressed, so
 //! that they take little memory and are decoded only as notes play.
 //!
-//! The file is the emulator's own format, not SmileBASIC's:
+//! The file is the emulator's own format, not a SmileBASIC format:
 //!
 //! ```text
 //! "SBBANK01"
@@ -26,8 +26,8 @@ const WAVE_BYTES: usize = 64;
 /// Samples in one DSP-ADPCM frame of eight bytes.
 pub const FRAME_SAMPLES: u32 = 14;
 
-/// How a note's level moves: SmileBASIC's attack, decay, sustain, hold and
-/// release, each 0 to 127.
+/// The envelope of a note's level: SmileBASIC's attack, decay, sustain,
+/// hold and release, each 0 to 127.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Adshr {
     pub attack: u8,
@@ -43,12 +43,13 @@ pub struct Region {
     /// The lowest and highest key, inclusive.
     pub keys: (u8, u8),
     pub wave: u16,
-    /// The key the waveform sounds at as it is.
+    /// The key the waveform sounds at when played unchanged.
     pub original_key: u8,
     pub volume: u8,
     pub pan: u8,
     pub envelope: Adshr,
-    /// The note plays to its end however soon it is let go, as drums do.
+    /// The note plays to its end however soon it is released, the same as
+    /// a drum note.
     pub ignore_note_off: bool,
 }
 
@@ -92,7 +93,8 @@ impl Region {
 pub enum Encoding {
     Pcm16,
     /// Nintendo's DSP-ADPCM: eight predictor pairs, and the two samples
-    /// before the loop start, which decoding the loop again starts from.
+    /// before the loop start, which decoding starts from each time the loop
+    /// repeats.
     Adpcm {
         coefs: [i16; 16],
         loop_history: [i16; 2],
@@ -108,7 +110,7 @@ pub struct WaveInfo {
     pub rate: u32,
     /// Samples in the waveform.
     pub len: u32,
-    /// Where the loop starts, for a waveform that loops to its end.
+    /// The loop start, for a waveform that loops to its end.
     pub loop_start: Option<u32>,
     pub encoding: Encoding,
     /// The bytes in the bank's data.
@@ -116,8 +118,9 @@ pub struct WaveInfo {
 }
 
 impl WaveInfo {
-    /// Bytes `len` samples take, if that fits in memory at all (a 32-bit
-    /// machine's usize can be too small for a damaged file's `len`).
+    /// The number of bytes `len` samples take, if it fits in memory at all
+    /// (on a 32-bit machine, usize can be too small for the `len` of a
+    /// damaged file).
     pub fn bytes_for(encoding: &Encoding, len: u32) -> Option<usize> {
         match encoding {
             Encoding::Pcm16 => usize::try_from(len).ok()?.checked_mul(2),
@@ -295,10 +298,10 @@ impl<'a> Cursor<'a> {
     }
 }
 
-/// Reads a waveform's samples one after another, going round its loop.
+/// Reads a waveform's samples one after another, going around its loop.
 ///
-/// It decodes the rest of a DSP-ADPCM frame at once, up to 14 samples,
-/// and hands them out of a small buffer: decoding a sample at a time took
+/// It decodes the rest of a DSP-ADPCM frame in one step, up to 14 samples,
+/// and returns them from a small buffer: decoding one sample at a time took
 /// about as long as all the rest of a voice's work. A 16-bit waveform goes
 /// through the same buffer, so that taking a sample is the same few
 /// instructions for both. A reader of a waveform kept decoded
@@ -308,7 +311,7 @@ pub struct Reader {
     /// The position of the next sample, which `ahead[next]` holds while
     /// `next < end`.
     pos: u32,
-    /// The two samples before the last one decoded, which the next is
+    /// The last two samples decoded, the latest first, which the next is
     /// predicted from.
     history: [i16; 2],
     /// Samples of the frame `pos` is in, decoded ahead: `next..end` are
@@ -316,7 +319,7 @@ pub struct Reader {
     ahead: [i16; FRAME_SAMPLES as usize],
     next: u8,
     end: u8,
-    /// The waveform kept decoded, while this takes from there.
+    /// The waveform kept decoded, while this reader takes from there.
     cached: Option<Cached>,
 }
 
@@ -327,7 +330,7 @@ impl Reader {
         self.next_of(wave, &data[wave.data.clone()])
     }
 
-    /// [`Reader::next`] with the waveform's own bytes found already: this is
+    /// [`Reader::next`] with the waveform's own bytes already found. It runs
     /// for each sample of each voice.
     #[inline(always)]
     pub fn next_of(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
@@ -355,8 +358,8 @@ impl Reader {
         }
     }
 
-    /// The samples decoded already that [`Reader::next_of`] gives next, for
-    /// a loop that takes them itself, with [`Reader::skip`].
+    /// The samples already decoded that [`Reader::next_of`] returns next,
+    /// for a loop that takes them itself, with [`Reader::skip`].
     #[inline(always)]
     pub(crate) fn ahead(&self) -> &[i16] {
         match &self.cached {
@@ -365,7 +368,7 @@ impl Reader {
         }
     }
 
-    /// Moves on past `n` of [`Reader::ahead`]'s samples.
+    /// Moves past `n` of the samples that [`Reader::ahead`] returns.
     #[inline(always)]
     pub(crate) fn skip(&mut self, n: usize) {
         debug_assert!(n <= self.ahead().len());
@@ -376,9 +379,9 @@ impl Reader {
         self.pos += n as u32;
     }
 
-    /// [`Reader::next_of`] past the end of the chunk a kept waveform's
-    /// reader is in: the next chunk, round the loop, or decoding on alone
-    /// where the waveform is not kept.
+    /// [`Reader::next_of`] past the end of the chunk that the reader of a
+    /// kept waveform is in: it takes the next chunk, goes around the loop,
+    /// or continues decoding alone where the waveform is not kept.
     #[inline(never)]
     fn next_kept(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
         let c = self.cached.as_mut()?;
@@ -404,12 +407,12 @@ impl Reader {
                 Some(s)
             }
             None => {
-                // Not kept: decoding goes on from here, from the two samples
-                // before, which are.
+                // Not kept: decoding continues from here, from the two
+                // samples before, which are kept.
                 let history = c.history_at(pos);
                 self.cached = None;
-                // Without them, decoding gave out before here: missing
-                // bytes, where decoding alone gives out too.
+                // Without them, decoding stopped before here at missing
+                // bytes, where decoding alone stops too.
                 self.history = history?;
                 self.decode(wave, data)
             }
@@ -417,7 +420,7 @@ impl Reader {
     }
 
     /// Decodes from `pos` to the end of its frame, or of the waveform, and
-    /// gives the first of those samples.
+    /// returns the first of those samples.
     #[inline(never)]
     fn decode(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
         if self.cached.is_some() {
@@ -436,8 +439,8 @@ impl Reader {
         let to = (FRAME_SAMPLES as usize).min(wave.len as usize - frame);
         let to = match &wave.encoding {
             Encoding::Pcm16 => {
-                // Only the samples whose bytes are there: a wave that the
-                // bank's checks let through always has them all.
+                // Only the samples whose bytes are present. A wave that
+                // passed the bank's checks always has all of them.
                 let bytes = data.get(2 * frame..).unwrap_or_default();
                 let to = to.min(bytes.len() / 2);
                 for n in from..to {
@@ -459,11 +462,12 @@ impl Reader {
                 let header = whole[0];
                 let predictor = usize::from(header >> 4 & 7);
                 let [c1, c2] = [coefs[2 * predictor], coefs[2 * predictor + 1]].map(i32::from);
-                // What each nibble adds, which does not hang on the samples
-                // before: worked out first, apart from the chain of
-                // predictions. The sums wrap (a damaged bank's coefficients
-                // can overflow, as they would unchecked; real waveforms
-                // stay far inside i32), so their order does not matter.
+                // The amount each nibble adds, which does not depend on the
+                // samples before. It is computed first, separately from the
+                // chain of predictions. The sums wrap, the same as unchecked
+                // arithmetic (the coefficients of a damaged bank can
+                // overflow; real waveforms stay far inside i32), so their
+                // order does not matter.
                 let mut add = [0i32; FRAME_SAMPLES as usize];
                 for (pair, &byte) in add.chunks_exact_mut(2).zip(&whole[1..]) {
                     // Sign-extend each four bits.
@@ -492,14 +496,14 @@ impl Reader {
             self.end = 0;
             return None;
         }
-        // The buffer goes by the place in the frame.
+        // The buffer is indexed by the place in the frame.
         (self.next, self.end) = (from as u8 + 1, to as u8);
         self.pos += 1;
         Some(self.ahead[from])
     }
 
-    /// [`Reader::next_of`] as it was first written, a sample decoded at a
-    /// time, to compare with.
+    /// The first version of [`Reader::next_of`], which decodes one sample
+    /// at a time, to compare with.
     #[cfg(test)]
     fn next_by_sample(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
         if self.pos >= wave.len {
@@ -652,8 +656,8 @@ mod tests {
         assert_eq!(r.next(&w, &data), None);
     }
 
-    /// What the decoder's sum was before it wrapped: the same in every
-    /// frame of valid data, whatever the build.
+    /// The output the decoder gave before its sums wrapped stays the same
+    /// in every frame of valid data, regardless of the build.
     #[test]
     fn adpcm_output_is_unchanged_inside_the_range() {
         let mut coefs = [0; 16];
@@ -699,9 +703,10 @@ mod tests {
         }
     }
 
-    /// Decoding a frame at a time gives what decoding a sample at a time
-    /// gave, across frames, round loops that start anywhere in a frame,
-    /// and at the end of waveforms that do not loop, of any length.
+    /// Decoding one frame at a time gives the same samples as decoding one
+    /// sample at a time did, across frames, around loops that start
+    /// anywhere in a frame, and at the end of waveforms that do not loop,
+    /// of any length.
     #[test]
     fn frames_decode_as_samples_did() {
         let mut seed = 0x1234_5678u32;
@@ -765,7 +770,7 @@ mod tests {
     }
 
     /// A waveform whose bytes stop short of its length, which the bank's
-    /// checks refuse, ends where they do.
+    /// checks refuse, ends where its bytes stop.
     #[test]
     fn missing_bytes_end_the_waveform() {
         let w = WaveInfo {
@@ -797,7 +802,7 @@ mod tests {
 
     #[test]
     fn wave_sizes_stay_in_range() {
-        // Past what fits, a wave is refused rather than wrapped round.
+        // Past what fits, a wave is refused rather than wrapped around.
         let mut b = vec![0u8; WAVE_BYTES];
         b[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
         b[8..12].copy_from_slice(&u32::MAX.to_le_bytes());

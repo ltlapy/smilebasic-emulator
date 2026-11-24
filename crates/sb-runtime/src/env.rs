@@ -1,9 +1,9 @@
-//! The program's surroundings: ENVTYPE, ENVSTAT, ENVFOCUS, ENVINPUT$,
+//! The program's environment: ENVTYPE, ENVSTAT, ENVFOCUS, ENVINPUT$,
 //! ENVLOAD, ENVSAVE and ENVPROJECT as the main interpreter sees them,
 //! CLIPBOARD, and the project's metadata (METALOAD, METAEDIT, METASAVE).
 //!
-//! The sub interpreter's own side of them is here too; where they reach
-//! the main interpreter, see [`crate::sub`].
+//! The sub interpreter's own handling of them is here too. For the calls
+//! that reach the main interpreter, see [`crate::sub`].
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -21,32 +21,32 @@ use crate::runtime::{Command, Request, Runtime, checking, no_form, opt_int};
 use crate::sbfile;
 use crate::storage;
 
-/// Direct-mode lines that ENVINPUT$ can read back.
+/// The number of DIRECT mode lines that ENVINPUT$ can read back.
 pub const HISTORY: usize = 32;
 /// The icon's side in pixels.
 pub const ICON_SIZE: usize = 40;
 pub const TITLE_CHARS: usize = 24;
 pub const DESCRIPTION_CHARS: usize = 240;
-/// The metadata's files in the project folder: the title on the first
-/// line and the description after it, and the icon as a PNG. Their names
-/// start with `@`, so they never clash with SmileBASIC's typed files.
+/// The metadata files in the project folder: the title on the first line
+/// and the description after it, and the icon as a PNG. Their names start
+/// with `@`, so they never clash with SmileBASIC's typed files.
 const META_TEXT: &str = "@META.TXT";
 const META_ICON: &str = "@ICON.PNG";
-/// SmileBASIC 4's own metadata file, read when the emulator's are missing
-/// and removed by METASAVE.
+/// SmileBASIC 4's own metadata file. It is read when the emulator's own
+/// files are missing, and METASAVE removes it.
 pub const SB4_META: &str = "META";
 
-/// Somewhere to keep the text that CLIPBOARD sets and gets: the
-/// computer's clipboard in the frontend.
+/// A store for the text that CLIPBOARD sets and gets. In the frontend it
+/// is the computer's clipboard.
 pub trait Clipboard {
     fn text(&mut self) -> String;
     fn set_text(&mut self, text: &str);
     /// Called by the frontend from the thread the clipboard belongs to, to
-    /// pass on what was set from another.
+    /// pass on text set from another thread.
     fn settle(&mut self) {}
 }
 
-/// A clipboard of the emulator's own, for headless runs and tests.
+/// The emulator's own clipboard, for headless runs and tests.
 #[derive(Default)]
 pub struct MemoryClipboard(String);
 
@@ -66,8 +66,8 @@ impl Clipboard for MemoryClipboard {
 pub struct Meta {
     /// The project they belong to.
     pub project: String,
-    /// The current project when they were loaded: METALOAD may load
-    /// another's, which switching projects drops.
+    /// The current project when they were loaded. METALOAD may load the
+    /// metadata of another project. Switching projects drops that metadata.
     pub home: String,
     pub title: Vec<u16>,
     pub description: Vec<u16>,
@@ -86,7 +86,7 @@ impl Default for Meta {
     }
 }
 
-/// What the main interpreter is doing, as ENVSTAT reports it.
+/// The state of the main interpreter, as ENVSTAT reports it.
 mod status {
     pub const RUNNING: i32 = 3;
 }
@@ -101,7 +101,7 @@ fn string_arg(v: &Value) -> Result<String> {
 }
 
 impl Runtime {
-    /// Remembers a line typed in direct mode, for ENVINPUT$.
+    /// Remembers a line typed in DIRECT mode, for ENVINPUT$.
     pub(crate) fn remember_input(&mut self, line: &str) {
         let line: Vec<u16> = line.encode_utf16().collect();
         // Running the line just before again adds nothing (checked on
@@ -112,8 +112,8 @@ impl Runtime {
         self.history.truncate(HISTORY);
     }
 
-    /// The metadata being edited. Switching projects starts it afresh,
-    /// titled with the project's name.
+    /// The metadata being edited. Switching projects replaces it with blank
+    /// metadata titled with the project's name.
     fn meta(&mut self) -> &mut Meta {
         if self.meta.home != self.storage.project() {
             self.meta = self.blank_meta();
@@ -125,19 +125,19 @@ impl Runtime {
         project_meta(self.storage.project(), |_| None)
     }
 
-    /// The main interpreter's status: always running, as the code that
-    /// asks is running on it, even when typed in direct mode while a
-    /// program is stopped. Only subprograms see the others.
+    /// The main interpreter's status: always running, because the code
+    /// that asks is running on it, even when it was typed in DIRECT mode
+    /// while a program is stopped. Only subprograms see the other states.
     fn status(&self) -> i32 {
         status::RUNNING
     }
 
-    /// ENVLOCATE: where the console's cursor is on the 1280x720 display,
-    /// for a subprogram to show something by it, as SmileBASIC 4's soft
-    /// keyboard does. The command is not in the manual. The screen is
-    /// scaled to fit the display and centered, and the point is the top
-    /// of the cursor's cell, a character to its right. While the editor
-    /// shows, it is 0,0.
+    /// ENVLOCATE: the position of the console's cursor on the 1280x720
+    /// display, so that a subprogram can show something next to it, the
+    /// same as SmileBASIC 4's soft keyboard does. The command is not in the
+    /// manual. The screen is scaled to fit the display and centered, and
+    /// the point is the top of the cursor's cell, one character to its
+    /// right. While the editor shows, it is 0,0.
     pub(crate) fn cursor_on_display(&self) -> (i32, i32) {
         if self.env_status == crate::sub::status::EDITING {
             return (0, 0);
@@ -163,7 +163,7 @@ impl Runtime {
         match (command, want, args) {
             (Command::Envtype, Want::Value, []) => Ok(vec![int(self.env_type)]),
             // The manual says -1 for user programs; it is 0 on hardware.
-            // A subprogram's is -1.
+            // For a subprogram it is -1.
             (Command::Envtype, Want::Outs(2), []) => {
                 Ok(vec![int(self.env_type), int(-self.env_type)])
             }
@@ -205,8 +205,8 @@ impl Runtime {
                 let rect = self.sub_screen.unwrap_or([0, 0, 1280, 720]);
                 Ok(rect[..usize::from(n)].iter().map(|&v| int(v)).collect())
             }
-            // Outside a subprogram it does nothing, and gives 0s. It looks at
-            // no argument there, so nothing is an error.
+            // Outside a subprogram it does nothing and returns 0s. It reads
+            // no argument there, so any arguments are accepted.
             (Command::Xsubscreen, Want::Outs(n), _) if self.env_type != 1 => {
                 Ok(vec![int(0); usize::from(n)])
             }
@@ -224,8 +224,9 @@ impl Runtime {
                 Ok(vec![])
             }
             // 1 takes the focus and 0 gives it to the other interpreter,
-            // if a subprogram runs beside the main one. The focus moves a
-            // few frames later, and ENVFOCUS meanwhile does nothing.
+            // if a subprogram runs at the same time as the main one. The
+            // focus moves a few frames later, and ENVFOCUS meanwhile does
+            // nothing.
             (Command::Envfocus, Want::Outs(0), [flag]) => {
                 let take = flag.to_int()? != 0;
                 let other = self.env_type == 1 || self.sub_running;
@@ -234,7 +235,7 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
-            // Direct mode only: SUBRUN starts the file's program on the sub
+            // DIRECT mode only: SUBRUN starts the file's program on the sub
             // interpreter, and the others stop, show or hide it.
             (Command::Subrun, Want::Outs(0), [file]) => {
                 let file = string_arg(file)?;
@@ -354,8 +355,8 @@ impl Runtime {
                 }])
             }
             (Command::Metasave, Want::Outs(0), []) => {
-                // In a `#` project, before the question and with no
-                // argument's number.
+                // In a `#` project, the error comes before the question
+                // and names no argument.
                 if self.current_project_read_only() {
                     return Err(ErrorKind::CantSaveToSystemProject.into());
                 }
@@ -366,7 +367,7 @@ impl Runtime {
                     accept: "Save",
                     notice: format!("Saving the metadata of {}", self.project_label()),
                     in_programs: true,
-                    // SmileBASIC 4's META goes once these are written.
+                    // SmileBASIC 4's META is deleted once these are written.
                     originals: [META_TEXT, META_ICON, SB4_META]
                         .iter()
                         .filter_map(|name| self.storage.original_own(name))
@@ -375,7 +376,8 @@ impl Runtime {
                 // METASAVE sets no RESULT(), whether it saves, fails or is
                 // cancelled.
                 // UNVERIFIED: how SmileBASIC 4 reports a failed write; it
-                // is explained here as other file commands explain theirs.
+                // is explained here the same way other file commands explain
+                // theirs.
                 match self.confirm_file(action, &[]) {
                     Ask::Go => {}
                     Ask::Wait | Ask::Refused => return Ok(vec![]),
@@ -399,10 +401,10 @@ impl Runtime {
         }
     }
 
-    /// Into the current project, as the manual says, whichever project's
-    /// METALOAD read. A SmileBASIC 4 `META` there goes once the
-    /// emulator's files are written, so that no stale copy stays behind;
-    /// Export makes it again from these.
+    /// Writes into the current project, as the manual says, regardless of
+    /// the project METALOAD read. A SmileBASIC 4 `META` there is deleted
+    /// once the emulator's files are written, so that no stale copy stays
+    /// behind. Export makes it again from these files.
     fn write_meta(&mut self) -> storage::Result<()> {
         self.meta();
         let bad = |e: String| std::io::Error::new(std::io::ErrorKind::InvalidData, e);
@@ -413,10 +415,10 @@ impl Runtime {
     }
 }
 
-/// ENVSAVE's kind of thing to copy: 1 a graphic page and 2 a sprite
-/// definition, while 3 and 4 copy nothing. 0, a program slot, which only
-/// ENVLOAD copies, is Illegal function call, and the others Out of
-/// range. UNVERIFIED: that a negative kind is Out of range too.
+/// ENVSAVE's kind of item to copy: 1 is a graphic page and 2 a sprite
+/// definition, and 3 and 4 copy nothing. Kind 0, a program slot, which
+/// only ENVLOAD copies, is Illegal function call, and the other kinds are
+/// Out of range. UNVERIFIED: that a negative kind is Out of range too.
 pub(crate) fn envsave_kind(kind: &Value) -> Result<i32> {
     match kind.to_int().map_err(|e| e.of_arg(0))? {
         n @ 1..=4 => Ok(n),
@@ -425,10 +427,10 @@ pub(crate) fn envsave_kind(kind: &Value) -> Result<i32> {
     }
 }
 
-/// A project's metadata from its files, which `read` gives by name: the
-/// emulator's own, or else SmileBASIC 4's META file, or else empty
+/// A project's metadata from its files, which `read` returns by name: the
+/// emulator's own files, or else SmileBASIC 4's META file, or else empty
 /// metadata titled with the project's name (checked on hardware: the
-/// workspace's is "[WORKSPACE]").
+/// title of the workspace is "[WORKSPACE]").
 pub fn project_meta(project: &str, read: impl Fn(&str) -> Option<Vec<u8>>) -> Meta {
     let mut meta = Meta {
         project: project.to_string(),
@@ -481,7 +483,7 @@ pub fn meta_files(meta: &Meta) -> std::result::Result<[(&'static str, Vec<u8>); 
 }
 
 /// A title or description, cut to `max` characters.
-// A longer title or description is no error; it is cut.
+// A longer title or description is not an error; it is cut.
 fn limited(mut text: Vec<u16>, max: usize) -> Vec<u16> {
     text.truncate(max);
     text

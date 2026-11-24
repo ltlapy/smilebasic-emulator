@@ -1,11 +1,11 @@
 //! The GPU path (see docs/rendering/renderer.md): draws a scene with SDL_Renderer's textured triangles in the
 //! place of the CPU rasterizer, on any render driver with no shader of ours.
-//! A frame with something it cannot draw goes to the CPU whole; the CPU's
-//! pages stay what programs read, and nothing is read back.
+//! A frame with something the path cannot draw goes to the CPU whole.
+//! Programs still read the CPU's pages, and nothing is read back.
 //!
-//! SmileBASIC 4's sums need no shader. A texel times a vertex's color gives
-//! `t*c` and `a*ca`, and fixed-function blending then rounds `t*c*a + d*(1-a)`
-//! once, as the CPU's paints do:
+//! SmileBASIC 4's sums do not need a shader. A texel times a vertex's color
+//! gives `t*c` and `a*ca`, and fixed-function blending then rounds
+//! `t*c*a + d*(1-a)` once, the same as the CPU's paints do:
 //!
 //! - an element over the frame or a layer: `SDL_BLENDMODE_BLEND`;
 //! - an additive one: `SDL_BLENDMODE_ADD`, which keeps the destination's alpha;
@@ -16,36 +16,36 @@
 //! `SB_GPU` says how it runs:
 //!
 //! - unset: as the setting says, Auto or CPU;
-//! - `0`: the CPU, whatever the setting;
+//! - `0`: the CPU, regardless of the setting;
 //! - `1`: draws what it can;
-//! - `sync`: as well, waits for the GPU after each frame, to time its work;
-//! - `check` or `check:N`: every Nth frame it draws (every one by default)
-//!   the CPU draws too, and the two are compared, printing the differences at
-//!   the end. `SB_GPU_DUMP=PATH` saves the frame that differed most as
-//!   `PATH-gpu.pam` and `PATH-cpu.pam`.
+//! - `sync`: the same, and waits for the GPU after each frame to time its work;
+//! - `check` or `check:N`: the CPU also draws every Nth frame that the path
+//!   draws (every frame by default), the two are compared, and the differences
+//!   are printed at the end. `SB_GPU_DUMP=PATH` saves the frame that differed
+//!   most as `PATH-gpu.pam` and `PATH-cpu.pam`.
 //!
 //! `SB_GPU_TOL=PIXELS` sets how far off a texel may be inside a cell of a 4x4
 //! layer's grid, to measure it.
 //!
-//! At start-up one small scene is drawn by the path and by the CPU, see
-//! [`crate::gpu_golden`], and if they differ too much the path stays off.
+//! At start-up the path and the CPU each draw one small scene (see
+//! [`crate::gpu_golden`]). If the two differ too much, the path stays off.
 //! `SB_GPU_TEST=off` skips that, and `SB_GPU_TEST=fail` acts as if it failed.
-//! `SB_GPU_GOLDEN=1` runs all the scenes there instead of the emulator, prints how
-//! each came out and exits, with 1 if one differed too much.
+//! `SB_GPU_GOLDEN=1` runs all the scenes there instead of the emulator, prints the
+//! result of each and exits, with status 1 if any differed too much.
 //!
-//! `SB_GPU_ALONE=1` draws on a renderer of its own with no window, through
-//! SDL's GPU driver, to measure or check that driver without a display; the
-//! window then shows nothing of it.
+//! `SB_GPU_ALONE=1` draws on a separate renderer with no window, through
+//! SDL's GPU driver, to measure or check that driver without a display. The
+//! window then shows none of it.
 //!
-//! Mosaic and blur need no shader either: they work on half-size targets by
-//! drawing with smoothing and offsets, see [`Gpu::mosaic`] and [`Gpu::blur`]. A
-//! raster filter is strips of the layer, see [`RasterStrips`]. A 4x4 matrix is a
-//! grid of small triangles, see [`crate::gpu_project`].
+//! Mosaic and blur do not need a shader either: they work on half-size targets
+//! by drawing with smoothing and offsets, see [`Gpu::mosaic`] and [`Gpu::blur`].
+//! A raster filter is drawn as strips of the layer, see [`RasterStrips`]. A 4x4
+//! matrix is drawn as a grid of small triangles, see [`crate::gpu_project`].
 //!
 //! The color filter works in HSV, which blending cannot do. On SDL's `gpu` driver, on
-//! Vulkan, it is the one thing here with a shader of ours, through
-//! `SDL_GPURenderState`. Elsewhere that layer alone is drawn on the CPU and sent, and
-//! a direct one, which filters what is behind it too, starts the frame that way.
+//! Vulkan, it is the only part here with a shader of ours, through
+//! `SDL_GPURenderState`. Elsewhere only that layer is drawn on the CPU and sent. A
+//! direct one, which also filters what is behind it, starts the frame that way.
 
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
@@ -100,9 +100,9 @@ use sdl3::video::Window;
 use crate::gpu_golden;
 use crate::gpu_project::{Corner, Plane};
 
-/// Whether all these vertices' places and texture coordinates are numbers a driver
-/// can take. A false comparison catches NaN too. It looks at all of them, with no
-/// branch for each, as a frame nearly always passes.
+/// Whether the places and texture coordinates of all these vertices are numbers a
+/// driver can take. A false comparison catches NaN too. It checks all of them with
+/// no branch for each, because a frame nearly always passes.
 #[inline]
 fn in_reach(verts: &[SDL_Vertex]) -> bool {
     let near = |v: f32| v.abs() < MOST_REACH;
@@ -111,7 +111,7 @@ fn in_reach(verts: &[SDL_Vertex]) -> bool {
     })
 }
 
-/// Why a frame was left to the CPU.
+/// The reason a frame was left to the CPU.
 #[derive(Clone, Copy, Debug)]
 enum Reason {
     Raster,
@@ -137,32 +137,32 @@ const REASON_NAMES: [&str; REASONS] = [
     "vertex out of reach",
 ];
 
-/// How many vertices are handed to the driver at a time. SDL holds them all
+/// The number of vertices handed to the driver at a time. SDL holds them all
 /// until it flushes, and then makes one draw of those that go together. Drivers
-/// keep what it took for a large draw: on NVIDIA's OpenGL, a frame of 224000
+/// keep the memory a large draw took: on NVIDIA's OpenGL, a frame of 224000
 /// vertices in one draw held 700 MiB more than the same frame in draws of
 /// 60000 or fewer.
 const MOST_VERTICES: usize = 30000;
 
-/// How far from 0 a vertex's place or texture coordinate may go. Past this an f32
-/// no longer holds every whole number. The CPU draws such a frame.
+/// The largest distance from 0 for a vertex's place or texture coordinate. Past
+/// this an f32 no longer holds every whole number. The CPU draws such a frame.
 const MOST_REACH: f32 = (1 << 24) as f32;
 
-/// How far off a pixel may be and still be only rounding, in the start-up scene. An
-/// element goes through at most three draws there, on a layer, onto the frame and under
-/// FADE, and a GPU's blender that truncates where it should round, as a fixed-point
-/// one may, loses up to 1 in each and 1 more for the texel's tint.
+/// The most a pixel may be off in the start-up scene and still be only rounding. An
+/// element goes through at most three draws there: on a layer, onto the frame and under
+/// FADE. A GPU's blender that truncates where it should round, as a fixed-point
+/// blender may, loses up to 1 in each draw and 1 more for the texel's tint.
 const FAR_OFF: u32 = 4;
 
-/// How many frames in a row the renderer may refuse before the path stops asking.
+/// The number of frames in a row the renderer may refuse before the path stops asking.
 const MOST_REFUSED: u32 = 3;
 
-/// How far above a sample is moved, in texels, for a pixel exactly between
-/// two rows of a half-size target: the frame's rows count from its bottom on
-/// SmileBASIC 4, so that it takes the upper one, where a GPU takes the lower.
-/// A pixel not exactly between two is at least half a row of the frame's away
-/// from it, in whatever size of half-size row, 1/1440 of a texel on a frame 720
-/// high, and has to stay on its side.
+/// The distance in texels that a sample is moved up for a pixel exactly between
+/// two rows of a half-size target. On SmileBASIC 4 the frame's rows count from
+/// its bottom, so such a pixel takes the upper row, while a GPU takes the lower.
+/// A pixel not exactly between two rows is at least half a frame row away from
+/// the line between them, for any size of half-size row (1/1440 of a texel on a
+/// frame 720 high), and has to stay on its side.
 const ROW_BIAS: f32 = 1.0 / 4096.0;
 
 const WHITE: SDL_FColor = SDL_FColor {
@@ -172,15 +172,16 @@ const WHITE: SDL_FColor = SDL_FColor {
     a: 1.0,
 };
 
-/// How far a raster filter's sample is moved along the image, in texels, so that
-/// one that falls on the line between two texels takes the later, as rounding down
-/// does on the CPU, whichever way a GPU's interpolation is off.
+/// The distance in texels that a raster filter's sample is moved along the image. A
+/// sample on the line between two texels then takes the later one, the same as
+/// rounding down does on the CPU, regardless of which way a GPU's interpolation
+/// errs.
 const RASTER_BIAS: f64 = 1.0 / 512.0;
 /// The most quads a raster filter is drawn with: scales that wrap around the frame
 /// many times on every line are left to the CPU.
 const MOST_RASTER_QUADS: usize = 20000;
 
-/// How far off, in frame pixels, a texel may be inside a cell of a 4x4 layer's grid.
+/// The most a texel may be off, in frame pixels, in a cell of a 4x4 layer's grid.
 const GRID_TOLERANCE: f64 = 0.25;
 
 /// What the GPU's textures are measured in.
@@ -190,7 +191,7 @@ const PAGE_SIZE: f32 = GRP_SIZE as f32;
 const GLES2_BAND: i32 = 64 << 10;
 /// The cells of the atlas of fallback glyphs, up to the larger font's size.
 const ATLAS_CELL: u32 = 16;
-/// How long a side the atlas of inverted cells' characters has.
+/// The side length of the atlas of characters for inverted cells.
 const INVERTED_SIZE: i32 = 1024;
 
 /// A page as the GPU holds it.
@@ -200,15 +201,15 @@ struct Page {
     pending: Dirty,
     /// Whether any are.
     any_pending: bool,
-    /// [`Graphics::changes`] of what it holds, which tells a set of pages from
-    /// another too.
+    /// [`Graphics::changes`] of what it holds, which also tells one set of
+    /// pages from another.
     changes: u64,
 }
 
-/// What a run of triangles is drawn with.
+/// The texture, blend and wrapping of a run of triangles.
 #[derive(Clone, Copy, PartialEq)]
 struct Batch {
-    /// Null for a color alone, as GRP-1 is.
+    /// Null for a plain color, like GRP-1.
     texture: *mut SDL_Texture,
     blend: SDL_BlendMode,
     wrap: bool,
@@ -223,7 +224,7 @@ struct Stats {
     /// Handing changed pages to SDL.
     pages: Duration,
     page_bytes: u64,
-    /// SDL_FlushRenderer: SDL's commands turned into the driver's.
+    /// SDL_FlushRenderer: SDL commands turned into driver commands.
     flush: Duration,
     /// Waiting for the GPU to finish, with `sync`.
     wait: Duration,
@@ -233,7 +234,8 @@ struct Stats {
     left_to_cpu: [u64; REASONS],
 }
 
-/// How two frames differ, in pixels by the most any channel differs.
+/// The difference between two frames: pixel counts, grouped by the
+/// largest difference in any of a pixel's channels.
 #[derive(Default)]
 pub struct Compared {
     frames: u64,
@@ -245,11 +247,12 @@ pub struct Compared {
     far: u64,
     /// Those with alpha more than 2 off.
     alpha_more: u64,
-    /// The most any channel differs by, of the colors.
+    /// The largest difference of any color channel.
     largest: u32,
     /// The frame with the most pixels differing by more than 2.
     worst: Worst,
-    /// How many of those, and how many differing at all, in the frame dumped.
+    /// The number of those pixels, and of pixels that differ at all, in the
+    /// dumped frame.
     dumped: (u64, u64),
 }
 
@@ -257,7 +260,7 @@ pub struct Compared {
 struct Worst {
     pixels: u64,
     frame: u64,
-    /// Where the first of them is, and what the CPU and the GPU have there.
+    /// The position of the first such pixel, and the CPU and GPU colors there.
     first: Option<(u32, u32, u32, u32)>,
 }
 
@@ -272,12 +275,12 @@ struct ColorFilter {
 static COLOR_FILTER_SPIRV: &[u8] = include_bytes!("../shaders/color_filter.frag.spv");
 
 impl ColorFilter {
-    /// None where the renderer has no GPU device, or one that refuses it: the
-    /// filter then stays on the CPU.
+    /// None when the renderer has no GPU device, or one that refuses the filter.
+    /// The filter then stays on the CPU.
     fn new(renderer: *mut SDL_Renderer) -> Option<ColorFilter> {
-        // SAFETY: the renderer is valid; the device is its own, the shader's
-        // code is copied by the call, and what is made here is released in
-        // Drop before them.
+        // SAFETY: the renderer is valid, and the device belongs to it. The call
+        // copies the shader's code, and what is made here is released in Drop
+        // before the renderer and the device.
         unsafe {
             let device = SDL_GetGPURendererDevice(renderer);
             if device.is_null() {
@@ -323,8 +326,8 @@ impl ColorFilter {
     }
 }
 
-/// What an inverted cell shows: a character, which for a user-defined one depends
-/// on where TPAGE's page is, in a font type's size.
+/// The character an inverted cell shows, in the size of a font type. For a
+/// user-defined character it depends on where TPAGE's page is.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct InvertedGlyph {
     code: u16,
@@ -335,53 +338,54 @@ struct InvertedGlyph {
 
 pub struct Gpu {
     renderer: *mut SDL_Renderer,
-    /// It is its own renderer, with no window, to destroy with it.
+    /// The path has its own renderer, with no window, to destroy with it.
     alone: bool,
     frame: *mut SDL_Texture,
-    /// Where a composed layer is drawn first.
+    /// The target a composed layer is drawn on first.
     layer: *mut SDL_Texture,
-    /// What a filter draws into, which then takes the place of what it read.
+    /// The target a filter draws into, which then replaces the texture it read.
     spare: *mut SDL_Texture,
-    /// Direct mode's hint and completion list, over the frame; made when first
-    /// shown, with what it holds to tell whether it changed.
+    /// The hint and completion list of DIRECT mode, over the frame. Made when
+    /// first shown, with a copy of its content to tell whether it changed.
     overlay: *mut SDL_Texture,
     overlay_holds: Vec<u32>,
-    /// Where text screens on a 4x4 layer are drawn before going through it; made
-    /// when first wanted, and as large as any wanted so far.
+    /// The target that text screens on a 4x4 layer are drawn on before they go
+    /// through the layer. Made when first needed, and as large as any size
+    /// needed so far.
     flat: *mut SDL_Texture,
     flat_size: (u32, u32),
-    /// How far off, in frame pixels, a 4x4 layer's image may be inside a cell.
+    /// The most a 4x4 layer's image may be off inside a cell, in frame pixels.
     grid_tolerance: f64,
     /// Half the frame's size, for mosaic and blur; made when one is first
     /// used. The second holds what a pass of a blur makes of the first.
     half: [*mut SDL_Texture; 2],
     /// Adds all four channels.
     add_all: SDL_BlendMode,
-    /// Takes all four channels down by the source's alpha.
+    /// Scales all four channels down by the source's alpha.
     scale_down: SDL_BlendMode,
-    /// Makes the target's alpha the source's, and leaves its colors.
+    /// Sets the target's alpha to the source's alpha, and leaves its colors.
     set_alpha: SDL_BlendMode,
     color_filter: Option<ColorFilter>,
-    /// Where there is no shader, draws what has a color filter, and is sent on
-    /// `from_cpu`; both are made when first wanted.
+    /// When there is no shader, draws what has a color filter, and the result is
+    /// sent on `from_cpu`. Both are made when first needed.
     cpu: Option<CpuRasterizer>,
     from_cpu: *mut SDL_Texture,
     size: (u32, u32),
     pages: [Option<Page>; PAGES],
     atlas: *mut SDL_Texture,
-    /// Where each fallback glyph is on the atlas.
+    /// The place of each fallback glyph on the atlas.
     atlas_at: HashMap<(u16, u32), (u32, u32)>,
-    /// Inverted cells' characters; made when first wanted. They stay until a page
-    /// they may come from changes.
+    /// The characters of inverted cells, made when first needed. They stay until
+    /// a page they may come from changes.
     inverted: *mut SDL_Texture,
     inverted_at: HashMap<InvertedGlyph, (u32, u32)>,
     inverted_from: [u64; 2],
-    /// FADE's color with the darkening beside a subprogram in it, which keeps
+    /// FADE's color, with the darkening beside a subprogram included. It keeps
     /// the frame's alpha.
     fade_blend: SDL_BlendMode,
     screen: SDL_BlendMode,
     verts: Vec<SDL_Vertex>,
-    /// How many vertices SDL holds.
+    /// The number of vertices that SDL holds.
     queued: usize,
     batch: Batch,
     /// The scaling of the frame texture.
@@ -428,9 +432,10 @@ fn fcolor2(c1: u32, c2: u32) -> SDL_FColor {
     }
 }
 
-/// What goes over the frame, to go with [`Gpu::fade_blend`]: FADE's `c` by its
-/// alpha `a`, and the frame times `1 - a`, both times what the darkening leaves, `D`,
-/// as one draw so as to round once: light `c*a*D`, and an alpha of `1 - (1-a)*D`.
+/// The color drawn over the frame with [`Gpu::fade_blend`]: FADE's `c` times its
+/// alpha `a`, and the frame times `1 - a`, both times the part the darkening leaves,
+/// `D`. It is one draw, so that it rounds once: light `c*a*D`, and an alpha of
+/// `1 - (1-a)*D`.
 fn fade_color(fade: u32, dimmed: bool) -> SDL_FColor {
     const DIM: f32 = sb_runtime::screen::DIM as f32 / 255.0;
     let c = fcolor(fade);
@@ -443,16 +448,17 @@ fn fade_color(fade: u32, dimmed: bool) -> SDL_FColor {
     }
 }
 
-/// How far a sample is moved along the image to settle a tie, in texels: more
-/// than a GPU's interpolation is off, and not enough to matter elsewhere.
+/// The distance in texels that a sample is moved along the image to settle a
+/// tie: more than a GPU's interpolation error, and too little to matter
+/// elsewhere.
 const TIE_BIAS: f64 = 1.0 / 128.0;
-/// How far an element that can tie is moved down on the frame, in pixels: a
-/// pixel whose center an edge goes through then belongs to the element if
-/// the edge is its bottom one, not its top, as on SmileBASIC 4. One step of
-/// what GPUs usually snap vertices to.
+/// The distance in pixels that an element that can tie is moved down on the
+/// frame. A pixel with an edge through its center then belongs to the element
+/// if that edge is the bottom one, not the top, as on SmileBASIC 4. It is one
+/// step of the grid that GPUs usually snap vertices to.
 const COVER_BIAS: f64 = 1.0 / 256.0;
 
-/// How the image is sampled at an element's corners.
+/// The sampling of the image at an element's corners.
 #[derive(Clone, Copy)]
 struct Sampling {
     /// Added to each corner on the image.
@@ -461,9 +467,9 @@ struct Sampling {
     down: f64,
 }
 
-/// The [`Sampling`] of an element placed by `matrix`, `size` long on the
-/// image, whose texels are `texel` of its units and whose page coordinates run
-/// along it as `page` says.
+/// The [`Sampling`] of an element that `matrix` places and that is `size`
+/// long on the image. Its texels are `texel` of its units, and its page
+/// coordinates run along it as `page` says.
 fn sampling(matrix: &Affine, size: (i32, i32), texel: f64, page: (f64, f64)) -> Sampling {
     const NONE: Sampling = Sampling {
         shift: (0.0, 0.0),
@@ -481,8 +487,8 @@ fn sampling(matrix: &Affine, size: (i32, i32), texel: f64, page: (f64, f64)) -> 
     let Some(inv) = matrix.inverse().filter(|_| (sx, sy) != (0.0, 0.0)) else {
         return NONE;
     };
-    // Moving the element down moves what lies under each pixel: the first
-    // part keeps it where it was.
+    // Moving the element down moves what is under each pixel: the first
+    // part keeps it in place.
     Sampling {
         shift: (
             sx * TIE_BIAS * texel + inv.b * COVER_BIAS,
@@ -493,15 +499,17 @@ fn sampling(matrix: &Affine, size: (i32, i32), texel: f64, page: (f64, f64)) -> 
 }
 
 impl Compared {
-    /// Whether at most this part of the pixels is more than 2 off, and hardly any
-    /// has an alpha that is: rounding moves alpha by 1 on some GPUs, and no more.
+    /// Whether at most this share of the pixels is off by more than 2, and almost
+    /// none has an alpha off by that much. Rounding moves alpha by 1 on some GPUs,
+    /// and no more.
     pub fn within(&self, share: f64) -> bool {
         let pixels = self.pixels.max(1) as f64;
         self.by_diff[3] as f64 <= share * pixels && self.alpha_more as f64 <= 0.001 * pixels
     }
 
-    /// Whether at most this part of the pixels is more than [`FAR_OFF`] off, which
-    /// rounding alone cannot do on the start-up scene, however a driver rounds.
+    /// Whether at most this share of the pixels is off by more than [`FAR_OFF`],
+    /// which rounding alone cannot cause on the start-up scene, however a driver
+    /// rounds.
     pub fn near(&self, share: f64) -> bool {
         self.pixels > 0 && self.far as f64 <= share * self.pixels as f64
     }
@@ -516,7 +524,7 @@ impl Compared {
 }
 
 impl Gpu {
-    /// A path on `renderer` that compares each frame with the CPU's, to try scenes.
+    /// A path on `renderer` that checks each frame against the CPU, to try scenes.
     pub fn comparing(renderer: *mut SDL_Renderer) -> Option<Gpu> {
         Gpu::on(
             renderer,
@@ -528,7 +536,7 @@ impl Gpu {
         )
     }
 
-    /// What it has compared so far.
+    /// Returns the results compared so far, and clears them.
     pub fn take_compared(&mut self) -> Compared {
         std::mem::take(&mut self.compared)
     }
@@ -549,8 +557,8 @@ impl Gpu {
         )
     }
 
-    /// The path if `SB_GPU`, or failing that the setting, asks for it and `canvas`
-    /// can take it, and in a few words who draws then and why.
+    /// The path if `SB_GPU`, or else the setting, asks for it and `canvas` can take
+    /// it, and a short note on who draws and why.
     pub fn start(canvas: &Canvas<Window>, setting: Renderer) -> (Option<Gpu>, String) {
         let spec = match (std::env::var("SB_GPU"), setting) {
             (Ok(spec), _) if spec.is_empty() || spec == "0" => {
@@ -567,7 +575,7 @@ impl Gpu {
             }
             Err(why) => {
                 eprintln!("SB_GPU: staying on the CPU: {why}");
-                // What the self-test measured is for the log.
+                // The self-test's measurements are for the log.
                 let short = why.split(',').next().unwrap_or(&why);
                 (None, format!("CPU ({short})"))
             }
@@ -582,7 +590,7 @@ impl Gpu {
     }
 
     fn try_start(canvas: &Canvas<Window>, spec: &str) -> Result<Gpu, String> {
-        // Drawing triangles there would only be the CPU again, less exactly.
+        // Drawing triangles there would only be the CPU again, less exact.
         if canvas.renderer_name == "software" {
             return Err("software renderer".to_string());
         }
@@ -612,7 +620,7 @@ impl Gpu {
             Ok(took) => took,
             Err(why) => {
                 if alone {
-                    // SAFETY: it was made above, for this alone.
+                    // SAFETY: it was made above, for this path alone.
                     unsafe { SDL_DestroyRenderer(renderer) };
                 }
                 return Err(format!("start-up test failed, {why}"));
@@ -727,16 +735,16 @@ impl Gpu {
         }
     }
 
-    /// Whether the renderer has refused enough frames in a row to stop asking it:
-    /// each costs the GPU's work and then the CPU's, for a frame the CPU could have
-    /// drawn alone.
+    /// Whether the renderer has refused enough frames in a row to stop asking it.
+    /// Each refused frame costs the work of the GPU and then of the CPU, for a frame
+    /// the CPU could have drawn alone.
     pub fn given_up(&self) -> bool {
         self.refused_in_a_row >= MOST_REFUSED
     }
 
     /// A texture of the frame's format, or null if it was refused. SDL's OpenGL
-    /// driver looks at glGetError only in a debug context, so a target the driver
-    /// could not hold would otherwise show as black, here.
+    /// driver checks glGetError only in a debug context, so otherwise a target the
+    /// driver could not hold would show as black here.
     fn make_texture(&self, access: SDL_TextureAccess, w: i32, h: i32) -> *mut SDL_Texture {
         if !self.gles2_can_hold(w, h) {
             return null_mut();
@@ -752,8 +760,8 @@ impl Gpu {
         texture
     }
 
-    /// Whether a texture of this size fits, on SDL's GLES2 driver, asked of GL first:
-    /// where that driver looks at glGetError, SDL 3.4.18 answers GL_OUT_OF_MEMORY in
+    /// Whether a texture of this size fits on SDL's GLES2 driver, asked of GL first.
+    /// When that driver checks glGetError, SDL 3.4.18 handles GL_OUT_OF_MEMORY in
     /// `GLES2_CreateTexture` by freeing its data twice, which aborts the emulator.
     fn gles2_can_hold(&self, w: i32, h: i32) -> bool {
         !self.on_gles2 || gles2_can_hold(w, h)
@@ -765,8 +773,8 @@ impl Gpu {
         self.on_gl && gl_out_of_memory()
     }
 
-    /// Fills what holds a frame, as a device that loses them would leave them, to try
-    /// the frontend's answer with `SB_UI_BENCH`.
+    /// Fills the textures that hold a frame the way a device that loses them would
+    /// leave them, to test the frontend's response with `SB_UI_BENCH`.
     pub fn scribble(&mut self) {
         for texture in [self.frame, self.layer, self.spare] {
             if !texture.is_null() {
@@ -777,8 +785,8 @@ impl Gpu {
         self.done();
     }
 
-    /// The frame it drew, to scale as `filter_linear` says. Valid until the
-    /// frame's size changes; it is not to be destroyed.
+    /// The frame it drew, to scale as `linear` says. Valid until the
+    /// frame's size changes. It must not be destroyed.
     pub fn view(&mut self, linear: bool) -> Option<ManuallyDrop<Texture<'static>>> {
         if self.frame.is_null() || self.alone {
             return None;
@@ -787,8 +795,8 @@ impl Gpu {
             true => SDL_SCALEMODE_LINEAR,
             false => SDL_SCALEMODE_NEAREST,
         };
-        // SAFETY: the frame texture is one of this renderer's, and lives as
-        // long as `self`; ManuallyDrop keeps the wrapper from destroying it.
+        // SAFETY: the frame texture belongs to this renderer and lives as long
+        // as `self`; ManuallyDrop keeps the wrapper from destroying it.
         unsafe {
             if self.scale != Some(scale) {
                 // A filter may have swapped the frame for another target.
@@ -800,23 +808,23 @@ impl Gpu {
         }
     }
 
-    /// The frame, smoothed and to go over what is there as it is, premultiplied, as
-    /// a subprogram's does. Valid as [`Gpu::view`]'s is.
+    /// The frame, smoothed and premultiplied, to be drawn unchanged over what is
+    /// there, like a subprogram's frame. Valid on the same terms as [`Gpu::view`].
     pub fn premultiplied_view(&mut self) -> Option<ManuallyDrop<Texture<'static>>> {
         let view = self.view(true)?;
-        // SAFETY: the frame texture is one of this renderer's. view() sets its
-        // mode again when something else may have changed it, as a filter may.
+        // SAFETY: the frame texture belongs to this renderer. view() sets its
+        // mode again when something else, such as a filter, may have changed it.
         unsafe { SDL_SetTextureBlendMode(self.frame, SDL_BLENDMODE_BLEND_PREMULTIPLIED) };
         Some(view)
     }
 
-    /// The device it runs on, for telling results apart, if SDL can say.
+    /// The name of the device it runs on, to tell results apart, if SDL can give it.
     fn device_name(&self) -> String {
         const GL_RENDERER: u32 = 0x1F01;
         // SAFETY: the renderer outlives `self`; the device and the GL function
-        // are the ones it uses, on this thread, and the strings they give are
-        // copied at once. A renderer not on GL has no such function current,
-        // so it is asked for only on those that are.
+        // are the ones it uses, on this thread, and the strings they return are
+        // copied immediately. A renderer not on GL has no such function current,
+        // so it is asked for only on GL renderers.
         unsafe {
             let device = SDL_GetGPURendererDevice(self.renderer);
             if !device.is_null() {
@@ -882,20 +890,20 @@ impl Gpu {
     fn target(&mut self, texture: *mut SDL_Texture) {
         self.flush();
         self.stats.targets += 1;
-        // SAFETY: the renderer outlives `self`, and the texture is a target
-        // of its own or null.
+        // SAFETY: the renderer outlives `self`, and the texture is one of its
+        // own targets or null.
         self.failed |= !unsafe { SDL_SetRenderTarget(self.renderer, texture) };
     }
 
-    /// Hands the triangles gathered to SDL.
+    /// Passes the gathered triangles to SDL.
     fn flush(&mut self) {
         if self.verts.is_empty() {
             return;
         }
-        // Every vertex passes here on its way to the driver. The CPU then draws
-        // the whole frame, so the two paths cannot disagree about it. The
-        // CPU's picture shows nothing for a matrix holding NaN, as SmileBASIC 4
-        // does.
+        // Every vertex passes here on its way to the driver. If one is out
+        // of reach, the CPU draws the whole frame, so the two paths cannot
+        // disagree about it. The CPU's picture shows nothing for a matrix
+        // holding NaN, the same as SmileBASIC 4.
         if !in_reach(&self.verts) {
             self.out_of_reach = true;
             self.verts.clear();
@@ -979,8 +987,9 @@ impl Gpu {
         }
     }
 
-    /// The texture of a page that is not blank, up to date in `area`, or all
-    /// over with None: what no element reads is not sent until one does.
+    /// The texture of a page that is not blank, up to date in `area`, or in the
+    /// whole page when `area` is None. A part no element reads is not sent
+    /// until one does.
     fn page(
         &mut self,
         grp: &Graphics,
@@ -993,13 +1002,13 @@ impl Gpu {
             if texture.is_null() {
                 return Err(Reason::Refused);
             }
-            // SAFETY: as it was just made.
+            // SAFETY: the texture was just made, so it is valid.
             unsafe { SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST) };
             self.pages[page] = Some(Page {
                 texture,
                 pending: Dirty::default(),
                 any_pending: false,
-                // Of no set of pages, so all of it is to be sent.
+                // Matches no set of pages, so all of it is sent.
                 changes: !changes,
             });
         }
@@ -1031,8 +1040,8 @@ impl Gpu {
         let mut failed = false;
         send.for_each_area(|area| {
             let (w, h) = (area.x1 - area.x0 + 1, area.y1 - area.y0 + 1);
-            // SDL's GLES2 driver cannot unpack rows with a pitch of their
-            // own: it first copies the rectangle to a buffer it allocates,
+            // SDL's GLES2 driver cannot unpack rows with their own pitch.
+            // It first copies the rectangle to a buffer it allocates,
             // 16 MiB for a whole page. In bands, that buffer stays small
             // and in the cache, where the driver reads it back.
             let band = match on_gles2 && pitch != w * 4 {
@@ -1049,8 +1058,8 @@ impl Gpu {
                     h: rows,
                 };
                 let first = &pixels[page::at(area.x0 as usize, y as usize)..];
-                // SAFETY: the page is GRP_SIZE square, as the texture is,
-                // its rows `pitch` bytes apart, and the rectangle lies on it.
+                // SAFETY: the page is GRP_SIZE square, like the texture, with
+                // its rows `pitch` bytes apart, and the rectangle is inside it.
                 failed |= !unsafe {
                     SDL_UpdateTexture(held.texture, &rect, first.as_ptr().cast(), pitch)
                 };
@@ -1067,7 +1076,7 @@ impl Gpu {
         Ok(held.texture)
     }
 
-    /// Where a glyph with no place on the font page is on the atlas.
+    /// The place on the atlas of a glyph that has no place on the font page.
     fn atlas_glyph(
         &mut self,
         font: &sb_runtime::font::Font,
@@ -1083,7 +1092,7 @@ impl Gpu {
             if self.atlas.is_null() {
                 return Err(Reason::Refused);
             }
-            // SAFETY: as it was just made.
+            // SAFETY: the texture was just made, so it is valid.
             unsafe { SDL_SetTextureScaleMode(self.atlas, SDL_SCALEMODE_NEAREST) };
         }
         let across = GRP_SIZE as u32 / ATLAS_CELL;
@@ -1135,8 +1144,8 @@ impl Gpu {
         if !white && !s.repeat && !(on_page(s.u, s.w) && on_page(s.v, s.h)) {
             return Err(Reason::OffPage);
         }
-        // A point of the shown rectangle, on the page. As the CPU's page_xy
-        // but for points: the image is flipped, then turned.
+        // A point of the shown rectangle, on the page. Like the CPU's
+        // page_xy, but for points: the image is flipped, then turned.
         let page_xy = |lx: f64, ly: f64| {
             let (mut ix, mut iy) = match quarter {
                 0 => (lx, ly),
@@ -1226,8 +1235,8 @@ impl Gpu {
         };
         let size_on_image = (t.char_size as i32, t.char_size as i32);
         let on = sampling(m, size_on_image, cs / f64::from(ft), (1.0, 1.0));
-        // The corners of a cell on its glyph, for each ATTR. As the CPU's
-        // draw_turned: the character is flipped, then turned.
+        // The corners of a cell on its glyph, for each ATTR. Like the CPU's
+        // draw_turned, the character is flipped, then turned.
         let scale = f64::from(ft) / cs;
         let mut corners = [[(0.0, 0.0); 4]; 16];
         for (a, out) in corners.iter_mut().enumerate() {
@@ -1291,7 +1300,7 @@ impl Gpu {
                     continue;
                 }
                 let x0 = cx as f64 * cs;
-                // Where the character's image is, and on what.
+                // The texture with the character's image, and its place there.
                 let (texture, gx, gy, wrap) = if inverted {
                     let (gx, gy) = self.inverted_glyph(t, cell.code, input)?;
                     (self.inverted, gx as i32, gy as i32, false)
@@ -1344,7 +1353,8 @@ impl Gpu {
                     let (x, y) = m.apply(x, y);
                     (x, y + on.down)
                 };
-                // The inverted cells' atlas is smaller than what quad() counts in.
+                // The atlas of inverted cells is smaller than the page size that
+                // quad() counts in.
                 let k = if inverted {
                     f64::from(GRP_SIZE) / f64::from(INVERTED_SIZE)
                 } else {
@@ -1364,7 +1374,7 @@ impl Gpu {
             }
         }
         if let Some(bar) = &t.cursor {
-            // What the bar's color is goes on as it is, whatever is there.
+            // The bar's color is written unchanged, over anything there.
             self.batch(Batch {
                 texture: null_mut(),
                 blend: SDL_BLENDMODE_NONE,
@@ -1382,7 +1392,7 @@ impl Gpu {
         Ok(())
     }
 
-    /// Where an inverted cell's character is on its atlas.
+    /// The place of an inverted cell's character on its atlas.
     fn inverted_glyph(
         &mut self,
         t: &TextItem,
@@ -1410,7 +1420,7 @@ impl Gpu {
             if self.inverted.is_null() {
                 return Err(Reason::Refused);
             }
-            // SAFETY: as it was just made.
+            // SAFETY: the texture was just made, so it is valid.
             unsafe { SDL_SetTextureScaleMode(self.inverted, SDL_SCALEMODE_NEAREST) };
         }
         if self.inverted_from != from {
@@ -1514,15 +1524,17 @@ impl Gpu {
         Ok(())
     }
 
-    /// Goes to the target text screens on a 4x4 layer are drawn on, cleared.
+    /// Switches to the target that text screens on a 4x4 layer are drawn on,
+    /// and clears it.
     fn begin_flat(&mut self, p: &Projection) -> Result<(), Reason> {
         let (w, h) = p.flat_size;
         let (held_w, held_h) = self.flat_size;
         if w > held_w || h > held_h {
             let size = (w.max(held_w), h.max(held_h));
             self.flush();
-            // SAFETY: the renderer outlives `self`; the old one, its own, has
-            // what used it queued, which SDL runs before destroying it.
+            // SAFETY: the renderer outlives `self`. The old texture belongs to the
+            // renderer, and SDL runs the queued draws that used the texture before
+            // destroying it.
             unsafe {
                 if !self.flat.is_null() {
                     SDL_DestroyTexture(self.flat);
@@ -1538,8 +1550,8 @@ impl Gpu {
             self.flat_size = size;
         }
         if self.flat.is_null() {
-            // Nothing can show, as nothing is wanted of it, but there is to
-            // be somewhere to draw.
+            // Nothing can show, because nothing is needed from it, but there
+            // must still be somewhere to draw.
             self.flush();
             return Ok(());
         }
@@ -1550,7 +1562,8 @@ impl Gpu {
         Ok(())
     }
 
-    /// A text screen on what [`Gpu::begin_flat`] made ready. Its matrix goes there.
+    /// Draws a text screen on the target [`Gpu::begin_flat`] prepared. Its own
+    /// matrix applies there.
     fn on_flat(&mut self, p: &Projection, t: &TextItem, input: &RasterInput) -> Result<(), Reason> {
         if p.flat_size.0 == 0 || p.flat_size.1 == 0 {
             return Ok(());
@@ -1563,7 +1576,8 @@ impl Gpu {
         result
     }
 
-    /// What is on the flat target, through the 4x4 matrix, on the current target.
+    /// Draws what is on the flat target onto the current target, through the 4x4
+    /// matrix.
     fn end_flat(&mut self, p: &Projection, sample: u32) {
         let (w, h) = (f64::from(p.flat_size.0), f64::from(p.flat_size.1));
         if w == 0.0 || h == 0.0 || self.flat.is_null() {
@@ -1587,8 +1601,8 @@ impl Gpu {
         self.flush();
     }
 
-    /// A grid of triangles through `plane`, with `uv` taking the element's points
-    /// to the texture, which is 1 long each way.
+    /// Draws a grid of triangles through `plane`. `uv` maps the element's points
+    /// to the texture, which is 1 long in each direction.
     fn triangles(
         &mut self,
         plane: &Plane,
@@ -1630,7 +1644,7 @@ impl Gpu {
         }
     }
 
-    /// The whole frame with this texture (or color alone) in this color.
+    /// Covers the whole frame with this texture (or a plain color) in this color.
     fn cover(&mut self, texture: *mut SDL_Texture, blend: SDL_BlendMode, color: SDL_FColor) {
         let (w, h) = (f64::from(self.size.0), f64::from(self.size.1));
         self.batch(Batch {
@@ -1644,12 +1658,12 @@ impl Gpu {
         self.flush();
     }
 
-    /// Lets go of everything made at the frame's size.
+    /// Frees everything made at the frame's size.
     fn drop_frame_targets(&mut self) {
         let [half0, half1] = self.half;
         let targets = [self.frame, self.layer, self.spare, half0, half1];
-        // SAFETY: the renderer outlives `self`; these are its own and not in use
-        // between frames.
+        // SAFETY: the renderer outlives `self`; these belong to it and are not
+        // in use between frames.
         unsafe {
             for texture in targets
                 .into_iter()
@@ -1681,11 +1695,12 @@ impl Gpu {
         self.layer = self.make_texture(SDL_TEXTUREACCESS_TARGET, w as i32, h as i32);
         self.spare = self.make_texture(SDL_TEXTUREACCESS_TARGET, w as i32, h as i32);
         if self.frame.is_null() || self.layer.is_null() || self.spare.is_null() {
-            // Held in part, the next frame of this size would draw on the window.
+            // With only some of them made, the next frame of this size would draw
+            // on the window.
             self.drop_frame_targets();
             return Err(Reason::Refused);
         }
-        // SAFETY: as they were just made.
+        // SAFETY: the textures were just made, so they are valid.
         unsafe {
             for texture in [self.frame, self.layer, self.spare] {
                 SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
@@ -1696,7 +1711,7 @@ impl Gpu {
         Ok(())
     }
 
-    /// Why a scene needs the CPU, as far as a look over it shows.
+    /// The reason a scene needs the CPU, as far as a look at the scene shows.
     fn refuses(&self, scene: &Scene, frame: (u32, u32)) -> Option<Reason> {
         for pass in &scene.passes {
             match pass.filter {
@@ -1798,19 +1813,20 @@ impl Gpu {
             b: c.b * c.a,
             a: c.a,
         };
-        // SAFETY: the texture is the renderer's own.
+        // SAFETY: the texture belongs to the renderer.
         if !unsafe { SDL_SetTextureBlendMode(layer, blend) } {
             return Err(Reason::Refused);
         }
         self.cover(layer, blend, color);
-        // These two make the frame opaque all over, as the CPU's compose does.
+        // These two make the whole frame opaque, the same as the CPU's
+        // compose does.
         if matches!(pass.compose, Compose::Multiply | Compose::Screen) && !scene.opaque_frame {
             self.make_opaque();
         }
         Ok(())
     }
 
-    /// The CPU's rasterizer, and the texture what it draws is sent on.
+    /// Prepares the CPU's rasterizer, and the texture that its drawing is sent on.
     fn cpu_ready(&mut self) -> Result<(), Reason> {
         let (w, h) = self.size;
         if self.cpu.is_none() {
@@ -1821,7 +1837,7 @@ impl Gpu {
             if self.from_cpu.is_null() {
                 return Err(Reason::Refused);
             }
-            // SAFETY: as it was just made.
+            // SAFETY: the texture was just made, so it is valid.
             unsafe { SDL_SetTextureScaleMode(self.from_cpu, SDL_SCALEMODE_NEAREST) };
         }
         Ok(())
@@ -1832,7 +1848,7 @@ impl Gpu {
         let start = Instant::now();
         let bytes = frame.pixels().len() * 4;
         // SAFETY: the texture is at the frame's size: ready() drops it when the
-        // frame's size changes. SDL runs what is queued first, if it used it.
+        // frame's size changes. SDL first runs the queued draws, if they used it.
         unsafe {
             SDL_UpdateTexture(
                 self.from_cpu,
@@ -1875,13 +1891,13 @@ impl Gpu {
         self.compose_layer(self.from_cpu, scene, pass)
     }
 
-    /// A layer's filter, on the current target, which is the frame for a
-    /// direct layer and the layer's own otherwise.
+    /// Applies a layer's filter on the current target: the frame for a direct
+    /// layer, and the layer target otherwise.
     fn filter(&mut self, scene: &Scene, pass: &LayerPass) -> Result<(), Reason> {
         let direct = pass.compose == Compose::Direct;
         let from = if direct { self.frame } else { self.layer };
         match pass.filter {
-            // Amount 0 leaves the layer as it is, not halved.
+            // Amount 0 leaves the layer unchanged, not halved.
             FilterOp::None | FilterOp::Blur(0) => Ok(()),
             FilterOp::Raster {
                 vertical,
@@ -1920,8 +1936,8 @@ impl Gpu {
         }
     }
 
-    /// LFILTER's raster deformation: the strips onto a clear target, which then
-    /// takes the place of what they read.
+    /// LFILTER's raster deformation: draws the strips onto a clear target,
+    /// which then replaces the texture they read.
     fn raster(&mut self, from: *mut SDL_Texture, raster: &RasterStrips) {
         if raster.rows.is_empty() {
             return;
@@ -1979,7 +1995,8 @@ impl Gpu {
                 return Err(Reason::Refused);
             }
             self.half[i] = texture;
-            // SAFETY: as it was just made.
+            // SAFETY: the texture was just made, so it is valid, and the
+            // renderer outlives `self`.
             let takes = unsafe {
                 SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
                 SDL_SetTextureBlendMode(texture, self.add_all)
@@ -1992,9 +2009,9 @@ impl Gpu {
         Ok(())
     }
 
-    /// A rectangle of the current target, `to` as left, top, right, bottom,
-    /// filled with a rectangle of a texture, `from` in the same order with
-    /// the texture 1 long each way, or with the color alone.
+    /// Fills a rectangle of the current target, `to` as left, top, right,
+    /// bottom, with a rectangle of a texture, `from` in the same order with
+    /// the texture 1 long in each direction, or with the color alone.
     fn paint(
         &mut self,
         texture: *mut SDL_Texture,
@@ -2022,10 +2039,10 @@ impl Gpu {
     }
 
     fn scale_mode(&mut self, texture: *mut SDL_Texture, mode: SDL_ScaleMode) {
-        // SAFETY: the texture is one of the renderer's own, and each draw
-        // takes its scale mode when it is queued.
+        // SAFETY: the texture belongs to the renderer, and each draw takes
+        // its scale mode when it is queued.
         unsafe { SDL_SetTextureScaleMode(texture, mode) };
-        // The frame's, if it was the frame, is to be set again when shown.
+        // If it was the frame, the frame's mode must be set again when shown.
         self.scale = None;
     }
 
@@ -2034,10 +2051,10 @@ impl Gpu {
         ((self.size.0 / 2) as f32, (self.size.1 / 2) as f32)
     }
 
-    /// LFILTER's mosaic with what [`filter`] says for the rest: the frame is
-    /// drawn with smoothing into a part of a half-size target, whose bottom
-    /// is where the frame's is, as rows count from there, and that part is
-    /// drawn back without.
+    /// LFILTER's mosaic, with [`filter`] deciding the rest. The frame is drawn
+    /// with smoothing into a part of a half-size target. The bottom of that
+    /// part is at the bottom of the frame, because rows count from there. The
+    /// part is then drawn back without smoothing.
     fn mosaic(&mut self, from: *mut SDL_Texture, grid: MosaicGrid) -> Result<(), Reason> {
         self.half_targets()?;
         let small = self.half[0];
@@ -2045,8 +2062,8 @@ impl Gpu {
         let (across, down) = (grid.across as f32, grid.down as f32);
         self.target(small);
         self.scale_mode(from, SDL_SCALEMODE_LINEAR);
-        // What lies past the frame, where the part has a whole number of
-        // pixels and the frame does not fill them, reads the frame's edge.
+        // The area past the frame, where the part has a whole number of
+        // pixels that the frame does not fill, reads the frame's edge.
         let top = down - qy;
         self.paint(
             from,
@@ -2070,14 +2087,14 @@ impl Gpu {
         Ok(())
     }
 
-    /// LFILTER's blur with no shader. The CPU's and SmileBASIC 4's weighted sum
-    /// of up to nine taps is rounded once, each pass; here every draw rounds,
-    /// to 8 bits. To keep that from adding up, the taps do not add: each mixes
-    /// into what is there by its share of all those so far, the outermost first,
-    /// so a run of one color stays exact however many draws there are, and later
-    /// draws shrink what earlier ones got wrong. The sum of the weights, which
-    /// is less than 1 when the kernel is cut off, comes last, once. Two taps side by
-    /// side are one draw, by smoothing between them.
+    /// LFILTER's blur with no shader. On the CPU and on SmileBASIC 4, the weighted
+    /// sum of up to nine taps is rounded once per pass. Here every draw rounds to
+    /// 8 bits. To keep those errors from adding up, the taps are not added. Each
+    /// tap mixes into what is there by its share of all taps so far, the outermost
+    /// first. So a run of one color stays exact however many draws there are, and
+    /// later draws shrink the errors of earlier ones. The sum of the weights, which
+    /// is less than 1 when the kernel is cut off, comes last, once. Two adjacent
+    /// taps are one draw, by smoothing between them.
     fn blur(
         &mut self,
         from: *mut SDL_Texture,
@@ -2112,10 +2129,10 @@ impl Gpu {
         Ok(())
     }
 
-    /// One pass of [`Gpu::blur`], `step` long on the texture from tap to tap.
-    /// The texture's alpha decides nothing about how it mixes if it is all
-    /// opaque, which takes one draw for each. Otherwise it takes two, one to
-    /// take what is there down and one to add the tap.
+    /// One pass of [`Gpu::blur`], with taps `step` apart on the texture.
+    /// If the texture is all opaque, its alpha has no effect on the mixing,
+    /// and each tap takes one draw. Otherwise each tap takes two: one to
+    /// scale down what is there and one to add the tap.
     fn blur_pass(
         &mut self,
         from: *mut SDL_Texture,
@@ -2160,8 +2177,9 @@ impl Gpu {
             }
         }
         if kernel.total < 1 << 16 {
-            // What shows through falls with the light: black over it at what
-            // the weights fall short by does both.
+            // What shows through falls together with the light. Black
+            // drawn over the result, at the alpha the weights fall short
+            // by, lowers both.
             let short = SDL_FColor {
                 r: 0.0,
                 g: 0.0,
@@ -2198,7 +2216,7 @@ impl Gpu {
         ];
         self.target(self.spare);
         let white = fcolor(0xFFFF_FFFF);
-        // SAFETY: the state and textures are this renderer's own. The uniforms
+        // SAFETY: the state and textures belong to this renderer. The uniforms
         // are read when SDL's queue runs, so it runs before they can change.
         unsafe {
             SDL_SetGPURenderStateFragmentUniforms(
@@ -2222,7 +2240,7 @@ impl Gpu {
         self.target(if direct { self.frame } else { self.layer });
     }
 
-    /// Back to drawing on the window, as the frontend expects.
+    /// Goes back to drawing on the window, as the frontend expects.
     fn done(&mut self) {
         self.verts.clear();
         self.target(null_mut());
@@ -2238,7 +2256,7 @@ impl Gpu {
         }
     }
 
-    /// The frame as the GPU has it, or None where it cannot be read.
+    /// Reads the frame as the GPU has it, or returns None when it cannot be read.
     fn read_frame(&mut self, rect: Option<SDL_Rect>) -> Option<*mut SDL_Surface> {
         self.target(self.frame);
         // SAFETY: the renderer outlives `self`.
@@ -2326,7 +2344,7 @@ impl SceneBackend for Gpu {
                 self.leave(Reason::Refused);
                 return false;
             }
-            // SAFETY: as it was just made.
+            // SAFETY: the texture was just made, so it is valid.
             unsafe { SDL_SetTextureScaleMode(self.overlay, SDL_SCALEMODE_NEAREST) };
         }
         if self.overlay_holds != frame.pixels() {
@@ -2334,8 +2352,8 @@ impl SceneBackend for Gpu {
             self.overlay_holds.extend_from_slice(frame.pixels());
             let pixels = frame.pixels().as_ptr().cast();
             let pitch = frame.width() as i32 * 4;
-            // SAFETY: the texture was made at the size of what the frame is
-            // now: ready() destroys it when the frame's size changes.
+            // SAFETY: the texture was made at the current size of the frame:
+            // ready() destroys it when the frame's size changes.
             unsafe { SDL_UpdateTexture(self.overlay, null(), pixels, pitch) };
             crate::bench::uploaded(frame.pixels().len() * 4);
         }
@@ -2426,8 +2444,8 @@ impl SceneBackend for Gpu {
     }
 }
 
-/// Whether SDL may safely be asked for a texture of this size on `renderer`, which it
-/// says as an error if not. SDL 3.4.18 frees its data twice in `GLES2_CreateTexture` on
+/// Whether SDL can safely be asked for a texture of this size on `renderer`, with an
+/// error message if not. SDL 3.4.18 frees its data twice in `GLES2_CreateTexture` on
 /// GL_OUT_OF_MEMORY and aborts, with no chance to save anything, so GL is asked first.
 pub fn texture_fits(renderer: *mut SDL_Renderer, w: u32, h: u32) -> Result<(), String> {
     match !renderer_is_gles2(renderer) || gles2_can_hold(w as i32, h as i32) {
@@ -2445,7 +2463,7 @@ fn gles2_can_hold(w: i32, h: i32) -> bool {
     let _ = gl_out_of_memory();
     type TexImage = extern "C" fn(u32, i32, i32, i32, i32, i32, u32, u32, *const u8);
     // SAFETY: as in device_name, on this thread and only on a GL driver. SDL
-    // remembers which texture is bound, so that goes back as it was.
+    // remembers which texture is bound, so the old binding is restored.
     unsafe {
         let get = |name: &std::ffi::CStr| SDL_GL_GetProcAddress(name.as_ptr());
         let (Some(get_int), Some(generate), Some(bind), Some(image), Some(delete)) = (
@@ -2484,7 +2502,7 @@ fn gles2_can_hold(w: i32, h: i32) -> bool {
     }
 }
 
-/// Takes GL's errors, and whether it ran out of memory among them.
+/// Clears GL's errors, and returns whether one of them was out of memory.
 fn gl_out_of_memory() -> bool {
     const GL_NO_ERROR: u32 = 0;
     const GL_OUT_OF_MEMORY: u32 = 0x0505;
@@ -2495,7 +2513,7 @@ fn gl_out_of_memory() -> bool {
         };
         let get: extern "C" fn() -> u32 = std::mem::transmute(get);
         let mut out = false;
-        // A context lost keeps giving errors; a few are all there can be here.
+        // A lost context keeps giving errors. Only a few can occur here.
         for _ in 0..8 {
             match get() {
                 GL_NO_ERROR => break,
@@ -2507,29 +2525,29 @@ fn gl_out_of_memory() -> bool {
 }
 
 fn renderer_is_gles2(renderer: *mut SDL_Renderer) -> bool {
-    // SAFETY: the renderer is valid, and the name SDL gives is its own.
+    // SAFETY: the renderer is valid, and the name string belongs to SDL.
     unsafe { text_of(SDL_GetRendererName(renderer)) == "opengles2" }
 }
 
 /// Whether a renderer's driver is OpenGL or OpenGL ES.
 fn renderer_on_gl(renderer: *mut SDL_Renderer) -> bool {
-    // SAFETY: the renderer is valid, and the name SDL gives is its own.
+    // SAFETY: the renderer is valid, and the name string belongs to SDL.
     let name = unsafe { text_of(SDL_GetRendererName(renderer)) };
     name.starts_with("opengl")
 }
 
-/// Whether a filter is a color filter that changes anything, which left at zero it
-/// does not, on the CPU.
+/// Whether a filter is a color filter that changes anything. On the CPU, one left
+/// at zero changes nothing.
 fn has_color(filter: &FilterOp) -> bool {
     matches!(filter, &FilterOp::Color { hue, saturation, value }
         if !(hue.rem_euclid(360.0) == 0.0 && saturation == 0.0 && value == 0.0))
 }
 
-/// LFILTER's raster deformation as quads, for no shader: on a run of rows (or for
+/// LFILTER's raster deformation as quads, with no shader. On a run of rows (or for
 /// type 4, columns) with the same entry, a source point moves steadily with the
-/// pixel, so a nearest texture read between the run's ends shows what the CPU's
-/// sum gives each pixel. A frame's wrapping or its edge splits a run across, where
-/// the source point crosses it.
+/// pixel. So a nearest texture read between the ends of the run shows what the
+/// CPU's sum gives each pixel. The frame's wrapping or its edge splits a run
+/// across, where the source point crosses it.
 struct RasterStrips<'a> {
     rows: &'a [[f64; 4]],
     vertical: bool,
@@ -2538,8 +2556,9 @@ struct RasterStrips<'a> {
 }
 
 impl RasterStrips<'_> {
-    /// Gives each quad, as left, top, right, bottom on the target and in the
-    /// source, as the texture 1 long each way. How many there are.
+    /// Passes each quad to `quad`, as left, top, right, bottom on the target and
+    /// in the source, with the texture 1 long in each direction. Returns the
+    /// number of quads.
     fn quads(&self, mut quad: impl FnMut([f32; 4], [f32; 4])) -> usize {
         let n = self.rows.len();
         if n == 0 {
@@ -2564,8 +2583,8 @@ impl RasterStrips<'_> {
                 true => ((start as f64, end as f64), (0.0, fh)),
                 false => ((0.0, fw), (start as f64, end as f64)),
             };
-            // As the CPU's across_at and down_at, with the pixel's center
-            // left to the interpolation.
+            // Like the CPU's across_at and down_at, with the pixel's
+            // center left to the interpolation.
             spans(&mut xs, run_x, (sx, ox * fw), fw, self.repeat);
             spans(
                 &mut ys,
@@ -2589,8 +2608,8 @@ impl RasterStrips<'_> {
     }
 }
 
-/// A part of a run on one axis: where on the target, and where in the source,
-/// which is 1 long.
+/// A part of a run on one axis: its place on the target, and its place in the
+/// source, which is 1 long.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Span {
     to: (f32, f32),
@@ -2603,8 +2622,9 @@ fn spans(out: &mut Vec<Span>, run: (f64, f64), (scale, offset): (f64, f64), n: f
     out.clear();
     let at = |t: f64| scale * t + offset;
     let (first, last) = (at(run.0), at(run.1));
-    // NaN and the far off show nothing, as on the CPU. Only a point past the
-    // frame can be so far: this keeps the sums below in range.
+    // NaN and very distant points show nothing, as on the CPU. Only a point
+    // past the frame can be that far, and this check keeps the sums below in
+    // range.
     if !(first.abs() < 1e15 && last.abs() < 1e15) {
         return;
     }
@@ -2629,7 +2649,7 @@ fn spans(out: &mut Vec<Span>, run: (f64, f64), (scale, offset): (f64, f64), n: f
         true => ((lo / n).floor(), (hi / n).floor()),
         false => (0.0, 0.0),
     };
-    // Far more than the limit on quads wants, and known without going through.
+    // Far more than the quad limit allows, and known without going through them.
     if k1 - k0 > MOST_RASTER_QUADS as f64 {
         for _ in 0..=MOST_RASTER_QUADS {
             push(run.0, run.1, k0);
@@ -2647,7 +2667,7 @@ fn spans(out: &mut Vec<Span>, run: (f64, f64), (scale, offset): (f64, f64), n: f
     }
 }
 
-/// The draws of a pass of a blur in the order they mix, up to five: how far
+/// The draws of a blur pass in the order they mix, up to five: the distance
 /// from the middle in texels, and the weight in 16.16 of what the draw reads.
 fn blur_draws(kernel: &BlurKernel) -> [Option<(f32, u32)>; 5] {
     let w = kernel.weights;
@@ -2690,7 +2710,7 @@ unsafe fn text_of(s: *const std::ffi::c_char) -> String {
         .into_owned()
 }
 
-/// Saves `0xAARRGGBB` pixels in the form the bench's shots have.
+/// Saves `0xAARRGGBB` pixels in the format of the bench's shots.
 fn save_pam(path: &str, w: usize, h: usize, pixels: &[u32]) {
     let head =
         format!("P7\nWIDTH {w}\nHEIGHT {h}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n");
@@ -2719,7 +2739,7 @@ impl Drop for Gpu {
             half1,
             self.atlas,
         ];
-        // SAFETY: these are the renderer's own, and the frontend drops `self`
+        // SAFETY: these belong to the renderer, and the frontend drops `self`
         // before it.
         for texture in pages.chain(all) {
             if !texture.is_null() {
@@ -2727,7 +2747,7 @@ impl Drop for Gpu {
             }
         }
         // SAFETY: these were made in ColorFilter::new, and the renderer, made
-        // for this alone, is not used after this.
+        // for this path alone, is not used after this.
         unsafe {
             if let Some(c) = self.color_filter.take() {
                 SDL_DestroyGPURenderState(c.state);
@@ -2740,14 +2760,14 @@ impl Drop for Gpu {
     }
 }
 
-/// The frontend's GPU paths: the one for the main screens, the one for a
-/// subprogram's, which has its own pages and frame, and who draws, as
-/// About says it.
+/// The frontend's GPU paths: one for the main screens, and one with
+/// its own pages and frame for a subprogram's screens. It also holds
+/// who draws and why, in the words that About shows.
 #[derive(Default)]
 pub struct Paths {
     pub main: Option<Gpu>,
     pub sub: Option<Gpu>,
-    /// The paths are to be dropped, for frames on the CPU from now on.
+    /// The paths must be dropped, so that the CPU draws from now on.
     off: bool,
     /// The setting the paths were last started by.
     applied: Option<Renderer>,
@@ -2755,8 +2775,8 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// Drops the paths, as all that lives on a renderer must go before it
-    /// does. The next [`Paths::follow`] starts them again.
+    /// Drops the paths, because everything on a renderer must be dropped
+    /// before the renderer. The next [`Paths::follow`] starts them again.
     pub fn forget(&mut self) {
         (self.main, self.sub, self.off) = (None, None, false);
         self.applied = None;
@@ -2764,8 +2784,8 @@ impl Paths {
 
     /// Starts the main path again when the `renderer` setting is not the
     /// one it was started by, and drops the paths if they were turned off
-    /// or the renderer has refused too many frames. True if it started
-    /// the path: the screens are then to be drawn again.
+    /// or the renderer has refused too many frames. Returns true if it
+    /// started the path. The screens must then be drawn again.
     pub fn follow(&mut self, canvas: &Canvas<Window>, renderer: Renderer) -> bool {
         let started = self.applied != Some(renderer);
         if started {
@@ -2785,8 +2805,8 @@ impl Paths {
         started
     }
 
-    /// Has the next [`Paths::follow`] drop the paths, with `drawn_by` as
-    /// who draws from then on.
+    /// Makes the next [`Paths::follow`] drop the paths, with `drawn_by` as
+    /// the text that says who draws from then on.
     pub fn turn_off(&mut self, drawn_by: &str) {
         self.drawn_by = drawn_by.to_string();
         self.off = true;
@@ -2807,7 +2827,6 @@ mod tests {
         }
     }
 
-    /// All of a kernel's weight is read, each tap at its place.
     #[test]
     fn a_vertex_out_of_reach_is_found_wherever_it_is() {
         let good = SDL_Vertex {
@@ -2841,6 +2860,7 @@ mod tests {
         }
     }
 
+    /// All of a kernel's weight is read, each tap at its place.
     #[test]
     fn a_blur_reads_every_tap_once() {
         for amount in [1, 2, 8, 16, 32, 64, 128, 384, 1000] {
@@ -2861,7 +2881,8 @@ mod tests {
         }
     }
 
-    /// What the CPU's raster takes for a pixel, against what the quads give.
+    /// The texel the quads give for each pixel, to compare with
+    /// `cpu_raster`.
     fn strips_show(raster: &RasterStrips) -> Vec<Option<(u32, u32)>> {
         let (w, h) = raster.size;
         let mut shown = vec![None; (w * h) as usize];
@@ -2957,8 +2978,6 @@ mod tests {
         assert!(raster.quads(|_, _| {}) > MOST_RASTER_QUADS);
     }
 
-    /// One draw gives what the CPU's cover() does with FADE and the darkening, one
-    /// rounding of the two.
     #[test]
     fn rounding_passes_and_a_wrong_sum_does_not() {
         let compared = |far, by_diff, alpha_more| Compared {
@@ -2968,7 +2987,7 @@ mod tests {
             alpha_more,
             ..Compared::default()
         };
-        // A driver that rounds its own way: much off by a little, alpha too.
+        // A driver that rounds differently: many off by a little, alpha too.
         let rounding = Compared {
             alpha_off: 900,
             ..compared(0, [100, 700, 200, 0], 0)
@@ -2984,6 +3003,8 @@ mod tests {
         assert!(!Compared::default().near(0.005));
     }
 
+    /// One draw gives the same as the CPU's cover() with FADE and the darkening:
+    /// one rounding of the two.
     #[test]
     fn fade_and_dimming_are_one_sum() {
         const DIM: u32 = sb_runtime::screen::DIM;
@@ -3021,7 +3042,7 @@ mod tests {
     }
 
     /// A power of two at a scale of 1, on a half pixel: the higher texel, and
-    /// moving the element down does not move what lies under a pixel.
+    /// moving the element down does not move what is under a pixel.
     #[test]
     fn a_tie_goes_as_the_cpu_rule_says() {
         let on = sampling(&scaled(1.0, 3.5), (16, 16), 1.0, (1.0, 1.0));

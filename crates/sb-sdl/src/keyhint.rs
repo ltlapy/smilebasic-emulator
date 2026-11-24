@@ -1,5 +1,5 @@
-//! A picture of which keys press controller 1's buttons, shown in the
-//! bottom-right corner once, the first time a program reads buttons
+//! A picture of the keys that press the buttons of controller 1, shown
+//! once in the bottom-right corner, the first time a program reads buttons
 //! without a gamepad connected.
 
 use sb_runtime::Framebuffer;
@@ -21,9 +21,9 @@ const FOOTER: &str = "Off: Run menu";
 /// BUTTON's names, by id.
 const NAMES: [&str; 12] = ["X", "B", "Y", "A", "", "", "", "", "L", "R", "ZL", "ZR"];
 
-/// Where each button's keycap goes, in steps of a cap from the picture's
-/// top left: shoulders on top, the direction pad left, the face buttons
-/// right.
+/// The position of each button's keycap, in steps of a cap from the top
+/// left of the picture: shoulders on top, the direction pad left, the face
+/// buttons right.
 const PLACES: [(u32, (u32, u32)); 12] = [
     (8, (0, 0)),
     (10, (1, 0)),
@@ -48,7 +48,7 @@ pub struct KeyHint {
 
 impl KeyHint {
     /// The program read buttons: shows the picture if it has not been
-    /// shown and the keyboard is what presses them.
+    /// shown and the keyboard presses the buttons.
     pub fn buttons_read(&mut self, keys_press_buttons: bool, gamepads: usize) {
         if self.done {
             return;
@@ -90,7 +90,7 @@ impl KeyHint {
     }
 }
 
-/// A keycap with the key on it, and the button's name under the key; the
+/// A keycap with the key on it, and the button's name under the key. The
 /// cursor keys show an arrow, which is the button's place too.
 fn draw_cap(fb: &mut Framebuffer, font: &Font, cap: Rect, key: Scancode, button: &str) {
     fill(fb, cap, 0xFF30_3030);

@@ -81,27 +81,27 @@ pub struct System {
     started: Instant,
     /// Frames since start-up, for MAINCNT.
     pub(crate) frames: u32,
-    /// Time and chance come from the frame count and fixed seeds, for runs
-    /// that must repeat exactly; see [`System::fix`].
+    /// Time and random numbers come from the frame count and fixed seeds,
+    /// for runs that must repeat exactly; see [`System::fix`].
     fixed: bool,
     /// Seeds given out since [`System::fix`].
     fixed_seeds: u32,
-    /// SYSPARAM "SYSBEEP": the system's own sounds play. The emulator has
-    /// none, so this is only kept.
+    /// SYSPARAM "SYSBEEP": whether the system's own sounds play. The
+    /// emulator has none, so this is only kept.
     sysbeep: bool,
-    /// SYSPARAM "MOUSECURSOR": programs show the mouse cursor.
+    /// SYSPARAM "MOUSECURSOR": whether programs show the mouse cursor.
     pub mouse_cursor: bool,
-    /// When PERFBEGIN started each of its eight measurements.
+    /// The start time of each of PERFBEGIN's eight measurements.
     perf: [Option<Instant>; 8],
-    /// The same on the console's clock, with a console's speed chosen.
+    /// The same on the console's clock, when a console's speed is chosen.
     perf_clock: [u64; 8],
-    /// What PERFEND has timed of each since RUN, for the debugger's
-    /// panel.
+    /// The times PERFEND has recorded for each of the eight measurements
+    /// since RUN, for the debugger panel.
     perf_stats: [PerfStats; 8],
 }
 
-/// One PERFBEGIN and PERFEND measurement's times since RUN, in
-/// microseconds, which the emulator's debugger shows; programs never see
+/// The times of one PERFBEGIN and PERFEND measurement since RUN, in
+/// microseconds. The emulator's debugger shows them; programs never see
 /// them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PerfStats {
@@ -110,14 +110,14 @@ pub struct PerfStats {
     pub last: u64,
     pub max: u64,
     pub total: u64,
-    /// The colour PERFBEGIN last gave, as a colour code.
+    /// The color PERFBEGIN last gave, as a color code.
     pub color: Option<u32>,
-    /// PERFBEGIN started it, though PERFEND may not have ended it yet.
+    /// Whether PERFBEGIN started it. PERFEND may not have ended it yet.
     pub begun: bool,
 }
 
 impl PerfStats {
-    /// Kept cheap, as PERFEND may run many times a frame.
+    /// Kept cheap, because PERFEND may run many times per frame.
     fn add(&mut self, micros: u64) {
         self.count += 1;
         self.last = micros;
@@ -136,7 +136,7 @@ impl PerfStats {
 }
 
 /// SYSPARAM "KEYREPEAT": frames before a held key repeats, and between
-/// repeats, as SmileBASIC 4's settings start.
+/// repeats, in SmileBASIC 4's default settings.
 const KEY_REPEAT: [i32; 2] = [20, 3];
 
 impl Default for System {
@@ -157,10 +157,10 @@ impl Default for System {
 }
 
 impl System {
-    /// Makes time and chance the same on every run: MILLISEC, DATE$ and
-    /// TIME$ follow the frame count from a set date, PERFEND gives 0, and
-    /// the random series start from set seeds. For measuring and comparing
-    /// runs, never for playing.
+    /// Makes time and random numbers the same on every run: MILLISEC,
+    /// DATE$ and TIME$ follow the frame count from a set date, PERFEND
+    /// gives 0, and the random series start from set seeds. For measuring
+    /// and comparing runs, never for playing.
     pub fn fix(&mut self) {
         self.fixed = true;
         self.frames = 0;
@@ -266,8 +266,8 @@ impl Runtime {
                     [id, max] => (series_id(id)?, int(max)?),
                     _ => unreachable!("matched above"),
                 };
-                // RND(0) is 0 without taking a number, and a negative
-                // maximum Out of range, as on hardware.
+                // RND(0) is 0 and takes no number from the series. A
+                // negative maximum is Out of range, as on hardware.
                 if max < 0 {
                     return Err(Error::with_detail(
                         ErrorKind::OutOfRange,
@@ -282,8 +282,8 @@ impl Runtime {
             }
             (Command::Rndf, Want::Value, 0..=1) => {
                 let id = args.first().map_or(Ok(0), series_id)?;
-                // 53 bits from two numbers, as TinyMT's and Mersenne
-                // Twister's res53: 0 up to but not including 1.
+                // 53 bits from two numbers, like res53 in TinyMT and
+                // Mersenne Twister: 0 up to but not including 1.
                 let a = u64::from(sys.series[id].next() >> 5);
                 let b = u64::from(sys.series[id].next() >> 6);
                 let r = (a << 26 | b) as f64 / (1u64 << 53) as f64;
@@ -301,8 +301,8 @@ impl Runtime {
                 });
                 Ok(())
             }
-            // A console's speed keeps the console's clock, which PERFEND
-            // and MAINCNT follow too.
+            // When a console's speed is chosen, MILLISEC follows the
+            // console's clock, and so do PERFEND and MAINCNT.
             (Command::Millisec, Want::Value, 0) => one(
                 out,
                 Value::Int(match &self.meter {
@@ -310,14 +310,14 @@ impl Runtime {
                     None => sys.millis(),
                 }),
             ),
-            // Past XSCREEN or ACLS, the frame job has yet to raise it.
+            // After XSCREEN or ACLS, the frame job has not raised it yet.
             (Command::Maincnt, Want::Value, 0) => one(
                 out,
                 Value::Int(sys.frames.wrapping_sub(self.in_frame_job.into()) as i32),
             ),
             // PERFBEGIN and PERFEND measure time; SmileBASIC 4.4.9 shows no
             // gauge for them, nor does the emulator on its screens. Only
-            // the debugger's panel lists the times kept here.
+            // the debugger panel lists the times kept here.
             (Command::Perfbegin, Want::Outs(0), 1 | 2) => {
                 let n = perf_id(&args[0])?;
                 let color = args.get(1).map(int).transpose()?;
@@ -334,8 +334,8 @@ impl Runtime {
                 let n = perf_id(&args[0])?;
                 // Without PERFBEGIN, the time since SmileBASIC started.
                 let since = sys.perf[n].unwrap_or(sys.started);
-                // A console's speed times on the console's clock, which
-                // runs the same each time.
+                // When a console's speed is chosen, PERFEND times on the
+                // console's clock, which runs the same each time.
                 let micros = match (&self.meter, sys.fixed) {
                     (Some(meter), _) => {
                         let begun = sys.perf[n].map_or(0, |_| sys.perf_clock[n]);
@@ -407,8 +407,8 @@ impl Runtime {
                         let n = usize::from(name.as_bytes()[4] - b'1');
                         vec![string(self.settings.tools[n].clone())]
                     }
-                    // SmileBASIC 4 names the name, before it
-                    // looks at the OUT count.
+                    // SmileBASIC 4 reports the name, before it checks
+                    // the OUT count.
                     _ => {
                         let e = Error::with_detail(ErrorKind::IllegalSystemArgumentName, name);
                         return Err(e.of_arg(0));
@@ -463,12 +463,12 @@ impl Runtime {
         }
     }
 
-    /// What PERFEND has timed of each measurement since RUN.
+    /// The times PERFEND has recorded for each measurement since RUN.
     pub fn perf_stats(&self) -> &[PerfStats; 8] {
         &self.system.perf_stats
     }
 
-    /// Forgets what PERFEND has timed, as RUN does.
+    /// Forgets the times PERFEND has recorded, the same as RUN does.
     pub fn reset_perf_stats(&mut self) {
         self.system.perf_stats = [PerfStats::default(); 8];
     }

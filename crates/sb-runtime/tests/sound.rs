@@ -51,7 +51,7 @@ fn bgmchk_after_a_fading_stop() {
     run_on(&mut rt, "BGMPLAY 0,1:BGMSTOP 0,1").unwrap();
     frames(&mut rt, 1);
     assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "0");
-    // After a VSYNC that did not wait, BGMCHK says 0 two frames on.
+    // After a VSYNC that did not wait, BGMCHK says 0 two frames later.
     run_on(&mut rt, "BGMPLAY 0,1").unwrap();
     rt.sound.synced();
     run_on(&mut rt, "BGMSTOP 0,1").unwrap();
@@ -86,7 +86,7 @@ fn tracks_repeat_stop_and_pause() {
 }
 
 /// A user song with nothing set stops what the track plays, though
-/// BGMCHK still says 1 two frames on.
+/// BGMCHK still says 1 two frames later.
 #[test]
 fn an_unset_song_stops_the_track() {
     let mut rt = runtime();
@@ -99,7 +99,7 @@ fn an_unset_song_stops_the_track() {
     assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "1");
     frames(&mut rt, 3);
     assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "0");
-    // Another track goes on.
+    // Another track continues.
     run_on(&mut rt, "BGMPLAY 1,0:BGMPLAY 0,200").unwrap();
     frames(&mut rt, 5);
     assert_eq!(run_on(&mut rt, "?BGMCHK(0);BGMCHK(1)").unwrap(), "01");
@@ -164,7 +164,8 @@ fn checking_mml() {
         let e = run_on(&mut rt, &format!("BGMPLAY \"{mml}\"")).unwrap_err();
         assert_eq!(e.kind.code(), code, "{mml}");
     }
-    // A `:` naming the channel in use is no new channel (TEST74).
+    // A `:` naming the channel in use does not count as a new channel
+    // (TEST74).
     run_on(&mut rt, "BGMPLAY \":0C:0D\":BGMSTOP").unwrap();
     assert_eq!(
         run_on(&mut rt, "BGMPLAY 74").unwrap_err().kind,
@@ -196,8 +197,8 @@ fn preset_ranges_follow_4_4_9() {
     );
 }
 
-/// An error in MML names the first argument, whichever command reads it;
-/// MML over 1,048,576 characters is too long, naming none.
+/// An error in MML names the first argument, for any command that reads it.
+/// MML over 1,048,576 characters is too long, and the error names none.
 #[test]
 fn mml_errors_name_the_first_argument() {
     let mut rt = runtime();
@@ -323,8 +324,8 @@ fn wavseta_refuses_an_empty_array() {
     }
 }
 
-/// WAVSETA looks at its arguments in order, then at the range: one with
-/// nothing in it defines nothing and is no error, in both forms (TEST57).
+/// WAVSETA checks its arguments in order, then the range. In both forms, a
+/// range with nothing in it defines nothing and is no error (TEST57).
 #[test]
 fn wavseta_checks_in_order() {
     let wrong = |source: &str, kind: ErrorKind, arg: Option<u8>| {
@@ -341,11 +342,11 @@ fn wavseta_checks_in_order() {
     wrong("69,0,15,0", range, Some(9));
     wrong("69,0,15,96001", range, Some(9));
     wrong("69,0,15,28160,16", range, Some(10));
-    // An argument left out counts where it is.
+    // An omitted argument counts at its position.
     wrong("128,,15", range, Some(6));
     wrong("69,0,15,28160,", ErrorKind::TypeMismatch, Some(10));
     wrong("69,0,15,28160,0,\"X\"", ErrorKind::TypeMismatch, Some(11));
-    // Then the range, which comes before the offset's check.
+    // Then the range, which is checked before the offset.
     wrong("69,10,5", illegal, None);
     wrong("69,10,5,28160", illegal, None);
     wrong("69,10,5,28160,15", illegal, None);
@@ -369,7 +370,7 @@ fn wavseta_checks_in_order() {
         frames(&mut rt, 5);
         assert_eq!(u8::from(peak(&mut rt) > 0.0).to_string(), shows, "{source}");
     }
-    // One sample has no range, and an array of it is no error either.
+    // One sample has no range, and an array of one sample is no error either.
     for source in [
         "DIM A[1]:WAVSETA 224,0,0,0,0,A",
         "DIM A[1]:WAVSETA 224,0,0,0,0,A,69,0,0,28160",
@@ -379,8 +380,8 @@ fn wavseta_checks_in_order() {
     }
 }
 
-/// Arguments can be left off the end but not out in between, in either
-/// form, and that is looked at before the array is.
+/// In either form, arguments can be omitted at the end but not in between,
+/// and this is checked before the array.
 #[test]
 fn wavseta_refuses_omitted_arguments() {
     for (source, arg) in [
@@ -430,8 +431,8 @@ fn recsave_names_a_number() {
     assert_eq!((e.kind, e.arg), (ErrorKind::TypeMismatch, Some(0)));
 }
 
-/// RECSAVE into a string array or one of three dimensions names it, after
-/// the count's type.
+/// RECSAVE into a string array or a three-dimensional array names the
+/// array, after it checks the type of the count.
 #[test]
 fn recsave_names_an_array_it_cannot_fill() {
     let mut rt = runtime();
@@ -447,8 +448,8 @@ fn recsave_names_an_array_it_cannot_fill() {
     assert_eq!((e.kind, e.arg), (ErrorKind::TypeMismatch, Some(1)));
 }
 
-/// RECSAVE, which gives its array a new size, refuses GARRAY's and TARRAY's
-/// after looking at the count and the array's type.
+/// RECSAVE, which gives its array a new size, refuses the arrays of GARRAY
+/// and TARRAY after it checks the count and the type of the array.
 #[test]
 fn recsave_refuses_an_array_of_the_system() {
     let mut rt = runtime();
@@ -470,7 +471,8 @@ fn recsave_refuses_an_array_of_the_system() {
     );
 }
 
-/// CHKMML reads macros that BGMPLAY would refuse for how much they copy.
+/// CHKMML reads macros that BGMPLAY would refuse because of how much they
+/// copy.
 #[test]
 fn chkmml_takes_macros_bgmplay_refuses() {
     let mut rt = runtime();
@@ -486,8 +488,8 @@ fn chkmml_takes_macros_bgmplay_refuses() {
     assert_eq!(e.kind, ErrorKind::IllegalMml);
 }
 
-/// BEEP of a user waveform holds a note as long as a pass of it, which for a
-/// short waveform is none at all (TEST58's silence).
+/// BEEP of a user waveform holds a note as long as one pass of the waveform.
+/// For a short waveform that is no time at all (the silence in TEST58).
 #[test]
 fn beep_of_a_waveform_lasts_as_long_as_it() {
     let beep = |source: &str, at: usize| {
@@ -502,7 +504,7 @@ fn beep_of_a_waveform_lasts_as_long_as_it() {
     // 32 samples: a millisecond, less than the shortest note.
     let short = format!("DIM W%[32]\n{fill}WAVSETA 224,127,127,127,127,W%,69:H=BEEP(224,0,127)");
     assert_eq!(beep(&short, 2), 0.0);
-    // TEST58 went on with a start equal to the end, which changes nothing.
+    // TEST58 continued with a start equal to the end, which changes nothing.
     assert_eq!(
         beep(
             &format!("{short}:WAVSETA 224,127,127,127,127,W%,69,5,5:H=BEEP(224,0,127)"),
@@ -510,7 +512,8 @@ fn beep_of_a_waveform_lasts_as_long_as_it() {
         ),
         0.0
     );
-    // WAVSET's string: a second, whatever its length.
+    // A BEEP of a WAVSET string lasts a second, regardless of the string's
+    // length.
     let wavset = "WAVSET 224,127,127,127,127,\"E020\"*8:H=BEEP(224,0,127)";
     assert!(beep(wavset, 5) > 0.01);
     assert!(beep(wavset, 55) > 0.01);
@@ -520,7 +523,7 @@ fn beep_of_a_waveform_lasts_as_long_as_it() {
     let long = format!("DIM W%[14080]\n{fill}WAVSETA 224,127,127,127,127,W%,69:H=BEEP(224,0,127)");
     assert!(beep(&long, 30) > 0.01);
     assert_eq!(beep(&long, 40), 0.0);
-    // By 16-bit form, at its own rate: a quarter of a second, or for ever.
+    // In the 16-bit form, at its own rate: a quarter of a second, or forever.
     let sixteen = "DIM W%[1000]:FILL W%,20000:WAVSETA 224,127,127,127,127,W%,69,0,999,4000";
     assert!(beep(&format!("{sixteen}:H=BEEP(224,0,127)"), 10) > 0.01);
     assert_eq!(beep(&format!("{sixteen}:H=BEEP(224,0,127)"), 20), 0.0);
@@ -531,8 +534,8 @@ fn beep_of_a_waveform_lasts_as_long_as_it() {
     assert!(beep(&song, 30) > 0.01);
 }
 
-/// The peak of `frames` frames of what `source` starts, and how many samples
-/// up to the last that is not silent.
+/// The peak of `n` frames of the sound that `source` starts, and the
+/// number of samples up to the last one that is not silent.
 fn beep_recording(source: &str, n: usize) -> (i32, usize) {
     let mut rt = runtime();
     run_on(&mut rt, &format!("RECSTART {}:{source}", n as f64 / 60.0)).unwrap();
@@ -548,10 +551,10 @@ fn beep_recording(source: &str, n: usize) -> (i32, usize) {
 
 const WAVSET_SQUARE: &str = "WAVSET 224,127,127,127,127,\"FFFF0000\"*8,69";
 
-/// BEEP's volume is a linear gain, by which 64 is as loud as BGMPLAY's
-/// default: an eighth of full scale on each side for a full-scale waveform.
-/// The square holds at 4096; the filter waveforms are read through rings a
-/// little past that at each edge, to 4814.
+/// BEEP's volume is a linear gain, and 64 is as loud as BGMPLAY's default:
+/// an eighth of full scale on each side for a full-scale waveform. The
+/// square holds at 4096, but the filter that waveforms are read through
+/// rings a little past that at each edge, to 4814.
 #[test]
 fn beep_of_a_waveform_is_as_loud_as_a_song() {
     let beep = |volume: i32| beep_recording(&format!("{WAVSET_SQUARE}:H=BEEP(224,0,{volume})"), 30);
@@ -567,9 +570,9 @@ fn beep_of_a_waveform_is_as_loud_as_a_song() {
     assert_eq!(default, at_64);
 }
 
-/// WAVSETA's 8-bit form cuts each value to an integer and keeps its low
-/// 8 bits, so a waveform written as 16-bit numbers, as a song's noise from
-/// a 16-bit shift register is, sounds no louder than its bytes.
+/// The 8-bit form of WAVSETA cuts each value to an integer and keeps its
+/// low 8 bits. So a waveform written as 16-bit numbers, like a song's noise
+/// from a 16-bit shift register, sounds no louder than its bytes.
 #[test]
 fn wavseta_8_bit_values_keep_their_low_byte() {
     let square = |low: &str, high: &str| {
@@ -591,7 +594,7 @@ fn wavseta_8_bit_values_keep_their_low_byte() {
     ] {
         assert_eq!(square(low, high), bytes, "{low}, {high}");
     }
-    // Two bytes apart by 128 make half the swing.
+    // Two bytes 128 apart make half the swing.
     let half = square("&HFF40", "&HC0");
     assert!((half - bytes / 2).abs() <= bytes / 50, "{half} for {bytes}");
 }
@@ -613,7 +616,8 @@ fn beep_of_a_waveform_ends_on_the_sound_engines_steps() {
     assert_eq!(ms(sixteen, 90), 1000);
 }
 
-/// With the repeat flag each pass is a new note, over the last one's fall.
+/// With the repeat flag, each pass is a new note over the fall of the last
+/// one.
 #[test]
 fn a_repeating_beep_doubles_for_a_moment_at_each_pass() {
     let mut rt = runtime();
@@ -630,8 +634,9 @@ fn a_repeating_beep_doubles_for_a_moment_at_each_pass() {
          NEXT:?A DIV 48;\",\";B DIV 48;\",\";ABS(S[47000]);",
     )
     .unwrap();
-    // Loud from 5 ms before the first second ends, and last before the second
-    // second's end; between them, one note's level.
+    // Loud from 5 ms before the first second ends, and loud for the last time
+    // before the second second ends. At 979 ms, just before the first loud
+    // moment, the level of one note.
     assert_eq!(got, "995,1998,3750");
 }
 
@@ -676,13 +681,14 @@ fn beepstop_lets_a_slow_release_run_without_the_flag() {
     let slow = "WAVSET 224,127,127,127,32,\"FFFF0000\"*8,69:H=BEEP(224)";
     let (_, end) = stopped_recording(slow, 6, "BEEPSTOP H", 54);
     assert_eq!(end, 999);
-    // The handle is free at once, and BEEPVOL of it does not reach the fall.
+    // The handle is free immediately, and BEEPVOL of it does not reach the
+    // fall.
     let (quiet, _) = stopped_recording(slow, 6, "BEEPSTOP H:BEEPVOL H,0", 54);
     assert!(quiet > 3000, "{quiet}");
 }
 
-/// A BEEP that takes over a statement's handle lets its note fall too, a step
-/// for release 127, and SNDSTOP stops everything at once.
+/// A BEEP that takes over the handle of a statement lets its note fall too,
+/// which takes a step for release 127. SNDSTOP stops everything immediately.
 #[test]
 fn a_note_taken_over_falls_and_sndstop_cuts() {
     let quiet = "FOR I=1 TO 16:BEEP 225,0,0:NEXT";
@@ -694,7 +700,7 @@ fn a_note_taken_over_falls_and_sndstop_cuts() {
     assert_eq!(end, 99);
 }
 
-/// BEEPSTOP takes a step to fall, and frees the handle at once.
+/// BEEPSTOP takes a step to fall, and frees the handle immediately.
 #[test]
 fn beepstop_of_a_waveform_takes_a_step() {
     let mut rt = runtime();
@@ -711,7 +717,8 @@ fn beepstop_of_a_waveform_takes_a_step() {
     assert_eq!(run_on(&mut rt, "?BEEP(0);").unwrap(), "1");
 }
 
-/// BEEP's handles go on rising and round, whether the last has ended or not.
+/// BEEP's handles keep rising and wrap around, whether the last has ended or
+/// not.
 #[test]
 fn beep_handles_go_round() {
     let mut rt = runtime();
@@ -721,8 +728,8 @@ fn beep_handles_go_round() {
             .parse::<i32>()
             .unwrap()
     };
-    // 0 to 15, ended or not: a preset without the sounds ends at once, and
-    // one sounding still only holds its own number.
+    // 0 to 15, ended or not: a preset without the sounds ends immediately,
+    // and one that is sounding still holds only its own number.
     run_on(&mut rt, WAVSET_SQUARE).unwrap();
     for n in 0..8 {
         assert_eq!(handle(&mut rt, 0), n);
@@ -737,7 +744,7 @@ fn beep_handles_go_round() {
         assert_eq!(handle(&mut rt, 0), n);
         frames(&mut rt, 1);
     }
-    // Round again, past the one still held.
+    // Around again, skipping the one still held.
     assert_eq!(handle(&mut rt, 0), 0);
     frames(&mut rt, 1);
     for n in 1..8 {
@@ -745,7 +752,7 @@ fn beep_handles_go_round() {
         frames(&mut rt, 1);
     }
     assert_eq!(handle(&mut rt, 0), 9);
-    // BEEPSTOP lets it go.
+    // BEEPSTOP frees it.
     run_on(&mut rt, "BEEPSTOP 8").unwrap();
     frames(&mut rt, 1);
     for n in 10..16 {
@@ -781,8 +788,9 @@ fn with_all_beep_handles_held_there_is_none() {
     assert_eq!(run_on(&mut rt, "?BEEP(224);").unwrap(), "4");
 }
 
-/// A handle's number reaches whatever plays on it now, as it is the number
-/// of a place to play in: an old one has no sound of its own to tell apart.
+/// A handle's number reaches anything that plays on it now, because it is the
+/// number of a place to play in. An old handle has no separate sound to tell
+/// apart.
 #[test]
 fn an_old_beep_handle_reaches_what_plays_there() {
     let mut rt = runtime();
@@ -822,7 +830,7 @@ fn a_silent_beep_still_gives_a_handle() {
 #[test]
 fn beeps_take_handles() {
     let mut rt = runtime();
-    // PRINT works out its items right to left, so BEEP() takes handle 0.
+    // PRINT evaluates its items right to left, so BEEP() takes handle 0.
     assert_eq!(run_on(&mut rt, "?BEEP(152);BEEP();").unwrap(), "10");
     run_on(&mut rt, "WAVSET 230,127,127,127,127,\"FF00\"*8:H=BEEP(230,0,127):BEEPPIT H,1200:BEEPVOL H,64:BEEPPAN H,0").unwrap();
     rt.sound.take_samples();
@@ -871,7 +879,7 @@ fn pcm_streams_from_arrays() {
     frames(&mut rt, 1);
     // 16000 of 32767, at 0.35 of full scale for a full sample.
     assert!(peak(&mut rt) > 0.16);
-    // PCMPOS is where the feed has got to, 3073 samples ahead.
+    // PCMPOS is the position the feed has reached, 3073 samples ahead.
     assert_eq!(run_on(&mut rt, "PCMPOS OUT P:?P").unwrap(), "3073");
     run_on(&mut rt, "PCMSTOP:PCMPOS 10").unwrap();
     frames(&mut rt, 1);
@@ -888,7 +896,7 @@ fn pcm_streams_from_arrays() {
 }
 
 /// PCMSTREAM takes integers or reals in one or two dimensions, or two 1D
-/// arrays as long as each other, and none that is empty.
+/// arrays of the same length, and no array that is empty.
 #[test]
 fn pcm_stream_checks_its_arrays() {
     let mut rt = runtime();
@@ -951,9 +959,9 @@ fn pcm_samples_are_16_bits() {
     }
 }
 
-/// A stream keeps the length its arrays had at PCMSTREAM. Made shorter
-/// since, they play silence where they have nothing, also once PCMCONT
-/// goes on with a stream whose array was emptied.
+/// A stream keeps the length its arrays had at PCMSTREAM. If its arrays are
+/// made shorter later, they play silence where they have nothing. This is
+/// also true when PCMCONT continues a stream whose array was emptied.
 #[test]
 fn a_pcm_stream_outlives_its_array() {
     let mut rt = runtime();
@@ -965,7 +973,7 @@ fn a_pcm_stream_outlives_its_array() {
     rt.sound.take_samples();
     frames(&mut rt, 2);
     assert_eq!(peak(&mut rt), 0.0);
-    // 3073 samples fed, round the 480.
+    // 3073 samples fed, wrapping around the 480.
     assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "193");
     // The left row is still there, the right one is not.
     run_on(
@@ -986,7 +994,7 @@ fn a_pcm_stream_outlives_its_array() {
     assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "193");
     frames(&mut rt, 2);
     assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "193");
-    // An array grown since goes round at its old length.
+    // An array grown since then wraps around at its old length.
     assert_eq!(
         run_on(
             &mut rt,
@@ -1035,8 +1043,8 @@ fn effector_balance_and_talk_are_accepted() {
     );
 }
 
-/// TALK and a sung note do not cut each other, whichever starts first;
-/// a sung note's letters must make syllables.
+/// TALK and a sung note do not cut each other, regardless of which starts
+/// first. The letters of a sung note must make syllables.
 #[test]
 fn talk_and_sung_notes_sound_together() {
     let mut rt = runtime();
@@ -1059,7 +1067,7 @@ fn talk_and_sung_notes_sound_together() {
             .kind,
         ErrorKind::IllegalMml
     );
-    // Three letters at most to a note; letters that are no phoneme pass.
+    // Three letters at most per note; letters that are not a phoneme pass.
     run_on(&mut rt, "BGMPLAY \"T60@0O4*KO,C*Q,C*NI,C*CHI,C*WA,C1\"").unwrap();
     run_on(&mut rt, "BGMPLAY \"T60@0O4*XA,C*KXA,C\"").unwrap();
     frames(&mut rt, 10);
@@ -1090,9 +1098,9 @@ fn the_effector_rings_on_after_a_note_but_is_not_recorded() {
     assert_eq!(tail("EFCSET #EFCCAVE:EFCEN 1").0, 0.0);
 }
 
-/// What the effector hears of each sound. The checks read what plays:
-/// a full-scale square BEEP or BGM note at 64 records at an eighth of full
-/// scale, and plays as loud with EFCWET 127.
+/// The part of each sound sent to the effector. The checks read the sound
+/// that plays: a full-scale square BEEP or BGM note at 64 records at an
+/// eighth of full scale, and plays as loud with EFCWET 127.
 #[test]
 fn the_effector_sends_and_resets() {
     let heard = |setup: &str, sound: &str| {
@@ -1107,9 +1115,9 @@ fn the_effector_sends_and_resets() {
     let song = "BGMPLAY \"@224O4A1\"";
     let near = |a: f32, b: f32| (a - b).abs() < 0.02 * b;
     for sound in [beep, song] {
-        // EFCWET starts at 127, and with the effector off what is sent
-        // passes it: a full-scale square at 64 plays at an eighth of full
-        // scale, its waveform filter's ringing aside.
+        // EFCWET starts at 127, and with the effector off the part that is
+        // sent passes it: a full-scale square at 64 plays at an eighth of
+        // full scale, apart from the ringing of its waveform filter.
         let full = heard("", sound);
         assert!((0.12..0.15).contains(&full), "{sound} {full}");
         // Sending nothing, half as loud.
@@ -1133,7 +1141,8 @@ fn the_effector_sends_and_resets() {
     assert_eq!(got, "10");
 }
 
-/// BGMPLAY starts a track with EFCWET's send, whatever BGMWET said before.
+/// BGMPLAY starts a track with the send of EFCWET, regardless of what
+/// BGMWET said before.
 #[test]
 fn bgmplay_forgets_bgmwet() {
     let quiet = |setup: &str| {
@@ -1166,8 +1175,9 @@ fn a_recording_waits_for_a_song_waking_the_sound_system() {
     assert_eq!(first, "1");
 }
 
-/// RECSTART keeps what older recordings left in the buffer, and a
-/// recording round the buffer reads it before 0 and past its end.
+/// RECSTART keeps the samples that older recordings left in the buffer, and
+/// a recording that wraps around the buffer reads them before 0 and past
+/// its end.
 #[test]
 fn recordings_keep_what_older_ones_left() {
     let mut rt = runtime();
@@ -1188,7 +1198,7 @@ fn recordings_keep_what_older_ones_left() {
     };
     assert_eq!(sum("-1000"), "1");
     assert_eq!(sum("RECPOS()+1000"), "1");
-    // What this recording took: silence.
+    // The samples this recording took are silent.
     assert_eq!(sum("4000"), "0");
 }
 
@@ -1229,7 +1239,8 @@ fn recording_what_plays() {
         run_on(&mut rt, "RECSTART 61").unwrap_err().kind,
         ErrorKind::OutOfRange
     );
-    // Recording round the buffer, a position below 0 is from its end.
+    // A recording with no time wraps around the buffer, so a position below
+    // 0 is from its end.
     assert_eq!(
         run_on(&mut rt, "RECSTART:RECDATA -1 OUT L,R:?\"OK\"").unwrap(),
         "OK"
@@ -1282,7 +1293,7 @@ fn a_pcm_stream_starts_at_full_volume() {
 #[test]
 fn silent_jingles_still_end() {
     // Without SmileBASIC's own songs, preset 5 ends after its length and
-    // preset 0, which loops, goes on.
+    // preset 0, which loops, continues.
     let mut rt = runtime();
     run_on(&mut rt, "BGMPLAY 0,5:BGMPLAY 1,0").unwrap();
     frames(&mut rt, 100);
@@ -1292,8 +1303,8 @@ fn silent_jingles_still_end() {
 }
 
 /// An octave set inside a chord ends with the chord, and a bare length
-/// after a tied chord goes on with it. Without the first, the `<` after
-/// the chord would leave octave 9.
+/// after a tied chord continues it. Without the first, the `<` after the
+/// chord would leave octave 9.
 #[test]
 fn a_chords_octave_ends_with_the_chord() {
     let mut rt = runtime();
@@ -1311,7 +1322,7 @@ fn the_debugger_sees_what_tracks_and_beeps_play() {
     let mml = "T90$2=7:1@3O5V90P20[C4]:4R1";
     run_on(&mut rt, &format!("BGMSET 130,\"{mml}\":BGMPLAY 3,130,100")).unwrap();
     run_on(&mut rt, "BGMPLAY 1,0,,1").unwrap();
-    // Waking, then a tick or so a frame at 90 quarters a minute.
+    // Waking, then about a tick per frame at 90 quarters per minute.
     assert_eq!(rt.sound.inspect_tracks()[1].state, State::Waking);
     frames(&mut rt, 6);
     let tracks = rt.sound.inspect_tracks();
@@ -1326,7 +1337,7 @@ fn the_debugger_sees_what_tracks_and_beeps_play() {
         (State::Playing, 90, 48)
     );
     assert_eq!((user.ticks, user.vars[2]), (5, 7));
-    // The channels the song uses, with what they last set.
+    // The channels the song uses, with the values they last set.
     let c: Vec<usize> = user.channels.iter().map(|c| c.channel).collect();
     assert_eq!(c, [0, 1, 4]);
     let one = &user.channels[1];
@@ -1356,7 +1367,7 @@ fn the_debugger_sees_what_tracks_and_beeps_play() {
         (120, 90, 10)
     );
     assert_eq!((beeps[1].sound, beeps[1].kind), (2, BeepKind::Silent));
-    // Nothing for a silent preset to play, it ends at once.
+    // A silent preset has nothing to play, so it ends immediately.
     frames(&mut rt, 1);
     assert_eq!(rt.sound.inspect_beeps().len(), 1);
 }
@@ -1407,7 +1418,7 @@ fn samples_out_of_all_range_stay_out_of_the_mix() {
     let during = rt.sound.take_samples();
     assert!(during.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
     run_on(&mut rt, "PCMSTOP").unwrap();
-    // The tail goes on, and dies away, rather than being stuck for good.
+    // The tail continues and dies away, rather than being stuck forever.
     for _ in 0..40 {
         frames(&mut rt, 60);
         let after = rt.sound.take_samples();

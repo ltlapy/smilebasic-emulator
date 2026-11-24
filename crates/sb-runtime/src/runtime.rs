@@ -1,5 +1,5 @@
-//! The [`Host`] that programs run against: text screens now, graphics,
-//! sprites and sound later.
+//! The [`Host`] that programs run against: text screens, graphics, sprites
+//! and sound.
 
 use std::cell::Cell;
 use std::collections::VecDeque;
@@ -266,7 +266,7 @@ pub(crate) enum Command {
 
 impl Command {
     /// Whether the command never changes what the screens show, so that
-    /// a program that only runs such commands leaves the frame as it is.
+    /// a program that only runs such commands leaves the frame unchanged.
     fn unseen(self) -> bool {
         use Command::*;
         matches!(
@@ -355,8 +355,6 @@ impl Command {
         )
     }
 
-    /// Whether the command's forms that give values only read, so that
-    /// they leave the screens as they are.
     /// The function of [`Runtime::run`] that runs this.
     #[inline]
     fn group(self) -> Group {
@@ -379,6 +377,8 @@ impl Command {
         }
     }
 
+    /// Whether the command's forms that return values only read, so that
+    /// they leave the screens unchanged.
     fn reads(self) -> bool {
         use Command::*;
         matches!(
@@ -414,7 +414,7 @@ impl Command {
     }
 }
 
-/// Which function [`Runtime::run`] hands a command to.
+/// The function that [`Runtime::run`] passes a command to.
 #[derive(Clone, Copy)]
 enum Group {
     Sprite,
@@ -425,7 +425,7 @@ enum Group {
     Other,
 }
 
-/// What a command call can do to the screens.
+/// The effect a command call can have on the screens.
 enum Sight {
     /// Nothing, or nothing beyond what render notices itself.
     Unseen,
@@ -663,8 +663,8 @@ pub(crate) const COMMANDS: &[(&str, Command)] = &[
 /// Program slots PRG0 to PRG5.
 pub const SLOTS: usize = 6;
 
-/// Work for the [`crate::machine::Machine`] around the runtime, asked for
-/// by direct-mode commands.
+/// Work for the [`crate::machine::Machine`] around the runtime, requested
+/// by DIRECT mode commands.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
     Run(usize),
@@ -683,16 +683,17 @@ pub enum Request {
 pub enum Stopped {
     #[default]
     No,
-    /// By STOP or the + button, so that CONT can go on.
+    /// By STOP or the + button, so that CONT can continue it.
     Paused,
     /// By an error.
     Error,
 }
 
-/// How many unread keys each key buffer keeps; the oldest goes for a new one.
+/// The number of unread keys each key buffer keeps. A new key drops the
+/// oldest.
 pub const KEY_BUFFER: usize = 128;
-/// How many keys go a frame from the buffer typed keys wait in to the one
-/// programs read.
+/// The number of keys per frame that move from the buffer where typed keys
+/// wait to the buffer that programs read.
 const KEYS_A_FRAME: usize = 32;
 /// Frames per half period of the editor cursor's blink: at 60 fps, a full
 /// blink takes about 833 ms.
@@ -708,8 +709,8 @@ const SPLIT_COLOR: u32 = 0xFF30_3040;
 const SPLIT_FLASH: u32 = 0xFF58_A0FF;
 const SPLIT_FLASH_HOLD: u32 = 12;
 const SPLIT_FLASH_FADE: u32 = 30;
-/// The share of the editor's frame, out of 20, below it for the
-/// debugger's panel.
+/// The share of the editor frame, out of 20, that the debugger panel
+/// takes at the bottom of the frame.
 const PANEL_SHARE: u32 = 7;
 
 /// Character codes for keys that do not produce text, as INKEY$ returns them.
@@ -730,8 +731,8 @@ pub mod keys {
     pub const DOWN: u16 = 0x1F;
 }
 
-/// A key the frontend reports, as one of the [`keys`] values, as SmileBASIC 4's
-/// code.
+/// Converts a key that the frontend reports as one of the [`keys`] values
+/// to SmileBASIC 4's code.
 fn key_code(key: u16) -> u32 {
     match key {
         keys::UP => codes::UP,
@@ -751,8 +752,9 @@ fn key_code(key: u16) -> u32 {
     }
 }
 
-/// What INKEY$ gives for a code, a [`keys`] value or a character; 0 for
-/// nothing, and it then goes on to the next key.
+/// The character INKEY$ returns for a code, a [`keys`] value or a
+/// character; 0 when the code has none, and the next key is then read
+/// instead.
 pub(crate) fn key_value(code: u32) -> u16 {
     match code & codes::CODE {
         codes::UP => keys::UP,
@@ -773,7 +775,8 @@ pub(crate) fn key_value(code: u32) -> u16 {
 }
 
 /// A code the system takes on its way to the program, such as
-/// #SOFTKEY_HIDDEN's &H10056. No more keys go on that frame.
+/// #SOFTKEY_HIDDEN's &H10056. No more keys move to the program's buffer
+/// on that frame.
 fn system_key(code: u32) -> bool {
     matches!(code,
         0x10020..=0x10023
@@ -794,7 +797,7 @@ fn push_key(buffer: &mut VecDeque<u32>, code: u32) {
     buffer.push_back(code);
 }
 
-/// A direct-mode line that Up and Down walk through the history from.
+/// A DIRECT mode line that Up and Down walk through the history from.
 struct Recall {
     /// The history entry shown, newest first; `None` is the line that was
     /// being typed.
@@ -803,8 +806,8 @@ struct Recall {
     draft: Vec<u16>,
 }
 
-/// The slot left out of the other slots' names, and the slots' change
-/// counts they were found at.
+/// The slot excluded from the other slots' names, and the change counts
+/// of the slots when the names were collected.
 type NamesKey = (usize, Vec<u32>);
 
 pub struct Runtime {
@@ -813,16 +816,17 @@ pub struct Runtime {
     /// The editor's other font sources: the chosen file and the bundled
     /// glyphs. The sub interpreter shares them.
     pub(crate) extra_glyphs: Rc<ExtraGlyphs>,
-    /// The editor's half-width glyphs with the chosen file's, made for
+    /// The editor's half-width glyphs with those of the chosen file, and
     /// the font order they were made with; `None` while no file is read,
-    /// when the font's own serve.
+    /// when the font's own glyphs are used.
     editor_halves: Option<(FontSource, Rc<HalfGlyphs>)>,
-    /// What the settings' program font puts over the font page.
+    /// The patch that the program font from the settings puts over the
+    /// font page.
     font_patch: FontPatch,
     /// Graphic pages GRP0-GRP5.
     pub grp: Graphics,
     pub sprites: Sprites,
-    /// SPVAR's and TVAR's variables in all, or more.
+    /// The number of SPVAR and TVAR variables in all, or more.
     pub(crate) var_entries: usize,
     pub input: Input,
     pub(crate) system: System,
@@ -830,19 +834,20 @@ pub struct Runtime {
     /// Typed characters not yet read by INKEY$ or INPUT.
     pub(crate) keys: VecDeque<u32>,
     /// Keys on their way to [`Runtime::keys`], typed or from PUSHKEY. Each
-    /// frame takes up to [`KEYS_A_FRAME`] of them there.
+    /// frame moves up to [`KEYS_A_FRAME`] of them there.
     pub(crate) typed: VecDeque<u32>,
-    /// Pasted text's keys, which the prompt's dropping of keys leaves alone.
+    /// The keys of pasted text. When DIRECT mode starts, it drops the
+    /// waiting keys, but not these.
     pub(crate) pasted: VecDeque<u32>,
     /// A pasted line has been sent, and the next waits for a line to type in.
     paste_held: bool,
-    /// The line being typed for INPUT, LINPUT or direct mode.
+    /// The line being typed for INPUT, LINPUT or DIRECT mode.
     line: Option<LineEdit>,
-    /// Where the Up and Down keys have taken the direct-mode line in the
-    /// history, if it is being typed in direct mode and they have.
+    /// The history position that Up and Down have moved the DIRECT mode
+    /// line to. It is set only while a line is typed in DIRECT mode.
     recall: Option<Recall>,
     pub(crate) frame: u32,
-    /// Whether the code running was typed in direct mode, where RUN, NEW
+    /// Whether the code running was typed in DIRECT mode, where RUN, NEW
     /// and CLEAR are allowed.
     pub direct: bool,
     requests: Vec<Request>,
@@ -855,13 +860,13 @@ pub struct Runtime {
     /// Counts each slot's changes by programs and commands, so that an
     /// editor showing it while code runs can take them.
     pub(crate) slot_changes: Vec<u32>,
-    /// The other slots' names for completion, by the slot left out and
-    /// the slots' change counts they were found at.
+    /// The other slots' names for completion, keyed by the excluded slot
+    /// and the change counts of the slots when the names were collected.
     other_names: Option<(NamesKey, Rc<Vec<complete::Item>>)>,
-    /// How PRGINS, LOAD and the rest changed slots' lines since the
-    /// machine last took them, in order.
+    /// The changes PRGINS, LOAD and the rest made to slots' lines since
+    /// the machine last took them, in order.
     pub(crate) slot_edits: Vec<(usize, crate::prg::SlotEdit)>,
-    /// The slot whose program is running; `None` in direct mode.
+    /// The slot whose program is running; `None` in DIRECT mode.
     pub(crate) running_slot: Option<usize>,
     /// How the last program stopped, kept up to date by the machine.
     pub(crate) stopped: Stopped,
@@ -874,7 +879,7 @@ pub struct Runtime {
     pub(crate) prg_lines: crate::prg::LinesCache,
     /// The slot the editor shows, or last showed.
     pub(crate) edit_slot: usize,
-    /// Direct-mode lines typed, newest first, for ENVINPUT$.
+    /// DIRECT mode lines typed, newest first, for ENVINPUT$.
     pub(crate) history: crate::env::History,
     /// Which interpreter this is, as ENVTYPE gives it: 0 for the main
     /// one, 1 for the sub interpreter that runs SUBRUN's program.
@@ -885,15 +890,15 @@ pub struct Runtime {
     /// On the sub interpreter, XSUBSCREEN's rectangle on the display:
     /// x, y, width and height. It shows nothing until one is set.
     pub(crate) sub_screen: Option<[i32; 4]>,
-    /// On the main interpreter, whether a subprogram runs beside it, which
-    /// ENVFOCUS can give the focus to.
+    /// On the main interpreter, whether a subprogram runs at the same time,
+    /// which ENVFOCUS can give the focus to.
     pub(crate) sub_running: bool,
     /// ENVFOCUS asked for the focus (true) or gave it away during the
     /// frame, which moves it some frames later.
     pub(crate) focus_wish: Option<bool>,
     /// The focus is moving, and ENVFOCUS does nothing until it has.
     pub(crate) focus_busy: bool,
-    /// On the main interpreter, what it is doing and its last error, as
+    /// On the main interpreter, its state and its last error, as
     /// ENVSTAT gives them to the sub interpreter: a [`crate::sub::status`],
     /// then the error's number, argument, slot, character and line.
     pub(crate) env_status: i32,
@@ -907,21 +912,23 @@ pub struct Runtime {
     /// Something may have changed what the screens show since the last
     /// frame was drawn.
     changed: bool,
-    /// What the last frame was drawn with besides the screens' state: the
-    /// cursor's blink and the dimming.
+    /// The state the last frame was drawn with, besides the screens'
+    /// state: the cursor's blink and the dimming.
     drawn_with: Option<(Option<bool>, bool)>,
     /// Counts the frames drawn, for the frontend to upload only new ones.
     revision: u64,
     /// The last frame was drawn by a [`SceneBackend`], which holds it.
     on_backend: bool,
-    /// What goes over a frame a backend draws; made when first wanted.
+    /// The overlay drawn over a frame that a backend draws; made when first
+    /// needed.
     overlay: Option<Framebuffer>,
     /// What CLIPBOARD reads and writes.
     pub clipboard: Box<dyn crate::env::Clipboard>,
     /// The DIALOG the program waits on, and the frontend's answer.
     pub(crate) dialog: Option<crate::dialog::Waiting>,
     pub(crate) dialog_answer: Option<crate::dialog::DialogAnswer>,
-    /// The answer that closed the last DIALOG, for the other interpreter's.
+    /// The answer that closed the last DIALOG, for the DIALOG of the other
+    /// interpreter.
     pub(crate) dialog_closed: Option<crate::dialog::DialogAnswer>,
     /// The other interpreter's DIALOG is open: what the controllers type
     /// goes to it.
@@ -933,7 +940,7 @@ pub struct Runtime {
     /// The project metadata that METAEDIT edits.
     pub(crate) meta: crate::env::Meta,
     pub settings: Settings,
-    /// The console's time the program has used, with a console's speed
+    /// The console's time the program has used, when a console's speed is
     /// chosen.
     pub meter: Option<Meter>,
     pub storage: Storage,
@@ -946,15 +953,15 @@ pub struct Runtime {
     pub(crate) retry: bool,
     /// See [`Runtime::hold_for_a_frame`].
     frame_waited: bool,
-    /// The frame now and the one VSYNC counts from, which the machine sets
-    /// before it runs the program, and where SNDSTOP moves the latter.
+    /// The current frame and the frame VSYNC counts from. The machine sets
+    /// them before it runs the program, and SNDSTOP moves the latter.
     pub(crate) sync: SyncMark,
     /// See [`Runtime::mode_taken`]; until the next frame or VSYNC.
     pub(crate) in_frame_job: bool,
     pub(crate) notices: Vec<String>,
     /// The program last started, whose DATA commands like SPANIM read.
     pub(crate) program: Option<Rc<Compiled>>,
-    /// Each slot's program once the run has gone on in it, for DATA
+    /// Each slot's program once the run has entered it, for DATA
     /// named `"n:@LABEL"`.
     pub(crate) slot_programs: [Option<Rc<Compiled>>; SLOTS],
     /// READ's place in the program's DATA, during a command.
@@ -967,18 +974,18 @@ pub struct Runtime {
     /// BACKCOLOR: what shows behind every layer.
     pub back_color: u32,
     pub(crate) fade: Fade,
-    /// The frame being drawn, kept so as to keep its memory.
+    /// The frame being drawn, kept to reuse its memory.
     scene: Scene,
     /// Draws it, and holds the frame.
     raster: CpuRasterizer,
-    /// XSCREEN, and what ACLS goes back to.
+    /// XSCREEN's mode, and the mode ACLS restores.
     pub(crate) mode: ScreenMode,
     startup_mode: ScreenMode,
     /// The editor draws at a multiple of the start-up resolution, for its
     /// font and size (see [`frame_size`]).
     editor_fb: Framebuffer,
-    /// What `editor_fb` shows, as [`Runtime::editor_key`] gave it, while
-    /// it can be shown again without drawing it.
+    /// The fingerprint of what `editor_fb` shows, as [`Runtime::editor_key`]
+    /// returned it, while it can be shown again without being drawn.
     pub(crate) editor_key: Option<u64>,
     /// Counts the frames drawn into `editor_fb`.
     editor_revision: u64,
@@ -987,27 +994,27 @@ pub struct Runtime {
     pub library: Rc<Library>,
     /// SmileBASIC 4's help, for HELPGET and HELPINFO.
     pub help: Option<Rc<crate::help::Help>>,
-    /// The frame the cursor of the line typed last started blinking.
+    /// The frame when the cursor of the last typed line started blinking.
     line_blink_from: u32,
-    /// Lines overwrite rather than insert, from Insert on a line before.
+    /// Lines overwrite instead of insert, after Insert on an earlier line.
     line_overwrite: bool,
     /// The editor's line and cursor column when the program started,
     /// where HELPINFO looks for a command.
     pub(crate) help_cursor: (Vec<u16>, usize),
-    /// Ctrl+Space hid completion's list and the hints in direct mode.
+    /// Ctrl+Space hid completion's list and the hints in DIRECT mode.
     line_quiet: bool,
     /// One side of a split editor, drawn before going into `editor_fb`.
     side_fb: Framebuffer,
-    /// Where the second side of a split editor starts on its frame: a
+    /// The start of the second side of a split editor on its frame: a
     /// column, or a row when the sides are one above the other.
     pub(crate) split_at: Option<u32>,
     /// The last split drawn, as whether its sides were one above the
-    /// other and which side had the keys, and the frame that side's
-    /// frame started to show.
+    /// other and which side had the keys, and the frame number when the
+    /// outline around that side started to show.
     split_shown: Option<(bool, usize)>,
     split_flash: u32,
-    /// Where the debugger's panel starts on the editor's frame, when it
-    /// is shown.
+    /// The start of the debugger panel on the editor frame, when the
+    /// panel is shown.
     pub(crate) panel_at: Option<u32>,
     /// GRP4 at start-up, which ACLS puts back.
     sprite_page: Option<Page>,
@@ -1064,7 +1071,7 @@ impl DataReader<'_> {
         self.pos.get() >= self.program.data.len()
     }
 
-    /// The next value, of whatever type.
+    /// The next value, of any type.
     pub(crate) fn literal(&mut self) -> Result<Literal> {
         let item = self
             .program
@@ -1085,8 +1092,8 @@ pub(crate) fn illegal() -> Error {
 }
 
 /// No form of a command takes the arguments given: SmileBASIC 4 says
-/// Wrong number of arguments, a command used as a function too, or Wrong
-/// number of OUT arguments as [`counts`] has it for the command.
+/// Wrong number of arguments, also for a command used as a function, or
+/// Wrong number of OUT arguments where [`counts`] gives it for the command.
 pub(crate) fn no_form() -> Error {
     ErrorKind::WrongNumberOfArguments.into()
 }
@@ -1124,12 +1131,12 @@ pub(crate) fn give(out: &mut Vec<Value>, values: Result<Vec<Value>>) -> Result<(
     Ok(())
 }
 
-/// An error from command `name`, which names it after the place, with the
-/// argument that was wrong when that is one of `args`: `(LOCATE:2)`.
+/// An error from command `name`, which names the command after the place,
+/// with the wrong argument when that is one of `args`: `(LOCATE:2)`.
 #[cold]
 pub(crate) fn command_error(e: Error, name: &str, args: &[Value]) -> Error {
     match e.kind {
-        // Not the program's to see, or shown with no place.
+        // Errors the program does not see, or that show no place.
         ErrorKind::MemoryCheck
         | ErrorKind::CantUseFromDirectMode
         | ErrorKind::CantContinue
@@ -1143,13 +1150,14 @@ fn is_no_form(e: &Error) -> bool {
     e.kind == ErrorKind::WrongNumberOfArguments && e.detail.is_none()
 }
 
-/// How SmileBASIC 4 tells a call no form takes: `Wrong number of OUT
-/// arguments` (53) when its argument count is one of `args` and its OUT
-/// count none of `outs`, `Wrong number of arguments` (52) otherwise. Each
-/// command's handler checks the two counts itself, in its own order. Most
-/// check the OUT count first ([`Counts::outs`]), some the argument count
-/// ([`Counts::args`]), and some sprite commands want a sprite before the
-/// OUT count. Bit n of a mask stands for n, bit 31 for 31 and more.
+/// SmileBASIC 4's error for a call that no form takes: `Wrong number of
+/// OUT arguments` (53) when its argument count is one of `args` and its OUT
+/// count is none of `outs`, `Wrong number of arguments` (52) otherwise.
+/// Each command's handler checks the two counts itself, in its own order.
+/// Most check the OUT count first ([`Counts::outs`]), some the argument
+/// count ([`Counts::args`]), and some sprite commands check for a sprite
+/// before the OUT count. Bit n of a mask stands for n, bit 31 for 31 and
+/// more.
 #[derive(Clone, Copy)]
 struct Counts {
     args: u32,
@@ -1174,7 +1182,7 @@ impl Counts {
     /// Never 53.
     const NONE: Counts = Counts { args: 0, outs: 0 };
 
-    /// The OUT count is checked first: any but `outs` is 53.
+    /// The OUT count is checked first: any count but `outs` is 53.
     const fn outs(outs: &[u8]) -> Counts {
         Counts::new(u32::MAX, outs)
     }
@@ -1348,7 +1356,7 @@ fn counts(command: Command) -> Counts {
         Command::Recdata | Command::Stick | Command::Tcoord => Counts::outs(&[2]),
         Command::Accel | Command::Gyroa | Command::Gyrov => Counts::outs(&[3]),
         Command::Irread => Counts::outs(&[4]),
-        // Two arguments take the same way out as a wrong OUT count.
+        // Two arguments give the same error as a wrong OUT count.
         Command::Rndf => Counts::outs(&[]),
         Command::Files | Command::Sndmsbal | Command::Touch => Counts::args(&[0, 1, 2]),
         Command::Mouse => Counts::new(mask(&[0, 1]), &[0]),
@@ -1417,12 +1425,12 @@ fn no_form_error(command: Command, args: usize, outs: usize) -> Error {
 }
 
 /// The frame a program runs in and the frame VSYNC, WAIT and SNDSTOP last
-/// left it at, as frame numbers of the machine's.
+/// left it at, as the machine's frame numbers.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SyncMark {
     pub(crate) now: u64,
     pub(crate) mark: Option<u64>,
-    /// Where SNDSTOP moved the mark, for the machine to take.
+    /// The frame SNDSTOP moved the mark to, for the machine to take.
     pub(crate) moved: Option<u64>,
 }
 
@@ -1587,13 +1595,14 @@ impl Runtime {
         self.startup_mode
     }
 
-    /// The resolution to start with and to go back to on ACLS, which
-    /// resets the screens for it as ACLS does. The editor uses its size.
     /// Makes every run the same: see [`System::fix`].
     pub fn fix_time_and_chance(&mut self) {
         self.system.fix();
     }
 
+    /// The resolution to start with and to restore on ACLS. Setting it
+    /// resets the screens for it, the same as ACLS does. The editor uses
+    /// its size.
     pub fn set_startup_mode(&mut self, mode: ScreenMode) {
         self.startup_mode = mode;
         self.editor_fb = Framebuffer::new(mode.width, mode.height);
@@ -1602,7 +1611,6 @@ impl Runtime {
         self.set_mode(mode);
     }
 
-    /// The sprite image on GRP4, also put back by ACLS.
     /// The page that sprites start on, as set by [`Runtime::set_sprite_page`].
     pub(crate) fn sprite_page(&self) -> Option<&Page> {
         self.sprite_page.as_ref()
@@ -1619,7 +1627,7 @@ impl Runtime {
     }
 
     /// XSCREEN: the console is resized to fill the screen, keeping its
-    /// font, and `#GSPRITE` shows as much of GRP0.
+    /// font, and `#GSPRITE` shows an area of GRP0 the size of the screen.
     // The console is cleared, and all of #GSPRITE's settings are reset.
     pub(crate) fn set_mode(&mut self, mode: ScreenMode) {
         self.mode = mode;
@@ -1634,8 +1642,8 @@ impl Runtime {
     /// ACLS: the start-up state of the screens, sprites, layers and
     /// graphic pages, keeping what the flags ask for.
     // Checked on hardware: SPPAGE, SPLAYER, GSAMPLE, TOFS, COLOR, ATTR and
-    // TCOLOR go back too, though the manual's equivalent program leaves
-    // them out.
+    // TCOLOR are reset too, though the equivalent program in the manual
+    // skips them.
     pub(crate) fn acls(
         &mut self,
         keep_grp: bool,
@@ -1676,12 +1684,9 @@ impl Runtime {
         self.grp.reset_state();
     }
 
-    /// The DATA values from `label` on, for commands that take a
-    /// `"@label"`. As on hardware, they move READ's place: RESTORE to
-    /// the label, then READ.
-    /// A callback's name as SPFUNC and TFUNC keep it: with the slot they
-    /// were set in, whose DEFs and labels CALL SPRITE and CALL TEXT look
-    /// in from any slot.
+    /// A callback's name as SPFUNC and TFUNC keep it: with the slot it was
+    /// set in. CALL SPRITE and CALL TEXT look in the DEFs and labels of
+    /// that slot from any slot.
     pub(crate) fn callback_name(&self, name: &[u16]) -> Vec<u16> {
         match self.running_slot {
             Some(slot) if !self.direct && !name.contains(&u16::from(b':')) => {
@@ -1693,13 +1698,14 @@ impl Runtime {
         }
     }
 
-    /// SPFUNC's and TFUNC's name, checked as SmileBASIC 4's handlers check
-    /// it when it is set (4.4.8): a DEF of the program's (or a COMMON DEF)
-    /// passes, any other name the program or SmileBASIC knows is Function
-    /// must be user defined, and else it must be a label, `@` and a name,
-    /// that the program has. `"n:"` before it looks in slot n.
-    // UNVERIFIED: a variable's name is no symbol here; a label inside any
-    // DEF passes.
+    /// Checks SPFUNC's and TFUNC's name the same way SmileBASIC 4's
+    /// handlers check it when it is set (4.4.8). A DEF of the program (or a
+    /// COMMON DEF) passes. Any other name that the program or SmileBASIC
+    /// knows gives the error Function must be user defined. Otherwise the
+    /// name must be a label that the program has: `@` and a name. `"n:"`
+    /// before it looks in slot n.
+    // UNVERIFIED: a variable's name is not a symbol here; a label inside
+    // any DEF passes.
     pub(crate) fn check_callback(&self, name: &[u16]) -> Result<()> {
         let text = String::from_utf16_lossy(name).to_ascii_uppercase();
         let (program, rest) = match text.split_once(':') {
@@ -1726,7 +1732,7 @@ impl Runtime {
                 }
             };
         }
-        // A slot's name with no label after it is no label either.
+        // A slot's name with no label after it is not a label either.
         if text.contains(':') && program.is_none() {
             return illegal();
         }
@@ -1752,9 +1758,14 @@ impl Runtime {
         }
     }
 
+    /// The DATA values from `label` on, for commands that take a
+    /// `"@label"`. As on hardware, they move READ's place: RESTORE to
+    /// the label, then READ.
+    ///
     /// `"@LABEL"` reads the DATA after a label of the DEF the command is
-    /// called in, else of the top level, as RESTORE does. `"n:@LABEL"`
-    /// reads slot n's top level, once the run has gone on there.
+    /// called in, else of the top level, the same as RESTORE does.
+    /// `"n:@LABEL"` reads slot n's top level, once the run has entered
+    /// slot n.
     pub(crate) fn label_data(&self, label: &Value) -> Result<DataReader<'_>> {
         let (slot, name) = sb_core::vm::label_string(label)?;
         let name = name.as_str();
@@ -1791,14 +1802,14 @@ impl Runtime {
         self
     }
 
-    /// The sub interpreter's fonts: the main one's font file, and its
+    /// Gives the sub interpreter the main interpreter's font file and
     /// program font on the font page.
     pub(crate) fn share_fonts(&mut self, main: &Runtime) {
         self.extra_glyphs = Rc::clone(&main.extra_glyphs);
         self.apply_program_font();
     }
 
-    /// The font page as start-up and ACLS put it on GRP5: SmileBASIC's,
+    /// The font page that start-up and ACLS put on GRP5: SmileBASIC's font,
     /// with the program font's glyphs over it.
     fn font_page(&self) -> Vec<u32> {
         let mut page = self.font.page_image();
@@ -1809,7 +1820,7 @@ impl Runtime {
     }
 
     /// Makes the program font's glyphs for the settings and writes them
-    /// over GRP5, putting back SmileBASIC's where the last ones were.
+    /// over GRP5, restoring SmileBASIC's glyphs where the last ones were.
     /// Only those cells change; the rest of the page keeps what the
     /// program drew there. Start-up and ACLS write them again.
     pub fn apply_program_font(&mut self) {
@@ -1861,7 +1872,7 @@ impl Runtime {
         &self.font
     }
 
-    /// The line being typed for INPUT or in direct mode, if any.
+    /// The line being typed for INPUT or in DIRECT mode, if any.
     pub(crate) fn typed_line(&self) -> Option<Vec<u16>> {
         Some(self.line.as_ref()?.text.clone())
     }
@@ -1881,7 +1892,7 @@ impl Runtime {
         Some(String::from_utf16_lossy(&text))
     }
 
-    /// Ctrl+Space in direct mode: hides completion's list and the hints,
+    /// Ctrl+Space in DIRECT mode: hides completion's list and the hints,
     /// or shows them again with the list for the word at the cursor.
     pub fn toggle_line_popups(&mut self) {
         let Some(options) = Options::from_settings(&self.settings, false) else {
@@ -1900,7 +1911,7 @@ impl Runtime {
     }
 
     /// The names of the slots but `except`, in order, when the settings
-    /// offer every slot's; kept until a slot changes.
+    /// offer the names of every slot; kept until a slot changes.
     pub(crate) fn other_slot_names(&mut self, except: usize) -> Option<Rc<Vec<complete::Item>>> {
         if !self.settings.complete_all_slots {
             return None;
@@ -1922,7 +1933,7 @@ impl Runtime {
     }
 
     /// Completion's list for the word before the cursor of the line typed
-    /// in direct mode.
+    /// in DIRECT mode.
     fn line_words(&mut self, options: Options) {
         // The edited slot's names, also for labels after GOTO.
         let lines = split_lines(&self.slots[self.edit_slot]);
@@ -1945,7 +1956,7 @@ impl Runtime {
         (self.line.as_ref()).is_none_or(|l| l.text.len() + count <= line::LINE_MAX)
     }
 
-    /// Whether INPUT, LINPUT or direct mode waits for a line.
+    /// Whether INPUT, LINPUT or DIRECT mode waits for a line.
     pub fn wants_line(&self) -> bool {
         self.line.is_some()
     }
@@ -1961,10 +1972,10 @@ impl Runtime {
         self.recall = None;
     }
 
-    /// Moves through the history from the line being typed in direct mode:
-    /// `older` for Up, else Down. Whatever was typed before the first Up
-    /// comes back with the last Down; edits made on a recalled line are
-    /// lost when the line changes.
+    /// Moves through the history from the line being typed in DIRECT mode:
+    /// `older` for Up, else Down. The text typed before the first Up comes
+    /// back with the last Down; edits made on a recalled line are lost when
+    /// the line changes.
     fn recall_line(&mut self, older: bool) {
         let (Some(recall), Some(line)) = (self.recall.as_mut(), self.line.as_mut()) else {
             return;
@@ -1993,7 +2004,7 @@ impl Runtime {
         self.paste_held = false;
         let console = &mut self.text[CONSOLE];
         let free = line::rows_kept_free(self.mode.height, self.mode.aspect(), console.font().1);
-        // Rows are kept free at once, for a LINPUT without a guide too.
+        // Rows are kept free immediately, also for a LINPUT without a guide.
         line::keep_rows_free(console, free);
         let mut line = LineEdit::new(console, free);
         line.overwrite = self.line_overwrite;
@@ -2001,7 +2012,7 @@ impl Runtime {
         self.line_blink_from = self.system.frames;
     }
 
-    /// Waits for a line typed in direct mode, where Up and Down recall the
+    /// Waits for a line typed in DIRECT mode, where Up and Down recall the
     /// lines typed before.
     pub(crate) fn direct_input_start(&mut self) {
         self.start_line();
@@ -2014,7 +2025,7 @@ impl Runtime {
         });
     }
 
-    /// Direct-mode requests made since the last call.
+    /// DIRECT mode requests made since the last call.
     pub fn take_requests(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.requests)
     }
@@ -2051,17 +2062,17 @@ impl Runtime {
         push_key(&mut self.typed, code);
     }
 
-    /// Queues pasted text's keys, of which none may be lost, however many.
+    /// Queues pasted text's keys, none of which may be lost, however many.
     pub(crate) fn paste_key(&mut self, code: u16) {
         self.changed = true;
         self.pasted.push_back(key_code(code));
     }
 
-    /// Takes the frame's keys to where programs and lines read them. A code
-    /// of 0 ends it for this frame.
+    /// Moves the frame's keys to the buffer that programs and lines read. A
+    /// code of 0 ends the move for this frame.
     pub fn take_typed_keys(&mut self) {
-        // Pasted lines go one at a time, so that the prompt after one finds
-        // the next still waiting.
+        // Pasted lines go one at a time, so that when DIRECT mode starts
+        // again after one line, the next pasted line is still waiting.
         if self.typed.is_empty() && !self.paste_held {
             while self.typed.len() < KEYS_A_FRAME {
                 let Some(code) = self.pasted.pop_front() else {
@@ -2084,8 +2095,8 @@ impl Runtime {
     }
 
     /// For a command that does its work and then holds the program until
-    /// the next frame, leaving VSYNC's count alone: at the end of its work
-    /// it calls this, and the VM calls it again on the next frame.
+    /// the next frame, without changing VSYNC's count: at the end of its
+    /// work it calls this, and the VM calls it again on the next frame.
     pub(crate) fn hold_for_a_frame(&mut self) {
         self.frame_waited = true;
         self.retry = true;
@@ -2098,15 +2109,16 @@ impl Runtime {
     }
 
     /// The end of XSCREEN and ACLS, which hold the program until the frame
-    /// job has taken the mode: it goes on while that job is still running.
+    /// job has taken the mode. The program then continues while that job
+    /// is still running.
     pub(crate) fn mode_taken(&mut self) -> bool {
         let over = self.frame_wait_over();
         self.in_frame_job |= over;
         over
     }
 
-    /// Drops the keys a program left unread and what its buttons were
-    /// doing, so that none of it reaches direct mode or the next run.
+    /// Drops the keys a program left unread and the state of its buttons,
+    /// so that none of it reaches DIRECT mode or the next run.
     pub(crate) fn clear_input(&mut self) {
         self.clear_keys();
         self.pasted.clear();
@@ -2126,8 +2138,8 @@ impl Runtime {
         self.next_key_of(false)
     }
 
-    /// Takes the next unread key; `keyboard_only` drops those a controller
-    /// typed on the way to it.
+    /// Takes the next unread key; `keyboard_only` drops the keys a
+    /// controller typed before it.
     fn next_key_of(&mut self, keyboard_only: bool) -> Option<u16> {
         while let Some(code) = self.keys.pop_front() {
             if keyboard_only && code >= codes::FROM_PAD {
@@ -2146,32 +2158,33 @@ impl Runtime {
         self.changed = true;
     }
 
-    /// Which frame [`Runtime::render`] gave last: it changes only when the
-    /// frame was drawn again.
+    /// The number of the frame [`Runtime::render`] returned last. It
+    /// changes only when the frame was drawn again.
     pub fn revision(&self) -> u64 {
         self.revision
     }
 
     /// Whether the line's cursor shows this frame. The period after a
-    /// restart is one frame short, the frame it comes in being counted.
+    /// restart is one frame shorter, because the frame of the restart is
+    /// counted.
     fn line_blink_on(&self) -> bool {
         let n = self.system.frames.wrapping_sub(self.line_blink_from);
         (n.wrapping_add(1) / LINE_CURSOR_BLINK).is_multiple_of(2)
     }
 
-    /// The frame [`Runtime::render`] gave last.
+    /// The frame [`Runtime::render`] returned last.
     pub fn screen_frame(&self) -> &Framebuffer {
         self.raster.frame()
     }
 
     /// Composes the current frame: layers 7 to 0, each back to front. The
-    /// last one is given again while nothing has changed.
+    /// last one is returned again while nothing has changed.
     pub fn render(&mut self) -> &Framebuffer {
         self.render_with(None);
         self.raster.frame()
     }
 
-    /// Whether the frame given last is on the [`SceneBackend`] and not in
+    /// Whether the frame returned last is on the [`SceneBackend`] and not in
     /// [`Runtime::screen_frame`].
     pub fn frame_on_backend(&self) -> bool {
         self.on_backend
@@ -2181,11 +2194,11 @@ impl Runtime {
     /// first.
     pub fn render_with(&mut self, mut backend: Option<&mut dyn SceneBackend>) {
         self.frame = self.frame.wrapping_add(1);
-        // A frame the backend holds has to be drawn again for whoever wants
-        // it in the framebuffer.
+        // A frame the backend holds has to be drawn again for any caller
+        // that wants it in the framebuffer.
         self.changed |= self.on_backend && backend.is_none();
         // Counted in frames played, not in frames drawn, which are not
-        // one a frame when frames are skipped or only some are looked at.
+        // one per frame when frames are skipped or only some are looked at.
         // Whether it is a block, if it shows.
         let cursor = (self.line.is_some() && self.line_blink_on()).then_some(self.line_overwrite);
         let with = Some((cursor, self.dimmed));
@@ -2217,8 +2230,8 @@ impl Runtime {
             font: &self.font,
             cells: std::array::from_fn(|i| self.text[i].cells()),
         };
-        // Offered first; the CPU then draws what the backend did not, and what
-        // it did only to compare.
+        // The backend gets the scene first. The CPU draws it when the backend
+        // did not, and also, to compare, when the backend did.
         self.on_backend = match &mut backend {
             Some(backend) => backend.draw(&self.scene, &input, self.mode.frame()),
             None => false,
@@ -2249,11 +2262,12 @@ impl Runtime {
         }
     }
 
-    /// What the emulator itself shows over the frame, after FADE, which is
-    /// no part of SmileBASIC 4's picture: on the CPU's frame, or for a backend
-    /// on a clear one of its own. Whether anything was to be shown.
+    /// Draws what the emulator itself shows over the frame, after FADE,
+    /// which is not part of SmileBASIC 4's picture: on the CPU's frame, or
+    /// for a backend on a separate clear frame. Returns whether there was
+    /// anything to show.
     fn draw_overlay(&mut self, on_clear: bool) -> bool {
-        // In direct mode, the hint for the command being typed above the
+        // In DIRECT mode, the hint for the command being typed above the
         // line and completion's list below the word.
         let options = Options::from_settings(&self.settings, false).filter(|_| !self.line_quiet);
         let mut shows = false;
@@ -2270,7 +2284,7 @@ impl Runtime {
                 }
                 false => self.raster.frame_mut(),
             };
-            // Direct mode shows the console's font, as programs see it.
+            // DIRECT mode shows the console's font, as programs see it.
             let plain = Fonts::plain(&self.font, FontSize::Small);
             let console = &self.text[CONSOLE];
             let (w, _) = console.size();
@@ -2325,8 +2339,8 @@ impl Runtime {
     /// Starts a frame: the input it sees, and MAINCNT.
     pub fn begin_frame(&mut self) {
         self.input.latch();
-        // What the controllers type while a DIALOG is open goes nowhere,
-        // but a key held on after it closes repeats into the queue.
+        // Keys the controllers type while a DIALOG is open are dropped,
+        // but a key still held after it closes repeats into the queue.
         if self.dialog.is_some() || self.dialog_beside {
             self.input.drop_pad_key();
         }
@@ -2353,7 +2367,8 @@ impl Runtime {
         self.changed |= moved;
     }
 
-    /// Clears SPVAR's and TVAR's variables, as starting a program does.
+    /// Clears SPVAR's and TVAR's variables, the same as starting a program
+    /// does.
     pub fn clear_vars(&mut self) {
         self.sprites.clear_vars();
         for t in &mut self.text {
@@ -2363,9 +2378,9 @@ impl Runtime {
 
     /// Composes a frame showing the editor instead of the screens.
     /// `split` is `None` for one side, else whether the sides are one
-    /// above the other. `panel` leaves room below for the debugger's.
-    /// The frame is `area`'s if given, and otherwise the size SmileBASIC
-    /// 4's rows take at the screen's shape.
+    /// above the other. `panel` leaves room below for the debugger panel.
+    /// The frame has the size of `area` if given, and otherwise the size
+    /// that SmileBASIC 4's rows take at the screen's shape.
     pub(crate) fn render_editors(
         &mut self,
         editors: &mut [Editor; 2],
@@ -2407,8 +2422,8 @@ impl Runtime {
         &self.editor_fb
     }
 
-    /// Counts the frames drawn into the editor's frame, which stays as
-    /// it is while the count does.
+    /// Counts the frames drawn into the editor frame. While the count
+    /// stays the same, so does the frame.
     pub(crate) fn editor_revision(&self) -> u64 {
         self.editor_revision
     }
@@ -2512,8 +2527,8 @@ impl Runtime {
         state.finish()
     }
 
-    /// How strongly, out of 256, the side of a split editor with the keys
-    /// is outlined, fading out after it has them.
+    /// The strength, out of 256, of the outline around the side of a split
+    /// editor with the keys. It fades out after the side gets them.
     fn split_alpha(&self) -> u32 {
         let age = self.frame.wrapping_sub(self.split_flash);
         match age.checked_sub(SPLIT_FLASH_HOLD) {
@@ -2596,7 +2611,7 @@ impl Runtime {
                 (true, _) => Some(0),
                 (false, _) => Some(menu),
             };
-            // One above the other, the room is left below both.
+            // With the sides one above the other, the room is below both.
             let bottom = if rows { 0 } else { reserve };
             let look = Look {
                 top,
@@ -2658,7 +2673,7 @@ impl Runtime {
         Ok(&mut self.text[id])
     }
 
-    /// What calling `command` can do to the screens.
+    /// The effect that calling `command` can have on the screens.
     fn sight(&self, command: Command, args: &[Value], want: Want) -> Sight {
         use Command::*;
         if command.unseen() || (want != Want::Outs(0) && command.reads()) {
@@ -2676,7 +2691,7 @@ impl Runtime {
             // They change only the cells, which tell when they change, and
             // the cursor, which shows only while a line is typed.
             Attr | Cls | Color | Locate | Tfill | Tput if self.line.is_none() => Sight::Unseen,
-            // What SPSET gives new sprites.
+            // The settings that SPSET gives new sprites.
             Sppage | Splayer if args.len() == 1 => Sight::Unseen,
             Spchr | Spcolor | Sphide | Sphome | Splayer | Spofs | Sppage | Sprot | Spscale
             | Spshow => match args.first().map(crate::sp::sprite_id) {
@@ -2689,7 +2704,7 @@ impl Runtime {
 
     /// Runs `command` as a call: a function called as a command with one
     /// OUT variable, such as `SPSET 242 OUT IX`, runs as the function, and
-    /// a call no form takes is the count error SmileBASIC 4 gives for it.
+    /// a call that no form takes gives SmileBASIC 4's count error for it.
     pub(crate) fn run_counted(
         &mut self,
         command: Command,
@@ -2744,7 +2759,7 @@ impl Runtime {
         }
     }
 
-    /// [`Runtime::run`] for the commands of no group of their own.
+    /// [`Runtime::run`] for the commands that do not have their own group.
     fn run_other(
         &mut self,
         command: Command,
@@ -2778,7 +2793,8 @@ impl Runtime {
                     slot => slot_arg(slot).map(|s| s..s + 1)?,
                 };
                 let unsaved = self.unsaved_among(slots.clone());
-                // Without unsaved edits, NEW clears at once (checked on hardware).
+                // Without unsaved edits, NEW clears immediately (checked on
+                // hardware).
                 if !unsaved.is_empty() {
                     let summary = match args.first() {
                         None => "Erase the programs in all slots.".to_string(),
@@ -2808,7 +2824,7 @@ impl Runtime {
                 }
                 Ok(())
             }
-            // CONT: direct mode only, with the same Syntax error as CLEAR in a
+            // CONT: DIRECT mode only, with the same Syntax error as CLEAR in a
             // program.
             (Command::Cont, Want::Outs(0)) if args.is_empty() => {
                 self.direct_only(ErrorKind::SyntaxError)?;
@@ -2817,8 +2833,9 @@ impl Runtime {
                     _ => Err(ErrorKind::CantContinue.into()),
                 }
             }
-            // Unlike SmileBASIC 4, the program can go on afterwards. To
-            // stop it as SmileBASIC 4 does, bring back the lines below.
+            // Unlike SmileBASIC 4, the program can continue afterwards.
+            // To end it the way SmileBASIC 4 does, so that CONT cannot
+            // continue it, uncomment the lines below.
             (Command::Backtrace, Want::Outs(0)) if args.is_empty() => {
                 self.direct_only(ErrorKind::SyntaxError)?;
                 for (slot, line) in self.backtrace.clone() {
@@ -3109,8 +3126,8 @@ impl Host for Runtime {
     }
 
     fn input_start(&mut self) -> Result<()> {
-        // Keys queued while the program read none, PUSHKEY's too, are not
-        // typed into the line.
+        // Keys queued while the program read none, including those from
+        // PUSHKEY, are not typed into the line.
         self.keys.clear();
         self.start_line();
         self.recall = None;
@@ -3140,7 +3157,7 @@ impl Host for Runtime {
             }
             // A file that cannot be loaded is Load failed, after the
             // dialog that says so (checked on hardware), or the notice
-            // that stands for it. Back on the question over the slot's
+            // that replaces it. Back on the question about the slot's
             // unsaved edits sets RESULT to -1 and is Load failed too.
             // UNVERIFIED: the Load failed after Back.
             match self.load_asking("EXEC", file, slot) {
@@ -3216,12 +3233,12 @@ impl Host for Runtime {
         }
     }
 
-    // Up and Down recall history in direct mode
+    // Up and Down recall history in DIRECT mode
     fn input_poll(&mut self) -> Result<Option<Vec<u16>>> {
         if self.line.is_none() {
             return Ok(None);
         }
-        // Only lines typed in direct mode, not INPUT's, are completed.
+        // Only lines typed in DIRECT mode are completed, not INPUT lines.
         let options = match self.recall {
             Some(_) => Options::from_settings(&self.settings, false),
             None => None,
@@ -3230,11 +3247,11 @@ impl Host for Runtime {
             let key = key & codes::CODE;
             let console = &mut self.text[CONSOLE];
             let line = self.line.as_mut().expect("checked above");
-            // Up and Down stay the history's; Tab takes a word.
+            // Up and Down stay with the history; Tab takes a word.
             if matches!(key, codes::UP | codes::DOWN) {
                 line.completion = None;
             }
-            // A control character that PUSHKEY gave is no key of the list's.
+            // A control character from PUSHKEY is not a key for the list.
             let literal = key < 0x20 && key != codes::ENTER;
             if let Some(list) = line.completion.as_mut().filter(|_| !literal) {
                 let outcome = list.key(key_value(key), options.is_some_and(|o| o.enter));
@@ -3302,7 +3319,7 @@ impl Host for Runtime {
     }
 }
 
-/// Beside a subprogram, the side without the focus shows a little
+/// While a subprogram runs, the side without the focus shows a little
 /// darker.
 fn dim(fb: &mut Framebuffer) {
     darken(fb.pixels_mut());

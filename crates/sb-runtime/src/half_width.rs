@@ -6,10 +6,10 @@
 //! SmileBASIC 4's glyphs fill a square cell, so they cannot be cut in
 //! half. The glyphs come from fonts drawn for half-width cells: the 8-pixel
 //! ones from GalmuriMono7 (4x8), the 16-pixel ones from NeoDunggeunmo
-//! (8x16), then Unifont JP, for what it lacks. A font file
-//! chosen in the settings comes before them or after them, as the editor's
-//! font order says, for the glyphs it draws half-width. Squeezing
-//! SmileBASIC's own glyph to half its width is the last resort.
+//! (8x16), then Unifont JP for the characters it lacks. A font file chosen
+//! in the settings comes before or after them, as the editor's font order
+//! says, for the glyphs it draws half-width. Squeezing SmileBASIC's own
+//! glyph to half its width is the last resort.
 
 use std::sync::OnceLock;
 
@@ -79,7 +79,7 @@ impl std::fmt::Debug for HalfGlyphs {
 }
 
 impl HalfGlyphs {
-    /// The bundled glyphs, then `font`'s squeezed.
+    /// The bundled glyphs, then `font`'s glyphs squeezed.
     pub(crate) fn new(font: &Font) -> HalfGlyphs {
         HalfGlyphs::with_file(font, None, FontSource::SmileBasic)
     }
@@ -181,7 +181,7 @@ mod tests {
         glyph.iter().filter(|&&a| a >= 0x80).count()
     }
 
-    /// An 8x16 glyph with each 2x2 block made its top left pixel: the
+    /// An 8x16 glyph with each 2x2 block set to its top left pixel: the
     /// glyph itself if it was drawn at 4x8 and doubled.
     fn doubled(glyph: &[u8]) -> Vec<u8> {
         (0..LARGE)

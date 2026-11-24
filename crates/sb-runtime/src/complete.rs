@@ -1,6 +1,6 @@
-//! Completion of the word being typed, in the editor and in direct mode:
-//! a list of SmileBASIC's words, and if asked for the program's own
-//! names, that start with it, below the cursor. SmileBASIC 4's editor
+//! Completion of the word being typed, in the editor and in DIRECT mode:
+//! a list below the cursor of the words that start with it: SmileBASIC's
+//! words and, if asked for, the program's own names. SmileBASIC 4's editor
 //! lists its words from the first letter; the settings can change that.
 //!
 //! Each entry carries a tag for what it is (an instruction, a function, a
@@ -21,7 +21,7 @@ use crate::settings::Settings;
 use crate::syntax::{ALSO_RESERVED, COMMANDS, Role, highlight, is_ident_char};
 use crate::text::TextScreen;
 
-/// Entries shown at once; the list scrolls through the rest.
+/// The number of entries shown; the list scrolls through the rest.
 pub const ROWS: usize = 6;
 /// Cells before each entry for its tag.
 const TAG_CELLS: usize = 2;
@@ -34,7 +34,7 @@ pub(crate) const DIM: u32 = 0xFF90_98A8;
 pub(crate) const SYNTAX: u32 = 0xFFE0_E090;
 const DEF: u32 = 0xFF40_C8A0;
 
-/// What goes in the list, and when it shows.
+/// The contents of the list, and when it shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Options {
     /// Letters typed before the list shows.
@@ -43,19 +43,19 @@ pub struct Options {
     pub commands: bool,
     /// Variables, labels, constants and DEFs found in the program.
     pub names: bool,
-    /// Enter takes the chosen entry, as Tab always does.
+    /// Enter takes the chosen entry, the same as Tab always does.
     pub enter: bool,
-    /// How commands are used shows under the list and while typing
-    /// their arguments.
+    /// The forms of commands show under the list and while their
+    /// arguments are typed.
     pub hints: bool,
     /// Hints show at the bottom of the screen, or at the top while the
-    /// cursor is down there, instead of by the cursor.
+    /// cursor is down there, instead of next to the cursor.
     pub bottom: bool,
 }
 
 impl Options {
-    /// The settings' options for the editor, or for direct mode; `None`
-    /// if completion is off there.
+    /// Returns the options from the settings for the editor, or for DIRECT
+    /// mode; `None` if completion is off there.
     pub fn from_settings(settings: &Settings, editor: bool) -> Option<Options> {
         let on = if editor {
             settings.complete_editor
@@ -73,7 +73,7 @@ impl Options {
     }
 }
 
-/// What an entry is.
+/// The kind of an entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
     /// An instruction, used as a statement.
@@ -137,7 +137,8 @@ impl Item {
         }
     }
 
-    /// How a DEF is used, as the help writes a command's forms.
+    /// Returns the form of a DEF, written the way the help writes a
+    /// command's forms.
     pub fn form(&self) -> Option<String> {
         match self.kind {
             Kind::Def => Some(format!("{}{}", self.word, self.detail)),
@@ -148,15 +149,15 @@ impl Item {
     }
 }
 
-/// SmileBASIC's own words: the forms the help gives for each, from which
-/// instructions are told from functions.
+/// SmileBASIC's own words: the forms the help gives for each, which tell
+/// instructions from functions.
 #[derive(Default)]
 pub struct Library {
     forms: HashMap<String, Vec<String>>,
 }
 
 /// Whether a form of the help (`ABS(Number)`, `SPOFS SpriteNumber,X,Y`)
-/// is a function's: the name followed by a parenthesis.
+/// is the form of a function: the name followed by a parenthesis.
 fn is_function_form(form: &str, name: &str) -> bool {
     let upper = form.to_ascii_uppercase();
     upper
@@ -164,7 +165,7 @@ fn is_function_form(form: &str, name: &str) -> bool {
         .is_some_and(|at| upper[at + name.len()..].trim_start().starts_with('('))
 }
 
-/// A help title without the page it is of, as `(➡1/2)` at its end.
+/// A help title without its page mark, such as `(➡1/2)` at its end.
 fn without_page_mark(title: &str) -> &str {
     let Some(open) = title.strip_suffix(')').and_then(|t| t.rfind('(')) else {
         return title;
@@ -214,9 +215,9 @@ impl Library {
             .map_or(&[], Vec::as_slice)
     }
 
-    /// What one of SmileBASIC's words is: from the help's forms, or
-    /// without the help from the language's own table, where the screen,
-    /// sound and file commands count as instructions.
+    /// Returns the kind of one of SmileBASIC's words: from the help's
+    /// forms, or without the help, from the language's own table, where the
+    /// screen, sound and file commands count as instructions.
     pub fn kind(&self, word: &str) -> Kind {
         let upper = word.to_ascii_uppercase();
         if Keyword::from_word(&upper).is_some() || ALSO_RESERVED.contains(&upper.as_str()) {
@@ -243,7 +244,7 @@ impl Library {
     }
 }
 
-/// What a key did to an open list.
+/// The effect of a key on an open list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// The list took the key.
@@ -252,20 +253,20 @@ pub enum Outcome {
     Accept,
     /// The list closed and took the key.
     Close,
-    /// The key goes on to the text; the list is looked at again after.
+    /// The key is passed to the text, and the list is checked again after.
     Pass,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Completion {
-    /// Where the word starts in the line.
+    /// The start of the word in the line.
     pub start: usize,
     pub items: Vec<Item>,
     /// The entry picked with Up or Down; none until then.
     pub chosen: Option<usize>,
     /// The first entry shown.
     top: usize,
-    /// How the first form of the entry is used, under the list.
+    /// The first form of each entry, shown under the list.
     syntax: Vec<Option<String>>,
     /// The form goes under the list; otherwise the caller shows it with
     /// the hints at the bottom.
@@ -296,7 +297,7 @@ pub fn word_before(line: &[u16], col: usize) -> Option<(usize, String)> {
         return None;
     }
     let word = String::from_utf16_lossy(&line[start..col]);
-    // Numbers are no names, but labels may start with a digit.
+    // Numbers are not names, but labels may start with a digit.
     if word.starts_with(|c: char| c.is_ascii_digit()) {
         return None;
     }
@@ -308,7 +309,7 @@ pub fn word_before(line: &[u16], col: usize) -> Option<(usize, String)> {
 fn wants_label(line: &[u16], start: usize) -> bool {
     let before = String::from_utf16_lossy(&line[..start]).to_ascii_uppercase();
     let mut rest = before.trim_end();
-    // ON X GOTO @A,@B: back over the labels before this one.
+    // ON X GOTO @A,@B: step back over the labels before this one.
     while let Some(head) = rest.strip_suffix(',') {
         let head = head.trim_end();
         rest = head
@@ -333,7 +334,7 @@ fn const_value(text: &str) -> String {
     format!("= {}", value[..end].trim())
 }
 
-/// `names` followed by those of `more` it does not have.
+/// Returns `names` followed by the entries of `more` that it does not have.
 pub fn merge(mut names: Vec<Item>, more: &[Item]) -> Vec<Item> {
     let have: std::collections::HashSet<String> = names.iter().map(|i| i.word.clone()).collect();
     names.extend(more.iter().filter(|i| !have.contains(&i.word)).cloned());
@@ -341,7 +342,7 @@ pub fn merge(mut names: Vec<Item>, more: &[Item]) -> Vec<Item> {
 }
 
 /// The names a program uses: variables, DEFs, labels and constants, as
-/// first written. A DEF or an array keeps what its line says of it.
+/// first written. A DEF or an array keeps the detail its line gives.
 pub fn names<'a>(lines: impl IntoIterator<Item = &'a [u16]>) -> Vec<Item> {
     let mut index: HashMap<String, usize> = HashMap::new();
     let mut out: Vec<Item> = Vec::new();
@@ -388,8 +389,8 @@ pub fn names<'a>(lines: impl IntoIterator<Item = &'a [u16]>) -> Vec<Item> {
             if word.len() < 2 || first.is_ascii_digit() {
                 continue;
             }
-            // Columns of the UTF-16 line are those of the text for the
-            // ASCII that names and signatures are written in.
+            // The columns of the UTF-16 line match those of the text,
+            // because names and signatures are written in ASCII.
             let after = String::from_utf16_lossy(&line[i..]);
             let (kind, detail) = match role {
                 Role::Label => (Kind::Label, String::new()),
@@ -415,7 +416,8 @@ pub fn names<'a>(lines: impl IntoIterator<Item = &'a [u16]>) -> Vec<Item> {
             last_reserved.clear();
             let key = word.to_ascii_uppercase();
             match index.get(&key) {
-                // What a DEF, an array or a CONST says wins over a use.
+                // The kind and detail from a DEF, an array or a CONST win
+                // over a use.
                 Some(&at) if !detail.is_empty() || kind != Kind::Variable => {
                     if out[at].detail.is_empty()
                         && (out[at].kind == Kind::Variable || out[at].kind == kind)
@@ -523,8 +525,8 @@ pub fn candidates(
 
 impl Completion {
     /// The list for the word ending at `col`, if it is long enough and
-    /// anything fits it. After GOTO and its kind, or at a lone `@` or `#`,
-    /// it shows at once.
+    /// anything fits it. After GOTO, GOSUB and RESTORE, or at a lone `@` or
+    /// `#`, it shows immediately.
     pub fn find(
         line: &[u16],
         col: usize,
@@ -556,7 +558,7 @@ impl Completion {
         })
     }
 
-    /// How the chosen entry, or else the first, is used.
+    /// The form of the chosen entry, or else of the first.
     pub fn syntax(&self) -> Option<&str> {
         self.syntax[self.chosen.unwrap_or(0)].as_deref()
     }
@@ -566,9 +568,9 @@ impl Completion {
         &self.items[self.chosen.unwrap_or(0)].word
     }
 
-    /// A key while the list is open. Until Up or Down picks an entry,
-    /// Enter goes on to the text, so that a list showing after one letter
-    /// does not take the Enter that ends a line; Tab takes the first.
+    /// Handles a key while the list is open. Until Up or Down picks an
+    /// entry, Enter is passed to the text, so that a list showing after one
+    /// letter does not take the Enter that ends a line; Tab takes the first.
     pub fn key(&mut self, code: u16, enter: bool) -> Outcome {
         let n = self.items.len();
         let chosen = match (code, self.chosen) {
@@ -592,7 +594,7 @@ impl Completion {
 
     /// Draws the list with its top left at a pixel of `fb`, in cells of
     /// `cell` pixels, or above `y` with its bottom at `above` if it would
-    /// not fit below. Under it goes how the entry is used.
+    /// not fit below. The form of the entry goes under it.
     pub fn draw(
         &self,
         fb: &mut Framebuffer,
@@ -664,8 +666,8 @@ impl Completion {
     }
 }
 
-/// How an entry is used, on a line `cols` cells wide with its top left
-/// at a pixel.
+/// Draws the form of an entry on a line `cols` cells wide with its top
+/// left at a pixel.
 pub fn draw_syntax(
     fb: &mut Framebuffer,
     fonts: Fonts,
@@ -879,7 +881,8 @@ mod tests {
             names: false,
             ..ALL
         };
-        // Labels whatever the settings, from the first letter or none.
+        // Labels with any settings, from the first letter or with no
+        // letter typed.
         let c = Completion::find(&u("GOTO M"), 6, &commands_only, &lib, &names);
         assert_eq!(
             (c.as_ref().unwrap().start, words(&c)),

@@ -1,8 +1,8 @@
 //! Sprite commands: SPSET, SPCLR, SPSHOW, SPHIDE, SPHOME, SPOFS, SPROT,
 //! SPSCALE, SPCOLOR, SPCHR, SPPAGE, SPLAYER, SPDEF, SPVAR, SPUSED, SPLINK,
-//! SPUNLINK, SPFUNC, and the
-//! animation commands SPANIM, ANIMDEF, SPSTART, SPSTOP and SPCHK, and the
-//! collision commands SPCOL, SPCOLVEC, SPHITSP, SPHITRC and SPHITINFO.
+//! SPUNLINK and SPFUNC; the animation commands SPANIM, ANIMDEF, SPSTART,
+//! SPSTOP and SPCHK; and the collision commands SPCOL, SPCOLVEC, SPHITSP,
+//! SPHITRC and SPHITINFO.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
@@ -41,7 +41,7 @@ fn in_range(v: &Value, what: &str, range: std::ops::RangeInclusive<i32>) -> Resu
     })
 }
 
-/// Why an image's attribute is refused; off SPSET's usual path.
+/// The error for a refused image attribute, kept off SPSET's usual path.
 #[cold]
 fn attribute_error(v: &Value) -> Error {
     match in_range(v, "attribute", 0..=31) {
@@ -97,8 +97,8 @@ fn flag(v: Option<&Value>) -> Result<bool> {
 }
 
 /// Runs `f` with the key of a sprite or text screen variable that `v`
-/// names. A number key is an int, a real cut to one; ASCII a-z in a
-/// string key count as A-Z, and no other letters are folded.
+/// names. A number key is an int, and a real is cut to an int. ASCII a-z
+/// in a string key count as A-Z, and no other letters are folded.
 pub(crate) fn with_var_key<R>(v: &Value, f: impl FnOnce(Key) -> Result<R>) -> Result<R> {
     let Value::Str(s) = v else {
         let n = checking(v, || int(v))?;
@@ -141,7 +141,7 @@ pub(crate) fn var_value(v: &Value) -> Result<Value> {
     }
 }
 
-/// Whose variables: a sprite's or a text screen's.
+/// The owner of a set of variables: a sprite or a text screen.
 #[derive(Clone, Copy)]
 pub(crate) enum VarsOf {
     Sprite(usize),
@@ -157,7 +157,7 @@ impl Runtime {
         }
     }
 
-    /// Writing or deleting variable 7 stops target "V"'s animation.
+    /// Writing or deleting variable 7 stops the animation of target "V".
     fn stop_v(&mut self, of: VarsOf) {
         let v = Target::V.index();
         match of {
@@ -180,7 +180,7 @@ impl Runtime {
         Ok(())
     }
 
-    /// SPVAR() or TVAR(). A variable not there is made, holding 0.
+    /// SPVAR() or TVAR(). A missing variable is created with the value 0.
     pub(crate) fn read_var(&mut self, of: VarsOf, key: Key) -> Result<Value> {
         if let Some(v) = self.vars_of(of).get(key) {
             return Ok(v.clone());
@@ -226,7 +226,8 @@ impl Runtime {
         sprites.chain(text).sum()
     }
 
-    /// Adds what SPVAR's and TVAR's variables take to a count of FREEMEM.
+    /// Adds the memory that the variables of SPVAR and TVAR take to a count
+    /// of FREEMEM.
     pub(crate) fn count_vars(&self, tally: &mut memory::Tally) {
         for s in self.sprites.list() {
             s.vars.count(tally);
@@ -274,7 +275,7 @@ impl Runtime {
         Ok((u, v, w, h, attr))
     }
 
-    /// A free sprite number, searching from `start` towards `end`.
+    /// A free sprite number, searching from `start` toward `end`.
     pub(crate) fn free_sprite(&self, start: usize, end: usize) -> Option<usize> {
         let free = |&i: &usize| !self.sprites.list()[i].used;
         if start <= end {
@@ -344,7 +345,7 @@ impl Runtime {
                     ));
                 }
                 let key = |v: &Value| match v {
-                    // Named by no argument.
+                    // The error names no argument.
                     Value::Array(_) => Err(Error::with_detail(
                         ErrorKind::IllegalFunctionCall,
                         "an array among the keys",
@@ -386,12 +387,13 @@ impl Runtime {
             3 => (flag(args.get(1))?, mask(args.get(2))?),
             5 | 6 => (flag(args.get(5))?, u32::MAX),
             7 => (flag(args.get(5))?, mask(args.get(6))?),
-            // 4 and 8 arguments are no form.
+            // 4 and 8 arguments match no form.
             _ => return Err(no_form()),
         };
         let id = sprite_id(&args[0])?;
         let s = self.sprite(&args[0])?;
-        // Without a rectangle, the sprite's own at the time, from its home.
+        // Without a rectangle, the sprite's own rectangle at the time,
+        // from its home.
         let (x, y, w, h) = rect.unwrap_or((-s.home.0 as i32, -s.home.1 as i32, s.w, s.h));
         self.sprites.set_collision(
             id,
@@ -407,7 +409,7 @@ impl Runtime {
         Ok(())
     }
 
-    /// Runs a search, or goes on with the last one, and returns the next
+    /// Runs a search, or continues the last one, and returns the next
     /// sprite hit or -1.
     fn hit(&mut self, rect: bool, start: Option<Search>) -> i32 {
         let slot = if rect {
@@ -451,8 +453,8 @@ impl Runtime {
         want: Want,
         out: &mut Vec<Value>,
     ) -> Result<()> {
-        // These check the sprite's number before how many arguments and
-        // OUT variables there are.
+        // These check the sprite's number before the number of arguments
+        // and OUT variables.
         if let (
             Command::Spofs
             | Command::Spcol
@@ -544,8 +546,8 @@ impl Runtime {
                 s.z = z.unwrap_or(s.z);
                 Ok(())
             }
-            // With the flag set, where the sprite shows once its links are
-            // followed.
+            // With the flag set, the position where the sprite shows after its
+            // links are followed.
             (Command::Spofs, Want::Outs(n @ (2 | 3)), 1 | 2) => {
                 let absolute = args.get(1).map(opt_int).transpose()?.flatten().unwrap_or(0) != 0;
                 self.sprite(&args[0])?;
@@ -855,7 +857,7 @@ impl Runtime {
                     let e = Error::with_detail(ErrorKind::IllegalFunctionCall, "link to itself");
                     return Err(e.of_arg(1));
                 }
-                // Named here, unlike elsewhere.
+                // The error names the argument here, unlike elsewhere.
                 self.sprite(&args[0]).map_err(|e| e.of_arg(0))?;
                 self.sprite(&args[1]).map_err(|e| e.of_arg(1))?;
                 if self.sprites.descends_from(parent, child) {
@@ -956,10 +958,10 @@ impl Runtime {
                     [] | [_] => (0, 0),
                     _ => return Err(no_form()),
                 };
-                // Templates past the last are left out.
+                // Templates past the last one are skipped.
                 let room = self.sprites.defs.len().saturating_sub(offset);
-                // DATA is read up to the first value missing, whose error
-                // comes after the templates before it are set.
+                // DATA is read up to the first missing value. Its error comes
+                // after the templates before it are set.
                 let (values, missing) = match &mut data {
                     Some((data, n)) => {
                         let mut values = Vec::new();
@@ -1088,8 +1090,8 @@ fn optional_real(v: &Value) -> Result<Option<f64>> {
     })
 }
 
-/// Setting what an animation changes stops that animation, so that SPCHK
-/// no longer shows it.
+/// Setting the property an animation changes stops that animation, so that
+/// SPCHK no longer shows it.
 fn stop(s: &mut Sprite, target: Target) {
     s.anims[target.index()] = None;
 }

@@ -25,7 +25,7 @@ pub fn preset(program: usize) -> (u16, u16) {
     }
 }
 
-/// How instruments are numbered.
+/// The numbering of instruments.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
     /// SmileBASIC 4's own numbers, see [`preset`].
@@ -34,9 +34,9 @@ pub enum Layout {
     Gm,
 }
 
-/// The GS kit program of each drum set @128-@148, every one its own so
+/// The GS kit program of each drum set @128-@148, each one different so
 /// that none hides another. A set takes the GS kit nearest by name
-/// ([`DRUM_KITS`]) if no earlier set has it, else the next program up.
+/// ([`DRUM_KITS`]) if no earlier set has it, otherwise the next program up.
 pub fn gm_drum_programs() -> [u8; 21] {
     let mut taken = [false; 128];
     DRUM_KITS.map(|kit| {
@@ -113,7 +113,7 @@ fn bag(out: &mut Vec<u8>, generators: u16) {
 /// Writes the SoundFont to `out`, decoding the waveforms as it goes so
 /// that they are never all in memory.
 pub fn write(bank: &Bank, layout: Layout, out: &mut impl Write) -> io::Result<()> {
-    // Where each waveform starts among the samples.
+    // The start of each waveform among the samples.
     let mut shdr = Vec::new();
     let mut start = 0u32;
     for (i, wave) in bank.waves.iter().enumerate() {
@@ -154,7 +154,7 @@ pub fn write(bank: &Bank, layout: Layout, out: &mut impl Write) -> io::Result<()
             igen.add(35, timecents(t.hold));
             igen.add(36, timecents(t.decay));
             igen.add(37, (t.sustain_db * 10.0).round().min(1440.0) as i16);
-            // A note that ignores being let go keeps decaying.
+            // A note that ignores being released keeps decaying.
             let release = if region.ignore_note_off {
                 t.decay
             } else {

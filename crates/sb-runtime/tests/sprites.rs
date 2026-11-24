@@ -128,7 +128,7 @@ fn variables() {
 #[test]
 fn variable_keys() {
     // ASCII a-z fold to upper case, nothing else does; number keys are
-    // apart from string keys, and a real key is cut to an int.
+    // separate from string keys, and a real key is cut to an int.
     let (_, out) = run("SPVAR 0,\"name\",1:SPVAR 0,\"Mixed\",2\n\
          ?SPVAR(0,\"NAME\");SPVAR(0,\"MIXED\");SPVAR(0,\"name\");\n\
          SPVAR 0,\"ａ\",1:?SPVAR(0,\"Ａ\");SPVAR(0,\"ａ\");\n\
@@ -152,8 +152,8 @@ fn writing_variable_7_stops_v() {
     assert_eq!(out, "000032");
 }
 
-/// Variables take FREEMEM for keys over 16 characters, made by reading a
-/// missing one too, and the values they hold count as any others do.
+/// Variables take FREEMEM for keys over 16 characters, also those made by
+/// reading a missing one, and their values count the same as any others.
 #[test]
 fn variables_take_memory() {
     let (_, out) = run(
@@ -244,7 +244,7 @@ fn errors() {
         ("SPFUNC 0,0", "Type mismatch in 0:1(SPFUNC:2)"),
         ("SPFUNC 4096,0", "Out of range in 0:1(SPFUNC:1)"),
         ("TFUNC 0,0", "Type mismatch in 0:1(TFUNC:2)"),
-        // The name must be a DEF, or else a label, as it is set.
+        // The name must be a DEF, or else a label, when it is set.
         (
             "SPFUNC 0,\"SPSET\"",
             "Function must be user defined in 0:1(SPFUNC:2)",
@@ -339,8 +339,9 @@ fn errors() {
     }
 }
 
-/// SPDEF from an array or DATA sets the templates up to the last and
-/// leaves the rest out, and a bad template stops it after those before.
+/// SPDEF from an array or DATA sets the templates up to the last one and
+/// ignores the rest of the data, and a bad template stops it after the
+/// templates before it.
 #[test]
 fn spdef_from_a_list_stops_at_the_last_template() {
     let (_, out) = run("DIM D[14]:D[0]=5:D[2]=16:D[3]=16:D[9]=16:D[10]=16\n\
@@ -511,8 +512,8 @@ fn linked_sprites_follow_their_parent() {
          SPOFS 2,1 OUT X,Y:?ROUND(X);\",\";ROUND(Y);\" \";\n\
          SPOFS 3,1 OUT X,Y:SPOFS 3 OUT RX,RY:?X;\",\";Y;\",\";RX;\" \";\n\
          ?SPLINK(1);SPLINK(0,1);SPLINK(1,2);SPLINK(3,3);SPLINK(2,2)");
-    // Offsets turn and scale with the parent whatever the flags; the flags
-    // pass on the parent's own rotation and scale to the child's image.
+    // Offsets turn and scale with the parent regardless of the flags. The
+    // flags pass on the parent's own rotation and scale to the child's image.
     assert_eq!(out, "100,70,8 100,70 105,75,5 0121-1");
 }
 
@@ -556,7 +557,8 @@ fn call_sprite_runs_each_callback() {
 }
 
 /// A command reading DATA from `"@L"` looks at the labels of the DEF it is
-/// called in first, then the top level's, as RESTORE does (4.4.8).
+/// called in first, then at those of the top level, the same as RESTORE
+/// does (4.4.8).
 #[test]
 fn label_data_finds_the_labels_of_the_def_running() {
     let (_, out) = run("F:G\n\
@@ -575,7 +577,7 @@ fn label_data_finds_the_labels_of_the_def_running() {
     assert_eq!(out, "5799");
     let (_, out) = run("SPDEF \"@D\"\nDEF F\n@D:DATA 1,5,5,16,16,0,0,1\nEND");
     assert!(out.starts_with("Undefined label"), "{out}");
-    // The label string is parsed as RESTORE's is.
+    // The label string is parsed the same as the label string of RESTORE.
     for bad in ["D", "6:@D", "X:@D"] {
         let (_, out) = run(&format!("SPDEF \"{bad}\"\n@D:DATA 1,5,5,16,16,0,0,1"));
         assert!(out.starts_with("Illegal label string"), "{bad}: {out}");
@@ -664,7 +666,8 @@ fn spdef_from_an_array_wraps_coordinates() {
 }
 
 /// The columns (along a row) or rows (along a column) of a page of unique
-/// colors that a program's sprite shows, past the first `skip` pixels.
+/// colors that a program's sprite shows at `n` frame pixels, `step` apart
+/// from `along` on.
 fn texels(setup: &str, along: (u32, u32), step: (u32, u32), n: u32) -> Vec<Option<u32>> {
     let source = format!(
         "GTARGET 3:FOR Y=0 TO 32:FOR X=0 TO 32:GPSET X,Y,RGB(X*7+8,Y*7+8,100):NEXT:NEXT\n\
@@ -745,14 +748,14 @@ fn half_pixel_sprites_cover_by_left_and_bottom_edges() {
     let mut across = vec![None];
     across.extend((0..16).map(Some));
     across.push(None);
-    // From the pixel the left edge runs through to the last before the
-    // right edge's; the last texel shows twice nowhere.
+    // From the pixel the left edge runs through to the last pixel before
+    // the pixel of the right edge; the last texel does not show twice.
     assert_eq!(
         texels(sp, (39, 44), (1, 0), 17)[1..],
         shown(&(0..16).collect::<Vec<_>>())
     );
-    // Not the pixel the top edge runs through, but the bottom edge's, which
-    // reads the page past the image.
+    // Not the pixel the top edge runs through, but the pixel of the bottom
+    // edge, which reads the page past the image.
     let down = texels(sp, (44, 40), (0, 1), 18);
     assert_eq!(down[0], None);
     assert_eq!(down[1..=16], shown(&(1..=16).collect::<Vec<_>>()));

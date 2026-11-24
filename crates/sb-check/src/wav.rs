@@ -22,7 +22,7 @@ pub struct Wav {
     path: PathBuf,
     /// Data bytes written so far.
     bytes: u32,
-    /// Samples left out because the file was full.
+    /// Whether samples were dropped because the file was full.
     dropped: bool,
     finished: bool,
 }

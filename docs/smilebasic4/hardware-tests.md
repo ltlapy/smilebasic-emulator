@@ -10,10 +10,10 @@ the console's text, and `smilebasic-check` runs the same parts on the
 emulator and compares the two screens row by row.
 
 A real console can run these programs too. Where the docs say so, a result
-from a real Switch outranks Ryujinx's.
+from a real Switch outranks a result from Ryujinx.
 
 The TEST and TTEST numbers in the docs name check programs kept outside the
-repository. TTEST, which stops at TTEST39, is the older series; the later
+repository. TTEST, which ends at TTEST39, is the older series; the later
 programs are TEST40 and up.
 
 ## Writing a check program
@@ -80,12 +80,12 @@ For each `RES` file, `smilebasic-check` prints `same` or the rows that differ.
 Where SmileBASIC 4 has not saved one yet, it prints the emulator's screen, to
 compare by eye.
 
-Each part runs on a fresh copy of the folder. The projects beside it are copied
-once, `###` as the workspace, for parts that read them.
+Each part runs on a fresh copy of the folder. The projects next to it are
+copied once, with `###` as the workspace, for parts that read them.
 
-The part's number is typed after three seconds, as a person would. A `VSYNC`
-right after `INPUT` counts from the `VSYNC` before it, so how long the answer
-takes changes how long it waits.
+The part's number is typed after three seconds, the way a person would type
+it. A `VSYNC` right after `INPUT` counts from the `VSYNC` before it, so the
+time the answer takes changes how long the `VSYNC` waits.
 
 ## Exit status
 
@@ -104,7 +104,7 @@ when the tool itself fails, for example on a missing folder.
 
 Errors in a slot that `EXEC` runs, and in a subprogram that a script's
 `SUBRUN` line starts, count. Errors in lines typed in DIRECT mode do not.
-Status 2 holds even when the script goes on to run the program again, and
+Status 2 holds even when the script then runs the program again, and
 each error also goes to stderr as one line:
 
 ```
@@ -138,9 +138,9 @@ smilebasic-check --play --wav song.wav 600 PROJECT_FOLDER SONG - shots
 ```
 
 The file holds 16-bit PCM stereo at 48000 Hz, the mixer's own rate, with no
-resampling. Each frame adds 800 samples, what the audio device would get in
-real time, so 600 frames give 10 seconds. Listen to it or plot the waveform to
-check an MML loop's seam.
+resampling. Each frame adds 800 samples, the amount the audio device would get
+in real time, so 600 frames give 10 seconds. Listen to it or plot the waveform
+to check an MML loop's seam.
 
 The same program, script and frame count give a byte-identical file. A program
 that reads `RND`, `MILLISEC`, `DATE$` or `TIME$` can change from run to run;

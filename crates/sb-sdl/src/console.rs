@@ -3,9 +3,9 @@
 //! gives a GUI program no console even when one started it. This takes the
 //! console of the program that started the emulator, if it has one.
 
-/// Sends what is printed to the console the emulator was started from. A
-/// start from the desktop has none, and a handle that is already there, as
-/// with `> file`, stays.
+/// Sends printed output to the console that the emulator was started from.
+/// A start from the desktop has no console. A handle that is already set,
+/// for example by `> file`, stays.
 #[cfg(all(windows, not(debug_assertions)))]
 pub fn attach() {
     use std::ffi::c_void;
@@ -23,8 +23,8 @@ pub fn attach() {
         fn SetStdHandle(which: u32, handle: *mut c_void) -> i32;
     }
 
-    // SAFETY: the three take plain values and keep nothing of ours. The
-    // handle SetStdHandle gets is an open file's, given up to it for good.
+    // SAFETY: the three take plain values and keep nothing that we own.
+    // SetStdHandle gets the handle of an open file and keeps it permanently.
     unsafe {
         if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
             return;

@@ -2,7 +2,7 @@
 
 [English](README.md) | 한국어 | [日本語](README_ja.md)
 
-Rust+SDL3 조합으로 작성된 SmileBASIC 4 (Nintendo Switch) 호환 에뮬레이터.
+Rust+SDL3 조합으로 작성된 SmileBASIC 4 (Nintendo Switch) 호환 에뮬레이터입니다.
 아직 개발 중입니다.
 
 비공식 프로젝트이며, SmileBoom 및 Nintendo와는 관계가 없고 승인이나 지원을 받지 않았습니다.
@@ -31,7 +31,7 @@ smilebasic-import <본편 ROMFS 폴더> <본편 EXEFS 폴더> <업데이트 ROMF
 ```
 
 가져온 리소스는 `<데이터 경로>/resources` 아래에 저장됩니다.
-자세한 내용은 [docs/using/importing.md](docs/using/importing.md) 를 참조하세요.
+자세한 내용은 [docs/using/importing.md](docs/using/importing.md) 를 참조하십시오.
 
 
 ## 실행 방법

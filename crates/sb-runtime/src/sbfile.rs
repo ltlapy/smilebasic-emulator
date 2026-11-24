@@ -1,6 +1,6 @@
 //! SmileBASIC 4's file container, and the `PCBN` arrays inside DAT and
-//! GRP files. docs/smilebasic4/file-formats.md describes both, from files SmileBASIC 4
-//! saved.
+//! GRP files. docs/smilebasic4/file-formats.md describes both, from files
+//! SmileBASIC 4 saved.
 //!
 //! | Offset | Size | Field |
 //! |---|---|---|
@@ -30,7 +30,7 @@ pub const MAX_BODY: usize = 256 << 20;
 /// The key of the footer's HMAC, the one SmileBASIC 3 used too.
 const SIGNING_KEY: &[u8] = b"nqmby+e9S?{%U*-V]51n%^xZMk8>b{?x]&?(NmmV[,g85:%6Sqd\"'U\")/8u77UL2";
 
-/// What a file is, by the number at 0x02.
+/// The type of a file, by the number at 0x02.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Text,
@@ -63,7 +63,8 @@ pub mod usage {
     pub const DAT: u16 = 1;
     pub const GRP: u16 = 3;
     pub const JPG: u16 = 3;
-    /// A GRP image stored as Data, as SmileBASIC 4's own projects have.
+    /// A GRP image stored as Data, the way SmileBASIC 4's own projects store
+    /// it.
     pub const OLD_GRP: u16 = 2;
 }
 
@@ -172,8 +173,8 @@ pub fn parse(bytes: &[u8]) -> Result<File, FileError> {
     let stored = bytes
         .get(HEADER_SIZE..HEADER_SIZE.saturating_add(size))
         .ok_or(FileError::TooShort)?;
-    // Arrays are read by their own sizes. Some files' size leaves out the
-    // array's header, so it goes on to the signature.
+    // Arrays are read by their own sizes. In some files the size does not
+    // count the array's header, so the body is read up to the signature.
     let whole_array = !compressed && kind == Kind::Data && stored.starts_with(b"PCBN000");
     let stored = match bytes.get(HEADER_SIZE..bytes.len().saturating_sub(FOOTER_SIZE)) {
         Some(all) if whole_array && all.len() > stored.len() => all,
@@ -254,8 +255,8 @@ impl File {
 }
 
 /// The array in a DAT or GRP file, which may be in a container or be the
-/// bare `PCBN` body the emulator saves; with whether it is an image,
-/// stored width first.
+/// bare `PCBN` body the emulator saves, and whether it is an image, stored
+/// width first.
 pub fn read_data(bytes: &[u8]) -> Result<(Data, bool), FileError> {
     if bytes.starts_with(DATA_MAGIC) {
         return Ok((parse_data(bytes)?, false));
@@ -267,8 +268,8 @@ pub fn read_data(bytes: &[u8]) -> Result<(Data, bool), FileError> {
 /// An array as DAT and GRP files keep it, with up to four dimensions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Data {
-    /// As stored: outermost first for a DAT file, as `DIM` takes them,
-    /// but width then height for a GRP image.
+    /// As stored: outermost first for a DAT file, in the order `DIM` takes
+    /// them, but width then height for a GRP image.
     pub dims: Vec<usize>,
     pub values: DataValues,
 }
@@ -290,8 +291,8 @@ const STR_TYPE: u16 = 6;
 const PIXEL16_TYPE: u16 = 3;
 
 /// A 16-bit pixel, 5 bits each of red, green and blue from the top and
-/// the lowest bit opaque, as an ARGB colour. Each 5 bits become the top
-/// of 8, the low 3 left 0 (checked on hardware: 31 is &HF8).
+/// the lowest bit opaque, as an ARGB color. Each 5 bits become the top 5
+/// of 8, with the low 3 left 0 (checked on hardware: 31 is &HF8).
 fn argb_from_5551(p: u16) -> i32 {
     let wide = |v: u16| u32::from(v & 31) << 3;
     let alpha = if p & 1 == 1 { 0xFF00_0000 } else { 0 };
@@ -302,7 +303,7 @@ pub const DATA_MAGIC: &[u8; 8] = b"PCBN0004";
 pub(crate) const DATA_HEADER: usize = 28;
 /// The longest string a DAT file can hold, in UTF-8 bytes.
 pub const MAX_STR_BYTES: usize = 0x7FFF;
-/// The most elements an array in a file holds, as for DIM.
+/// The most elements an array in a file holds, the same as for DIM.
 const MAX_ELEMENTS: usize = 1 << 28;
 
 /// `PCBN0004`, u16 element type, u16 dimension count, u32 x 4 dimensions
@@ -355,9 +356,10 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
     Ok(Data { dims, values })
 }
 
-/// How many elements an array of these sizes holds. A zero in any size
-/// makes it empty; the others must still multiply to no more than an array
-/// can hold, so that nothing later goes through `[0xFFFFFFFF, 0]`'s rows.
+/// The number of elements an array of these sizes holds. A zero in any
+/// size makes it empty; the others must still multiply to no more than an
+/// array can hold, so that no later code loops over the rows of
+/// `[0xFFFFFFFF, 0]`.
 // Our own guard, for a file no SmileBASIC 4 program writes.
 fn checked_elements(dims: &[usize]) -> Result<usize, FileError> {
     let mut product = 1usize;
@@ -493,7 +495,7 @@ pub fn meta_body(meta: &ProjectMeta) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// The array is read by its own sizes, whatever the file's size says.
+    /// The array is read by its own sizes, regardless of the file's size.
     #[test]
     fn a_size_without_the_arrays_header_still_reads() {
         let body = data_body(&Data {
@@ -558,7 +560,7 @@ mod tests {
         assert_eq!(f.date, DATE);
     }
 
-    /// What SmileBASIC 4 saved for `DIM A%[2,3]` holding 1 to 6, and for
+    /// The files SmileBASIC 4 saved for `DIM A%[2,3]` holding 1 to 6, and for
     /// the string array `["AB", ""]`.
     #[test]
     fn files_saved_by_smilebasic() {
@@ -660,8 +662,8 @@ mod tests {
 
     #[test]
     fn arrays_are_limited_as_dim_limits_them() {
-        // Their products are 0, and so fit a payload of nothing, but what
-        // goes through their rows would not fit.
+        // Their products are 0, so they fit an empty payload, but what goes
+        // through their rows would not fit.
         for dims in [
             &[u32::MAX, 0][..],
             &[0, u32::MAX],

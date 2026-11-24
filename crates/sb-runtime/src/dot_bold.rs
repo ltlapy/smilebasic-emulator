@@ -16,21 +16,21 @@ pub type Cell16 = [u16; 16];
 const LEFT: u16 = 1;
 const RIGHT: u16 = 1 << 15;
 
-/// Which font a glyph comes from, which decides the side it grows to.
+/// The font a glyph comes from, which decides the side it grows toward.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Face {
-    /// Izumi Gothic 16: always to the left, as Izumi Gothic 16 Bold does.
+    /// Izumi Gothic 16: always to the left, like Izumi Gothic 16 Bold.
     /// Its kanji leave column 0 empty and mostly touch column 15.
     Izumi,
     /// Unifont JP: to the left when column 0 is empty, else to the right.
     Unifont,
 }
 
-/// How bolding treats the cell's side columns, where a glyph meets its
+/// The bolding rule for the cell's side columns, where a glyph meets its
 /// neighbors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EdgeRule {
-    /// The rule alone, as Izumi Gothic 16 Bold ships: many kanji then
+    /// The rule alone, the way Izumi Gothic 16 Bold ships: many kanji then
     /// touch both sides of the cell, and the next character.
     Plain,
     /// No pixel is added to the side column the glyph grows toward when
@@ -43,9 +43,9 @@ pub enum EdgeRule {
     KeepEdgeInward,
     /// [`EdgeRule::KeepEdgeInward`], after a Unifont glyph that touches
     /// column 0 and leaves column 15 empty moves one pixel right, so that
-    /// it sits as Izumi's kanji do and grows left like them. The move
-    /// removes no pixel. Without it, an Izumi kanji followed by a hanzi
-    /// only Unifont JP has touches it about a third of the time.
+    /// it sits the same way as Izumi's kanji and grows left like them. The
+    /// move removes no pixel. Without it, an Izumi kanji followed by a
+    /// hanzi only Unifont JP has touches it about a third of the time.
     KeepEdgeInwardShifted,
 }
 
@@ -182,7 +182,8 @@ mod tests {
         let bold = |rows, edge| art(&embolden(rows, Face::Unifont, edge), 1);
         assert_eq!(bold(&left_free, EdgeRule::Plain), ["##.............."]);
         assert_eq!(bold(&against_left, EdgeRule::Plain), ["##.....##......."]);
-        // Izumi grows left even then, and loses what leaves the cell.
+        // Izumi grows left even then, and loses the pixels that leave the
+        // cell.
         let izumi = embolden(&against_left, Face::Izumi, EdgeRule::Plain);
         assert_eq!(art(&izumi, 1), ["#.....##........"]);
     }

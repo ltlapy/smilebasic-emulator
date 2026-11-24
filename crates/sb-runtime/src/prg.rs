@@ -11,13 +11,13 @@
 //!
 //! The rest follows the model of these commands in SmileBASIC Debugger
 //! (otya's SBDBG 1.2.8, which tests it against the real ones; TEST35
-//! checked the cases below on hardware too), with the
-//! place past the last line kept as the line count:
+//! checked the cases below on hardware too), with the place past the last
+//! line kept as the line count:
 //! - PRGSET replaces the current line, and puts the lines after it. On the
 //!   last line it adds an empty line first, and past the last line it
 //!   replaces the last one and stays past the new last line.
 //! - PRGSEEK 1 from the last line goes past it, and PRGDEL deletes back
-//!   towards the start once it reaches the end.
+//!   toward the start once it reaches the end.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
@@ -33,11 +33,11 @@ pub struct PrgEdit {
     pub line: usize,
 }
 
-/// How a command changed a slot's lines, for what is kept by line, such
-/// as breakpoints.
+/// The change a command made to a slot's lines, for data kept by line,
+/// such as breakpoints.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SlotEdit {
-    /// Lines moved, or went, as an edit in the editor moves them.
+    /// Lines moved or removed, the same way an edit in the editor moves them.
     Shift(LineShift),
     /// Another program took the slot's place: LOAD, NEW and the like.
     /// The programs' files, as `PROJECT/NAME`, when they have one.
@@ -45,16 +45,16 @@ pub(crate) enum SlotEdit {
         from: Option<String>,
         to: Option<String>,
     },
-    /// EXEC compiled the slot's program as it is now.
+    /// EXEC compiled the slot's current program.
     Compiled,
 }
 
-/// `count` lines put in before line `at`, from 0.
+/// `count` lines inserted before line `at`, from 0.
 fn inserted(at: usize, count: usize) -> LineShift {
     LineShift::Broken { at: (at, 0), count }
 }
 
-/// Line `at`, from 0, taken out.
+/// Line `at`, from 0, deleted.
 fn deleted(at: usize) -> LineShift {
     LineShift::Joined {
         start: (at, 0),
@@ -62,16 +62,16 @@ fn deleted(at: usize) -> LineShift {
     }
 }
 
-/// What a slot holds, counting PRGSIZE's free characters: 1 MiB less one
-/// for an empty slot (checked on hardware).
+/// The number of characters a slot holds, counting PRGSIZE's free
+/// characters: 1 MiB less one for an empty slot (checked on hardware).
 const SLOT_CHARS: i32 = 1 << 20;
 const LF: u16 = 10;
 
-/// Where a slot's lines start in its text, kept so that reading a long
-/// program line by line with PRGGET$, or editing it a line at a time,
-/// does not split all of it again for each line. A line is its text up
-/// to and with the LF that ends it; a last line without one reads as if
-/// it had it, and an empty slot reads as one empty line.
+/// The positions where a slot's lines start in its text, kept so that
+/// reading a long program line by line with PRGGET$, or editing it a line
+/// at a time, does not split all of it again for each line. A line is its
+/// text up to and including the LF that ends it; a last line without one
+/// reads as if it had it, and an empty slot reads as one empty line.
 #[derive(Default)]
 pub(crate) struct LinesCache {
     /// The slot, and the address and length of the text the lines were
@@ -84,16 +84,16 @@ pub(crate) struct LinesCache {
 }
 
 impl LinesCache {
-    /// Drops the lines kept. Whatever puts another text into a slot
-    /// calls it; the address and length checked besides only catch a
-    /// change that forgot to.
+    /// Drops the kept lines. Any code that puts another text into a slot
+    /// calls it; the address and length are also checked, but only to
+    /// catch a change that forgot to.
     pub(crate) fn forget(&mut self) {
         self.key = None;
     }
 }
 
-/// What tells whether a slot's text is still the one the cache holds,
-/// as a guard behind [`LinesCache::forget`].
+/// The key that tells whether a slot's text is still the one the cache
+/// holds, as a guard behind [`LinesCache::forget`].
 fn text_key(slot: usize, text: &str) -> (usize, usize, usize) {
     (slot, text.as_ptr() as usize, text.len())
 }
@@ -113,7 +113,7 @@ fn line_starts(text: &str, starts: &mut Vec<usize>) {
     );
 }
 
-/// A slot's lines, read through its text and where its lines start.
+/// A slot's lines, read through its text and the starts of its lines.
 struct Source<'a> {
     text: &'a str,
     starts: &'a [usize],
@@ -159,8 +159,8 @@ impl Source<'_> {
     }
 }
 
-/// The lines a PRGSET or PRGINS string makes, as text: it ends with a
-/// line break of its own.
+/// The lines a PRGSET or PRGINS string makes, as text: it ends with its
+/// own line break.
 struct NewLines {
     text: String,
     count: usize,
@@ -223,7 +223,7 @@ impl LinesEdit<'_> {
         self.starts.splice(range, firsts);
     }
 
-    /// An empty line put after the last.
+    /// An empty line added after the last.
     fn push_empty(&mut self) {
         let len = self.len();
         let new = NewLines {
@@ -260,7 +260,7 @@ impl Runtime {
     }
 
     /// The slot PRGNAME$ and PRGSIZE mean when none is given: the running
-    /// one, and slot 0 in direct mode, whichever PRGEDIT is on.
+    /// one, and slot 0 in DIRECT mode, regardless of the slot PRGEDIT is on.
     fn current_slot(&self, arg: Option<&Value>) -> Result<usize> {
         match arg.map(opt_int).transpose()?.flatten() {
             None => Ok(self.running_slot.unwrap_or(0)),
@@ -272,9 +272,9 @@ impl Runtime {
         self.prg_edit.ok_or_else(|| ErrorKind::UsePrgedit.into())
     }
 
-    /// Notes that a slot's program was replaced by file `to`'s, so that
-    /// what is kept by its lines goes with the old one. Earlier changes
-    /// to its lines no longer matter.
+    /// Notes that a slot's program was replaced by the program of file
+    /// `to`, so that data kept by its lines goes with the old one. Earlier
+    /// changes to its lines no longer matter.
     pub(crate) fn replaced_lines(&mut self, slot: usize, to: Option<String>) {
         let earlier = self.slot_edits.iter().find_map(|(s, edit)| match edit {
             SlotEdit::Replaced { from, .. } if *s == slot => Some(from.clone()),
@@ -388,8 +388,8 @@ impl Runtime {
                 }
                 let source = self.source(slot);
                 let line = match flag(rest.first(), 1)? {
-                    // Past the last line, and lines after the last go to
-                    // it.
+                    // -1 is past the last line, and a line number after the
+                    // last selects the last line.
                     -1 => source.len(),
                     n @ 1.. => (n as usize).min(source.len()) - 1,
                     n => {
@@ -447,7 +447,7 @@ impl Runtime {
                 let new = new_lines(text)?;
                 let edit = self.editing()?;
                 // UNVERIFIED: that PRGSET does nothing too when the slot
-                // would be over its size, as PRGINS does.
+                // would be over its size, the same as PRGINS does.
                 let source = self.source(edit.slot);
                 let old = source.line(edit.line.min(source.len() - 1));
                 if !self.fits(edit.slot, new.units(), old.map_or(0, |l| l.len())) {
@@ -457,9 +457,9 @@ impl Runtime {
                     let n = new.count;
                     let past = *line >= lines.len();
                     let at = (*line).min(lines.len() - 1);
-                    // The replaced line keeps what it had, as one whose
-                    // text is typed over in the editor does; the lines
-                    // after it move down past the new ones.
+                    // The replaced line keeps what it had, the same as a
+                    // line whose text is typed over in the editor; the
+                    // lines after it move down past the new ones.
                     shifts.push(inserted(at + 1, n - 1));
                     if past {
                         // Past the last line, the last is replaced and an
@@ -477,7 +477,7 @@ impl Runtime {
                 });
                 Ok(vec![])
             }
-            // The current line stays on the line it was when inserting
+            // The current line stays on the line it was on when inserting
             // before it, and moves to the last line inserted after it
             // (checked on hardware).
             (Command::Prgins, Want::Outs(0), [text, rest @ ..]) if rest.len() <= 1 => {
@@ -520,7 +520,7 @@ impl Runtime {
                     let past = *line >= lines.len();
                     match usize::try_from(n) {
                         // Lines after the current one go first; at the end
-                        // it deletes back towards the start.
+                        // it deletes back toward the start.
                         Ok(n) => {
                             let start = (*line).min(lines.len() - 1);
                             let (mut cur, mut len) = (start, lines.len());
@@ -589,8 +589,8 @@ mod tests {
     use super::*;
     use crate::font::Font;
 
-    /// The commands as they worked on a slot split into lines anew each
-    /// time, before the lines were kept.
+    /// The commands as they worked before the lines were kept, splitting
+    /// the slot into lines again each time.
     struct Model {
         text: String,
         edit: Option<PrgEdit>,
@@ -639,7 +639,7 @@ mod tests {
     }
 
     impl Model {
-        /// What the op returns, or None for an error.
+        /// Returns the result of the op, or None for an error.
         fn apply(&mut self, op: &Op) -> Option<Vec<i64>> {
             let (mut lines, empty) = model_lines(&self.text);
             if let Op::Edit(n) = *op {
@@ -798,8 +798,8 @@ mod tests {
         Some(out.into_iter().flat_map(units).collect())
     }
 
-    /// The kept lines give what splitting the slot anew each time gave,
-    /// over many random edits.
+    /// The kept lines give the same results as splitting the slot again
+    /// each time, over many random edits.
     #[test]
     fn kept_lines_match_splitting_anew() {
         let pieces: [&[u16]; 7] = [

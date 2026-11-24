@@ -1,4 +1,4 @@
-//! File commands in direct mode and in programs, on a temporary folder.
+//! File commands in DIRECT mode and in programs, on a temporary folder.
 
 use std::path::PathBuf;
 
@@ -39,7 +39,7 @@ fn machine(dir: &TempDir) -> Machine {
 fn enter(m: &mut Machine, line: &str) {
     m.type_text(line);
     m.rt.key_press(keys::ENTER);
-    // Keys go on 32 a frame.
+    // Keys arrive 32 per frame.
     for _ in 0..=line.len() / 32 {
         m.frame();
     }
@@ -200,7 +200,7 @@ fn breakpoints_go_and_come_back_with_their_file() {
     assert_eq!(m.all_breakpoints(), [(2, 1, None)]);
     enter(&mut m, "load \"b\",1");
     assert_eq!(m.all_breakpoints(), [(1, 2, None), (2, 1, None)]);
-    // Lines past the end of the file as it is now go.
+    // Breakpoints on lines past the new end of the file are removed.
     m.toggle_breakpoint(1, 1);
     enter(&mut m, "load \"c\",1");
     m.set_slot(3, "A=1".to_string());
@@ -215,7 +215,7 @@ fn projects_rename_delete() {
     let mut m = machine(&dir);
     // PROJECT only switches; projects are made in the project manager.
     enter(&mut m, "project \"mygame\"");
-    // The message names the command and goes on to a second row.
+    // The message names the command and wraps onto a second row.
     assert!(tail(&m, 3).concat().contains("Undefined project name"));
     enter(&mut m, "project \"/\"");
     assert!(tail(&m, 2)[0].starts_with("Illegal project name"));
@@ -224,8 +224,9 @@ fn projects_rename_delete() {
     assert_eq!(tail(&m, 2), ["MYGAME", "OK"]);
     enter(&mut m, "save \"a\":rename \"a\",\"b\":files \"txt:\"");
     assert_eq!(tail(&m, 2), ["TXT:B", "OK"]);
-    // Another type for the second name is File type mismatch, before the
-    // file is looked for; no type takes the first's.
+    // A different type for the second name is File type mismatch, before
+    // the file is looked for. A second name with no type takes the type of
+    // the first.
     m.set_slot(0, "A=1\nRENAME \"TXT:B\",\"DAT:C\"".to_string());
     enter(&mut m, "run");
     let (e, _) = m.take_program_error().expect("an error");
@@ -260,7 +261,7 @@ fn failures_set_result_and_explain() {
     assert_eq!(tail(&m, 2), ["LOAD failed: TXT:NOPE not found", "OK"]);
     enter(&mut m, "?result()");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
-    // In a program, failures are silent and PROJECT is direct-mode only.
+    // In a program, failures are silent and PROJECT works only in DIRECT mode.
     m.set_slot(0, "LOAD \"NOPE\",1:?RESULT()\nPROJECT \"X\"".to_string());
     enter(&mut m, "run");
     let r = tail(&m, 3);
@@ -274,7 +275,7 @@ fn failures_set_result_and_explain() {
     m.set_slot(0, "LOAD \"NOPE\",1".to_string());
     enter(&mut m, "run");
     assert_eq!(m.rt.take_notices(), ["LOAD failed: TXT:NOPE not found"]);
-    // A program can LOAD over itself, and goes on (checked on hardware).
+    // A program can LOAD over itself, and continues (checked on hardware).
     (m.rt.storage)
         .write(sb_runtime::storage::FileKind::Txt, "X", b"?2", None)
         .unwrap();
@@ -335,7 +336,7 @@ fn ask(m: &mut Machine, line: &str) -> sb_runtime::confirm::Confirm {
     panic!("{line:?} did not ask");
 }
 
-/// Runs frames until direct mode waits for a line again.
+/// Runs frames until DIRECT mode waits for a line again.
 fn settle(m: &mut Machine) {
     for _ in 0..10 {
         m.frame();
@@ -441,7 +442,7 @@ fn programs_ask_except_for_a_safe_load() {
         (vec!["1".into(), "OK".into()], "?2")
     );
 
-    // SAVE in a program asks, as typed ones do.
+    // SAVE in a program asks, the same as a typed SAVE does.
     m.set_slot(0, "SAVE \"B\",1:?RESULT()".to_string());
     let c = ask(&mut m, "run");
     assert_eq!(c.title, "Slot 1: Save file");
@@ -516,7 +517,7 @@ fn loadv_as_a_function_needs_room_for_the_new_value() {
     );
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2)[0], "2500000 0");
-    // A string the same.
+    // The same for a string.
     let setup = "VAR N=2000000:VAR S$=\"A\"*N:SAVEV \"TXT:Q\",S$:DIM F[16000000]";
     m.set_slot(0, format!("{setup}\nS$=LOADV(\"TXT:Q\")"));
     enter(&mut m, "run");
@@ -554,9 +555,9 @@ fn loadv_as_a_function_needs_room_for_the_new_value() {
     );
 }
 
-/// LOADV into GARRAY's or TARRAY's array keeps its size: the elements that
-/// fit come in, the rest stay, and RESIZE still refuses it. An array
-/// LOADV made is the program's.
+/// LOADV into the array of GARRAY or TARRAY keeps its size: the elements
+/// that fit come in, the rest stay, and RESIZE still refuses it. An array
+/// that LOADV made belongs to the program.
 #[test]
 fn loadv_keeps_the_size_of_an_array_of_the_system() {
     let dir = TempDir::new("loadv-system");
@@ -600,7 +601,7 @@ fn values_save_and_load() {
         ["1", "2 6 1.5", "6 1", "1 X", "0 0 3", "OK"]
     );
     assert!(dir.0.join("@WORKSPACE").join("B@BACKUP.DAT").is_file());
-    // Text is stored as UTF-8, as SAVE does.
+    // Text is stored as UTF-8, the same as SAVE does.
     let memo = dir.0.join("@WORKSPACE").join("TMEMO");
     assert_eq!(std::fs::read_to_string(memo).unwrap(), "Hi\nあ");
 
@@ -627,7 +628,7 @@ fn values_save_and_load() {
     );
 }
 
-/// What TEST67 saw of LOADV, CHKFILE, LOAD and SAVE in a program.
+/// The results of TEST67 for LOADV, CHKFILE, LOAD and SAVE in a program.
 #[test]
 fn loadv_chkfile_and_program_types() {
     let dir = TempDir::new("test67");
@@ -645,7 +646,7 @@ fn loadv_chkfile_and_program_types() {
     );
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["301-1", "OK"]);
-    // The command form takes no TXT file, into a string either.
+    // The command form takes no TXT file, not even into a string.
     m.set_slot(0, "S$=\"\"\nLOADV \"TXT:NONE\",S$".to_string());
     enter(&mut m, "run");
     assert_eq!(
@@ -686,7 +687,7 @@ fn loadv_chkfile_and_program_types() {
     }
 }
 
-/// A file name may start with `#`; it is the project's only when a `/`
+/// A file name may start with `#`; it names a project only when a `/`
 /// follows.
 #[test]
 fn file_names_starting_with_a_hash() {
@@ -711,8 +712,8 @@ fn file_names_starting_with_a_hash() {
 
 /// Names as SmileBASIC 4's parser takes them: `@` anywhere, `.` after a
 /// first `@`, and a type only before a `:` at index 3. A name it refuses
-/// is Illegal format, and a part of over 32 characters File name is too
-/// long, both numbering the argument.
+/// is Illegal format, and a part of over 32 characters gives File name is
+/// too long. Both errors number the argument.
 #[test]
 fn file_names_follow_sb4s_parser() {
     let dir = TempDir::new("name-parser");
@@ -787,7 +788,7 @@ fn file_names_follow_sb4s_parser() {
         (said.as_str(), number, arg),
         ("Illegal format in 0:1 (\"TXT:A:B\")", 71, None)
     );
-    // The name is fine and the file there: FILES lists it, RENAME and
+    // The name is fine and the file is there: FILES lists it, RENAME and
     // DELETE take it.
     enter(&mut m, "cls:dim l$[0]:files \"txt:\",l$:?l$[0]");
     assert_eq!(tail(&m, 2), ["TXT:@", "OK"]);
@@ -858,9 +859,8 @@ fn crafted_arrays_fail_as_a_bad_file_does() {
     let mut m = machine(&dir);
     let workspace = dir.0.join("@WORKSPACE");
     std::fs::create_dir_all(&workspace).unwrap();
-    // Their products are 0, but RINGCOPY would go through four thousand
-    // million rows, and an image of no pixels ended the process when it was
-    // encoded.
+    // Their products are 0, but RINGCOPY would go through four billion rows,
+    // and an image of no pixels ended the process when it was encoded.
     std::fs::write(workspace.join("BHUGE"), array_file(&[u32::MAX, 0], 0)).unwrap();
     std::fs::write(workspace.join("GFLAT"), array_file(&[0, 16], 0)).unwrap();
     let program = [
@@ -868,7 +868,8 @@ fn crafted_arrays_fail_as_a_bad_file_does() {
         "LOADV \"DAT:HUGE\",A:?RESULT(),DIM(A,0),DIM(A,1)",
         "LOADV \"GRP:FLAT\",A:?RESULT()",
         "LOADG \"FLAT\",0 OUT W,H:?W,H,RESULT()",
-        // RESIZE can make what DIM cannot, and that has to come back.
+        // RESIZE can make an array that DIM cannot, and that array has to
+        // load back.
         "DIM B[1,3]:RESIZE B,0,3:SAVEV \"DAT:E\",B:?RESULT()",
         "DIM C[1,1]:LOADV \"DAT:E\",C:?RESULT(),DIM(C,0),DIM(C,1)",
     ];
@@ -886,8 +887,8 @@ fn crafted_arrays_fail_as_a_bad_file_does() {
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
 }
 
-/// A zero in any size loads and keeps the sizes, and whatever is then done
-/// with so empty an array ends, with an error or without.
+/// An array with a zero in any size loads and keeps its sizes, and anything
+/// then done with such an empty array ends, with or without an error.
 #[test]
 fn arrays_with_a_zero_in_any_size_stay_harmless() {
     let statements = [
@@ -1055,7 +1056,7 @@ fn metadata_saves_with_the_project() {
     assert_eq!(words(&tail(&m, 2)), ["My game 13 2 FF00FF00", "OK"]);
     let text = std::fs::read_to_string(dir.0.join("@WORKSPACE").join("@META.TXT")).unwrap();
     assert_eq!(text, "My game\nLine 1\nLine 2");
-    // METASAVE leaves RESULT() as it was.
+    // METASAVE leaves RESULT() unchanged.
     m.set_slot(0, "LOAD \"NOPE\",1:METASAVE:?RESULT()".to_string());
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
@@ -1071,7 +1072,7 @@ fn metadata_saves_with_the_project() {
     enter(&mut m, "project \"game\"");
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["GAME", "OK"]);
-    // METALOAD reads another project's, here the workspace's.
+    // METALOAD reads the metadata of another project, here the workspace.
     m.set_slot(0, "METALOAD \"\":METAEDIT 0 OUT T$:?T$".to_string());
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["My game", "OK"]);
@@ -1080,7 +1081,7 @@ fn metadata_saves_with_the_project() {
     assert_eq!(tail(&m, 2), ["My game", "OK"]);
     m.set_slot(0, "METALOAD \"NONE\"".to_string());
     enter(&mut m, "run");
-    // The message names the command and goes on to a second row.
+    // The message names the command and wraps onto a second row.
     assert!(tail(&m, 3).concat().contains("Undefined project name"));
     let (_, code, arg) = program_error(&mut m);
     assert_eq!((code, arg), (76, Some(0)), "METALOAD:1");
@@ -1113,7 +1114,7 @@ fn metadata_from_smilebasic() {
     assert_eq!(words(&tail(&m, 2)), ["てすと05 3 FFD2D6CA", "OK"]);
 
     // METASAVE writes the emulator's files and then removes META, but
-    // only once it has written them: No leaves everything as it was.
+    // only once it has written them: No leaves everything unchanged.
     let workspace = dir.0.join("@WORKSPACE");
     m.rt.settings.file_confirm = FileConfirm::Ask;
     ask(&mut m, "metaload:metasave");
@@ -1154,7 +1155,7 @@ fn other_projects_and_backups() {
     s.set_project("").unwrap();
     s.write(FileKind::Txt, "W", b"?\"W\"", None).unwrap();
 
-    // Direct mode reads any project's files; "/NAME" is the workspace.
+    // DIRECT mode reads any project's files; "/NAME" is the workspace.
     enter(&mut m, "load \"game/sub\",1:?loadv(\"txt:game/note\")");
     assert_eq!(
         (m.slot(1), tail(&m, 2)),
@@ -1180,7 +1181,7 @@ fn other_projects_and_backups() {
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     enter(&mut m, "project \"\"");
 
-    // Names may start with @, as the backups' do (checked on hardware).
+    // Names may start with @, like the names of backups (checked on hardware).
     enter(&mut m, "save \"w\",3:load \"@backup.prg\",4:?result()");
     assert_eq!((m.slot(4), tail(&m, 2)[0].as_str()), ("?\"W\"", "1"));
     enter(&mut m, "save \"@x\",3:?result()");
@@ -1195,7 +1196,7 @@ fn other_projects_and_backups() {
 /// A program may not EXEC a file named with a project, its own included:
 /// EXEC stops with error 74 (TEST68). LOADG takes a name with a project,
 /// the program's own or another, with or without `GRP:`, in a program and
-/// in direct mode. LOAD into a slot and then EXEC of the slot runs another
+/// in DIRECT mode. LOAD into a slot and then EXEC of the slot runs another
 /// project's program.
 #[test]
 fn exec_refuses_project_names_and_loadg_takes_them() {
@@ -1255,7 +1256,7 @@ fn exec_refuses_project_names_and_loadg_takes_them() {
     assert_eq!(tail(&m, 2), ["SUB", "OK"]);
 }
 
-/// What a program's error says, its number and its argument.
+/// The message, number and argument of a program's error.
 fn program_error(m: &mut Machine) -> (String, i32, Option<u8>) {
     let (e, _) = m.take_program_error().expect("an error");
     (e.to_string(), e.kind.code(), e.arg)
@@ -1338,8 +1339,8 @@ fn saveg_checks_its_numbers_first_and_takes_a_quality_for_any_file() {
 }
 
 /// SAVEG, SAVEV and EXEC of a type of file they cannot take: File type
-/// mismatch with no argument's number, after the name's checks and
-/// before the project's, and before anything is asked.
+/// mismatch with no argument number. It comes after the checks of the name,
+/// before those of the project, and before anything is asked.
 #[test]
 fn saves_and_exec_refuse_other_types_of_file() {
     let dir = TempDir::new("save-types");
@@ -1408,9 +1409,9 @@ fn rename_in_a_system_project_is_refused() {
     assert!(dir.0.join("@WORKSPACE").join("TA").exists());
 }
 
-/// With a `#` project the current one, the five commands that write
-/// refuse a name with no project as error 75, before anything is asked,
-/// and METASAVE too.
+/// When a `#` project is the current one, the five commands that write
+/// refuse a name with no project as error 75, before anything is asked.
+/// METASAVE does too.
 #[test]
 fn writes_in_the_current_system_project_are_refused() {
     let dir = TempDir::new("current-system");
@@ -1442,8 +1443,8 @@ fn writes_in_the_current_system_project_are_refused() {
     assert_eq!(files, 0);
 }
 
-/// The editor's save writes nothing in a current `#` project, and does
-/// with the setting to write in them on.
+/// The editor's save writes nothing in a current `#` project, but does
+/// write when the setting to write in them is on.
 #[test]
 fn the_editors_save_in_a_system_project_is_refused() {
     let dir = TempDir::new("editor-system");
@@ -1461,8 +1462,8 @@ fn the_editors_save_in_a_system_project_is_refused() {
 }
 
 /// The setting to write in `#` projects lets the five commands through,
-/// in the current project and, at the prompt, in one named, and METASAVE
-/// in the current one.
+/// in the current project and, in DIRECT mode, in a named one, and
+/// METASAVE in the current one.
 #[test]
 fn the_setting_allows_writes_in_system_projects() {
     let dir = TempDir::new("write-system");
@@ -1524,10 +1525,10 @@ fn exec_over_unsaved_edits_asks_and_back_fails() {
     assert_eq!(tail(&m, 2), ["-1", "OK"]);
 }
 
-/// TEST69: a main program's SAVEV, RENAME and DELETE refuse a project
-/// name, their own project's and the workspace's `/NAME` too, while
-/// SAVEV at the prompt saves in the current project named so. EXEC
-/// refuses `/NAME` as it refuses a project's name.
+/// TEST69: SAVEV, RENAME and DELETE in a main program refuse a project
+/// name, including the name of their own project and the workspace's
+/// `/NAME`. SAVEV in DIRECT mode saves in the current project named this
+/// way. EXEC refuses `/NAME` the same as it refuses a project name.
 #[test]
 fn programs_write_no_file_named_with_a_project() {
     let dir = TempDir::new("write-projects");
@@ -1573,7 +1574,7 @@ fn programs_write_no_file_named_with_a_project() {
         ["Can't access other project in this mode in 0:1", "OK"]
     );
 
-    // At the prompt, SAVEV asks as set and saves.
+    // In DIRECT mode, SAVEV asks as the setting says and saves.
     m.rt.settings.file_confirm = FileConfirm::Ask;
     enter(&mut m, "project \"\"");
     let c = ask(&mut m, "savev \"txt:/x\",\"1\":?result()");
@@ -1587,13 +1588,13 @@ fn programs_write_no_file_named_with_a_project() {
     enter(&mut m, "savev \"txt:game/x\",\"1\":?result()");
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     assert!(dir.0.join("GAME").join("TX").is_file());
-    // Another project's name, the workspace's here, at the prompt.
+    // The name of another project, here the workspace, in DIRECT mode.
     enter(&mut m, "savev \"txt:/y\",\"1\":?result()");
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     assert!(workspace.join("TY").is_file());
 }
 
-/// SAVE, SAVEV and SAVEG at the prompt and in a subprogram write to any
+/// SAVE, SAVEV and SAVEG in DIRECT mode and in a subprogram write to any
 /// project named, which must exist, and keep a backup there.
 #[test]
 fn the_prompt_and_subprograms_save_in_any_project() {
@@ -1632,13 +1633,13 @@ fn the_prompt_and_subprograms_save_in_any_project() {
     }
 }
 
-/// Runs a direct-mode line on a clear console, and gives what it printed
-/// after itself, put together again from the rows it wraps on.
+/// Runs a line in DIRECT mode on a clear console, and returns the text it
+/// printed after itself, joined again from the rows it wraps on.
 fn direct_error(m: &mut Machine, line: &str) -> String {
     enter(m, "cls");
     enter(m, line);
     let rows = rows(m);
-    // CLS's OK, the line, what it printed, and OK.
+    // The OK of CLS, the line, its output, and OK.
     let text = rows[1..rows.len() - 1].concat();
     assert_eq!(rows.last().map(String::as_str), Some("OK"));
     let echo = line.to_ascii_uppercase();
@@ -1682,7 +1683,7 @@ fn saves_into_a_system_project_are_refused_everywhere() {
     assert_eq!(files, 0);
 }
 
-/// RENAME and DELETE refuse a name with a project at the prompt and in a
+/// RENAME and DELETE refuse a name with a project in DIRECT mode and in a
 /// subprogram too.
 #[test]
 fn rename_and_delete_refuse_projects_everywhere() {
@@ -1710,9 +1711,9 @@ fn rename_and_delete_refuse_projects_everywhere() {
     assert!(dir.0.join("@WORKSPACE").join("TA").is_file());
 }
 
-/// LOADG's types of file, the same in every mode: `PNG:` is error 74,
-/// a type that is none Illegal format, `TXT:` File type mismatch, and a
-/// JPG file loads.
+/// LOADG's types of file, the same in every mode: `PNG:` is error 74, an
+/// unknown type is Illegal format, `TXT:` is File type mismatch, and a JPG
+/// file loads.
 #[test]
 fn loadg_types_of_file() {
     let dir = TempDir::new("loadg-types");
@@ -1847,7 +1848,7 @@ fn loadv_into_a_string_and_chkfile_result() {
 }
 
 /// RUN sets RESULT to 0 once the program compiles, and CHKFILE leaves it
-/// as it was, whether the file is there or not.
+/// unchanged, whether the file is there or not.
 #[test]
 fn run_sets_result_and_chkfile_leaves_it() {
     let dir = TempDir::new("run-result");
@@ -1866,16 +1867,16 @@ fn run_sets_result_and_chkfile_leaves_it() {
     enter(&mut m, "?chkfile(\"txt:none\");result()");
     assert_eq!(tail(&m, 2), ["01", "OK"]);
 
-    // A program that does not compile leaves RESULT as it was.
+    // A program that does not compile leaves RESULT unchanged.
     m.set_slot(0, "?RESULT(\n".to_string());
     enter(&mut m, "run");
     enter(&mut m, "?result()");
     assert_eq!(tail(&m, 2), ["1", "OK"]);
 }
 
-/// LOADG of a file named with a project asks at the prompt as LOAD does,
-/// and loads without asking in a program, for the program's own project
-/// and another, with or without `GRP:`.
+/// LOADG of a file named with a project asks in DIRECT mode, the same as
+/// LOAD does, and loads without asking in a program, for the program's own
+/// project and another, with or without `GRP:`.
 #[test]
 fn loadg_of_a_project_name_asks_only_at_the_prompt() {
     use sb_runtime::storage::FileKind;
@@ -1950,7 +1951,7 @@ fn loading_a_slot_keeps_its_definitions() {
 }
 
 /// Files and projects that another program adds, replaces or removes
-/// between commands: each command reads the folder as it is now.
+/// between commands: each command reads the current state of the folder.
 #[test]
 fn changes_made_outside_show_at_the_next_command() {
     let dir = TempDir::new("outside");
@@ -2027,8 +2028,8 @@ fn changes_made_outside_show_at_the_next_command() {
     assert!(tail(&m, 3).concat().contains("Undefined project name"));
 }
 
-/// A save to a project that is not there asks first, as SmileBASIC 4
-/// does, and then fails with RESULT 0.
+/// A save to a project that is not there asks first, the same as
+/// SmileBASIC 4 does, and then fails with RESULT 0.
 #[test]
 fn saves_to_a_missing_project_ask_and_then_fail() {
     let dir = TempDir::new("missing-project");
@@ -2148,9 +2149,9 @@ fn run_to_dialog_now(m: &mut Machine) -> sb_runtime::dialog::ProgramDialog {
     panic!("no dialog: {:?}", rows(m));
 }
 
-/// SAVEV of an array whose DAT or GRP body is over 16 MiB both as it is
-/// and compressed is Array is too large, with no number. As it is, the
-/// values count without the body's header.
+/// SAVEV of an array whose DAT or GRP body is over 16 MiB both uncompressed
+/// and compressed is Array is too large, with no number. Uncompressed, the
+/// values count without the header of the body.
 #[test]
 fn savev_refuses_what_does_not_fit_in_16_mib() {
     let dir = TempDir::new("savev-large");
@@ -2171,7 +2172,7 @@ fn savev_refuses_what_does_not_fit_in_16_mib() {
     enter(&mut m, "run");
     enter(&mut m, "cls:?CHKFILE(\"GRP:BIG\")");
     assert_eq!(tail(&m, 2), ["1", "OK"]);
-    // What compresses below it saves.
+    // An array that compresses below it saves.
     enter(
         &mut m,
         "cls:DIM B%[4400000]:SAVEV \"DAT:ZERO\",B%:?CHKFILE(\"DAT:ZERO\")",
@@ -2180,7 +2181,7 @@ fn savev_refuses_what_does_not_fit_in_16_mib() {
 }
 
 /// SmileBASIC 4: FILES of a number is Type mismatch naming
-/// it, whatever the OUT count.
+/// it, regardless of the OUT count.
 #[test]
 fn files_of_a_number_names_it() {
     let dir = TempDir::new("files-number");
@@ -2204,7 +2205,7 @@ fn files_of_projects_and_of_a_files_name() {
     // The count first, and the workspace's `/` after a `-` name.
     enter(&mut m, "cls:files \"//\"");
     assert_eq!(rows(&m), ["-- 3 projects --", "-DASH/", "/", "GAME/", "OK"]);
-    // A file's name is taken for a project's, which is not there.
+    // A file name is taken as a project name, and that project is not there.
     enter(&mut m, "cls:files \"txt:a\"");
     assert_eq!(rows(&m), ["OK"]);
     enter(&mut m, "cls:files \"txt:\"");
@@ -2244,7 +2245,7 @@ fn a_folder_opened_as_the_project_loads_and_saves_beside_the_program() {
             "OK"
         ]
     );
-    // Away to the workspace and back by the folder's name.
+    // Switching to the workspace and back by the name of the folder.
     enter(&mut m, "project \"\":?chkfile(\"hglib.prg\")");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
     enter(&mut m, "project \"hgtest\":?chkfile(\"hglib.prg\")");
@@ -2276,7 +2277,7 @@ fn changing_a_file_that_was_in_the_folder_asks_once_whatever_the_setting() {
     );
     let backup = std::fs::read(folder.join("@BACKUP.TXT.txt")).unwrap();
     assert_eq!(backup, b"'LIB");
-    // Once is enough; the setting says the rest.
+    // Asking once is enough; after that the setting decides.
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["1", "OK"]);
 
@@ -2293,9 +2294,9 @@ fn changing_a_file_that_was_in_the_folder_asks_once_whatever_the_setting() {
     assert!(m.rt.original_txt("NEW.PRG").is_empty());
 }
 
-/// CON, PRN, NUL, AUX, COM1 to COM4 and LPT1 to LPT4 are no file's or
-/// project's name, on every system: Illegal format. COM5 and the like are
-/// names like any other.
+/// CON, PRN, NUL, AUX, COM1 to COM4 and LPT1 to LPT4 are not allowed as a
+/// file or project name, on every system: Illegal format. COM5 and the like
+/// are names like any other.
 #[test]
 fn reserved_names_are_illegal_format() {
     let dir = TempDir::new("reserved-names");

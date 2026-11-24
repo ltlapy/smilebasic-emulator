@@ -9,7 +9,7 @@
 //! link found among the projects or in one: such a link could lead a read or
 //! a write out of the storage folder. The storage folder itself may be one.
 //!
-//! One more project can come from a folder of the user's own, outside the
+//! One more project can come from the user's own folder, outside the
 //! storage folder: the one that holds a program run from the command line
 //! (see [`Storage::open_folder`]). Its files may have plain names too
 //! (`HGLIB.PRG.txt`), and it takes no links either.
@@ -203,7 +203,7 @@ fn write_with_backup(path: &Path, bytes: &[u8], backup: Option<&Path>) -> Result
 }
 
 /// Writes a regular file, refusing a link in its place, which would carry
-/// the write to wherever it leads, even to a file not there yet.
+/// the write to the link's target, even to a file not there yet.
 pub fn write_regular(path: &Path, bytes: &[u8]) -> io::Result<()> {
     check_writable(path)?;
     std::fs::write(path, bytes)
@@ -233,8 +233,8 @@ fn check_name(name: &str) -> Result<String> {
 
 /// Whether SmileBASIC 4's name parser takes `c` at index `i` of a part of
 /// a path: letters, digits, `-`, `@` and `_` anywhere, and `.` after the
-/// first character. A path's first character may be `#` besides. Where
-/// SmileBASIC 4 asks `isalnum` about characters up to U+00FF, this takes
+/// first character. A path's first character may also be `#`. Where
+/// SmileBASIC 4 calls `isalnum` for characters up to U+00FF, this takes
 /// ASCII only.
 fn name_byte(c: u8, i: usize) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, b'-' | b'@' | b'_') || (c == b'.' && i > 0)
@@ -255,7 +255,7 @@ fn check_plain_name(name: &str, dot_first: bool) -> Result<String> {
     Ok(name.to_ascii_uppercase())
 }
 
-/// Whether SmileBASIC 4 refuses `name` as a file's or a project's name,
+/// Whether SmileBASIC 4 refuses `name` as a file or project name,
 /// on every system: `CON`, `PRN`, `NUL`, `AUX`, `COM1` to `COM4` and
 /// `LPT1` to `LPT4`, the whole name and nothing more. `COM5` and `CON.A`
 /// are fine, and so is `#CON`.
@@ -362,19 +362,19 @@ pub fn split_name(spec: &str) -> Option<NameParts<'_>> {
     })
 }
 
-/// Why SmileBASIC 4's file commands refuse a name before they look for
-/// the file.
+/// The reason SmileBASIC 4's file commands refuse a name before they look
+/// for the file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NameError {
-    /// [`split_name`] fails, or there is no file's name: Illegal format.
+    /// [`split_name`] fails, or there is no file name: Illegal format.
     Illegal,
-    /// The project's name or the file's is over [`MAX_NAME`] characters:
+    /// The project name or the file name is over [`MAX_NAME`] characters:
     /// File name is too long.
     TooLong,
 }
 
-/// How the commands that name one file, such as CHKFILE, SAVE or EXEC,
-/// refuse `spec`, if they do.
+/// Returns why the commands that name one file, such as CHKFILE, SAVE or
+/// EXEC, refuse `spec`, if they do.
 pub fn file_name_error(spec: &str) -> Option<NameError> {
     let Some(parts) = split_name(spec) else {
         return Some(NameError::Illegal);
@@ -389,9 +389,10 @@ pub fn file_name_error(spec: &str) -> Option<NameError> {
     }
 }
 
-/// How FILES refuses `spec` (`[TYPE:][PROJECT][/]`), if it does: as
-/// [`file_name_error`], but a name alone is a project's, and an empty
-/// string is Illegal format. `//`, the list of projects, is not for this.
+/// Returns why FILES refuses `spec` (`[TYPE:][PROJECT][/]`), if it does:
+/// the same as [`file_name_error`], but a name alone is a project name,
+/// and an empty string is Illegal format. `//`, the list of projects, is
+/// not for this.
 pub fn listing_name_error(spec: &str) -> Option<NameError> {
     let parts = match split_name(spec) {
         Some(parts) if !spec.is_empty() => parts,
@@ -403,9 +404,10 @@ pub fn listing_name_error(spec: &str) -> Option<NameError> {
     }
 }
 
-/// Whether Windows takes a name for a device, whatever follows its first
-/// dot, rather than for a folder. Files escape this by their type letter;
-/// a project's folder of such a name gets [`ESCAPE`] in front on Windows.
+/// Whether Windows takes a name for a device, regardless of what follows its
+/// first dot, rather than for a folder. Files avoid this by their type
+/// letter; the folder of a project with such a name gets [`ESCAPE`] in
+/// front on Windows.
 fn is_windows_device(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
     match stem.as_bytes() {
@@ -426,8 +428,8 @@ fn windows_folder_name(name: String) -> String {
 }
 
 /// Put in front of a project's folder name that Windows takes for a device
-/// (`COM5`, `CON.A`). `@` is in no project's name, so the folder cannot be
-/// another project's.
+/// (`COM5`, `CON.A`). `@` is in no project's name, so the folder cannot
+/// belong to another project.
 const ESCAPE: char = '@';
 
 /// The folder name of a project (checked, not the workspace).
@@ -439,7 +441,7 @@ fn folder_name(project: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// The project that a folder in the storage folder holds, by its name on
-/// disk: [`folder_name`] the other way round.
+/// disk: the reverse of [`folder_name`].
 fn folder_project(folder: &str) -> &str {
     match folder.strip_prefix(ESCAPE) {
         Some(project) if cfg!(windows) && is_windows_device(project) => project,
@@ -643,8 +645,8 @@ impl Storage {
         folder.untouched.borrow().contains(&entry).then_some(entry)
     }
 
-    /// [`Storage::original`] for a file of the current project's own, such
-    /// as its metadata.
+    /// [`Storage::original`] for an untyped file of the current project,
+    /// such as its metadata.
     pub fn original_own(&self, name: &str) -> Option<String> {
         let folder = self.folder_of(&self.project)?;
         let there = is_real_file(&folder.dir.join(name));
@@ -698,11 +700,11 @@ impl Storage {
         Ok(name)
     }
 
-    /// The folder of an existing project, named as it is on disk, which
+    /// The folder of an existing project, with its name on disk, which
     /// may break the naming rules if it was copied there by hand.
     fn existing_project(&self, name: &str) -> Result<PathBuf> {
-        // The user's own folder is not the emulator's to rename, delete
-        // or copy whole.
+        // The emulator may not rename or delete the user's own folder, or
+        // copy it whole.
         if self.folder_of(name).is_some() {
             let what = format!("{name} is the folder of the program run from the command line");
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, what).into());
@@ -725,7 +727,8 @@ impl Storage {
         let old = self.existing_project(from)?;
         let to = check_project_name(to)?;
         let new = self.dir(&to)?;
-        // A change of case only finds itself on case-insensitive disks.
+        // A new name that differs only in case finds the old project itself
+        // on a case-insensitive disk, so it is not checked.
         if !to.eq_ignore_ascii_case(from) && new.exists() {
             return Err(StorageError::Exists(to));
         }
@@ -752,7 +755,7 @@ impl Storage {
         self.dir(project)
     }
 
-    /// Every way to a project goes through here, so that a link in the
+    /// All access to a project goes through here, so that a link in the
     /// storage folder posing as a project, the workspace included, leads
     /// nowhere; [`Storage::projects`] does not list one either.
     fn dir(&self, project: &str) -> Result<PathBuf> {
@@ -855,8 +858,8 @@ impl Storage {
         written
     }
 
-    /// [`Storage::write`] of a file named with a project, which need not
-    /// be the current one but must exist.
+    /// [`Storage::write`] of a file named with a project, which does not
+    /// need to be the current one but must exist.
     pub fn write_ref(&self, file: &FileRef, bytes: &[u8], backup: Option<&str>) -> Result<()> {
         let backup = match backup {
             Some(backup) if file.name != backup => Some(self.ref_path(&FileRef {
@@ -869,8 +872,8 @@ impl Storage {
         self.write_marked(&path, bytes, backup.as_deref())
     }
 
-    /// A file of the current project's own, outside the typed files (whose
-    /// names start with a type letter), such as its metadata.
+    /// Reads an untyped file of the current project (its name has no type
+    /// letter), such as its metadata.
     pub fn read_project_file(&self, name: &str) -> Result<Vec<u8>> {
         self.read_file_in(&self.project, name)
     }
@@ -888,7 +891,7 @@ impl Storage {
         })
     }
 
-    /// Writes a file of a project's own, such as its metadata, whole or
+    /// Writes an untyped file of a project, such as its metadata, whole or
     /// not at all: into a temporary file first, which then replaces it.
     pub fn write_file_in(&self, project: &str, name: &str, bytes: &[u8]) -> Result<()> {
         let dir = self.dir(project)?;
@@ -897,8 +900,8 @@ impl Storage {
         check_writable(&target)?;
         // A leading `.` keeps the temporary file out of the listings.
         let temporary = dir.join(format!(".{name}.tmp"));
-        // One left by a crash goes; anything else there is refused, and
-        // `create_new` does not follow a link that appears meanwhile.
+        // One left by a crash is removed; anything else there is refused,
+        // and `create_new` does not follow a link that appears meanwhile.
         check_writable(&temporary)?;
         if is_real_file(&temporary) {
             std::fs::remove_file(&temporary)?;
@@ -916,7 +919,7 @@ impl Storage {
         Ok(())
     }
 
-    /// Deletes a file of the current project's own, such as SmileBASIC
+    /// Deletes an untyped file of the current project, such as SmileBASIC
     /// 4's `META`, if it is there.
     pub fn delete_project_file(&self, name: &str) -> Result<()> {
         self.delete_file_in(&self.project, name)
@@ -937,12 +940,14 @@ impl Storage {
         self.delete_in(&self.project, kind, name)
     }
 
-    /// Whether a file is in a project, which need not be the current one.
+    /// Whether a file is in a project, which does not need to be the
+    /// current one.
     pub fn exists_in(&self, project: &str, kind: FileKind, name: &str) -> bool {
         (self.typed_path(project, kind, name)).is_ok_and(|p| is_real_file(&p))
     }
 
-    /// Deletes a file of a project, which need not be the current one.
+    /// Deletes a file of a project, which does not need to be the current
+    /// one.
     pub fn delete_in(&self, project: &str, kind: FileKind, name: &str) -> Result<()> {
         if !self.exists_in(project, kind, name) {
             return Err(StorageError::NotFound(format!("{}:{name}", kind.name())));
@@ -991,15 +996,16 @@ impl Storage {
         Ok(())
     }
 
-    /// Renames a file of a project, which need not be the current one,
-    /// and returns the new name as checked, in upper case. A file of that
-    /// name already there is not replaced.
+    /// Renames a file of a project, which does not need to be the current
+    /// one, and returns the new name as checked, in upper case. A file of
+    /// that name already there is not replaced.
     pub fn rename_in(&self, project: &str, kind: FileKind, from: &str, to: &str) -> Result<String> {
         let to = check_name(to)?;
         if !self.exists_in(project, kind, from) {
             return Err(StorageError::NotFound(format!("{}:{from}", kind.name())));
         }
-        // A change of case only finds itself on case-insensitive disks.
+        // A new name that differs only in case finds the old file itself on
+        // a case-insensitive disk, so it is not checked.
         if !to.eq_ignore_ascii_case(from) && self.exists_in(project, kind, &to) {
             return Err(StorageError::Exists(format!("{}:{to}", kind.name())));
         }
@@ -1098,7 +1104,7 @@ impl Storage {
     /// When the storage folder (`None`) or a project's folder last had a
     /// file or folder added, removed or renamed in it; `None` while it is
     /// not there. The file lists compare it to see changes that other
-    /// programs made. A file written over in place leaves it as it was.
+    /// programs made. A file written over in place leaves it unchanged.
     pub fn changed_at(&self, project: Option<&str>) -> Option<SystemTime> {
         let dir = match project {
             None => self.root.clone()?,
@@ -1132,11 +1138,11 @@ impl Storage {
     }
 }
 
-/// The project name that a folder of the user's goes by: its own name in
-/// upper case when that is a legal project name, or else the name that
-/// the Projects window offers for a folder copied in by hand (each
-/// character that is not allowed becomes `_`). A `#` at the start, which
-/// marks SmileBASIC 4's own projects, becomes `_` too.
+/// The project name that a user's folder goes by: its own name in upper
+/// case when that is a legal project name, or else the name that the
+/// Projects window offers for a folder copied in by hand (each character
+/// that is not allowed becomes `_`). A `#` at the start, which marks
+/// SmileBASIC 4's own projects, becomes `_` too.
 pub fn folder_project_name(folder: &str) -> String {
     let name = match folder.strip_prefix('#') {
         Some(rest) => format!("_{rest}"),
@@ -1149,7 +1155,7 @@ pub fn folder_project_name(folder: &str) -> String {
 /// two files map to the same type and name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Form {
-    /// SmileBASIC 4's: the type letter, then the name (`THGLIB.PRG`).
+    /// SmileBASIC 4's form: the type letter, then the name (`THGLIB.PRG`).
     Sb4,
     /// A text file's name and `.txt` (`HGLIB.PRG.txt`).
     Txt,
@@ -1157,10 +1163,10 @@ enum Form {
     Bare,
 }
 
-/// A folder of the user's, outside the storage folder, used as a project
-/// (see [`Storage::open_folder`]). Its files keep the names they have on
-/// disk, which can be SmileBASIC 4's or plain ones. Names compare without
-/// regard to case, and each file maps to one type and name at most:
+/// A user's folder, outside the storage folder, used as a project (see
+/// [`Storage::open_folder`]). Its files keep the names they have on disk,
+/// which can be SmileBASIC 4's or plain ones. Names compare without regard
+/// to case, and each file maps to one type and name at most:
 ///
 /// - SmileBASIC 4's form, when the folder uses it (see [`Folder::open`])
 ///   or the file's contents are of its type (SmileBASIC 4's container, or
@@ -1168,8 +1174,9 @@ enum Form {
 /// - otherwise a text file: the name before `.txt`, or the whole name.
 ///
 /// Names that break the rules map to nothing and stay out of the lists,
-/// as do the project's metadata files. Of two files that map to one name,
-/// the one in SmileBASIC 4's form wins, then the one ending in `.txt`.
+/// the same as the project's metadata files. Of two files that map to one
+/// name, the one in SmileBASIC 4's form wins, then the one ending in
+/// `.txt`.
 #[derive(Debug)]
 struct Folder {
     dir: PathBuf,
@@ -1184,7 +1191,7 @@ struct Folder {
     untouched: RefCell<BTreeSet<String>>,
 }
 
-/// The names of the regular files in `dir`, links left out, sorted.
+/// The names of the regular files in `dir`, without links, sorted.
 fn folder_entries(dir: &Path) -> io::Result<Vec<String>> {
     let mut names = Vec::new();
     for entry in std::fs::read_dir(dir)? {
@@ -1213,8 +1220,8 @@ fn sb4_name(entry: &str) -> Option<(FileKind, String)> {
     Some((kind, check_name(chars.as_str()).ok()?))
 }
 
-/// Whether a file starts as SmileBASIC 4's container does, or for DAT,
-/// GRP and JPG files, as the emulator writes them.
+/// Whether a file starts the same way as SmileBASIC 4's container, or, for
+/// DAT, GRP and JPG files, the way the emulator writes them.
 fn starts_as(path: &Path, kind: FileKind) -> bool {
     let mut start = Vec::with_capacity(8);
     let read = std::fs::File::open(path).and_then(|f| f.take(8).read_to_end(&mut start));
@@ -1237,7 +1244,7 @@ impl Folder {
     /// ending in `.txt` when at least half of the plain text files there
     /// do, and DAT, GRP and JPG files take SmileBASIC 4's names.
     fn open(dir: &Path) -> io::Result<Folder> {
-        // The folder itself may be a link, as the storage folder may.
+        // The folder itself may be a link, the same as the storage folder.
         let dir = std::fs::canonicalize(dir)?;
         if !dir.is_dir() {
             let what = format!("{} is not a folder", file_label(&dir));
@@ -1319,9 +1326,10 @@ impl Folder {
             .unwrap_or_else(|| self.new_name(kind, name)))
     }
 
-    /// The name a new file takes, in the folder's way. A plain name that
-    /// would map back to another name (`README.TXT` saved as is would be
-    /// `README`), or to the metadata, takes the other plain form.
+    /// The name a new file takes, in the folder's naming style. A plain name
+    /// that would map back to another name (`README.TXT` saved under that
+    /// bare name would map to `README`), or to the metadata, takes the other
+    /// plain form.
     fn new_name(&self, kind: FileKind, name: &str) -> String {
         let sb4 = format!("{}{name}", kind.prefix());
         if self.sb4 || kind != FileKind::Txt {
@@ -1343,7 +1351,7 @@ impl Folder {
 }
 
 /// Copies the files and the folders in `from` into `to`, which exists.
-/// Anything else, a link above all, stays behind, as it does on import.
+/// Anything else, a link above all, is not copied, the same as on import.
 fn copy_folder(from: &Path, to: &Path) -> io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
@@ -1489,7 +1497,7 @@ mod tests {
         ] {
             assert!(split_name(bad).is_none(), "{bad}");
         }
-        // Valid to the parser, `/#X` is still not taken as a file's name.
+        // Valid to the parser, `/#X` is still not taken as a file name.
         assert!(parse_read_name("/#X", FileKind::Txt).is_err());
         assert_eq!(check_name("@.x").unwrap(), "@.X");
         assert_eq!(check_name("A@B").unwrap(), "A@B");
@@ -1806,8 +1814,8 @@ mod tests {
         assert!(!s.exists(FileKind::Txt, "A"));
     }
 
-    /// A folder of the user's holding `files` (name, contents), opened
-    /// as the current project beside an empty storage folder.
+    /// A user's folder holding `files` (name, contents), opened as the
+    /// current project beside an empty storage folder.
     fn user_folder(tmp: &TempDir, folder: &str, files: &[(&str, &[u8])]) -> (Storage, PathBuf) {
         let dir = tmp.0.join(folder);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1876,7 +1884,7 @@ mod tests {
         assert!(!s.exists(FileKind::Txt, "EST.PRG"), "a plain name it is");
         assert!(s.exists(FileKind::Dat, "SCORES"));
         assert!(!s.exists(FileKind::Txt, "BSCORES"));
-        // Named with the project, as another project's files are.
+        // Named with the project, the same as the files of another project.
         let file = parse_read_name("HGTEST/HGLIB.PRG", FileKind::Txt).unwrap();
         assert_eq!(s.read_ref(&file).unwrap(), b"lib");
         assert_eq!(s.folder_file("hgtest.prg.txt"), Some(txt("HGTEST.PRG")));
@@ -1973,7 +1981,7 @@ mod tests {
         s.delete(FileKind::Txt, "HGTEST.PRG").unwrap();
         assert!(!dir.join("HGTEST.PRG.txt").exists());
 
-        // Without `.txt` on most of them, new ones go without.
+        // When most of them have no `.txt`, new ones get none either.
         let tmp = TempDir::new("folder-bare");
         let plain: [(&str, &[u8]); 3] = [("MAIN.PRG", b""), ("OTHER.PRG", b""), ("A.txt", b"")];
         let (s, dir) = user_folder(&tmp, "BARE", &plain);
@@ -2008,7 +2016,7 @@ mod tests {
         copy.delete(FileKind::Txt, "MAIN.PRG").unwrap();
         s.write(FileKind::Txt, "MAIN.PRG", b"new", None).unwrap();
         assert_eq!(s.original(&file("MAIN.PRG")), None);
-        // Files elsewhere are no originals.
+        // Files elsewhere are not originals.
         let mut s = s;
         s.set_project("").unwrap();
         s.write(FileKind::Txt, "HGLIB.PRG", b"", None).unwrap();
@@ -2228,7 +2236,7 @@ mod tests {
             assert!(s.write(FileKind::Txt, "LEAK", b"new", None).is_ok());
             assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
             assert!(is_link(&dir.join("TLEAK")));
-            // The folder itself may be a link, as the storage folder may.
+            // The folder itself may be a link, the same as the storage folder.
             let linked = tmp.0.join("linked");
             symlink(&dir, &linked).unwrap();
             let mut s = Storage::new(tmp.0.join("root"));

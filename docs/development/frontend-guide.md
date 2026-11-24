@@ -1,13 +1,13 @@
 # Working on the frontend
 
-For whoever changes `crates/sb-sdl` next: where the window's code and state
-are, where new code goes, and how to check a change to it.
-[working-notes.md](working-notes.md) has what holds for the whole
-repository; this adds what is particular to the frontend.
+This document is for anyone changing `crates/sb-sdl`. It covers where the
+window's code and state are, where new code goes, and how to check a change to
+it. [working-notes.md](working-notes.md) has what holds for the whole
+repository; this adds what is specific to the frontend.
 
 ## The loop
 
-`frontend()` in `main.rs` is the window's loop. One trip round it does this,
+`frontend()` in `main.rs` is the window's loop. Each iteration does this,
 in this order:
 
 1. Replaces a renderer that failed, and notices a wake from a suspend.
@@ -19,13 +19,14 @@ in this order:
 7. Asks the `Pacer` whether to draw, and if so draws and presents.
 8. Waits for the next frame.
 
-A trip is not a frame. A trip runs no frame of the program while it is
-paused, one as a rule, several to catch up, and it may leave the drawing
-out. Say "trip" for the loop and "frame" for the program.
+An iteration is not always one frame. It usually runs one frame of the
+program, but it runs none while the program is paused and several when the
+program has to catch up. It may also skip drawing. "Iteration" refers to the
+loop, and "frame" refers to the program.
 
 ## Where state lives
 
-The loop's state is in structs, by what it is for. A new piece of state
+The loop's state is in structs, grouped by purpose. A new piece of state
 goes into the struct it belongs to. Add a local to `frontend()` only if no
 struct fits.
 
@@ -36,9 +37,9 @@ struct fits.
 | `Debugger` | `main.rs` | The debugger's panel, its menu, the stop it last showed |
 | `Beside` | `main.rs` | The help or the index beside the editor |
 | `Overlays` | `overlays.rs` | The layers drawn over the screens, and the drawn cursor |
-| `Held` | `main.rs` | Textures kept besides the main frame's, and what the frames' textures hold |
-| `gpu::Paths` | `gpu.rs` | The GPU paths for the main screens and a subprogram's |
-| `Pacer` | `pacing.rs` | The frames' clock, what a drawing costs, the drawings left out |
+| `Held` | `main.rs` | Textures kept in addition to the main frame texture, and what the frame textures hold |
+| `gpu::Paths` | `gpu.rs` | The GPU paths for the main screens and for a subprogram's screen |
+| `Pacer` | `pacing.rs` | The frame clock, the cost of a drawing, the skipped drawings |
 
 ## Where code goes
 
@@ -49,9 +50,9 @@ struct fits.
 | A key that does what a menu item does | The key gives the `Action` and calls `menu_action` (`debug_key`, `events::editor_ctrl_action`, the `act!` macro) |
 | The Simple UI's hotkeys (Select+A, Select+Start, F8) | `events::pause_hotkeys` |
 | Whether Select is held | `stick_mouse::Select`, the only place that follows it |
-| Bringing the frame to the main window's texture | `upload_frame` in `main.rs` |
+| Uploading the frame to the main window's texture | `upload_frame` in `main.rs` |
 | Drawing a subprogram's screen | `draw_sub_screen` in `main.rs` |
-| What a dialog and a program's DIALOG lay out and draw alike | The functions at the end of `program_dialog.rs` (`draw_window`, `button_rect`, ...) |
+| What a dialog and a program's DIALOG lay out and draw the same way | The functions at the end of `program_dialog.rs` (`draw_window`, `button_rect`, ...) |
 | What the UI looks like on a frame | `draw::Ui::draw` |
 | Copying layers to a window | `Overlays::copy_main`, `copy_editor` |
 | Where something goes in a window, or which pixel the pointer is over | `placement.rs` |
@@ -60,10 +61,11 @@ struct fits.
 | A notice in the bottom right corner | `corner.rs` |
 
 A new screen needs four things: a field in `Screens`, its place in
-`Screens::any`, a handler in `events.rs` called from the loop at the place
-its layer has in the order, and its drawing in `draw::Ui::draw`. A new layer
-or texture that lives on the renderer needs its line in `Overlays::forget`
-or `Held::forget_device`, or it survives a renderer that is gone.
+`Screens::any`, a handler in `events.rs`, and its drawing in
+`draw::Ui::draw`. Call the handler from the loop at the place its layer has
+in the order. A new layer or texture that lives on the renderer needs its
+line in `Overlays::forget` or `Held::forget_device`. Without it, the layer
+or texture survives the loss of its renderer.
 
 ## What stays in the loop, and why
 
@@ -71,10 +73,10 @@ Two parts of the event handling are still in `frontend()` on purpose.
 
 - **The dispatch.** The arms of the last `match event` decide by key,
   window and state who gets the event. Their order and their guards are the
-  behavior. An arm is a few lines; keep it so, and put anything longer in a
+  behavior. An arm is a few lines; keep it short, and put anything longer in a
   function it calls.
 - **The window's own events.** Renderer resets, focus, raising a window.
-  They touch the canvas, the textures and the windows at once.
+  They touch the canvas, the textures and the windows at the same time.
 
 The main frame's texture and its kind are still locals of `frontend()`,
 handed to `upload_frame`. They are replaced together with the renderer,
@@ -88,27 +90,27 @@ struct and pass that.
 
 ## Drop order
 
-Rust drops locals in the reverse of the order they are declared in, and
-nothing checks that a texture goes before its renderer. In `frontend()`, a
-variable that holds textures is declared after the canvas and the window
-they belong to: `textures` comes after `editor_gfx` because some of its
-textures are the editor window's. Destroying a texture after its renderer
-is a use after free that SDL hides by default and
-`SDL_INVALID_PARAM_CHECKS=1` shows; `tests/editor_window.rs` quits that way.
+Rust drops locals in reverse order of declaration, and nothing checks that
+a texture goes before its renderer. In `frontend()`, a variable that holds
+textures is declared after the canvas and the window they belong to:
+`textures` comes after `editor_gfx` because some of its textures belong to
+the editor window. Destroying a texture after its renderer is a use after
+free. SDL hides it by default, and `SDL_INVALID_PARAM_CHECKS=1` shows it.
+`tests/editor_window.rs` quits with that variable set.
 When state that owns textures moves to a new struct or a new place, keep
 that order.
 
 ## Things that look the same and are not
 
-- **`screens.any()` at different points of a trip.** The events between two
+- **`screens.any()` at different points of an iteration.** The events between two
   calls open and close windows. Ask where the loop asks; do not cache one
-  answer for the trip.
+  answer for the iteration.
 - **The order in which screens get an event.** A dialog first, then the
   welcome screen, the pause menu, and so on down to the program. A screen
   that takes the event ends its handling. Moving a block moves a priority.
 - **A key and its menu item.** Most are the same and share `menu_action`.
   F1 is not: in DIRECT mode it shows the help over the screen and leaves
-  the editor closed, where the menu item opens the editor. Before merging
+  the editor closed, while the menu item opens the editor. Before merging
   two paths, compare their guards and bodies line by line.
 - **A menu item's check for the editor.** `menu_action` opens the editor
   first for items that need it. A key arm that requires the editor's focus
@@ -118,8 +120,8 @@ that order.
 
 [working-notes.md](working-notes.md#checking-a-change) says what to run and
 how a comparison of two builds goes wrong. For the frontend, the comparison
-is of pictures: run the emulator headless and compare shots of the build
-before and the build after.
+is of pictures: run the emulator headless and compare shots of the old
+build and the new build.
 
 ```
 SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy XDG_DATA_HOME=SCRATCH \
@@ -130,7 +132,7 @@ smilebasic
 `at=TRIP:` presses keys (`key:ctrl+S`), controller buttons (`pad:a`,
 `padup:a`), and uses the mouse (`click:X:Y`, `rclick`, `dclick`, `press`,
 `drag`, `release`, `move`, `wheel:X:Y:N`); [benchmarking.md](../performance/benchmarking.md)
-lists the rest. A scene is one such line. A change is checked by some dozens
+lists the rest. A scene is one such line. A change is checked by several dozen
 of them, each run on both builds, with the shots compared byte for byte.
 
 `tools/ui_compare/compare.sh` does that for the scenes in `scenes.txt`
@@ -143,10 +145,11 @@ tools/ui_compare/compare.sh BEFORE AFTER OUT_DIR [NAMES_REGEX]
 `BEFORE` and `AFTER` are the two binaries. Build the old one from a clean
 checkout of its commit: a build made with the new changes still in the tree
 is the new build, and the script refuses two equal binaries. A full run
-takes about 15 minutes, and a build running beside it changes the timing of
-some scenes. When a change touches a screen no scene reaches, add a scene.
+takes about 15 minutes, and a build running at the same time changes the
+timing of some scenes. When a change touches a screen no scene reaches, add
+a scene.
 
-What to know about scenes:
+Notes on scenes:
 
 - A program named `TEST` is the file `TTEST` in its project folder. With
   the wrong name the bench prints "could not run" and the scene shows an
@@ -157,22 +160,22 @@ What to know about scenes:
 - Copy both binaries to one folder. A binary in `target/debug` behaves
   differently in the bench from a copy elsewhere.
 - DIRECT mode's banner, Help > About and the Simple UI's pause menu print
-  the commit. `shothash.py` leaves the banner's and the pause menu's pixels
-  out; a scene that ends on About differs between two builds by itself,
-  unless both were built with the same `SB_COMMIT`.
-- A scene that opens something in the first trips shows however far the
-  program got in its first frame. Let the program settle first
+  the commit. `shothash.py` skips the pixels of the banner and the pause menu;
+  a scene that ends on About differs between two builds even with no other
+  change, unless both were built with the same `SB_COMMIT`.
+- A scene that opens something in the first iterations shows the state the
+  program reached in its first frame. Let the program settle first
   (`at=60:menu` in place of `menu`).
 - Two runs of one build differ in about one scene in a hundred over a long
-  run: a blinking text cursor's phase moves when an event lands a trip
-  later. Run a differing scene again by itself, and keep the output of the
-  run that differed.
-- A program whose trip takes about as long as a frame allows goes one way
-  or the other with the computer's load.
+  run: a blinking text cursor's phase moves when an event lands an iteration
+  later. Run a scene that differed again by itself, and keep the output of
+  the run that differed.
+- When a program takes about as long per iteration as a frame allows, the
+  scene's result depends on the computer's load.
 
 The offscreen driver draws with the desktop's GPU. A change to the loop's
 timing or to the GPU path also needs a run on the slowest target, which the
-bench cannot stand for.
+bench cannot stand in for.
 
 ## Traps in what we build on
 

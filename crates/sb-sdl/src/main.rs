@@ -139,20 +139,21 @@ const TITLE: &str = "SmileBASIC emulator";
 const EDITOR_TITLE: &str = "SmileBASIC editor";
 /// In the data directory.
 const SETTINGS_FILE: &str = "settings.txt";
-/// SmileBASIC runs at 60 frames a second.
+/// SmileBASIC runs at 60 frames per second.
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 /// Holding the + button, or F5 for it, this long stops a program even
 /// past ON BREAK GOTO (checked on hardware).
 const FORCED_STOP: Duration = Duration::from_secs(1);
-/// How long a window brought to the front for input in the other one has
-/// to get the keys before it is flashed instead.
+/// The time a raised window has to get the keys before it is flashed
+/// instead. Input in the other window raises it.
 const RAISE_WAIT: Duration = Duration::from_millis(300);
 type AnyError = Box<dyn std::error::Error>;
 
 fn main() {
     console::attach();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // Asked for, so it is no error: printed, with no message box.
+    // The user asked for the usage, so it is not an error: it is printed,
+    // with no message box.
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("{USAGE}");
         return;
@@ -172,8 +173,8 @@ fn main() {
     }
 }
 
-/// The program to run and whether `--simple-ui` was given, from the
-/// command line; `None` for anything else, which gets the usage.
+/// Returns the program to run and whether `--simple-ui` was given, from the
+/// command line, or `None` for any other arguments, which get the usage.
 fn parse_args(args: &[String]) -> Option<(Option<&str>, bool)> {
     let mut program = None;
     let mut simple_ui = false;
@@ -188,13 +189,13 @@ fn parse_args(args: &[String]) -> Option<(Option<&str>, bool)> {
     Some((program, simple_ui))
 }
 
-/// Panics on frames in a row after which frames stop: the machine cannot be
-/// put right, but the window can still save what is in the editor.
+/// The number of panics on frames in a row after which frames stop. The
+/// machine cannot be fixed, but the window can still save the editor text.
 const MOST_PANICS: u32 = 3;
 
-/// What keeps a panic in a program's frame from taking unsaved work with
-/// it. A failed allocation aborts and cannot be caught, nor can a panic
-/// outside of the frame, as when drawing.
+/// The guard that keeps a panic in a program's frame from losing unsaved
+/// work. A failed allocation aborts and cannot be caught. A panic outside
+/// the frame, for example while drawing, cannot be caught either.
 #[derive(Debug, Default)]
 struct FrameGuard {
     panics_in_a_row: u32,
@@ -233,8 +234,8 @@ impl FrameGuard {
     }
 }
 
-/// The version as Help > About and the Simple UI's pause menu show it:
-/// [`sb_runtime::VERSION`], with the build's options after it, so that a
+/// Returns the version that Help > About and the Simple UI's pause menu
+/// show: [`sb_runtime::VERSION`] followed by the build options, so that a
 /// bug report shows a build with options, such as unchecked-vars.
 fn version_with_options() -> String {
     match sb_runtime::BUILD_OPTIONS {
@@ -243,7 +244,7 @@ fn version_with_options() -> String {
     }
 }
 
-/// What Help > About says.
+/// Returns the text of Help > About.
 fn about_lines(drawn_by: &str) -> Vec<String> {
     vec![
         format!("SmileBASIC emulator {}", version_with_options()),
@@ -262,7 +263,7 @@ fn headless() -> bool {
     std::env::var("SDL_VIDEO_DRIVER").is_ok_and(|driver| driver == "offscreen")
 }
 
-/// What a panic said.
+/// Returns the panic message.
 fn panic_text(panic: &(dyn Any + Send)) -> String {
     (panic.downcast_ref::<&str>().map(|s| s.to_string()))
         .or_else(|| panic.downcast_ref::<String>().cloned())
@@ -289,8 +290,8 @@ fn load_source(path: &Path) -> Result<String, AnyError> {
 }
 
 /// Makes the folder of the program given on the command line the current
-/// project, and gives the name of the TXT file that the program is there,
-/// if it maps to one.
+/// project. Returns the program's TXT file name in that project, if it
+/// maps to one.
 fn open_program_folder(storage: &mut Storage, program: &Path) -> Option<String> {
     let dir = match program.parent() {
         Some(dir) if !dir.as_os_str().is_empty() => dir,
@@ -341,20 +342,21 @@ fn run(program: Option<&Path>, simple_ui_flag: bool) -> Result<(), AnyError> {
     rt.library = std::rc::Rc::new(sb_runtime::complete::Library::new(help.as_deref()));
     rt.help = help.clone();
     let saved_settings = rt.settings.clone();
-    // The flag is for this run: the setting stays as it was saved.
+    // The flag applies to this run only: the saved setting is unchanged.
     let simple_ui = simple_ui_flag || rt.settings.simple_ui;
     let mut machine = Machine::new(rt);
     machine.boot();
     let mut restart = None;
     if let Some(source) = source {
-        // Loaded as LOAD would, it is named for Ctrl+S to save it again;
-        // a program that maps to no name there runs all the same.
+        // It is loaded the same way LOAD loads it, so that Ctrl+S saves it
+        // again under its name. A program that maps to no name there still
+        // runs.
         let loaded = (program_name.as_ref()).is_some_and(|name| machine.load_slot(0, name).is_ok());
         if !loaded {
             machine.set_slot(0, source);
         }
-        // With the Simple UI on it ends in the game list, after an error once
-        // A is pressed, as a program run from there does.
+        // With the Simple UI on, it ends in the game list (after an error,
+        // once A is pressed), the same as a program run from the list does.
         match program_name.filter(|_| loaded && simple_ui) {
             Some(name) if machine.run_home(&name).is_ok() => restart = Some(name),
             _ => machine.run_slot(0),
@@ -373,7 +375,8 @@ fn run(program: Option<&Path>, simple_ui_flag: bool) -> Result<(), AnyError> {
     let ended = catch_unwind(AssertUnwindSafe(|| {
         frontend(&mut machine, &mut recovery, start)
     }));
-    // Whatever ended it, the machine can still be read, for its programs' text.
+    // However `frontend` ended, the machine can still be read for the text
+    // of its programs.
     let why = match ended {
         Ok(Ok(())) => return Ok(()),
         Ok(Err(e)) => e.to_string(),
@@ -383,7 +386,7 @@ fn run(program: Option<&Path>, simple_ui_flag: bool) -> Result<(), AnyError> {
     Err(failure_message(&why, saved.ok().flatten()).into())
 }
 
-/// What to say when the emulator ends for a failure.
+/// Returns the message to show when the emulator ends because of a failure.
 fn failure_message(why: &str, saved: Option<Vec<String>>) -> String {
     match saved {
         Some(lines) => format!("{why}\n\n{}", lines.join("\n")),
@@ -400,17 +403,18 @@ struct Screens {
     dialog: Option<(Dialog, Asking)>,
     /// Takes all input while it is open, except for a dialog over it.
     manager: Option<ProjectManager>,
-    /// Ctrl+S's and Ctrl+L's windows.
+    /// The windows of Ctrl+S and Ctrl+L.
     file_dialog: Option<FileDialog>,
     settings_window: Option<SettingsWindow>,
     shortcuts_window: Option<ShortcutsWindow>,
     color_window: Option<ColorWindow>,
-    /// The Simple UI's game list, which takes all input but a dialog's
-    /// while it is open, and its pause menu, which takes all input.
+    /// The Simple UI's game list and its pause menu. While open, the pause
+    /// menu takes all input, and the list takes all input except what goes
+    /// to a dialog.
     game_list: Option<GameList>,
     pause_menu: Option<PauseMenu>,
-    /// The screen shown the first time the Simple UI starts, over the
-    /// list: it takes all input but a dialog's.
+    /// The screen shown over the list the first time the Simple UI starts.
+    /// It takes all input except what goes to a dialog.
     welcome: Option<Welcome>,
 }
 
@@ -428,9 +432,9 @@ impl Screens {
             || self.welcome.is_some()
     }
 
-    /// Shows the question a command of the program or of direct mode
-    /// asks, on a display of `size`, and takes it away once the machine
-    /// no longer asks it. Another dialog stays.
+    /// Shows the question that a command of the program or of DIRECT mode
+    /// asks, on a display of `size`, and removes it once the machine no
+    /// longer asks it. Another dialog stays.
     fn follow_confirmation(&mut self, machine: &Machine, size: (u32, u32)) {
         match (&self.dialog, machine.confirmation()) {
             (Some((_, Asking::Command(shown))), Some(confirm)) if shown == confirm => {}
@@ -450,7 +454,7 @@ impl Screens {
     }
 }
 
-/// What the frontend starts from.
+/// The values that the frontend starts from.
 struct Start {
     screen: sb_profiles::ScreenConfig,
     bank: Option<Arc<Bank>>,
@@ -477,8 +481,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     } = start;
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
-    // The UI's size: the profile's display on the desktop, or in
-    // the Simple UI the output's at a whole scale.
+    // The UI size: the profile's display on the desktop, or in the Simple
+    // UI the output size at a whole scale.
     let profile_display = screen.display;
     let (mut display_w, mut display_h) = profile_display;
     // The offscreen driver of headless runs has a 1024x768 display, which
@@ -488,7 +492,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         .and_then(|d| d.get_usable_bounds());
     let usable = usable.ok().filter(|_| !headless());
     let usable = usable.map(|r| (r.width(), r.height()));
-    // As large as when the emulator last quit, as View > Window size left it.
+    // The window size when the emulator last quit, as View > Window size
+    // left it.
     let wanted = (machine.rt.settings.window_size).map_or(profile_display, |[w, h]| (w, h));
     let (window_w, window_h) = window::start_size(wanted, usable);
     let mut builder = video.window(TITLE, window_w, window_h);
@@ -505,33 +510,34 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut inputs = Inputs::new(Controls::new(&sdl)?);
     inputs.typing.upper_case = machine.rt.settings.upper_case_letters;
     let audio = Audio::open(&sdl);
-    // Runs the frames while a call to SDL holds the loop up.
+    // Runs the frames while a call to SDL blocks the loop.
     let standby = standby::Standby::start(audio.sink());
     // The file dialog answers from its own thread.
     let (chosen_font, font_choice) = std::sync::mpsc::channel::<PathBuf>();
-    // ...as does the one for the editor's extra font.
+    // ...so does the one for the editor's extra font.
     let (chosen_extra_font, extra_font_choice) = std::sync::mpsc::channel::<PathBuf>();
-    // ...as do the editor colors window's, with whether to save there.
+    // ...so does the editor colors window's dialog, with whether to save
+    // there.
     let (chosen_colors, colors_choice) = std::sync::mpsc::channel::<(PathBuf, bool)>();
-    // ...and the project manager's, for importing and exporting.
+    // ...and the project manager's dialog, for importing and exporting.
     let (chosen_folder, folder_choice) = std::sync::mpsc::channel::<(PathBuf, Transfer)>();
     let mut canvas = make_canvas(&window, &[])?;
-    // The window outlives each renderer made for it, for what is kept of
-    // it at the end.
+    // The window outlives each renderer made for it, so that the settings
+    // can keep its state at the end.
     let main_window = window;
     if simple_ui {
         let size = machine.rt.settings.simple_ui_size;
         (display_w, display_h) = simple_ui::ui_size(canvas.output_size()?, size);
     }
-    // Vsync paces frames on a 60 Hz display; on others, without vsync,
-    // or while the window is not shown, the loop goes by the clock. The
-    // bench's novsync turns it off whatever the setting says.
+    // Vsync paces frames on a 60 Hz display. On other displays, without
+    // vsync, or while the window is not shown, the clock paces the loop.
+    // The bench's novsync turns vsync off, regardless of the setting.
     let bench_vsync = bench::wants_vsync();
     let wants_vsync = |settings: &Settings| bench_vsync && settings.vsync;
     let mut main_presents = pacing::Presents::new(&canvas, wants_vsync(&machine.rt.settings));
     let mut editor_presents = None;
     let mut iterations = 0u32;
-    // Replaced with the renderer, as is everything that holds textures.
+    // Replaced with the renderer, like everything that holds textures.
     let mut creator = OwnedCreator::new(&canvas);
     let mut texture_creator = creator.get();
     let mut mode = machine.screen_mode();
@@ -541,36 +547,36 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // The frame's size and filter, which the texture is made for.
     let mut texture_kind = (mode.frame(), filter);
     let mut texture = frame_texture(&canvas, texture_creator, texture_kind)?;
-    // The pixels that mouse positions are given in: the screen's, or the
-    // editor's frame.
+    // The pixel space of mouse positions: the screen or the editor frame.
     let mut pointer_space = (mode.width, mode.height);
-    // Where the editor's frame was drawn, if that frame was the
-    // editor's laid out for the main window's room (see
-    // `placement::editor_fill`), where the pointer maps through it: always
-    // but in the Simple UI.
+    // The rectangle the editor frame was drawn in, if the editor was laid
+    // out to fill the main window (see `placement::editor_fill`). The
+    // pointer then maps through it. This is always so except in the Simple
+    // UI.
     let mut filled_editor: Option<FRect> = None;
     let mut menu = MenuBar::default();
-    // Whether a program ran when the loop last looked, to see one start.
+    // Whether a program was running when the loop last checked, to notice
+    // when one starts.
     let mut was_running = false;
-    // The editor's own window, made the first time the editor opens apart
-    // from the screen and hidden while it is closed, with its frame's
-    // texture and the pixels its pointer positions are given in.
+    // The editor's own window, with its frame texture and the pixel space
+    // of its pointer positions. It is made the first time the editor opens
+    // apart from the screen, and hidden while the editor is closed.
     let mut editor_gfx: OnceCell<EditorWindow> = OnceCell::new();
-    // The other textures, and what the frames' textures hold. Some are
-    // the editor's window's, so they come after it, to be dropped first.
+    // The other textures, and what the frame textures hold. Some belong to
+    // the editor window, so they come after it, to be dropped first.
     let mut textures = Held::default();
     // The emulator's UI over the screens or the editor, with the cursor
     // drawn where the system shows none.
     let cursor_var = std::env::var(pointer::CURSOR_VAR).ok();
     let draws_cursor = pointer::draws_own(video.current_video_driver(), cursor_var.as_deref());
     let mut overlays = Overlays::new(pointer::DrawnCursor::new(draws_cursor));
-    // View > "Keep 16:9 when resizing": what puts the main window's shape
-    // right where the system ignores the shape asked for, and whether
-    // that shape is asked for now.
+    // View > "Keep 16:9 when resizing": the helper that corrects the main
+    // window's shape where the system ignores the requested shape, and
+    // whether that shape is requested now.
     let mut keep_shape = window::KeepShape::default();
     // SDL asks for no shape at first; asking sets the window's size again.
     let mut shape_asked = false;
-    // The console without a desktop, whose one window is the display.
+    // The console without a desktop, whose only window is the display.
     let kms = video.current_video_driver() == "kmsdrm";
     let mut editor_space = (1, 1);
     let mut editor_shown = false;
@@ -584,8 +590,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // window. They follow the keys, but a dialog or window stays where it
     // opened until it closes.
     let mut ui_on_editor = false;
-    // The window that input in the other one brought to the front, and
-    // when, to mark it if the system would not raise it.
+    // The window that input in the other window brought to the front, and
+    // the time, to mark it if the system would not raise it.
     let mut raised: Option<(Which, Instant)> = None;
     let mouse = sdl.mouse();
     let mut cursor_shown = true;
@@ -635,15 +641,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         std::process::exit(if passed { 0 } else { 1 });
     }
     let mut paths = gpu::Paths::default();
-    // Why the renderer has to be replaced, from where it was found out.
+    // The reason the renderer has to be replaced, set by the code that
+    // found the failure.
     let mut renderer_failed: Option<String> = None;
     let mut watch = RendererWatch::default();
     // Renderers to refuse, for the bench.
     let mut refusals = 0;
     let mut suspend = SuspendWatch::new();
-    // The events of a trip round the loop, as they were drained.
+    // The events drained in an iteration of the loop.
     let mut polled: Vec<Event> = Vec::new();
-    // Who the right stick and R3 are for now: the program or the
+    // Which side the right stick and R3 serve now: the program or the
     // emulator's screens.
     macro_rules! stick_role {
         () => {
@@ -661,7 +668,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             .role()
         };
     }
-    // Lends the machine for a call that may hold the loop up, unless the
+    // Lends the machine for a call that may block the loop, unless the
     // program is paused.
     macro_rules! lend {
         () => {
@@ -677,7 +684,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     }
     'running: loop {
         let trip_began = Instant::now();
-        // A renderer that failed ends the frame here, to be replaced above it.
+        // A renderer that failed ends the iteration here. It is replaced at
+        // the top of the loop.
         macro_rules! drawing {
             ($result:expr) => {
                 match $result {
@@ -691,7 +699,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         if let Some(why) = renderer_failed.take() {
             eprintln!("the renderer failed: {why}");
-            // All that lives on the renderers goes before they do.
+            // All that lives on the renderers is dropped before them.
             paths.forget();
             textures.forget_device();
             textures.forget_targets();
@@ -739,7 +747,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             suspend = SuspendWatch::new();
             toasts.push("The renderer failed and was restarted.".to_string());
         }
-        // After a suspend a GL context may have lost its textures without a word.
+        // After a suspend a GL context may have silently lost its textures.
         if suspend.woke() {
             if bench.on() {
                 eprintln!("woke from a suspend: giving the renderer all again");
@@ -749,7 +757,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if bench.on() {
             bench.sound(audio.stats());
         }
-        // Frames the standby thread ran this trip.
+        // Frames the standby thread ran in this iteration.
         let mut kept = standby::Kept::default();
         if bench.step(machine) {
             bench.report(&canvas.renderer_name);
@@ -846,7 +854,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         timestamp: 0,
                         window_id,
                         keycode: Some(key),
-                        // Any will do, but SDL's event must have one.
+                        // Any scancode works, but SDL events need one.
                         scancode: Some(Scancode::A),
                         keymod,
                         repeat: false,
@@ -940,7 +948,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if let Some(open) = &mut screens.welcome {
                 open.set_size(wanted);
             }
-            // Made again at the new size, from the machine's, below.
+            // Made again below at the new size, from the machine's dialog.
             program_dialog = None;
         }
         if bench.on() {
@@ -974,8 +982,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 toasts.push("A notice".to_string());
             }
         }
-        // The program that Projects ran has ended: back to Projects. Opened
-        // some other way, a wait for a button is over.
+        // The program that Projects ran has ended: back to Projects. If the
+        // manager was opened some other way, a wait for a button ends.
         if screens.manager.is_some() {
             machine.home_leave();
         } else if simple_ui {
@@ -1004,8 +1012,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 screens.game_list = Some(GameList::new(&machine.rt.storage, size, &list_memory));
             }
         }
-        // The editor shows in a window of its own while it is open, if
-        // chosen.
+        // The editor shows in its own window while it is open, if that
+        // setting is on.
         machine.set_detached(machine.rt.settings.editor_window);
         let apart = machine.is_detached() && machine.is_editing();
         if apart && editor_gfx.get().is_none() {
@@ -1055,10 +1063,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             false => display_rect(display_w, display_h, out_w, out_h),
         };
         let settings = &machine.rt.settings;
-        // A UI at a scale that is not whole can go past the bottom edge;
-        // the program's screen stays on the output. The desktop's goes
-        // below its display too, in a window narrower than 16:9, and so
-        // does the UI that goes with the screen.
+        // A UI at a scale that is not whole can go past the bottom edge,
+        // but the program's screen stays on the output. In a window
+        // narrower than 16:9, the desktop screen also goes below its
+        // display, and so does the UI that goes with the screen.
         let screen_h = display.h.min(out_h as f32);
         let main_ui_h = match simple_ui {
             true => display_h,
@@ -1071,7 +1079,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 placement::desktop_screen_place(&mode, settings, (out_w, out_h), display)
             }
         };
-        // The main window's menus at 1x where its display is scaled below.
+        // The main window's menus at 1x if its display is scaled below 1x.
         let menus_apart = match simple_ui {
             true => None,
             false => placement::menu_place(display, display_w, (out_w, out_h)),
@@ -1085,11 +1093,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             menu: menus_apart.map(|place| place.at),
         };
         let ui_scale = bench.ui_scale;
-        // The window the editor shows in, whose zooms F2 and View > Size
-        // go by: its width and the height of SmileBASIC 4's display there.
+        // The space that the zooms of F2 and View > Size follow: the width
+        // of the window the editor shows in, and the height of
+        // SmileBASIC 4's display there.
         let mut editor_room = (out_w, display.h);
-        // The editor's window has the UI in pixels of its own, and the
-        // emulator's windows laid out on the display as on the main window.
+        // The editor window has the UI in its own pixels, and the
+        // emulator's windows are laid out on the display the same way as on
+        // the main window.
         let (editor_map, windows_map, editor_ui) = match editor_gfx.get().filter(|_| apart) {
             Some(gfx) => {
                 let settings = &machine.rt.settings;
@@ -1116,14 +1126,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             None => (main_map, main_map, (display_w, main_ui_h)),
         };
-        // The room the menus open in on the window with the keys, and
-        // that of the context menus on the main window's editor.
+        // The space the menus open in on the window with the keys, and the
+        // space of the context menus on the main window's editor.
         let main_menus = menus_apart.map_or((display_w, main_ui_h), |place| place.size);
         menu.space = Some(if ui_editor { editor_ui } else { main_menus });
         let popup_room = [main_menus, editor_ui];
-        // The window the event being handled came from: the main one, or
-        // the editor's, and whether the emulator's windows are open on the
-        // editor's.
+        // The window the event being handled came from (the main window or
+        // the editor window), and whether the emulator's windows are open
+        // on the editor window.
         let maps = [main_map, editor_map, windows_map];
         let source = Cell::new(0);
         let windows_on_editor = Cell::new(false);
@@ -1134,16 +1144,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // Mouse positions come in window coordinates; the display is in
         // pixels...
         let to_display = |x: f32, y: f32| map().to_display(x, y);
-        // ...and the menus', which are the display's unless they go apart.
+        // ...so are the menu coordinates, which are display pixels unless
+        // the menus are placed apart...
         let to_menu = |x: f32, y: f32| map().to_menu(x, y);
-        // ...and so are the screen's or the editor's, which fill their
+        // ...and so are the screen or editor coordinates, which fill their
         // rectangle.
         let to_screen = |x: f32, y: f32| map().to_screen(x, y);
         let shift = |keymod: Mod| keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
         let ctrl = |keymod: Mod| keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
         let mut quit = false;
-        // The pad repeats on the screen that has it, once a frame whatever
-        // events came; a new screen or mode starts without the old hold.
+        // The pad repeats on the screen that has it, once per frame
+        // regardless of the events. A new screen or mode starts without the
+        // old hold.
         let screen = input_screen(
             screens.pause_menu.is_some(),
             screens.dialog.is_some(),
@@ -1151,7 +1163,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             screens.game_list.as_ref().map(GameList::mode_id),
         );
         let repeats = inputs.repeats(screen);
-        // Pumping the events is what can hold the loop up for seconds.
+        // Pumping the events can block the loop for seconds.
         let ((), held) = standby.hold(lend!(), || {
             while let Some(event) = events.poll_event() {
                 polled.push(event);
@@ -1178,31 +1190,32 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 continue;
             }
             if !repeated {
-                // A, B, X and Y are what the setting makes them from here
-                // on, for every screen and the program, even after a
-                // change an event before made.
+                // From here on, A, B, X and Y follow the setting for every
+                // screen and the program, even after an earlier event
+                // changed it.
                 inputs.controls.swap = machine.rt.settings.swap_ab_xy;
                 inputs.controls.stick_mouse.on = machine.rt.settings.right_stick_mouse;
                 inputs.controls.event(&mut event);
-                // R3 clicks on the emulator's screens as the mouse does.
+                // R3 clicks on the emulator's screens the same as the mouse
+                // does.
                 let main_id = canvas.window().id();
                 let lcd = main_map.lcd(simple_ui);
                 inputs
                     .controls
                     .stick_click(&mut event, stick_role!(), main_id, lcd);
-                // A press and its release can both come between two
-                // frames, which what is held then would miss. One of the
-                // emulator's screens takes them back below.
+                // A press and its release can both come between two frames,
+                // and the held state at the next frame would miss them. One
+                // of the emulator's screens takes them back below.
                 let keys = machine.rt.settings.keyboard_buttons;
                 for (tap, down) in inputs.controls.taps(&event, keys).into_iter().flatten() {
                     machine.rt.input.tap(tap, down);
                 }
             }
             let event = inputs.pad_event(event, repeated, screen);
-            // Whatever the event does may show on the screens.
+            // Any effect of the event may show on the screens.
             machine.rt.touch();
-            // Some renderers lose what textures held, which then has to be
-            // given again.
+            // Some renderers lose the contents of textures, which then have
+            // to be supplied again.
             if matches!(
                 event,
                 Event::RenderTargetsReset { .. } | Event::RenderDeviceReset { .. }
@@ -1212,8 +1225,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // A target comes back empty, and the frames are drawn again.
                 machine.touch_sub();
             }
-            // Direct3D 11 and 12 and Vulkan have let go of every texture, and fail
-            // on those still held; a page sent to the GPU has to go again too.
+            // Direct3D 11 and 12 and Vulkan have released every texture,
+            // and fail on textures still held. A page sent to the GPU has
+            // to be sent again too.
             if let Event::RenderDeviceReset { .. } = event {
                 paths.forget();
                 textures.forget_device();
@@ -1284,8 +1298,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     menu.leave();
                 }
             }
-            // Closing the editor's window closes the editor; closing the
-            // main one quits even with the editor's shown.
+            // Closing the editor window closes the editor. Closing the main
+            // window quits, even while the editor window is shown.
             let event = match event {
                 Event::Window {
                     win_event: WindowEvent::CloseRequested,
@@ -1316,8 +1330,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // with the menu bar and the emulator's windows.
             let editor_window = !apart || from_editor;
             let ui_window = from_editor == ui_editor;
-            // Input in the window without the emulator's window that takes
-            // it all brings that one forward instead.
+            // Input in one window, while an emulator window that takes all
+            // input is open in the other, brings the other forward instead.
             let modal_on = window::modal_window(apart, screens.any(), ui_editor);
             let from = if from_editor {
                 Which::Editor
@@ -1347,7 +1361,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     || (side_panel.open.is_some() && side_panel.focus);
             }
             // Only the main window's pointer reaches the program, and only
-            // the window with the emulator's windows takes theirs.
+            // the window with the emulator's windows takes pointer input
+            // for them.
             let pointer = matches!(
                 event,
                 Event::MouseMotion { .. }
@@ -1358,7 +1373,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if pointer && screens.any() && !ui_window {
                 continue;
             }
-            // Ctrl+Shift+F12 turns the Simple UI on or off, whatever shows.
+            // Ctrl+Shift+F12 turns the Simple UI on or off, regardless of
+            // what is shown.
             if let Event::KeyDown {
                 keycode: Some(Keycode::F12),
                 keymod,
@@ -1371,13 +1387,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 simple_ui = !simple_ui;
                 machine.rt.settings.simple_ui = simple_ui;
                 let window = canvas.window_mut();
-                // The Simple UI is fullscreen; the desktop goes back to
-                // what it was, as View > Fullscreen keeps it.
+                // The Simple UI is fullscreen. The desktop returns to its
+                // earlier state, which the View > Fullscreen setting keeps.
                 if simple_ui {
                     let desktop = window.fullscreen_state() != FullscreenType::Off;
                     machine.rt.settings.fullscreen = desktop;
                     let _ = window.set_fullscreen(true);
-                    // What needs a keyboard or a mouse closes.
+                    // Everything that needs a keyboard or a mouse closes.
                     (
                         screens.manager,
                         screens.file_dialog,
@@ -1401,10 +1417,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 inputs.plus_down = None;
                 continue;
             }
-            // Ctrl+Shift+F11 turns the desktop's fullscreen on or off,
-            // whatever shows. The Simple UI is always fullscreen. Like
-            // Ctrl+Shift+F12 it types nothing and starts no tool, though
-            // KEYBOARD sees the keys held, as it sees every key.
+            // Ctrl+Shift+F11 turns fullscreen on or off on the desktop,
+            // regardless of what is shown. The Simple UI is always
+            // fullscreen. Like Ctrl+Shift+F12, the keys type nothing and
+            // start no tool, but KEYBOARD still sees them held, as it sees
+            // every key.
             if let Event::KeyDown {
                 keycode: Some(Keycode::F11),
                 keymod,
@@ -1419,7 +1436,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 }
                 continue;
             }
-            // What each of the emulator's screens is given with the event.
+            // The context that each of the emulator's screens gets with the
+            // event.
             macro_rules! cx {
                 () => {
                     events::Ctx {
@@ -1475,9 +1493,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 events::pause_menu(event, &mut screens, memory, ran, cx!());
                 continue;
             }
-            // After an error of the program that Projects ran, only A or
-            // Enter, freshly pressed, does anything on the keyboard and
-            // the pad; the window and its menu bar work as ever.
+            // After an error in the program that Projects ran, only a new
+            // press of A or Enter does anything on the keyboard and the
+            // pad. The window and its menu bar work as usual.
             if machine.home_waiting() && !screens.any() && program_dialog.is_none() {
                 match &event {
                     Event::KeyDown {
@@ -1532,9 +1550,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 {
                     inputs.controls.mouse.wheel += y.round() as i32;
                 }
-                // Here, before the dialogs and menus below take the event
-                // and go on to the next, so that the page and the editor's
-                // selection let go of the pointer whatever is shown.
+                // Handled here, before the dialogs and menus below take the
+                // event and continue to the next, so that the page and the
+                // editor's selection release the pointer regardless of what
+                // is shown.
                 Event::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     ..
@@ -1542,7 +1561,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     debugger.panel.release();
                     inputs.dragging = false;
                 }
-                // The + button acts when let go, unless it was held until
+                // The + button acts when released, unless it was held until
                 // the program stopped (checked on hardware).
                 Event::KeyUp {
                     keycode: Some(Keycode::F5),
@@ -1610,8 +1629,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if screens.game_list.is_some() {
                 let (memory, ran) = (&mut list_memory, &mut ran_from_list);
                 events::game_list(&event, &mut screens, memory, ran, cx!());
-                // Nothing else goes past it, as typing would reach the
-                // prompt under it.
+                // Nothing else goes past it, because typing would reach
+                // DIRECT mode under it.
                 continue;
             }
             if screens.manager.is_some() {
@@ -1638,8 +1657,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             match event {
                 Event::Quit { .. } => quit = true,
-                // The desktop's windows and tools are not to be had with
-                // the Simple UI on.
+                // The desktop windows and tools are not available with the
+                // Simple UI on.
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
@@ -1654,8 +1673,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     if editor_window {
                         debugger.panel.motion(to_display(x, y), mousestate.left());
                     }
-                    // A button let go where this loop did not see it ends
-                    // the selection too.
+                    // A button released where this loop did not see it also
+                    // ends the selection.
                     inputs.dragging &= mousestate.left();
                     if inputs.dragging && on_editor {
                         let (x, y) = to_screen(x, y);
@@ -1697,8 +1716,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                         editor_menu(machine)
                     };
-                    // In the menus' pixels, which may be apart from the
-                    // display's.
+                    // In the menu pixels, which may be apart from the
+                    // display pixels.
                     let room = popup_room[usize::from(apart)];
                     debugger.menu = Some(Popup::new(to_menu(x, y), items, room));
                 }
@@ -1761,7 +1780,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     keycode: Some(Keycode::Pause),
                     ..
                 } => machine.stop(),
-                // The debugger's keys, around F5's.
+                // The debugger's keys, around the F5 key.
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
@@ -1815,7 +1834,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                     inputs.eat_text = true;
                 }
-                // Editing the line typed in direct mode or for INPUT.
+                // Editing the line typed in DIRECT mode or for INPUT.
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
@@ -1829,9 +1848,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         .typing
                         .key_down(&mut machine.rt, keymod, repeat, Some(code))
                 }
-                // Ctrl+C is a break, as the + button is, in a program and
-                // on a DIRECT mode line that runs. It types nothing, also
-                // as it repeats.
+                // Ctrl+C is a break, like the + button, in a program and on
+                // a DIRECT mode line that runs. It types nothing, also
+                // while it repeats.
                 Event::KeyDown {
                     keycode: Some(Keycode::C),
                     keymod,
@@ -1905,11 +1924,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } if !machine.is_running() => {
                     act!(Action::Projects);
                 }
-                // A controller's Select (-) opens them in direct mode, so
-                // that a game can be picked with the pad alone, when it is
-                // released with nothing else pressed or moved meanwhile:
-                // held, it is for the right-stick mouse. Programs never see
-                // this button: BUTTON has no bit for it.
+                // In DIRECT mode, a controller's Select (-) opens the
+                // projects when it is released with nothing else pressed or
+                // moved meanwhile, so that a game can be picked with the
+                // pad alone. Held, it is for the right-stick mouse.
+                // Programs never see this button: BUTTON has no bit for it.
                 Event::GamepadButtonDown {
                     button: Button::Back,
                     ..
@@ -1931,7 +1950,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } if on_editor => next_editor_size(machine, editor_room),
                 // F1 shows the help for the command at the cursor, in the
-                // editor or on the line typed in direct mode.
+                // editor or on the line typed in DIRECT mode.
                 Event::KeyDown {
                     keycode: Some(Keycode::F1),
                     keymod,
@@ -1944,7 +1963,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     let size = (display_w, display_h);
                     side_panel.show_help(machine, help.as_deref(), &mut toasts, size, !on_editor);
                 }
-                // Simple save and load, as SmileBASIC 4 has them.
+                // Simple save and load, the same as in SmileBASIC 4.
                 Event::KeyDown {
                     keycode: Some(key @ (Keycode::S | Keycode::L)),
                     keymod,
@@ -1988,7 +2007,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 Event::MouseWheel { y, .. } if on_editor => {
                     machine.edit().wheel(-3 * y.round() as i32);
                 }
-                // F3 finds, and in finding goes to the next match.
+                // F3 starts a search, and during a search goes to the next
+                // match.
                 Event::KeyDown {
                     keycode: Some(Keycode::F3),
                     keymod,
@@ -2001,9 +2021,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         editor.start_find(false);
                     }
                 }
-                // Shift+Tab takes the indent away, and Shift and the cursor
-                // keys select in the editor. They go with the typed keys,
-                // which repeat in frames.
+                // Shift+Tab removes the indent, and Shift with the cursor
+                // keys selects in the editor. They are handled with the
+                // typed keys, which repeat in frames.
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
@@ -2020,10 +2040,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         .typing
                         .key_down(&mut machine.rt, keymod, repeat, Some(code))
                 }
-                // What a program's dialog does not take is lost, or it
-                // would reach the prompt or the program beside it.
+                // Keys that a program's dialog does not take are dropped,
+                // or they would reach DIRECT mode or the program beside it.
                 Event::KeyDown { .. } if program_dialog.is_some() && !from_editor => {}
-                // Typing for a program, the prompt or the editor.
+                // Typing for a program, DIRECT mode or the editor.
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
@@ -2040,9 +2060,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
         }
 
-        // A window the system would not raise, as Wayland may refuse, is
-        // flashed until it has the keys. Not at once: on Wayland a flash
-        // takes the place of the raise's request.
+        // A window that the system would not raise (Wayland may refuse) is
+        // flashed until it has the keys. This does not happen immediately,
+        // because on Wayland a flash replaces the request to raise.
         if let Some((target, at)) = raised
             && at.elapsed() >= RAISE_WAIT
         {
@@ -2058,8 +2078,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 _ => {}
             }
         }
-        // Opened or closed since its window was shown or hidden above, the
-        // editor shows where it did until the next frame.
+        // If the editor was opened or closed after its window was shown or
+        // hidden above, it stays where it was shown until the next frame.
         let apart = apart && machine.is_editing();
         let ui_editor = ui_editor && apart;
         if !simple_ui {
@@ -2087,7 +2107,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // Programs see nothing pressed while the emulator's own screens
         // take the input.
         let modal = screens.any();
-        // The help opened in direct mode closes when the editor opens or
+        // The help opened in DIRECT mode closes when the editor opens or
         // a program runs; the editor's panels close with the editor.
         if side_panel.direct && (machine.is_editing() || machine.is_running())
             || !side_panel.direct && !machine.is_editing()
@@ -2111,8 +2131,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         menu.status = status_line(machine, paused);
         machine.focus_editor(editor_focused);
         let editor_keys = machine.editor_has_keys() && machine.program_dialog().is_none();
-        // The help beside direct mode has the keys and the prompt is left
-        // alone, and after a Projects run's error only its A goes anywhere.
+        // While the help beside DIRECT mode has the keys, DIRECT mode is
+        // left alone. After an error in a program run from Projects, only A
+        // goes anywhere.
         let waiting = machine.home_waiting() && program_dialog.is_none();
         let beside = side_panel.direct && side_panel.focus && side_panel.open.is_some();
         inputs.controls.swap = machine.rt.settings.swap_ab_xy;
@@ -2144,8 +2165,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             Default::default()
         };
         machine.rt.input.live = inputs.controls.carried.program_sees(held, screen);
-        // What a screen had the controls for, or closed with, is none of
-        // the program's.
+        // Input that a screen used, or closed with, does not reach the
+        // program.
         if inputs.controls.carried.blanked() {
             machine.rt.input.drop_taps();
         }
@@ -2179,8 +2200,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         machine.set_changes(&debugger.panel.change_watches());
         bench.lap(Stage::Events);
-        // Each frame reads the setting, whichever screen or reload changed it;
-        // a subprogram, a tool among them, runs on the same machine.
+        // Each frame reads the setting, regardless of which screen or
+        // reload changed it. A subprogram, including a tool, runs on the
+        // same machine.
         apply_frame_setting(machine);
         let frames = run_frames(
             machine,
@@ -2215,10 +2237,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         {
             gfx.canvas.borrow_mut().window_mut().raise();
         }
-        // A pointer the program moved with MOUSE stays there until the
-        // real one moves, and the real one goes there too, unless Settings
-        // keep the computer's pointer where it is: then the program sees
-        // the move only until the next frame, which reads the real one.
+        // A pointer the program moved with MOUSE stays there until the real
+        // pointer moves, and the real pointer moves there too, unless
+        // Settings keep the computer's pointer where it is. Then the
+        // program sees the move only until the next frame, which reads the
+        // real pointer.
         let (sent, now) = (&mut inputs.controls.mouse, machine.rt.input.live.mouse);
         let fed = !modal
             && !paused
@@ -2236,8 +2259,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // The editor leaves its top row for the menu bar.
         menu.pinned = machine.is_editing() && (!machine.is_detached() || ui_editor);
         menu.running = machine.is_running();
-        // Settings change through the menu, keys and questions; keep each
-        // change at once so that nothing is lost if the emulator crashes.
+        // The menu, keys and questions change settings. Save each change
+        // immediately, so that nothing is lost if the emulator crashes.
         if machine.rt.settings != saved_settings && !bench.on() {
             saved_settings = machine.rt.settings.clone();
             save_settings(&settings_path, &saved_settings);
@@ -2247,8 +2270,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             .controls
             .key_buttons
             .update(machine.rt.input.take_keys_read());
-        // A program that keeps every key to itself has no use for the
-        // picture yet; it may still come to read only buttons.
+        // A program that reserves every key does not need the picture yet.
+        // It may still start to read only buttons later.
         if machine.rt.input.take_buttons_read() && !inputs.controls.key_buttons.all_reserved() {
             let keys = machine.rt.settings.keyboard_buttons;
             key_hint.buttons_read(keys, inputs.controls.gamepads());
@@ -2266,11 +2289,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         follow_program_dialog(&mut program_dialog, machine, (display_w, main_ui_h));
         blink = blink.wrapping_add(1);
 
-        // A drawing that would end after the frame's time is left out if
-        // the program is still making the scene, or if it would cost the
-        // program its next frame; see `Scene::drawing`. What the window
-        // shows besides the program's screens is drawn every frame, and so
-        // is the frame after it went.
+        // A drawing that would end after the frame's time is skipped if the
+        // program is still making the scene, or if it would cost the
+        // program its next frame (see `Scene::drawing`). Everything the
+        // window shows besides the program's screens is drawn every frame,
+        // and so is the first frame after that content goes away.
         let must = paused
             || modal
             || !machine.is_running()
@@ -2310,9 +2333,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             false => placement::desktop_screen_place(&mode, settings, (out_w, out_h), display),
         };
         let editing = machine.is_editing() && !machine.is_detached();
-        // The main window's editor laid out for the room it has, under the
-        // menu bar as the window shows it. Worked out only while it shows:
-        // a trip that draws a program's screen does nothing for the editor.
+        // The main window's editor, laid out for the space it has under the
+        // menu bar as the window shows it. It is computed only while the
+        // editor is shown: an iteration that draws a program's screen does
+        // nothing for the editor.
         let fill = editing.then(|| {
             let scale = placement::menu_scale(display, display_w, (out_w, out_h));
             let bar = (MenuBar::HEIGHT as f32 * scale).ceil() as u32;
@@ -2326,8 +2350,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if paths.follow(&canvas, renderer) {
             machine.rt.touch();
         }
-        // The editor's frame, and the screens', stay as they are while
-        // their revision does.
+        // The editor frame and the screen frame stay unchanged while their
+        // revision stays the same.
         let revision = match editing {
             true => {
                 machine.render_editor();
@@ -2360,7 +2384,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // The editor's frame can be finer than the screen it is shown in.
         let kind = if editing {
             pointer_space = frame;
-            // Each of its pixels is a whole number of the window's.
+            // Each of its pixels covers a whole number of window pixels.
             (frame, Filter::Nearest)
         } else {
             pointer_space = (mode.width, mode.height);
@@ -2384,9 +2408,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         ));
         bench.lap(Stage::Screen);
         // The editor in its own window, where the debugger's panel goes
-        // too: where its frame and the UI are there, and the UI's size.
+        // too: the places of its frame and the UI there, and the UI size.
         let mut editor_place = (rect, frame, display, (display_w, display_h));
-        // ...and where the emulator's windows go on it.
+        // ...and the place of the emulator's windows on it.
         let mut windows_place = display;
         if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
             let settings = &machine.rt.settings;
@@ -2400,7 +2424,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let fb = machine.editor_frame();
             let frame = (fb.width(), fb.height());
             editor_space = frame;
-            // Each of its pixels is a whole number of the window's.
+            // Each of its pixels covers a whole number of window pixels.
             let kind = (frame, Filter::Nearest);
             if textures.editor.as_ref().is_none_or(|(_, k)| *k != kind) {
                 let made = drawing!(frame_texture(&editor_canvas, gfx.creator.get(), kind));
@@ -2418,11 +2442,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             editor_place = (from_corner(rect), frame, from_corner(ui), layout.ui_size);
         }
         bench.lap(Stage::Editor);
-        // The debugger's panel fills the room the editor leaves below.
+        // The debugger's panel fills the space the editor leaves below.
         let mut debug = None;
         if let Some(at) = machine.panel_at() {
             let (rect, frame, display, (ui_w, ui_h)) = editor_place;
-            // To the main window's bottom, below its display too.
+            // To the bottom of the main window, also below its display.
             let bottom = if apart { ui_h } else { main_ui_h };
             let y = rect.y + at as f32 * rect.h / frame.1 as f32 - display.y;
             let top = ((y * ui_h as f32 / display.h).round() as u32).min(bottom);
@@ -2432,14 +2456,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 w: ui_w,
                 h: bottom - top,
             };
-            // A stop, though at the same place, shows the panel anew.
+            // A new stop shows the panel again, even at the same place.
             let fresh = machine.paused_at() != debugger.shown_stop || !debugger.was_shown;
             if fresh {
                 debugger.shown_stop = machine.paused_at();
                 debugger.panel.reset();
             }
             // The screens change only while a step runs. Beside the
-            // editor's own window, they show in the main one.
+            // editor's own window, they show in the main window.
             let screens = !apart && machine.panel_screens();
             if screens && (fresh || machine.is_running() || textures.panel_screens.is_none()) {
                 let screens = machine.render_screens();
@@ -2489,9 +2513,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             lcd,
             !debugger.was_shown,
         ));
-        // Where the focus has just gone: a yellow line on the edge, one
-        // pixel out and two in, then a dark band two pixels wide, fading
-        // out together.
+        // The border where the focus has just gone: a yellow line on the
+        // edge, one pixel out and two in, then a dark band two pixels wide,
+        // fading out together.
         if let Some((rect, alpha)) = machine.focus_border() {
             let lcd = main_map.lcd(simple_ui);
             let place = placement::border_place(rect, main_map, lcd, display_h, main_ui_h);
@@ -2544,15 +2568,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             cursor_shown = system_cursor;
             mouse.show_cursor(system_cursor);
         }
-        // Which window each part goes on: the main one, or the editor's.
-        // The menu bar and the emulator's windows go with the keys, the
-        // editor's panels and menu with the editor.
+        // Which window each part goes on: the main window or the editor
+        // window. The menu bar and the emulator's windows go with the keys,
+        // and the editor's panels and menu go with the editor.
         let ui = usize::from(ui_editor);
         let ed = usize::from(apart);
         let side_on = if side_panel.direct { 0 } else { ed };
-        // Beside the editor's own window, the chosen sprite is outlined
-        // on the main one's screen, and a subprogram's always on its own,
-        // where the panel leaves it.
+        // Beside the editor's own window, the chosen sprite is outlined on
+        // the main window's screen. A subprogram's sprite is always
+        // outlined on its own screen, where the panel leaves it.
         let outline = (debug.as_ref()).and_then(|(place, view, _)| {
             let list = view.sprites.as_ref()?;
             let outline = list.outline?;
@@ -2571,10 +2595,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 None => None,
             }
         });
-        // Each window's UI in its own pixels. On the editor's window, the
-        // emulator's windows go on a layer of their own, laid out on the
-        // display as on the main window. The main window's goes below its
-        // display, where the screen goes too.
+        // The UI of each window, in its own pixels. On the editor window,
+        // the emulator's windows go on a separate layer, laid out on the
+        // display the same way as on the main window. The main window's UI
+        // goes below its display, where the screen goes too.
         let ui_sizes = [(display_w, main_ui_h), editor_place.3];
         let windows_apart = apart && ui == 1 && screens.any();
         if let Some(open) = &mut side_panel.open {
@@ -2629,12 +2653,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 );
             }
             // A dialog or the project manager dims the screen behind it,
-            // as a program's DIALOG does, but not the panel and the bar
-            // over it.
+            // like a program's DIALOG, but not the panel and the bar over
+            // it.
             let dim = i == ui && dims || i == 0 && program_dialog.is_some();
             let panel = debug.as_ref().filter(|_| i == ed).map(|(place, ..)| *place);
-            // The bar's height on this UI, which is more than its own where
-            // it goes apart at 1x from a display scaled below.
+            // The bar height on this UI. It is more than the bar's own
+            // height where the bar is placed apart at 1x from a display
+            // scaled below 1x.
             let bar_h = match menus_apart {
                 Some(_) => (MenuBar::HEIGHT as f32 * display_w as f32 / display.w).ceil() as u32,
                 None => MenuBar::HEIGHT,
@@ -2647,7 +2672,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             };
             let inside = Cell::new(false);
             // The UI in the window's pixels, and the emulator's windows,
-            // which go on a layer of their own on the editor's window.
+            // which go on a separate layer on the editor window.
             let windows_on_layer = i == 1 && windows_apart;
             let shown = draw::Ui {
                 window: i,
@@ -2681,8 +2706,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 shown.draw(fb, debug_panel, inside.get(), windows)
             };
             if let (Some(place), Some((_, view, screens))) = (panel, &debug) {
-                // What is partly see-through over the panel shows what is
-                // under the panel, as it always did, if drawn with it.
+                // If anything partly see-through is over the panel, the
+                // panel is drawn with the rest of the UI, so that the
+                // see-through part still shows what is under it.
                 let probe =
                     overlays.overlay[i].dry_run(size, |fb| parts(fb, &mut debugger.panel, false));
                 inside.set(probe.translucent.is_some_and(|t| t.overlaps(place)));
@@ -2723,10 +2749,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             _ => overlays.menu.release(),
         }
-        // The Simple UI's notices, under the rest of its UI as on the
-        // desktop. Neither shows with the pause menu or the game list, so
-        // they stay clear of the bar of hints at the bottom; the slow
-        // program's notice waits for the keys' picture to go.
+        // The Simple UI's notices, under the rest of its UI, the same as on
+        // the desktop. Neither shows with the pause menu or the game list,
+        // so they stay clear of the bar of hints at the bottom. The slow
+        // program's notice waits until the picture of the keys is gone.
         let notice = corner::visible(&key_hint, &slow_hint);
         let notice = (simple_ui && notice && !paused && !modal).then(|| {
             let size = settings.simple_ui_size;
@@ -2825,15 +2851,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         bench.lap(Stage::Wait);
         watch.frame_shown();
     }
-    // The editor's window, shown when quitting, opens there next time.
+    // The editor window, if shown when quitting, opens at the same place
+    // next time.
     let keep = machine.rt.settings.editor_window_keep_place;
     if let Some(gfx) = editor_gfx.get().filter(|_| editor_shown && keep) {
         let place = window_place(gfx.canvas.borrow().window());
         machine.rt.settings.editor_window_place = Some(place);
     }
-    // The desktop starts fullscreen next time if it is now, whoever made
-    // it so, and the window as large as it is now, unless fullscreen or
-    // maximized, which keep the size it had before.
+    // The desktop starts fullscreen next time if it is fullscreen now, no
+    // matter what made it so. The window starts at its current size, unless
+    // it is fullscreen or maximized, which keep the size it had before.
     if !simple_ui {
         let fullscreen = main_window.fullscreen_state() != FullscreenType::Off;
         machine.rt.settings.fullscreen = fullscreen;
@@ -2842,17 +2869,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             machine.rt.settings.window_size = Some([w, h]);
         }
     }
-    // A bench run leaves the settings as they were, as it does above, so
-    // that runs in one data directory start alike.
+    // A bench run leaves the settings unchanged, the same as it does above,
+    // so that runs in one data directory start the same way.
     if machine.rt.settings != saved_settings && !bench.on() {
         save_settings(&settings_path, &machine.rt.settings);
     }
     Ok(())
 }
 
-/// Which of the emulator's screens takes the input, so that a change can
-/// be told: the pause menu, a dialog, the manager in one of its modes, the
-/// game list in one of its, or none.
+/// Returns which of the emulator's screens takes the input, so that a
+/// change can be detected: the pause menu, a dialog, the manager in one of
+/// its modes, the game list in one of its modes, or none.
 fn input_screen(pause: bool, dialog: bool, manager: Option<usize>, list: Option<usize>) -> usize {
     match (pause, dialog, manager, list) {
         (true, ..) => 20,
@@ -2863,13 +2890,14 @@ fn input_screen(pause: bool, dialog: bool, manager: Option<usize>, list: Option<
     }
 }
 
-// The Simple UI goes back to its game list with the screens as ACLS
-// leaves them and the sound stopped, as `tidy_on_end` has a program end,
-// whatever that setting says: after END, STOP, the + button, an error
-// once A is pressed, Return to Game list and Restart.
+// After END, STOP, the + button, an error once A is pressed, Return to
+// Game list and Restart, the Simple UI returns to its game list with the
+// sound stopped and the screens in the state that ACLS leaves: the same
+// tidying that `tidy_on_end` does when a program ends. The Simple UI does
+// this regardless of that setting.
 
 /// Whether the program the game list ran has ended by itself or by the +
-/// button, tidied if so. An error waits for A instead.
+/// button. If so, the machine is tidied. An error waits for A instead.
 fn simple_ui_ended(machine: &mut Machine) -> bool {
     let done = machine.home_done();
     if done {
@@ -2887,8 +2915,8 @@ fn simple_ui_leave(machine: &mut Machine) {
     machine.tidy();
 }
 
-/// The keys of the desktop's windows and tools, which the Simple UI leaves
-/// alone: the function keys, but for F5 alone, which is the + button.
+/// The keys of the desktop windows and tools, which the Simple UI ignores:
+/// the function keys, except F5 without Ctrl, Shift or Alt (the + button).
 fn desktop_key(key: Keycode, keymod: Mod) -> bool {
     let held = Mod::LCTRLMOD | Mod::RCTRLMOD | Mod::LSHIFTMOD | Mod::RSHIFTMOD;
     match key {
@@ -2909,7 +2937,7 @@ fn desktop_key(key: Keycode, keymod: Mod) -> bool {
 }
 
 /// Runs a program that the game list chose, in its project, to come back
-/// to the list when it ends. False, with a notice, if it could not.
+/// to the list when it ends. Returns false, with a notice, if it could not.
 fn run_from_list(machine: &mut Machine, project: &str, file: &str, toasts: &mut Toasts) -> bool {
     let storage = &mut machine.rt.storage;
     if storage.project() != project
@@ -2991,9 +3019,9 @@ impl EditorWindow {
         })
     }
 
-    /// How the window is laid out at its size and the desktop's scale,
-    /// or at `scale` if given, for the profile's `display`. It keeps its
-    /// smallest size to what the UI needs at that scale.
+    /// Returns the layout of the window at its size and the desktop's
+    /// scale, or at `scale` if given, for the profile's `display`. It keeps
+    /// the window's minimum size at what the UI needs at that scale.
     fn layout(
         &self,
         settings: &Settings,
@@ -3013,8 +3041,8 @@ impl EditorWindow {
     }
 }
 
-/// A renderer for `window`: the one SDL picks or `SDL_RENDER_DRIVER` names, and if
-/// that cannot start, any other. What sdl3's `into_canvas` does here is panic.
+/// Makes a renderer for `window`: the one SDL picks or `SDL_RENDER_DRIVER` names,
+/// and if that cannot start, any other. sdl3's `into_canvas` panics here instead.
 ///
 /// `avoid` names drivers that have just failed, which are not tried.
 fn make_canvas(window: &Window, avoid: &[String]) -> Result<Canvas<Window>, AnyError> {
@@ -3049,21 +3077,21 @@ fn make_canvas(window: &Window, avoid: &[String]) -> Result<Canvas<Window>, AnyE
     Err(format!("No renderer could start: {first}").into())
 }
 
-/// What goes on while there is no renderer to draw with.
+/// The state of the wait while there is no renderer to draw with.
 struct Waiting<'a> {
     events: &'a mut sdl3::EventPump,
     controls: &'a mut Controls,
-    /// Tries to refuse, for the bench.
+    /// The number of renderer tries that the bench still refuses.
     refusals: &'a mut u32,
-    /// No message box, with no display.
+    /// No message box, because there is no display.
     quiet: bool,
 }
 
-/// A new renderer for `window`, with its creator and a frame's texture. With none to
-/// be had, it keeps trying every second with the program paused and its sound running
-/// out: a game nobody can see should not go on being played, and nobody can answer
-/// it. Programs go to files at once, as the wait may never end. None if the user closes
-/// the window with nothing unsaved.
+/// Makes a new renderer for `window`, with its creator and a frame texture. If none
+/// is available, it keeps trying every second with the program paused and its sound
+/// running out: a game nobody can see should not continue, and nobody can answer it.
+/// Programs are saved to files immediately, because the wait may never end. Returns
+/// `None` if the user closes the window with nothing unsaved.
 fn new_renderer(
     window: &Window,
     kind: TextureKind,
@@ -3093,14 +3121,15 @@ fn new_renderer(
                         let _ = window.set_title(TITLE);
                         return Ok(Some((canvas, creator, texture)));
                     }
-                    // It starts but cannot hold a frame: on to the next driver.
+                    // It starts but cannot hold a frame: try the next one.
                     Err(e) => {
                         avoid.push(canvas.renderer_name.clone());
                         e.to_string()
                     }
                 }
             }
-            // With nothing else to be had, any may do by now.
+            // With nothing else available, any driver will do now, so the
+            // failed ones are tried again.
             Err(e) => {
                 avoid.clear();
                 e.to_string()
@@ -3145,7 +3174,8 @@ fn new_renderer(
 
 /// Puts one of the renderer's events on SDL's queue: its targets or its
 /// device reset, or its device gone. The sdl3 crate's `push_event`
-/// refuses the first two and has no event of its own for the third.
+/// refuses the first two, and the crate has no separate `Event` variant
+/// for the third.
 fn push_render_event(kind: SDL_EventType) {
     // SAFETY: an all-zero event is valid, and the type is the only field read.
     unsafe {
@@ -3155,14 +3185,14 @@ fn push_render_event(kind: SDL_EventType) {
     }
 }
 
-/// A window's position and size, as the settings keep them.
+/// Returns a window's position and size, in the form the settings keep.
 fn window_place(window: &Window) -> [i32; 4] {
     let ((x, y), (w, h)) = (window.position(), window.size());
     [x, y, w as i32, h as i32]
 }
 
-/// Whether a window placed so lies wholly on one of the displays, so that
-/// it can go back there.
+/// Whether a window at this place is wholly on one of the displays, so
+/// that it can return there.
 fn on_a_display([x, y, w, h]: [i32; 4], displays: &[Rect]) -> bool {
     let place = Rect::new(x, y, w.max(1) as u32, h.max(1) as u32);
     displays.iter().any(|d| d.contains_rect(place))
@@ -3288,14 +3318,15 @@ fn file_url(path: &Path) -> String {
     url
 }
 
-/// Ctrl+S's or Ctrl+L's window, or the settings' to pick a tool.
+/// The window of Ctrl+S or Ctrl+L, or the one the settings open to pick a
+/// tool.
 enum FileDialog {
     Save(SaveDialog),
     Load(FilePicker),
 }
 
-/// Has `view` show the program's DIALOG as the machine has it, on a UI
-/// of `size`, with the focus where the controller moved it.
+/// Makes `view` show the program's current DIALOG from the machine, on a
+/// UI of `size`, with the focus where the controller moved it.
 fn follow_program_dialog(view: &mut Option<ProgramView>, machine: &Machine, size: (u32, u32)) {
     match (&mut *view, machine.program_dialog()) {
         (Some(open), Some(shown)) if open.shows(shown) => open.set_size(size),
@@ -3326,14 +3357,14 @@ struct Beside {
     open: Option<Side>,
     /// Whether it takes the keys.
     focus: bool,
-    /// The help was opened in direct mode, over the screen.
+    /// The help was opened in DIRECT mode, over the screen.
     direct: bool,
 }
 
 impl Beside {
     /// Shows the help for the command at the cursor and gives it the
     /// keys, if there is help for it; `direct` is whether it was asked for
-    /// in direct mode, to show over the screen. With no help to show, a
+    /// in DIRECT mode, to show over the screen. With no help to show, a
     /// notice says so and what was open stays.
     fn show_help(
         &mut self,
@@ -3352,7 +3383,7 @@ impl Beside {
 /// A panel beside the editor.
 enum Side {
     Help(HelpViewer),
-    /// With where the editor was when it opened, for Esc.
+    /// With the editor's place when the panel opened, for Esc.
     Index(IndexPanel, Place),
 }
 
@@ -3424,17 +3455,17 @@ fn side_outcome(
     *focus = false;
 }
 
-/// Who asked the open dialog's question.
+/// The source of the open dialog's question.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Asking {
     Quit,
-    /// A command of a running program or direct mode, with what it asks.
+    /// A command of a running program or DIRECT mode, with what it asks.
     Command(Confirm),
     /// Ctrl+S over another file of this name.
     Overwrite(String),
     /// Ctrl+L over unsaved changes, with the file to load.
     Discard(String),
-    /// Something told, such as About, with OK alone.
+    /// A message, such as About, with only an OK button.
     Notice,
     /// The condition of a breakpoint, by slot and 1-based line.
     Condition(usize, u32),
@@ -3487,10 +3518,11 @@ fn choose_extra_font(window: &Window, send: std::sync::mpsc::Sender<PathBuf>, to
     }
 }
 
-/// What the menu bar's items need of the emulator and the main window.
-/// `display`, the profile's, is given while a menu is open: View > Window
-/// size then asks the system for the window's display. `editor_room` is
-/// the window the editor shows in, as [`next_editor_size`] takes it.
+/// Returns what the menu bar's items need from the emulator and the main
+/// window. `display`, the profile's display, is given while a menu is open:
+/// View > Window size then asks the system for the window's display.
+/// `editor_room` is the window the editor shows in, in the same form that
+/// [`next_editor_size`] takes.
 fn menu_context(
     machine: &Machine,
     main: &Window,
@@ -3511,8 +3543,8 @@ fn menu_context(
         }
         None => (None, 0),
     };
-    // Which of View > Size's steps look the same, which only an open menu
-    // shows: a trip with the menus closed works nothing out for it.
+    // Which steps of View > Size look the same. Only an open menu shows
+    // this, so an iteration with the menus closed computes nothing for it.
     let same_sizes = match display {
         Some(_) => {
             let settings = &machine.rt.settings;
@@ -3538,9 +3570,10 @@ fn menu_context(
 }
 
 /// Sets the main window to `halves` halves of the profile's `display` in
-/// pixels, as View > Window size does: out of fullscreen first, and back
-/// on the display if the larger window would go past its edge. The menu
-/// bar goes over the screen, so the screen gets the whole multiple.
+/// pixels, the same as View > Window size does: it leaves fullscreen first,
+/// and moves the window back onto the display if the larger window would go
+/// past its edge. The menu bar goes over the screen, so the screen gets the
+/// whole multiple.
 fn set_window_scale(main: &mut Window, settings: &mut Settings, display: (u32, u32), halves: u32) {
     if main.fullscreen_state() != FullscreenType::Off {
         let _ = main.set_fullscreen(false);
@@ -3561,14 +3594,15 @@ fn set_window_scale(main: &mut Window, settings: &mut Settings, display: (u32, u
     }
 }
 
-/// Whether the main window's shape is left as it is: fullscreen or
+/// Whether the main window's shape is left unchanged: fullscreen or
 /// maximized, where the system or the display decides its size.
 fn shape_free(main: &Window) -> bool {
     main.fullscreen_state() != FullscreenType::Off || main.is_maximized()
 }
 
-/// The room the main window has on its display, in window coordinates:
-/// the usable area less the window's borders, where the system says.
+/// The space the main window has on its display, in window coordinates:
+/// the usable area minus the window's borders, where the system reports
+/// them.
 fn main_room(main: &Window) -> Option<(u32, u32)> {
     let usable = main
         .get_display()
@@ -3587,8 +3621,8 @@ fn main_room(main: &Window) -> Option<(u32, u32)> {
 /// the nearest size of that shape once a resize has settled (see
 /// [`window::KeepShape`]). `asked` is whether the shape is asked for now.
 ///
-/// A fullscreen or maximized window is left as it is, and so is what it
-/// asks for: SDL sets the window's size again when the shape asked for
+/// A fullscreen or maximized window is left unchanged, and so is the shape
+/// it asks for: SDL sets the window's size again when the requested shape
 /// changes, which would take it out of fullscreen on some systems.
 fn keep_main_shape(
     main: &mut Window,
@@ -3613,9 +3647,9 @@ fn keep_main_shape(
     }
 }
 
-/// Turns the main window's fullscreen on or off, as View > Fullscreen and
-/// Ctrl+Shift+F11 do, and keeps the choice. Desktop fullscreen: the
-/// display's mode stays as it is.
+/// Turns fullscreen on or off for the main window, for View > Fullscreen
+/// and Ctrl+Shift+F11, and keeps the choice. This is desktop fullscreen:
+/// the display mode is unchanged.
 fn toggle_fullscreen(main: &mut Window, settings: &mut Settings) {
     let on = main.fullscreen_state() == FullscreenType::Off;
     let _ = main.set_fullscreen(on);
@@ -3624,7 +3658,7 @@ fn toggle_fullscreen(main: &mut Window, settings: &mut Settings) {
 
 /// The debugger's keys: Shift+F5 continues and Ctrl+Shift+F5 restarts;
 /// F6 steps into, F7 over and Shift+F6 out; Ctrl+F6 runs to the cursor
-/// and Ctrl+Shift+F6 goes on from it; Shift+F7 sets a breakpoint and
+/// and Ctrl+Shift+F6 continues from it; Shift+F7 sets a breakpoint and
 /// Ctrl+F7 shows or hides the panel.
 fn debug_key(key: Keycode, shift: bool, ctrl: bool) -> Option<Action> {
     Some(match (key, shift, ctrl) {
@@ -3727,7 +3761,7 @@ fn condition_dialog(
     (open, Asking::Condition(slot, line))
 }
 
-/// What the debugger's panel shows of the stopped program.
+/// Gathers what the debugger's panel shows of the stopped program.
 fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
     let calls = machine.calls();
     let call = calls.get(panel.chosen_call(calls.len())).cloned();
@@ -3823,8 +3857,8 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
     }
 }
 
-/// Why and where the program stopped, as the debugger's panel says it,
-/// and whether it was a failure.
+/// Returns the debugger panel's text for why and where the program
+/// stopped, and whether it was a failure.
 fn stop_text(reason: Option<&StopReason>, slot: usize, line: u32) -> (String, bool) {
     let at = format!("{slot}:{line}");
     let text = match reason {
@@ -3846,7 +3880,7 @@ fn stop_text(reason: Option<&StopReason>, slot: usize, line: u32) -> (String, bo
     (text, false)
 }
 
-/// What a right click's menu on the editor or the debugger's panel can do.
+/// What the right-click menu on the editor or the debugger's panel can do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Choice {
     /// Type a new value for a variable shown, by its place in the list.
@@ -3860,10 +3894,10 @@ enum Choice {
     /// Type the condition of the breakpoint on a slot's line.
     Condition(usize, u32),
     RemoveBreakpoint(usize, u32),
-    /// Forget what PERFEND has timed, as RUN does.
+    /// Forget what PERFEND has timed, the same as RUN does.
     ResetPerf,
-    /// Outline a sprite on the screens, or none: one of the
-    /// subprogram's, or the main interpreter's.
+    /// Outline a sprite on the screens, or none: a sprite of the
+    /// subprogram or of the main interpreter.
     Highlight(bool, Option<usize>),
     /// Zoom the GRP tab's page.
     Zoom(grp_view::Zoom),
@@ -3877,8 +3911,8 @@ enum Choice {
     Paste,
 }
 
-/// A right click's menu on the debugger's panel: for a variable, a
-/// watch, or the panel.
+/// Returns the right-click menu on the debugger's panel: for a variable,
+/// a watch, or the panel.
 fn panel_menu(
     machine: &mut Machine,
     panel: &DebugPanel,
@@ -4009,7 +4043,7 @@ fn panel_menu(
     }
 }
 
-/// A right click's menu on the editor: the name at the cursor, the
+/// Returns the right-click menu on the editor: the name at the cursor, the
 /// debugger's commands for its line, and the clipboard.
 fn editor_menu(machine: &mut Machine) -> Vec<(String, bool, Choice)> {
     let paused = machine.paused_at().is_some() && !machine.is_running();
@@ -4060,8 +4094,8 @@ fn editor_menu(machine: &mut Machine) -> Vec<(String, bool, Choice)> {
     items
 }
 
-/// Does what was chosen in a right click's menu, giving the dialog to
-/// show for one that asks something.
+/// Does what was chosen in a right-click menu, and returns the dialog to
+/// show for a choice that asks something.
 #[must_use]
 fn choose(
     choice: Choice,
@@ -4108,8 +4142,8 @@ fn choose(
     None
 }
 
-/// Gives a variable shown in the debugger's panel the value of what was
-/// typed, worked out as a watch.
+/// Sets a variable shown in the debugger's panel to the value of the typed
+/// text, evaluated as a watch.
 fn set_value(
     machine: &mut Machine,
     panel: &DebugPanel,
@@ -4138,22 +4172,22 @@ fn close_bar_on_start(menu: &mut MenuBar, was_running: &mut bool, running: bool)
     *was_running = running;
 }
 
-/// What a trip round the loop ran of the program: see [`run_frames`].
+/// The program frames an iteration of the loop ran: see [`run_frames`].
 struct Frames {
     /// When the frames began, and how long they took.
     began: Instant,
     took: Duration,
     /// Program frames that started: how far `MAINCNT` went.
     started: u32,
-    /// Calls of `Machine::frame` that started none, because the program's
-    /// trip under way kept its frame.
+    /// Calls of `Machine::frame` that started no frame, because the
+    /// iteration of the program's main loop under way kept its frame.
     kept: u32,
 }
 
 impl Frames {
-    /// The trip as the notice for a program slower than real time takes
-    /// it; `watched` is whether the program is not paused and the window
-    /// is shown.
+    /// Returns the iteration in the form that the notice for a program
+    /// slower than real time takes; `watched` is whether the program is not
+    /// paused and the window is shown.
     fn trip(&self, machine: &Machine, watched: bool) -> slow_hint::Trip {
         let settings = &machine.rt.settings;
         let counts = watched
@@ -4172,23 +4206,24 @@ impl Frames {
     }
 }
 
-/// Runs a trip's frames of the program and plays their sound: one frame
-/// unless `paused`, and more if the loop is behind.
+/// Runs the program frames of one iteration of the window's loop and plays
+/// their sound: one frame unless `paused`, and more if the loop is behind.
 ///
-/// Behind by a frame or more, as when drawing takes too long or the
-/// compositor held a present back before vsync was dropped, the program
-/// and its sound catch up, and only the last of these frames is drawn, so
-/// that the game and its music keep time. Those frames run code briefly,
-/// so that catching up does not fall further behind.
+/// When the loop is behind by a frame or more, for example when drawing
+/// takes too long or the compositor held back a present before vsync was
+/// dropped, the program and its sound catch up. Only the last of these
+/// frames is drawn, so that the game and its music keep time. Those frames
+/// run code briefly, so that catching up does not fall further behind.
 ///
-/// A program at its VSYNC runs a whole trip round its main loop if two
-/// trips and a drawing fit in two frames, so that it keeps time, and
-/// otherwise stays there: a part of a trip would only make the frame
-/// drawn next show a half-made scene. That trip has the time a frame
-/// gives, or a trip that a frame holds would be cut short here.
+/// A program at its VSYNC runs a whole iteration of its main loop if two
+/// such iterations and a drawing fit in two frames, so that it keeps time.
+/// Otherwise it stays at its VSYNC: part of such an iteration would only
+/// make the next drawn frame show a half-made scene. That iteration gets
+/// the time a frame gives, or one that fits in a frame would be cut short
+/// here.
 ///
-/// A program whose trips fit a frame catches up a trip round the loop at
-/// a time instead, which leaves drawings out for it.
+/// A program whose main-loop iterations fit a frame instead catches up one
+/// iteration of the window's loop at a time, which skips drawings for it.
 fn run_frames(
     machine: &mut Machine,
     guard: &mut FrameGuard,
@@ -4227,7 +4262,7 @@ fn run_frames(
         skipped += 1;
     }
     let took = began.elapsed();
-    // A call that went on with a kept frame started none.
+    // A call that continued a kept frame started no frame.
     let started = (machine.rt.main_count())
         .wrapping_sub(count_before)
         .min(calls);
@@ -4239,14 +4274,14 @@ fn run_frames(
     }
 }
 
-/// Whether the program waits at its VSYNC and can have a trip round its
-/// main loop in every frame if drawings that cost `draw` are left out, as
-/// many as may be: that many trips as long as its last one, and one
-/// drawing, take no longer than their frames. The last trip's time is no
-/// test by itself: one that was cut and went on after a wait reads longer
-/// than the time a frame gives though it fits in one piece. Only at
-/// unlimited speed, where a frame has a time limit, and for the main
-/// program alone.
+/// Whether the program waits at its VSYNC and can run an iteration of its
+/// main loop in every frame if drawings that cost `draw` are skipped, as
+/// many as may be: that many iterations of its main loop as long as its
+/// last one, plus one drawing, take no longer than their frames. The time
+/// of the last iteration of its main loop alone does not decide it: one
+/// that was cut and continued after a wait reads longer than the time a
+/// frame gives, even though it fits in one piece. Only at unlimited speed,
+/// where a frame has a time limit, and only for the main program.
 fn fits_frame(machine: &Machine, draw: Duration) -> bool {
     let trip = machine.loop_time();
     let frames = pacing::MOST_UNDRAWN + 1;
@@ -4272,7 +4307,7 @@ fn apply_frame_setting(machine: &mut Machine) {
 }
 
 /// The bar's right side: the project, the slot being edited (with `*`
-/// for unsaved changes) or direct mode, and a running or paused program.
+/// for unsaved changes) or DIRECT mode, and a running or paused program.
 fn status_line(machine: &Machine, paused: bool) -> String {
     let project = sb_runtime::confirm::project_label(machine.rt.storage.project());
     let place = if machine.is_editing() {
@@ -4293,9 +4328,9 @@ fn status_line(machine: &Machine, paused: bool) -> String {
     }
 }
 
-/// Ctrl+S's window to save the edited slot, or Ctrl+L's to load into it.
-/// In a `#` project, which takes no files, Ctrl+S says so instead and
-/// asks for no name, as SmileBASIC 4's editor does.
+/// Opens the window of Ctrl+S to save the edited slot, or of Ctrl+L to
+/// load into it. In a `#` project, which takes no files, Ctrl+S says so
+/// instead and asks for no name, the same as SmileBASIC 4's editor does.
 fn open_file_dialog(
     machine: &Machine,
     save: bool,
@@ -4323,7 +4358,7 @@ fn open_file_dialog(
 }
 
 /// F1: the help for the command at the editor's cursor, or at the cursor
-/// of the line typed in direct mode, or its first page away from any
+/// of the line typed in DIRECT mode, or its first page away from any
 /// command.
 fn open_help(
     machine: &mut Machine,
@@ -4369,7 +4404,7 @@ fn copy_selection(
     }
 }
 
-/// Saves the edited slot (Ctrl+S); says how it went.
+/// Saves the edited slot (Ctrl+S) and reports the result.
 fn save_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
     let slot = machine.edited_slot();
     match machine.save_edited(name) {
@@ -4379,7 +4414,7 @@ fn save_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
     }
 }
 
-/// Loads a file into the edited slot (Ctrl+L); says how it went.
+/// Loads a file into the edited slot (Ctrl+L) and reports the result.
 fn load_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
     let slot = machine.edited_slot();
     match machine.load_edited(name) {
@@ -4394,8 +4429,8 @@ fn load_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
 /// The size of a texture's frames and how they are scaled.
 type TextureKind = ((u32, u32), Filter);
 
-/// A texture for frames of `w` x `h` pixels, scaled with `filter`:
-/// XSCREEN's, or the one chosen in the menu.
+/// Makes a texture for frames of `w` x `h` pixels, scaled with `filter`:
+/// XSCREEN's filter, or the one chosen in the menu.
 fn frame_texture<'a>(
     canvas: &Canvas<Window>,
     creator: &'a TextureCreator<WindowContext>,
@@ -4415,26 +4450,27 @@ fn frame_texture<'a>(
     Ok(creator.create_texture_streaming(PixelFormat::ARGB8888, w, h)?)
 }
 
-/// The frame the main window shows this trip, as [`upload_frame`] takes it.
+/// The frame the main window shows in this iteration, as [`upload_frame`]
+/// takes it.
 struct Showing {
-    /// Whether it is the editor's, and its revision.
+    /// Whether it is the editor frame, and its revision.
     revision: (bool, u64),
     /// Its size and the filter it is scaled with.
     kind: TextureKind,
-    /// Where it goes in the window.
+    /// Its place in the window.
     rect: FRect,
     /// The GPU path drew it, so its pixels are not in the framebuffer.
     on_gpu: bool,
-    /// It is scaled as XSCREEN's mode 1 is: see [`SmartFrame`].
+    /// It is scaled like XSCREEN's mode 1: see [`SmartFrame`].
     smart: bool,
     /// The bench asks for that scaling on the CPU.
     cpu_smart: bool,
 }
 
-/// Brings the frame `fb` to where the main window draws it from: makes
+/// Uploads the frame `fb` to the texture the main window draws from: makes
 /// the texture again when the frame's kind changed, sends the pixels when
-/// the texture does not hold this revision, and gets the doubled frame of
-/// XSCREEN's mode 1 ready. Gives the GPU path's own frame when that is the
+/// the texture does not hold this revision, and prepares the doubled frame
+/// of XSCREEN's mode 1. Returns the GPU path's own frame when that is the
 /// one to show.
 fn upload_frame<'a>(
     (texture, texture_kind): (&mut Texture<'a>, &mut TextureKind),
@@ -4475,8 +4511,8 @@ fn upload_frame<'a>(
             changed,
             cpu_smart,
         )?;
-        // Scaling on the CPU needs the frame on the CPU, from now on: this
-        // one is drawn again next time round, once there is no GPU path.
+        // From now on, scaling on the CPU needs the frame on the CPU. This
+        // frame is drawn again next time, once there is no GPU path.
         if on_gpu && textures.smart.on_cpu() {
             eprintln!("SB_GPU: the doubled frame was refused; staying on the CPU");
             paths.turn_off("CPU (doubled frame refused by the driver)");
@@ -4522,7 +4558,7 @@ fn draw_sub_screen<'a>(
         }
         canvas.set_blend_mode(before);
     }
-    // Whatever XSCREEN's mode, as a screen in mode 0 is.
+    // Bilinear regardless of XSCREEN's mode, like a screen in mode 0.
     let kind = ((fb.width(), fb.height()), Filter::Bilinear);
     let sub_view = (paths.sub.as_mut())
         .filter(|_| sub.on_backend)
@@ -4543,8 +4579,8 @@ fn draw_sub_screen<'a>(
     Ok(())
 }
 
-/// The textures frontend() keeps besides the main frame's, and what the
-/// frames' textures hold.
+/// The textures that frontend() keeps besides the main frame texture, and
+/// what the frame textures hold.
 #[derive(Default)]
 struct Held<'a> {
     /// What the main window's texture holds, if anything: whether it is
@@ -4561,20 +4597,20 @@ struct Held<'a> {
     /// The editor's frame in its own window.
     editor: Option<(Texture<'a>, TextureKind)>,
     /// The page the panel's GRP tab shows, in the main window and the
-    /// editor's.
+    /// editor window.
     grp: PageTexture<'a>,
     editor_grp: PageTexture<'a>,
 }
 
 impl Held<'_> {
-    /// The renderer's targets came back empty: the frames go to their
+    /// The renderer's targets came back empty: the frames are sent to their
     /// textures again.
     fn forget_targets(&mut self) {
         (self.main_holds, self.editor_holds) = (None, None);
     }
 
-    /// The renderer let go of every texture: these are made again when
-    /// they are next wanted.
+    /// The renderer released every texture: these are made again when they
+    /// are next needed.
     fn forget_device(&mut self) {
         self.smart = SmartFrame::default();
         (self.panel_screens, self.sub, self.editor) = (None, None, None);
@@ -4584,10 +4620,10 @@ impl Held<'_> {
 
 /// XSCREEN's composite mode 1 on its way to the window. Its mix between
 /// texels is what bilinear sampling gives from a copy of the frame twice as
-/// large made with nearest, which any renderer can do with no shader of
-/// ours: a draw into a texture when the frame changes, and one out. Where
-/// that texture cannot be made, as past an old GPU's largest size, the
-/// frame is scaled on the CPU instead.
+/// large, made with nearest. Any renderer can do this without a shader of
+/// ours: one draw into a texture when the frame changes, and one draw out.
+/// Where that texture cannot be made, for example past the largest size an
+/// old GPU allows, the frame is scaled on the CPU instead.
 #[derive(Default)]
 struct SmartFrame<'a> {
     /// The frame at twice its size, and that size.
@@ -4601,7 +4637,7 @@ struct SmartFrame<'a> {
 }
 
 impl<'a> SmartFrame<'a> {
-    /// Gets the frame `fb`, which `texture` holds, ready to show in `rect`.
+    /// Prepares the frame `fb`, which `texture` holds, to show in `rect`.
     #[allow(clippy::too_many_arguments)]
     fn prepare(
         &mut self,
@@ -4644,7 +4680,8 @@ impl<'a> SmartFrame<'a> {
                 return Ok(());
             }
         }
-        // As SDL rounds the rectangle, so as to fill it with one texel a pixel.
+        // Rounded the same way SDL rounds the rectangle, to fill it with
+        // one texel per pixel.
         let shown = (rect.w.ceil().max(1.0) as u32, rect.h.ceil().max(1.0) as u32);
         let fresh = self.scaled.as_ref().is_none_or(|(_, s)| *s != shown);
         if fresh {
@@ -4678,17 +4715,17 @@ impl<'a> SmartFrame<'a> {
         self.scaled.is_some()
     }
 
-    /// Frees what a frame shown another way has no use for.
+    /// Frees what a frame shown another way does not need.
     fn release(&mut self) {
         (self.doubled, self.scaled) = (None, None);
         self.pixels = Vec::new();
     }
 }
 
-/// Makes the editor's characters a size smaller, back to the largest
-/// after the smallest, as F2 and Ctrl+B do. In the window `room` gives,
-/// as [`editor_layout::next_size`] takes it, sizes that look the same as
-/// the one chosen are skipped.
+/// Makes the editor's characters one size smaller, going back to the
+/// largest after the smallest, for F2 and Ctrl+B. In the window that `room`
+/// gives, as [`editor_layout::next_size`] takes it, sizes that look the
+/// same as the chosen one are skipped.
 fn next_editor_size(machine: &mut Machine, (width, display_h): (u32, f32)) {
     let settings = &mut machine.rt.settings;
     let (font, size) = (settings.editor_font, settings.editor_size);
@@ -4735,7 +4772,7 @@ fn slot_key(key: Keycode) -> Option<usize> {
 }
 
 /// The line editing command of a key with Shift or Ctrl, for the line
-/// typed in direct mode or for INPUT.
+/// typed in DIRECT mode or for INPUT.
 fn line_command(key: Keycode, shift: bool, ctrl: bool) -> Option<u16> {
     use sb_runtime::line::commands::*;
     Some(match (key, shift, ctrl) {
@@ -4750,7 +4787,7 @@ fn line_command(key: Keycode, shift: bool, ctrl: bool) -> Option<u16> {
     })
 }
 
-/// F1 to F5's number, for Ctrl+F1 to F5.
+/// The number of F1 to F5, for Ctrl+F1 to F5.
 fn function_key(key: Keycode) -> Option<usize> {
     Some(match key {
         Keycode::F1 => 1,
@@ -4830,7 +4867,7 @@ mod tests {
         assert_eq!(input_screen(true, true, None, Some(0)), 20);
         assert_eq!(input_screen(false, false, None, Some(1)), 22);
         assert_eq!(input_screen(false, false, Some(3), None), 5);
-        // Each tells the pad's repeat a new screen started.
+        // Each value tells the pad's repeat that a new screen started.
         assert_ne!(input_screen(false, false, None, Some(0)), 2);
     }
 
@@ -4874,8 +4911,8 @@ mod tests {
         assert!(!m.keep_frames);
     }
 
-    /// Ctrl+S in a `#` project tells that it takes no files and asks for
-    /// no name; Ctrl+L there, and Ctrl+S with the setting on, open as ever.
+    /// Ctrl+S in a `#` project says that it takes no files and asks for no
+    /// name. Ctrl+L there, and Ctrl+S with the setting on, open as usual.
     #[test]
     fn ctrl_s_in_a_system_project_is_refused() {
         let dir = std::env::temp_dir().join(format!("sb-main-system-{}", std::process::id()));
@@ -4916,7 +4953,8 @@ mod tests {
         (m, dir)
     }
 
-    /// Whether the screens and sound are as ACLS and SNDSTOP leave them.
+    /// Whether the screens and sound are in the state that ACLS and SNDSTOP
+    /// leave.
     fn tidy(m: &Machine) -> bool {
         m.rt.back_color == 0xFF00_0000 && m.rt.sound.inspect_tracks().is_empty()
     }
@@ -5017,7 +5055,8 @@ mod tests {
             "{console:?}"
         );
         assert_eq!(m.rt.slots[0], "WHILE 1:VSYNC:WEND\n");
-        // The machine works on, and a frame without a panic clears the count.
+        // The machine keeps working, and a frame without a panic clears the
+        // count.
         guard.run(&mut m, &mut toasts, Machine::frame);
         assert_eq!(guard.panics_in_a_row, 0);
         m.run_slot(0);

@@ -1,25 +1,26 @@
-//! What FREEMEM reports: SmileBASIC 4's memory for strings and arrays, less
-//! what the program's values take.
+//! The value FREEMEM reports: SmileBASIC 4's memory for strings and arrays,
+//! minus what the program's values take.
 //!
 //! The sizes follow hardware (TEST57): a block takes its contents rounded
 //! up (64 bytes for an array, 128 for a string) plus a header of 64, and
-//! small contents take nothing. Values are counted as they are now, so
-//! memory a program lets go of is free at once; SmileBASIC 4 frees it only
-//! later.
+//! small contents take nothing. Only the values that exist now are counted,
+//! so memory that a program no longer holds is free immediately. SmileBASIC
+//! 4 frees it only later.
 //!
-//! The same counting makes `Out of memory`. Going through every value for
-//! each allocation would be far too slow, so the sites that make data work
-//! with a running estimate: what was live at the last count plus what has
-//! been made since. It knows nothing of what has been dropped, so it runs
-//! high, and it is never believed: when it says a request may not fit, the
-//! site gives [`ErrorKind::MemoryCheck`] before doing anything, and the VM
-//! counts exactly and runs the instruction again. Only a request that does
-//! not fit that count, or that could not fit in all of memory, is refused.
-//! Small requests do not stop to look; the VM counts at the start of a
-//! slice once enough has been made since the last time, and refuses there
-//! if the program holds more than there is.
+//! The same count decides `Out of memory`. Going through every value for
+//! each allocation would be far too slow, so the sites that allocate data
+//! work with a running estimate: the bytes live at the last count plus the
+//! bytes allocated since. The estimate has no knowledge of what has been
+//! dropped, so it runs high. It is never taken as final: when it says a
+//! request may not fit, the site returns [`ErrorKind::MemoryCheck`] before
+//! doing anything, and the VM counts exactly and runs the instruction again.
+//! Only a request that does not fit that count, or that could not fit in
+//! all of memory, is refused. Small requests do not stop to check. The VM
+//! counts at the start of a slice once enough has been allocated since the
+//! last count, and refuses there if the program holds more than all of
+//! memory.
 //!
-//! A block that gets smaller is a new block too, see [`shrink`].
+//! A block that gets smaller is also a new block; see [`shrink`].
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -29,23 +30,24 @@ use crate::value::{ArrayData, ElemType, Value};
 
 /// FREEMEM right after start-up, which the start-up screen shows too.
 pub const TOTAL: u32 = 134_216_720;
-/// Contents up to these sizes take no memory of their own: characters of
-/// a string, bytes of an array.
+/// Contents up to these sizes take no separate memory: characters of a
+/// string, bytes of an array.
 const SMALL_STRING: usize = 24;
 const SMALL_ARRAY: usize = 64;
-/// What a block takes beside its contents.
+/// The bytes a block takes besides its contents.
 const BLOCK_HEADER: usize = 64;
 
 /// Requests below this size only add to the estimate. Stopping to count
 /// for them could take longer than making them many times over.
 const BIG_REQUEST: usize = 64 * 1024;
-/// How much is made between counts, at the least and at the most for the
-/// number of values a count has to go through.
+/// The bytes allocated between counts. It is at least `MIN_BETWEEN_COUNTS`,
+/// and the part that grows with the number of values a count has to go
+/// through is at most `MOST_BETWEEN_COUNTS_FOR_VALUES`.
 const MIN_BETWEEN_COUNTS: usize = 16 * 1024 * 1024;
 const MOST_BETWEEN_COUNTS_FOR_VALUES: usize = 256 * 1024 * 1024;
 const BETWEEN_COUNTS_PER_VALUE: usize = 256;
 
-/// What a string of `chars` characters takes.
+/// The bytes that a string of `chars` characters takes.
 #[inline]
 pub fn string_bytes(chars: usize) -> usize {
     if chars <= SMALL_STRING {
@@ -58,7 +60,8 @@ pub fn string_bytes(chars: usize) -> usize {
         .saturating_add(BLOCK_HEADER)
 }
 
-/// What an array of `len` elements takes, without a string array's strings.
+/// The bytes that an array of `len` elements takes, without the strings of
+/// a string array.
 #[inline]
 pub fn array_bytes(elem: ElemType, len: usize) -> usize {
     // Strings are held by pointers of 8 bytes.
@@ -75,7 +78,8 @@ pub fn array_bytes(elem: ElemType, len: usize) -> usize {
     }
 }
 
-/// The estimate for one interpreter, which FREEMEM counts on its own.
+/// The estimate for one interpreter. FREEMEM counts each interpreter
+/// separately.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Estimate {
     live: usize,
@@ -91,7 +95,7 @@ thread_local! {
     static MADE: Cell<usize> = const { Cell::new(0) };
     static DUE: Cell<usize> = const { Cell::new(0) };
     // A count has just been made for the instruction about to run again,
-    // so what the estimate says now is the truth.
+    // so the estimate is now exact.
     static EXACT: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -102,7 +106,7 @@ pub fn enter(estimate: Estimate) {
     DUE.set(estimate.due);
 }
 
-/// Ends a slice, giving the estimate to keep.
+/// Ends a slice and returns the estimate to keep.
 pub fn leave() -> Estimate {
     Estimate {
         live: LIVE.get(),
@@ -116,8 +120,8 @@ pub fn count_due() -> bool {
     MADE.get() >= DUE.get()
 }
 
-/// Notes `bytes` made, where nothing can be refused any more or the size
-/// is small.
+/// Records `bytes` as allocated, where nothing can be refused any more or
+/// the size is small.
 #[inline]
 pub fn charge(bytes: usize) {
     if bytes != 0 {
@@ -163,10 +167,10 @@ pub fn grow(old: usize, new: usize) -> Result<()> {
 }
 
 /// A block going from `old` bytes to `new`, by something that has done
-/// nothing yet and can run again: whether it may. A smaller block is a new
-/// one as well, which has to fit while the old one is still held, and each
-/// caller says what happens when it does not. Blocks under [`BIG_REQUEST`]
-/// are always let through.
+/// nothing yet and can run again. Returns whether it may. A smaller block
+/// is also a new block, which has to fit while the old one is still held.
+/// Each caller decides what happens when it does not fit. Blocks under
+/// [`BIG_REQUEST`] are always allowed.
 #[inline]
 pub fn shrink(old: usize, new: usize) -> Result<bool> {
     if new >= old || new < BIG_REQUEST {
@@ -184,7 +188,8 @@ fn big_shrink(new: usize) -> Result<bool> {
     }
 }
 
-/// `needs` has to fit in what is free, which leaves `adds` more live.
+/// `needs` has to fit in the free memory, and then `adds` more bytes are
+/// live.
 #[inline(never)]
 fn big_request(needs: usize, adds: usize) -> Result<()> {
     let exact = EXACT.replace(false);
@@ -202,8 +207,8 @@ fn big_request(needs: usize, adds: usize) -> Result<()> {
     .into())
 }
 
-/// Takes an exact count as the estimate. `then` is that an instruction that
-/// asked for it runs again next.
+/// Takes an exact count as the estimate. `then` means that the instruction
+/// that asked for the count runs again next.
 pub fn counted(tally: &Tally, then: bool) {
     let between = tally
         .values
@@ -235,7 +240,7 @@ pub struct Tally {
 }
 
 impl Tally {
-    /// Leaves an array out, as if counted already.
+    /// Skips an array, as if it were already counted.
     pub fn skip(&mut self, array: &crate::value::ArrayRef) {
         self.seen.insert(array.as_ptr() as usize);
     }
@@ -244,7 +249,8 @@ impl Tally {
         match value {
             Value::Str(s) => {
                 self.values += 1;
-                // No one else holds it: most strings, and much cheaper.
+                // Nothing else holds it, which is true of most strings. This
+                // test is much cheaper than the set.
                 if std::rc::Rc::strong_count(s) == 1 || self.seen.insert(s.as_ptr() as usize) {
                     self.bytes += string_bytes(s.borrow().len());
                 }
@@ -271,7 +277,7 @@ impl Tally {
         }
     }
 
-    /// FREEMEM: what is left.
+    /// FREEMEM: the bytes left.
     pub fn free(&self) -> i32 {
         (TOTAL as usize).saturating_sub(self.bytes) as i32
     }
@@ -429,14 +435,14 @@ mod tests {
     #[test]
     fn shrinking_needs_the_smaller_block_beside_the_old() {
         let mb = 1 << 20;
-        // The same block, or a small one, is never looked at.
+        // The same block, or a small one, is never checked.
         fresh(TOTAL as usize);
         assert!(shrink(4 * mb, 4 * mb).unwrap());
         assert!(shrink(4 * mb, BIG_REQUEST - 64).unwrap());
         // Not known yet: nothing is decided until the count.
         let e = shrink(4 * mb, 4 * mb - 64).unwrap_err();
         assert_eq!(e.kind, ErrorKind::MemoryCheck);
-        // The count says it does not fit: no error, but no.
+        // The count says it does not fit: no error, but the answer is no.
         let tally = Tally {
             bytes: TOTAL as usize - mb,
             ..Tally::default()

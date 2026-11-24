@@ -1,7 +1,8 @@
 //! Where things go in a window, and which pixel a pointer is over: the
 //! display, the program's screen and the editor in the main window, the
-//! emulator's windows over the editor's own, the menus when they go
-//! apart, and the [`Mapping`] from a window's coordinates back to them.
+//! emulator's windows over the editor's own window, the menus when they
+//! are placed apart from the rest of the UI, and the [`Mapping`] from a
+//! window's coordinates back to them.
 
 use crate::{editor_layout, simple_ui};
 use sb_runtime::editor::{Area, EditorSize};
@@ -10,29 +11,29 @@ use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
 use sdl3::render::FRect;
 
-/// SmileBASIC 4's display, in whose pixels `Mouse::display` goes: MOUSE
-/// and TOUCH with their flag 1, and XSUBSCREEN's area.
+/// SmileBASIC 4's display, whose pixels `Mouse::display` uses. MOUSE and
+/// TOUCH with their flag 1, and the area of XSUBSCREEN, are in these pixels.
 pub const SB4_DISPLAY: (u32, u32) = (1280, 720);
 
-/// How a window's pointer positions map to the display's pixels and to
-/// those of the frame shown in `shown`, which has `space` pixels.
+/// The mapping of a window's pointer positions to the display's pixels and
+/// to the pixels of the frame shown in `shown`, which has `space` pixels.
 #[derive(Clone, Copy)]
 pub struct Mapping {
-    /// Pixels to a window coordinate.
+    /// Pixels per window coordinate.
     pub px: f32,
     pub display: FRect,
     pub display_w: u32,
     pub shown: FRect,
     pub space: (u32, u32),
-    /// The menus' top left corner in the window's pixels, where they go
-    /// apart at 1x (see [`menu_place`]); `None` where they are on
-    /// the display.
+    /// The top left corner of the menus in the window's pixels, when they
+    /// are placed apart at 1x (see [`menu_place`]); `None` when they are
+    /// on the display.
     pub menu: Option<(f32, f32)>,
 }
 
 impl Mapping {
-    /// The menu bar's pixel under a window position: the display's, or
-    /// the 1x one of menus apart.
+    /// The pixel of the menu bar under a window position: a pixel of the
+    /// display, or a 1x pixel of menus placed apart.
     pub fn to_menu(self, x: f32, y: f32) -> (i32, i32) {
         match self.menu {
             Some((mx, my)) => (
@@ -69,7 +70,7 @@ impl Mapping {
         )
     }
 
-    /// Where a rectangle of the display, in its own pixels, is on the
+    /// Maps a rectangle of the display, in the display's own pixels, to the
     /// window's canvas.
     pub fn on_window(self, [x, y, w, h]: [f32; 4]) -> FRect {
         let (at, s) = (self.display, self.display.w / self.display_w as f32);
@@ -77,14 +78,14 @@ impl Mapping {
     }
 
     /// This mapping with [`SB4_DISPLAY`] for its display, which the
-    /// program's pointer goes by. On the desktop that is the UI's
-    /// display. The Simple UI's display is the output's size in pixels of
-    /// its own, so there SmileBASIC 4's display is where it would be
-    /// around the screen, which SmileBASIC 4 fits to it: the smallest
-    /// 16:9 rectangle around the screen, centered on it. A screen point
-    /// then has the same coordinates as on SmileBASIC 4, whatever the
-    /// output; where the output cuts the display off, the pointer cannot
-    /// reach its edges.
+    /// program's pointer uses. On the desktop that is the UI's display.
+    /// The Simple UI's display is the size of the output, in its own
+    /// pixels, so there SmileBASIC 4's display is where it would be around
+    /// the screen, which SmileBASIC 4 fits to it: the smallest 16:9
+    /// rectangle around the screen, centered on it. A screen point then has
+    /// the same coordinates as on SmileBASIC 4, regardless of the output.
+    /// Where the output cuts the display off, the pointer cannot reach its
+    /// edges.
     pub fn lcd(self, simple_ui: bool) -> Mapping {
         let display = match simple_ui {
             true => around(self.shown),
@@ -97,8 +98,8 @@ impl Mapping {
         }
     }
 
-    /// The window coordinates of the middle of the screen's or the
-    /// editor's pixel (x, y), which [`Mapping::to_screen`] maps back.
+    /// The window coordinates of the middle of pixel (x, y) of the screen
+    /// or the editor, which [`Mapping::to_screen`] maps back.
     pub fn screen_to_window(self, x: i32, y: i32) -> (f32, f32) {
         let (shown, (w, h)) = (self.shown, self.space);
         (
@@ -108,8 +109,8 @@ impl Mapping {
     }
 }
 
-/// The smallest rectangle of [`SB4_DISPLAY`]'s shape around `shown`,
-/// centered on it.
+/// The smallest rectangle with the shape of [`SB4_DISPLAY`] around
+/// `shown`, centered on it.
 fn around(shown: FRect) -> FRect {
     let (w, h) = (SB4_DISPLAY.0 as f32, SB4_DISPLAY.1 as f32);
     let scale = (shown.w / w).max(shown.h / h);
@@ -122,18 +123,18 @@ fn around(shown: FRect) -> FRect {
     )
 }
 
-/// Where the display (emulator UI coordinates) goes in a window of
-/// `out_w` x `out_h` pixels: scaled to fit, centered across and at the
-/// top, so the menu bar stays at the window's top in a narrow window.
+/// The rectangle of the display (emulator UI coordinates) in a window of
+/// `out_w` x `out_h` pixels: scaled to fit, centered horizontally and at
+/// the top, so the menu bar stays at the window's top in a narrow window.
 pub fn display_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> FRect {
     let scale = (out_w as f32 / width as f32).min(out_h as f32 / height as f32);
     let (w, h) = (width as f32 * scale, height as f32 * scale);
     FRect::new((out_w as f32 - w) / 2.0, 0.0, w, h)
 }
 
-/// Where the display goes on the editor's own window for the emulator's
-/// windows over it: centered, at the UI's scale `ui` or the largest whole
-/// number below it that fits, or else scaled down to fit.
+/// The rectangle of the display on the editor's own window, for the
+/// emulator's windows over it: centered, at the UI's scale `ui` or the
+/// largest whole number below it that fits, or else scaled down to fit.
 pub fn windows_rect((w, h): (u32, u32), (out_w, out_h): (u32, u32), ui: u32) -> FRect {
     let fits = (out_w / w.max(1)).min(out_h / h.max(1)).min(ui);
     let scale = match fits {
@@ -150,12 +151,12 @@ pub fn from_corner((w, h): (u32, u32)) -> FRect {
     FRect::new(0.0, 0.0, w as f32, h as f32)
 }
 
-/// Where the screen goes in a window `out_w` pixels wide whose display
-/// is `out_h` high: centered in the display, at XSCREEN's aspect ratio,
-/// and scaled to fit, in every composite mode. The sharp choice in View >
-/// Screen filter, `screen_filter`'s own Nearest, keeps to whole factors,
-/// which SmileBASIC 4 does not do, where the screen fits once; in a
-/// smaller window it is scaled down to fit, as the other choices are.
+/// The rectangle of the screen in a window `out_w` pixels wide whose
+/// display is `out_h` high: centered in the display, at XSCREEN's aspect
+/// ratio, and scaled to fit, in every composite mode. The sharp choice in
+/// View > Screen filter, Nearest in `screen_filter` itself, keeps to whole
+/// factors where the screen fits once, which SmileBASIC 4 does not do. In
+/// a smaller window it is scaled down to fit, like the other choices.
 pub fn screen_rect(
     mode: &ScreenMode,
     screen_filter: Option<Filter>,
@@ -173,10 +174,11 @@ pub fn screen_rect(
     FRect::new((out_w as f32 - w) / 2.0, (out_h - h) / 2.0, w, h)
 }
 
-/// Where the screen goes, as [`screen_rect`] says, and the filter it is
-/// scaled with: View > Screen filter's on the desktop. The Simple UI
-/// always fits the screen to the display and has a filter setting of its
-/// own, as its display seldom holds the screen a whole number of times.
+/// The rectangle of the screen, as [`screen_rect`] gives it, and the
+/// filter it is scaled with: the filter of View > Screen filter on the
+/// desktop. The Simple UI always fits the screen to the display and has
+/// its own filter setting, because its display seldom holds the screen a
+/// whole number of times.
 pub fn screen_place(
     mode: &ScreenMode,
     settings: &Settings,
@@ -191,8 +193,8 @@ pub fn screen_place(
     }
     let chosen = settings.screen_filter;
     let rect = screen_rect(mode, chosen, out_w, out_h);
-    // Nearest would leave out whole rows and columns of a screen shrunk
-    // to fit a small window.
+    // Nearest would drop whole rows and columns of a screen shrunk to fit
+    // a small window.
     match chosen.unwrap_or(mode.filter) {
         Filter::Nearest if rect.h < mode.height as f32 => (rect, Filter::Bilinear),
         filter => (rect, filter),
@@ -200,19 +202,19 @@ pub fn screen_place(
 }
 
 /// Whether the desktop's 1280x720 display, at `display` in a window
-/// `out_h` pixels high, leaves room below it: in a window narrower than
-/// 16:9, where it is scaled to the window's width at its top. Elsewhere
-/// it fills the window's height, give or take rounding.
+/// `out_h` pixels high, leaves room below it. It does in a window narrower
+/// than 16:9, where it is scaled to the window's width at its top. In
+/// other windows it fills the window's height, except for rounding.
 fn room_below(display: FRect, out_h: u32) -> bool {
     display.y + display.h + 0.5 < out_h as f32
 }
 
 /// The height the desktop places the program's screen in, from the top
 /// of a window `out_h` pixels high whose display is at `display`: the
-/// whole window's. Where the display fills the window's height, the
-/// display's, which differs from the window's only by rounding: that
-/// keeps the frames in such windows as they were when the screen was
-/// confined to the display.
+/// height of the whole window. Where the display fills the window's
+/// height, it is the height of the display, which differs from the window
+/// height only by rounding. That keeps the frames in such windows the same
+/// as when the screen was confined to the display.
 pub fn screen_height(display: FRect, out_h: u32) -> f32 {
     match room_below(display, out_h) {
         true => out_h as f32,
@@ -220,11 +222,11 @@ pub fn screen_height(display: FRect, out_h: u32) -> f32 {
     }
 }
 
-/// How far down the desktop's UI goes, in its own pixels, in which the
-/// display at `display` is `display_h` high: to the bottom of a window
-/// `out_h` pixels high. More than the display only where it leaves room
-/// below, where the screen, the editor, the debugger's panel, the
-/// notices and the program's DIALOG go too.
+/// The height of the desktop's UI, in its own pixels, in which the display
+/// at `display` is `display_h` high. It reaches the bottom of a window
+/// `out_h` pixels high. It is more than the display only where the display
+/// leaves room below. The screen, the editor, the debugger's panel, the
+/// notices and the program's DIALOG use that room too.
 pub fn ui_height(display: FRect, display_h: u32, out_h: u32) -> u32 {
     if !room_below(display, out_h) || display.h <= 0.0 {
         return display_h;
@@ -233,10 +235,10 @@ pub fn ui_height(display: FRect, display_h: u32, out_h: u32) -> u32 {
     (below.floor() as u32).max(display_h)
 }
 
-/// Where the desktop shows the screen of `mode` in a window of `out`
-/// pixels whose display is at `display`, and the filter it is scaled
-/// with: centered in the whole window, at the largest size View > Screen
-/// filter allows (see [`screen_place`]).
+/// The rectangle where the desktop shows the screen of `mode` in a window
+/// of `out` pixels whose display is at `display`, and the filter it is
+/// scaled with. The screen is centered in the whole window, at the largest
+/// size View > Screen filter allows (see [`screen_place`]).
 pub fn desktop_screen_place(
     mode: &ScreenMode,
     settings: &Settings,
@@ -248,15 +250,15 @@ pub fn desktop_screen_place(
 }
 
 /// Where the main window's menu bar, its menus and its context menus go
-/// apart from the rest of the UI: at their own size, 1x, from the
-/// display's top left corner, with `size` pixels of room down to the
-/// window's bottom. That is in a window whose display is scaled below
-/// 1x, as 640x480 scales it to 0.5x, which would draw them shrunk and
-/// blurred. `None` where the display's scale is 1x or more: they are
-/// scaled with the display there, as the rest of the UI is.
+/// when they are placed apart from the rest of the UI: at their own size,
+/// 1x, from the display's top left corner, with `size` pixels of room down
+/// to the window's bottom. That happens in a window whose display is
+/// scaled below 1x, which would draw them shrunk and blurred; 640x480, for
+/// example, scales it to 0.5x. `None` where the display's scale is 1x or
+/// more: there they are scaled with the display, like the rest of the UI.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MenuPlace {
-    /// The bar's top left corner on the window, in its pixels.
+    /// The bar's top left corner on the window, in the window's pixels.
     pub at: (f32, f32),
     pub size: (u32, u32),
 }
@@ -268,8 +270,8 @@ impl MenuPlace {
     }
 }
 
-/// See [`MenuPlace`]: for a window of `out` pixels whose display of
-/// `display_w` pixels across is at `display`.
+/// See [`MenuPlace`]: for a window of `out` pixels whose display,
+/// `display_w` pixels wide, is at `display`.
 pub fn menu_place(display: FRect, display_w: u32, out: (u32, u32)) -> Option<MenuPlace> {
     if display.w + 0.5 >= display_w as f32 {
         return None;
@@ -280,9 +282,9 @@ pub fn menu_place(display: FRect, display_w: u32, out: (u32, u32)) -> Option<Men
     Some(MenuPlace { at, size: (w, h) })
 }
 
-/// How many of the window's pixels a pixel of the menu bar takes: 1
-/// where it goes apart (see [`menu_place`]), the display's scale
-/// otherwise.
+/// The number of window pixels that a pixel of the menu bar takes: 1
+/// where the menu bar is placed apart (see [`menu_place`]), the display's
+/// scale otherwise.
 pub fn menu_scale(display: FRect, display_w: u32, out: (u32, u32)) -> f32 {
     match menu_place(display, display_w, out) {
         Some(_) => 1.0,
@@ -290,10 +292,11 @@ pub fn menu_scale(display: FRect, display_w: u32, out: (u32, u32)) -> f32 {
     }
 }
 
-/// The main window's editor, laid out as in the editor's own window (see
-/// [`crate::editor_layout`]): its frame, the area, fills the window from
-/// its top left corner, and each of its pixels is `zoom` pixels of the
-/// window square, a whole number, so the dot fonts stay sharp.
+/// The main window's editor, laid out the same as in the editor's own
+/// window (see [`crate::editor_layout`]). Its frame, the area, fills the
+/// window from its top left corner, and each of its pixels is a square of
+/// `zoom` by `zoom` window pixels, where `zoom` is a whole number, so the
+/// dot fonts stay sharp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fill {
     pub zoom: u32,
@@ -301,7 +304,7 @@ pub struct Fill {
 }
 
 impl Fill {
-    /// Where the frame goes on the window: from its top left corner,
+    /// The rectangle of the frame on the window: from its top left corner,
     /// past its right and bottom edges by less than a pixel of the frame.
     pub fn rect(self) -> FRect {
         let (w, h) = self.area.size;
@@ -310,10 +313,10 @@ impl Fill {
 }
 
 /// The main window's editor in a window of `out` pixels whose display is
-/// at `display`, for the editor's `font` at F2's `size`, under a menu bar
+/// at `display`, for `look`, the editor's font and F2's size, under a menu bar
 /// `bar` pixels of the window high. The display's height sets the zoom,
-/// as the desktop's scale does in the editor's own window: the UI is
-/// scaled with the display here.
+/// the same as the desktop's scale does in the editor's own window: the
+/// UI is scaled with the display here.
 pub fn editor_fill(
     display: FRect,
     out: (u32, u32),
@@ -327,10 +330,11 @@ pub fn editor_fill(
 
 /// Where the focus border's `rect`, in [`SB4_DISPLAY`] pixels, goes: the
 /// rectangle, and the window position and scale that place its units. The
-/// whole display, the main interpreter's, covers `main`'s display, which is
-/// `display_h` UI pixels high, down to `ui_h`, where the screen goes too
-/// (see [`ui_height`]); a subprogram's screen goes where it is drawn, on
-/// SmileBASIC 4's display (`lcd`, see [`Mapping::lcd`]).
+/// border of the whole display belongs to the main interpreter. It covers
+/// the display of `main`, which is `display_h` UI pixels high, down to
+/// `ui_h`, where the screen goes too (see [`ui_height`]). The border of a
+/// subprogram's screen goes where that screen is drawn, on SmileBASIC 4's
+/// display (`lcd`, see [`Mapping::lcd`]).
 pub fn border_place(
     rect: [i32; 4],
     main: Mapping,
@@ -353,10 +357,11 @@ pub fn border_place(
     }
 }
 
-/// Where the screen, shown at `rect` in the window, is on the UI of
-/// `ui_w` x `ui_h` that `display` shows, as x, y, width and height, for
-/// what is drawn on the UI over the screen, and what to clip that to: the
-/// screen's part of a UI `bottom` high.
+/// Returns the rectangle of the screen, shown at `rect` in the window, on
+/// the UI of `ui_w` x `ui_h` that `display` shows, as x, y, width and
+/// height, for anything drawn on the UI over the screen. Also returns the
+/// rectangle to clip that drawing to: the part of a UI `bottom` high that
+/// the screen covers.
 pub fn screen_on_ui(
     rect: FRect,
     display: FRect,
@@ -386,7 +391,7 @@ mod tests {
     #[test]
     fn the_screen_on_the_ui_follows_the_display() {
         // A display of 640x360 at (100, 0) showing a UI of 1280x720, and a
-        // screen that fills it but for bars of 20 at its sides.
+        // screen that fills it except for bars of 20 at its sides.
         let display = FRect::new(100.0, 0.0, 640.0, 360.0);
         let rect = FRect::new(120.0, 0.0, 600.0, 360.0);
         let (at, clip) = screen_on_ui(rect, display, (1280, 720), 700);
@@ -414,8 +419,8 @@ mod tests {
         assert_eq!(box_of(sharp), (140.0, 60.0, 1000.0, 600.0));
         let sharp = screen_rect(&mode(400, 240, None), Some(Filter::Bilinear), 1000, 720.0);
         assert_eq!(box_of(sharp), (0.0, 60.0, 1000.0, 600.0));
-        // A screen larger than the window is scaled down to fit it, as on
-        // a 640x480 output, where the display is 640x360.
+        // A screen larger than the window is scaled down to fit it, for
+        // example on a 640x480 output, where the display is 640x360.
         let large = |w, h| screen_rect(&mode(w, h, None), Some(Filter::Nearest), 640, 360.0);
         assert_eq!(box_of(large(640, 480)), (80.0, 0.0, 480.0, 360.0));
         assert_eq!(box_of(large(1280, 720)), (0.0, 0.0, 640.0, 360.0));
@@ -439,7 +444,7 @@ mod tests {
             let (rect, filter) = screen_place(mode, &settings(chosen), simple_ui, out.0, display.h);
             (box_of(rect), filter)
         };
-        // Whatever the filter, it fits at 1.6 times.
+        // With any filter, it fits at 1.6 times.
         for chosen in SimpleUiFilter::ALL {
             assert_eq!(place(&mode, chosen, true).0, (0.0, 48.0, 640.0, 384.0));
         }
@@ -456,14 +461,14 @@ mod tests {
             Filter::Bilinear
         );
         // On the desktop the sharp choice keeps to whole factors, and the
-        // Simple UI's setting is not looked at.
+        // Simple UI's setting is ignored.
         let desktop = ((120.0, 120.0, 400.0, 240.0), Filter::Nearest);
         for chosen in SimpleUiFilter::ALL {
             assert_eq!(place(&mode, chosen, false), desktop);
         }
         // On the desktop at 640x480 the display is 640x360, and a screen
-        // shrunk to fit it is scaled smoothly, as Nearest would leave rows
-        // out.
+        // shrunk to fit it is scaled smoothly, because Nearest would drop
+        // rows.
         let tall = ScreenMode::new(640, 480);
         let (rect, filter) =
             screen_place(&tall, &settings(SimpleUiFilter::Auto), false, 640, 360.0);
@@ -485,7 +490,7 @@ mod tests {
         let large = ScreenMode::new(1280, 720);
         let half = ((0.0, 60.0, 640.0, 360.0), Filter::Bilinear);
         assert_eq!(place(&large, SimpleUiFilter::Auto, true), half);
-        // The UI's size leaves the program's screen as it is.
+        // The UI size leaves the program's screen unchanged.
         let large_ui = simple_ui::ui_size(out, SimpleUiSize::Large);
         assert_eq!(large_ui, (320, 240));
         let large_display = simple_ui::display_rect(large_ui, out, SimpleUiSize::Large);
@@ -601,7 +606,7 @@ mod tests {
             place(1280, 720, NEAREST, (720, 720)),
             ((0.0, 157.5, 720.0, 405.0), Bilinear)
         );
-        // Bilinear fits, and Program (XSCREEN) does with XSCREEN's filter.
+        // Bilinear fits, and so does Program (XSCREEN), with XSCREEN's filter.
         assert_eq!(
             place(400, 240, BILINEAR, (640, 480)),
             ((0.0, 48.0, 640.0, 384.0), Bilinear)
@@ -680,9 +685,9 @@ mod tests {
     fn the_editor_fills_the_window_at_a_whole_zoom() {
         use EditorSize::{Large, Medium, Small, Tiny};
         use FontSize::{Large as F16, Small as F8};
-        // The default, Medium with 16-pixel characters: 1x in each, as
-        // its 28 rows take 497 pixels and the displays are 360 to 576
-        // high. 40 columns on 640x480, 30 rows under the bar.
+        // The default, Medium with 16-pixel characters: 1x in each,
+        // because its 28 rows take 497 pixels and the displays are 360 to
+        // 576 high. 40 columns on 640x480, 30 rows under the bar.
         assert_eq!(fill((640, 480), F16, Medium), (1, (640, 480), 24));
         assert_eq!(fill((800, 600), F16, Medium), (1, (800, 600), 24));
         assert_eq!(fill((1024, 768), F16, Medium), (1, (1024, 768), 24));
@@ -873,7 +878,7 @@ mod tests {
         assert_eq!(rect((720, 720)), Some(((0.0, 0.0), (720, 720))));
         assert_eq!(rect((640, 360)), Some(((0.0, 0.0), (640, 360))));
         assert_eq!(rect((1279, 720)), Some(((0.0, 0.0), (1279, 720))));
-        // Wider than 16:9: within the display, centered across.
+        // Wider than 16:9: within the display, centered horizontally.
         assert_eq!(rect((1000, 500)), Some(((56.0, 0.0), (888, 500))));
         assert_eq!(menu_scale(display((640, 480)), 1280, (640, 480)), 1.0);
         // Nothing at all.
@@ -961,7 +966,7 @@ mod tests {
                             ),
                         };
                         let frame = fill.then_some(space);
-                        // On a Retina display, two pixels to a coordinate.
+                        // On a Retina display, two pixels per coordinate.
                         for px in [1.0, 2.0] {
                             let map = Mapping {
                                 px,
@@ -995,8 +1000,8 @@ mod tests {
                 }
             }
         }
-        // A 4:3 screen in a 640x480 window: the window's pixel is the
-        // screen's.
+        // A 4:3 screen in a 640x480 window: each window pixel is a screen
+        // pixel.
         let mode = ScreenMode::new(640, 480);
         let (shown, _) =
             desktop_screen_place(&mode, &with(NEAREST), (640, 480), display((640, 480)));
@@ -1033,8 +1038,9 @@ mod tests {
 
     #[test]
     fn the_focus_border_covers_the_display_or_the_subprograms_screen() {
-        // On the desktop the main interpreter's goes down to the UI's
-        // height, and a subprogram's stays where XSUBSCREEN put it.
+        // On the desktop the main interpreter's border goes down to the
+        // UI's height, and a subprogram's border stays where XSUBSCREEN
+        // put it.
         let out = (1280, 720);
         let mode = ScreenMode::new(400, 240);
         let map = Mapping {
@@ -1050,8 +1056,9 @@ mod tests {
         assert_eq!(whole, ([0, 0, 1280, 960], (0.0, 0.0), (1.0, 1.0)));
         let sub = [640, 0, 640, 360];
         assert_eq!(border_place(sub, map, lcd, 720, 960).0, sub);
-        // In the Simple UI a subprogram's goes on SmileBASIC 4's display,
-        // where its screen is drawn, whatever the UI's own display.
+        // In the Simple UI a subprogram's border goes on SmileBASIC 4's
+        // display, where its screen is drawn, regardless of the UI's own
+        // display.
         let mode = ScreenMode::new(640, 360);
         let map = simple_map((640, 480), &mode);
         let lcd = map.lcd(true);
@@ -1066,7 +1073,7 @@ mod tests {
         assert!((got.0 - want.0).abs() < 0.01, "{got:?} {want:?}");
         assert!((got.1 - want.1).abs() < 0.01, "{got:?} {want:?}");
         assert!((got.2 - want.2).abs() < 0.01, "{got:?} {want:?}");
-        // The main interpreter's covers the UI's display.
+        // The main interpreter's border covers the UI's display.
         let (r, origin, (sx, _)) = border_place([0, 0, 1280, 720], map, lcd, 480, 480);
         assert_eq!(r, [0, 0, map.display_w as i32, 480]);
         assert_eq!(origin, (map.display.x, map.display.y));
@@ -1135,7 +1142,8 @@ mod tests {
                 let mode = ScreenMode::new(w, h);
                 let map = simple_map(out, &mode);
                 let lcd = map.lcd(true);
-                // Where SmileBASIC 4 shows the screen on its display.
+                // The rectangle where SmileBASIC 4 shows the screen on its
+                // display.
                 let sb4 = screen_rect(&mode, None, 1280, 720.0);
                 let corners = [
                     (0, 0),

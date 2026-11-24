@@ -1,11 +1,11 @@
-//! The sub interpreter, which runs SUBRUN's program beside the main one
-//! with screens, sprites, sounds and program slots of its own. Its screen
-//! shows over the main one where XSUBSCREEN puts it, and whichever of the
-//! two has the focus gets the controls and the keyboard.
+//! The sub interpreter, which runs SUBRUN's program at the same time as
+//! the main one, with its own screens, sprites, sounds and program slots.
+//! Its screen shows over the main one where XSUBSCREEN puts it, and the
+//! interpreter that has the focus gets the controls and the keyboard.
 //!
 //! The commands that reach across, such as ENVLOAD and ENVSTAT, run on
-//! [`Linked`], which hands the sub interpreter's calls to its runtime
-//! with the main one at hand.
+//! [`Linked`], which passes the sub interpreter's calls to its runtime
+//! and gives them access to the main one.
 
 use std::rc::Rc;
 
@@ -18,7 +18,7 @@ use crate::graphics::PAGES;
 use crate::runtime::{COMMANDS, Command, Runtime, SLOTS};
 use crate::sprites::{DEFS, Sprites};
 
-/// What the main interpreter is doing, as ENVSTAT gives it to the sub
+/// The state of the main interpreter, as ENVSTAT returns it to the sub
 /// interpreter.
 pub mod status {
     pub const DIRECT: i32 = 0;
@@ -29,8 +29,8 @@ pub mod status {
 }
 
 impl Runtime {
-    /// A runtime for the sub interpreter, with this one's font, preset
-    /// sprites, sounds, settings and storage, and nothing else of its.
+    /// A runtime for the sub interpreter, with the font, preset sprites,
+    /// sounds, settings and storage of this one, and nothing else from it.
     pub(crate) fn new_sub(&self) -> Runtime {
         let mode = self.startup_mode();
         let mut rt = Runtime::new(mode.width, mode.height, self.font.clone());
@@ -54,8 +54,8 @@ impl Runtime {
     }
 
     /// ENVFOCUS, ENVLOAD, ENVSAVE, ENVSTAT, ENVINPUT$, ENVPROJECT, PUSHKEY,
-    /// CLIPBOARD and HELPINFO OUT on the sub interpreter, which reach the main one, or
-    /// `None` for a call that is the sub interpreter's own.
+    /// CLIPBOARD and HELPINFO OUT on the sub interpreter, which reach the
+    /// main one. `None` for a call that the sub interpreter handles itself.
     fn linked_command(
         &mut self,
         main: &mut Runtime,
@@ -66,8 +66,8 @@ impl Runtime {
         let int = Value::Int;
         let result = match (command, want, args) {
             (Command::Envstat, Want::Value, []) => Ok(vec![int(main.env_status)]),
-            // A stopped program, by STOP or an error, can no longer go
-            // on.
+            // A program stopped by STOP or an error can no longer
+            // continue.
             (Command::Envstat, Want::Outs(0), [s]) => s.to_int().and_then(|s| match s {
                 0 => {
                     if matches!(main.env_status, status::PAUSED | status::ERROR) {
@@ -83,7 +83,7 @@ impl Runtime {
                 int(main.running_slot.unwrap_or(0) as i32),
                 int(main.edit_slot as i32),
             ]),
-            // While the editor shows, nothing of the last error.
+            // While the editor shows, zeros instead of the last error.
             (Command::Envstat, Want::Outs(6), []) => {
                 let mut out = vec![int(main.env_status)];
                 match main.env_status {
@@ -122,12 +122,13 @@ impl Runtime {
                 _,
             ) => Ok(vec![]),
             // The subprogram's SNDMVOL checks its arguments, then does
-            // nothing: the main program's sets the level of both.
+            // nothing: the SNDMVOL of the main program sets the level of
+            // both.
             (Command::Sndmvol, Want::Outs(0), [_] | [_, _]) => {
                 crate::snd::sndmvol_args(args).map(|_| vec![])
             }
             // The keys go to the interpreter with the focus, so that a
-            // subprogram can type into the main one's direct mode.
+            // subprogram can type into the main one's DIRECT mode.
             (Command::Pushkey, Want::Outs(0), [_]) if !self.focus => {
                 if !self.frame_wait_over() {
                     if let Err(e) = main.pushkey(&args[0]) {

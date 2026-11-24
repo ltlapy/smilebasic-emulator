@@ -64,7 +64,7 @@ const EXECUTABLE: Source = Source {
     paths: &["main"],
 };
 
-/// What [`import`] did.
+/// The result of [`import`].
 #[derive(Debug, Default)]
 pub struct Imported {
     /// The source of each copied resource.
@@ -111,7 +111,8 @@ fn read(path: &Path) -> Result<Vec<u8>, ImportError> {
 }
 
 /// Finds a file in the RomFS or ExeFS directories. Later directories win,
-/// so an update's can be listed after the base game's.
+/// so the directories of an update can be listed after those of the base
+/// game.
 fn locate(source: &Source, dirs: &[PathBuf]) -> Option<PathBuf> {
     dirs.iter().rev().find_map(|root| {
         source
@@ -230,7 +231,7 @@ const OUTPUTS: [&str; 8] = [
 
 /// How many times to try the rename, and how long to wait between tries.
 /// On Windows an antivirus or indexer can hold a file it just saw written
-/// for a moment, and the rename fails until it lets go.
+/// for a moment, and the rename fails until it releases the file.
 const RENAME_TRIES: u32 = 5;
 const RENAME_WAIT: Duration = Duration::from_millis(80);
 

@@ -178,8 +178,8 @@ impl ColorWindow {
         }
     }
 
-    /// Up and Down choose a color, Backspace takes back a digit, Enter
-    /// ends typing, and Esc drops what is typed or closes the window.
+    /// Up and Down choose a color, Backspace deletes a digit, Enter ends
+    /// typing, and Esc discards the typed digits or closes the window.
     pub fn key(&mut self, key: Keycode) -> Outcome {
         match key {
             Keycode::Up => self.select(self.selected.saturating_sub(1)),
@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(p, PRESETS[1].1);
         w.text("Z9", &mut p);
         assert_eq!(p[Part::Numeric], 0xFF12_ACD9);
-        // Down moves on; Esc closes once nothing is being typed.
+        // Down selects the next color; Esc closes once nothing is typed.
         w.key(Keycode::Down);
         w.text("00FF00", &mut p);
         assert_eq!(p[Part::String], 0xFF00_FF00);

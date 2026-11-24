@@ -1,5 +1,6 @@
-//! A host with a few commands of its own, standing in for the runtime's, so
-//! that tests see host calls made fused and one instruction at a time alike.
+//! A host that defines a few commands, standing in for the runtime's
+//! commands, so that tests see host calls made fused and one instruction at
+//! a time the same way.
 
 use sb_core::bytecode::{Compiled, Want};
 use sb_core::error::{Error, ErrorKind, Result};
@@ -8,8 +9,8 @@ use sb_core::host::{Exec, Host, TextHost};
 use sb_core::value::Value;
 use sb_core::vm::Vm;
 
-/// How many times native code ran in `vm`'s running program: 0 without
-/// the `jit` feature.
+/// The number of times native code ran in the running program of `vm`: 0
+/// without the `jit` feature.
 #[allow(dead_code)]
 pub fn native_runs(vm: &Vm) -> u64 {
     #[cfg(feature = "jit")]
@@ -28,7 +29,7 @@ pub fn native_runs(vm: &Vm) -> u64 {
 /// - `GET()` gives a count that goes up by one with each call, and `GET N`
 ///   adds N to it; as `GET OUT X` it gives the count too.
 /// - `PAIR A OUT B,C` gives A+1 and A*2.
-/// - `HOLD` waits a frame on every other call, as a confirmation does.
+/// - `HOLD` waits a frame on every other call, like a confirmation dialog.
 /// - `BAD()` gives no value, which the VM refuses.
 /// - `NOTE$()` gives a new string each call.
 ///
@@ -138,11 +139,11 @@ impl Host for CmdHost {
     }
 }
 
-/// Checks each entry's [`sb_core::fuse::Fast::need`] against the locals its
-/// operation and chain name, found apart from the fuser's own list of them:
-/// in what `Debug` prints, where a local is a `Var` of 0x8000 or more. The
-/// VM reads an entry's places unchecked once it has compared this with the
-/// running DEF's variables.
+/// Checks each entry's [`sb_core::fuse::Fast::need`] against the locals that
+/// its operation and chain name. They are found separately from the fuser's
+/// own list: in the `Debug` output, where a local is a `Var` of 0x8000 or
+/// more. The VM reads the places of an entry unchecked once it has compared
+/// this need with the variables of the running DEF.
 #[allow(dead_code)]
 pub fn check_needs(program: &Compiled, source: &str) {
     for (pc, f) in program.fast.iter().enumerate() {

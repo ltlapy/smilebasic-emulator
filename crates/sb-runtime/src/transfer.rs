@@ -17,12 +17,12 @@ pub const SB4_WORKSPACE: &str = "###";
 const IMPORTED_WORKSPACE: &str = "WORKSPACE";
 const JPEG_MAGIC: &[u8] = &[0xFF, 0xD8];
 
-/// What an export or import did.
+/// The result of an export or import.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
     /// Files written, not counting the metadata.
     pub written: usize,
-    /// Files left out, with why.
+    /// Files skipped, with the reason.
     pub skipped: Vec<(String, String)>,
 }
 
@@ -59,16 +59,16 @@ pub fn import_name(folder: &Path) -> String {
     }
 }
 
-/// A file of the emulator's as SmileBASIC 4.4.9 writes that type. A file
-/// already in SmileBASIC 4's container is kept as it is.
+/// An emulator file in the form SmileBASIC 4.4.9 writes for that type. A
+/// file already in SmileBASIC 4's container is kept unchanged.
 pub fn export_file(kind: FileKind, bytes: &[u8], date: Date) -> Result<Vec<u8>, String> {
     if sbfile::is_container(bytes) && sbfile::parse(bytes).is_ok() {
         return Ok(bytes.to_vec());
     }
     Ok(match kind {
         // SAVEV's text files are compressed, with 0 at 0x06, but the
-        // emulator cannot tell them from programs, so every text file goes
-        // as a program.
+        // emulator cannot tell them from programs, so every text file is
+        // exported as a program.
         FileKind::Txt => {
             std::str::from_utf8(bytes).map_err(|_| "not UTF-8 text")?;
             sbfile::container(Kind::Text, usage::PROGRAM, date, bytes, false)
@@ -95,8 +95,8 @@ pub fn export_file(kind: FileKind, bytes: &[u8], date: Date) -> Result<Vec<u8>, 
     })
 }
 
-/// A file of SmileBASIC 4's as the emulator saves that type. A file that
-/// is not in SmileBASIC 4's container is kept as it is.
+/// A SmileBASIC 4 file in the form the emulator saves for that type. A file
+/// that is not in SmileBASIC 4's container is kept unchanged.
 pub fn import_file(kind: FileKind, bytes: &[u8]) -> Result<Vec<u8>, String> {
     if !sbfile::is_container(bytes) {
         return Ok(bytes.to_vec());
@@ -133,8 +133,8 @@ pub fn export_meta(meta: &Meta, date: Date) -> Vec<u8> {
     sbfile::container(Kind::Meta, 0, date, &sbfile::meta_body(&meta), false)
 }
 
-/// A file of a folder, read only when its turn comes, so that a folder's
-/// files are not all in memory at once.
+/// A file in a folder, read only when its turn comes, so that the files of
+/// a folder are not all in memory at the same time.
 struct Entry {
     name: String,
     path: PathBuf,

@@ -3,8 +3,8 @@
 SmileBASIC programs and project files reach the emulator from other
 people, so the emulator treats both as untrusted. A program should at
 worst fail with an error or stop itself. It should not reach files outside
-its project folder, take the machine down, or stop the user getting back
-to the editor.
+its project folder, take the machine down, or stop the user from getting
+back to the editor.
 
 SmileBASIC 4 relies on a closed console for much of this. The emulator
 runs on an open system and has to do it itself.
@@ -29,20 +29,21 @@ runs on an open system and has to do it itself.
   invariant is that every place an entry names is within its table.
   `fuse::check` bounds every global place by the program's globals and
   constants on every program the VM takes, before the VM shares it, and
-  works out what each entry needs of the running DEF's variables, which
-  `run_fused` compares with the DEF's before each entry. A program with a
-  place out of range runs without its fused code, and an entry that needs
-  more of the DEF's variables than there are runs one instruction at a
-  time. Each read and write also has a `debug_assert`, and tests feed the
-  VM entries moved from another DEF or program. With the feature on,
-  Miri found nothing in those tests and in five of the random programs
-  of `tests/fuse_random.rs`, under its default Stacked Borrows and with
-  `-Zmiri-tree-borrows`, nor in 12 more tests of `tests/fused.rs` under
-  Stacked Borrows. A bug there would be memory unsafety that an untrusted
-  program could reach, so leave the feature off in any build you hand to
-  others or use to run programs you did not write. Default builds run `fuse::check` too and keep the check
-  on each read and write, so a place out of range that gets past
-  `fuse::check` panics, which stops the program with `Internal Error`.
+  computes how many of the running DEF's variables each entry needs, and
+  `run_fused` compares that with the number the DEF has before each entry.
+  A program with a place out of range runs without its fused code,
+  and an entry that needs more of the DEF's variables than there are runs
+  one instruction at a time. Each read and write also has a `debug_assert`,
+  and tests feed the VM entries moved from another DEF or program. With
+  the feature on, Miri found nothing in those tests and in five of the
+  random programs of `tests/fuse_random.rs`, under its default Stacked
+  Borrows and with `-Zmiri-tree-borrows`, nor in 12 more tests of
+  `tests/fused.rs` under Stacked Borrows. A bug there would be memory
+  unsafety that an untrusted program could reach, so leave the feature off
+  in any build you hand to others or use to run programs you did not
+  write. Default builds run `fuse::check` too and keep the check on each
+  read and write, so a place out of range that gets past `fuse::check`
+  panics, which stops the program with `Internal Error`.
   `crates/sb-runtime/tests/scene.rs` has a counting allocator, used only by
   that test.
 - **Native code.** The `jit` feature of `sb-core`, off by default and a
@@ -51,13 +52,13 @@ runs on an open system and has to do it itself.
   `unsafe` is in three parts: `sb-jit`'s executable memory
   (`exec.rs`: `mmap`, `mprotect`, `munmap`, and the aarch64 cache
   maintenance), the call into generated code (`Code::run`), and the one
-  call of it in `crates/sb-core/src/jit.rs`, which checks the tables'
-  lengths against what the code names first. Generated code is outside
+  call of it in `crates/sb-core/src/jit.rs`, which first checks the
+  tables' lengths against what the code names. Generated code is outside
   Rust's checks and outside Miri. Its addresses are a table's start plus a
   constant offset, bounded by construction; the argument, the invariants
-  and the tests are in [jit-design.md](../performance/jit-design.md#memory-safety). A bug
-  in it, or in Cranelift, could be memory unsafety that an untrusted
-  program can reach: as with `unchecked-vars`, leave the feature off in
+  and the tests are in [jit-design.md](../performance/jit-design.md#memory-safety).
+  A bug in it, or in Cranelift, could be memory unsafety that an untrusted
+  program can reach. As with `unchecked-vars`, leave the feature off in
   any build you hand to others. A default build contains none of it.
 - **File names.** Every name goes through the checks in
   `crates/sb-runtime/src/storage.rs`: a limited set of characters, 32 at
@@ -67,16 +68,17 @@ runs on an open system and has to do it itself.
   by the product of their sizes.
 - **Memory.** `sb_core::memory` keeps a program's strings and arrays
   within SmileBASIC 4's own total and raises `Out of memory` beyond it.
-  `INSPECT` makes its lines a page at a time, as they are shown.
+  `INSPECT` makes its lines one page at a time, when each page is shown.
 - **Waveforms.** `WAVSET` and `WAVSETA` waveforms are outside that total,
-  as in SmileBASIC 4, whose limit for them is not known, so they have
-  none. A sample takes 2 bytes, and a waveform is at most an array long.
-  Each instrument holds one, and a `BEEP` note holds the one it started
-  with, so an interpreter holds at most 96 (32 instruments, 16 `BEEP`
-  handles, 48 notes falling away): about 6.4 GB from arrays as large as
-  memory allows, twice that with a subprogram.
+  the same as in SmileBASIC 4. The SmileBASIC 4 limit for them is not known,
+  so the emulator has none. A sample takes 2 bytes, and a waveform is at
+  most as long as an array. Each instrument holds one, and a `BEEP` note
+  holds the one it started with, so an interpreter holds at most 96 (32
+  instruments, 16 `BEEP` handles, 48 released notes still fading out): about
+  6.4 GB from arrays as large as memory allows, twice that with a
+  subprogram.
 - **Time.** A program runs a limited number of instructions per frame, so
-  a loop cannot hold up the window. Calls and `GOSUB`s have depth limits.
+  a loop cannot stall the window. Calls and `GOSUB`s have depth limits.
 - **Failures.** A panic while running a frame stops the program with
   `Internal Error` and keeps the slots and the editor's text. The sound
   thread catches its own panics.
@@ -118,8 +120,8 @@ rules, under "Files from elsewhere".
   `request` for something new, `grow` for something that gets bigger. Do
   it before changing anything, because the VM may run the instruction
   again.
-- **Commands that do a lot of work.** One call runs to its end, whatever
-  the frame's budget. Limit the work by what the program can ask for, or
+- **Commands that do a lot of work.** One call runs to its end, regardless
+  of the frame's budget. Limit the work by what the program can ask for, or
   charge for it.
 - **Reading a value for the debugger.** Watch expressions and viewers
   must not change the program's state.

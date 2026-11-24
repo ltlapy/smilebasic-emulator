@@ -1,7 +1,7 @@
-//! A part of the emulator's UI with pixels and a texture of its own,
-//! drawn again only when what it shows changes, and given to the texture
-//! only where it changed. A dry run of its drawing (see [`ui::dry_run`])
-//! tells whether anything did.
+//! A part of the emulator's UI with its own pixels and texture. It is
+//! drawn again only when what it shows changes, and uploaded to the
+//! texture only where it changed. A dry run of its drawing (see
+//! [`ui::dry_run`]) tells whether anything changed.
 
 use sb_runtime::Framebuffer;
 use sdl3::pixels::{Color, PixelFormat};
@@ -21,22 +21,22 @@ pub struct Layer<'a> {
     texture: Option<Texture<'a>>,
     /// The fingerprint of what `fb` and the texture hold.
     key: Option<u64>,
-    /// Around what was drawn last.
+    /// The rectangle around what was drawn last.
     drawn: Option<Rect>,
-    /// Where the texture came from, for the enlarged copy.
+    /// The creator of the texture, for the enlarged copy.
     creator: Option<&'a TextureCreator<WindowContext>>,
-    /// How the texture is sampled now.
+    /// The current sampling of the texture.
     sampling: Sampling,
     /// The renderer last drawn to, and whether its pixel art mode blends.
     pixel_art: Option<(*mut SDL_Renderer, bool)>,
-    /// Where pixel art mode does not blend: what was drawn, enlarged a
+    /// When pixel art mode does not blend: what was drawn, enlarged a
     /// whole number of times with nearest and shown with linear.
     enlarged: Option<Enlarged<'a>>,
     /// A size the renderer refused for `enlarged`.
     refused: Option<(u32, u32)>,
 }
 
-/// How a layer's texture is sampled at the scale it is shown at.
+/// The sampling of a layer's texture at the scale it is shown at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sampling {
     /// A whole number of times its size: each pixel is a square of the
@@ -60,7 +60,7 @@ impl Sampling {
     }
 }
 
-/// How to sample a layer drawn `scale` times its size.
+/// The sampling for a layer drawn `scale` times its size.
 pub fn sampling(scale: f32) -> Sampling {
     if scale >= 0.999 && (scale - scale.round()).abs() < 0.001 {
         Sampling::Nearest
@@ -75,8 +75,8 @@ struct Enlarged<'a> {
     /// A render target, transparent outside what it holds.
     texture: Texture<'a>,
     size: (u32, u32),
-    /// What it holds from its top left corner: how many times enlarged,
-    /// and the layer's fingerprint and drawn rectangle then.
+    /// What it holds from its top left corner: the enlargement factor,
+    /// and the layer's fingerprint and drawn rectangle at that time.
     holds: Option<(u32, u64, Rect)>,
 }
 
@@ -97,8 +97,8 @@ impl Default for Layer<'_> {
 }
 
 impl<'a> Layer<'a> {
-    /// What `draw` would draw on a frame of `size` pixels, drawing
-    /// nothing.
+    /// Returns what `draw` would draw on a frame of `size` pixels, without
+    /// drawing anything.
     pub fn dry_run(&mut self, size: (u32, u32), draw: impl FnOnce(&mut Framebuffer)) -> Drawn {
         self.resize(size);
         let fb = &mut self.fb;
@@ -118,10 +118,10 @@ impl<'a> Layer<'a> {
         (self.texture, self.key, self.enlarged, self.refused) = (None, None, None, None);
     }
 
-    /// Brings the layer up to what `draw` draws on a frame of `size`
-    /// pixels, starting from a transparent one: it draws only if the dry
-    /// run finds something changed, and uploads only around what changed.
-    /// `draw` runs twice then, and must do the same both times.
+    /// Updates the layer to what `draw` draws on a transparent frame of
+    /// `size` pixels. It draws only if the dry run finds a change, and
+    /// uploads only the area around the change. In that case `draw` runs
+    /// twice and must do the same both times.
     pub fn update(
         &mut self,
         creator: &'a TextureCreator<WindowContext>,
@@ -173,13 +173,14 @@ impl<'a> Layer<'a> {
         Ok(())
     }
 
-    /// Forgets what the texture holds, as when the renderer lost it.
+    /// Forgets what the texture holds, the same as when the renderer
+    /// lost it.
     pub fn forget(&mut self) {
         self.drop_textures();
         self.pixel_art = None;
     }
 
-    /// Lets go of the texture and pixels while the layer is not shown.
+    /// Frees the texture and pixels while the layer is not shown.
     pub fn release(&mut self) {
         if self.texture.is_some() || self.fb.width() > 0 {
             *self = Layer::default();
@@ -237,18 +238,19 @@ impl<'a> Layer<'a> {
         } else if self.enlarged.is_some() {
             self.enlarged = None;
         }
-        // Where the enlarged copy was refused, nearest as before.
+        // When the enlarged copy was refused, this copies with nearest, as
+        // before.
         let src = FRect::new(r.x as f32, r.y as f32, r.w as f32, r.h as f32);
         canvas.copy(texture, src, dst)?;
         Ok(())
     }
 }
 
-/// Gets `enlarged` to hold `holds`: the rectangle of `from` it names drawn
-/// that many times larger with nearest, at its top left corner. It grows
-/// to what it must hold but does not shrink, so that a dialog opening or a
-/// notice coming and going does not make it again. False where the
-/// renderer refuses it.
+/// Makes `enlarged` hold `holds`: the rectangle of `from` that it names,
+/// drawn that many times larger with nearest, at its top left corner. The
+/// texture grows to fit but does not shrink, so that a dialog opening or a
+/// notice appearing and disappearing does not make it again. Returns false
+/// when the renderer refuses it.
 fn enlarge_into<'a>(
     enlarged: &mut Option<Enlarged<'a>>,
     refused: &mut Option<(u32, u32)>,
@@ -270,7 +272,7 @@ fn enlarge_into<'a>(
         }
         crate::bench::made();
         // On OpenGL ES, SDL 3.4 frees twice when a texture is refused for
-        // want of memory, so GL is asked first.
+        // lack of memory, so GL is asked first.
         let fits = crate::gpu::texture_fits(canvas.raw(), size.0, size.1);
         let made = fits.and_then(|()| {
             (creator.create_texture_target(PixelFormat::ARGB8888, size.0, size.1))
@@ -294,7 +296,7 @@ fn enlarge_into<'a>(
     if e.holds != Some(holds) {
         let src = FRect::new(r.x as f32, r.y as f32, r.w as f32, r.h as f32);
         let dst = FRect::new(0.0, 0.0, need.0 as f32, need.1 as f32);
-        // Copied as it is, not blended over the cleared target, which
+        // Copied unchanged, not blended over the cleared target, which
         // would darken what is partly transparent.
         from.set_blend_mode(BlendMode::None);
         let mut drawn = Ok(());
@@ -314,7 +316,7 @@ fn enlarge_into<'a>(
 }
 
 /// Whether SDL's pixel art mode blends on the canvas's renderer, asked
-/// once a renderer.
+/// once per renderer.
 fn pixel_art_blends(
     known: &mut Option<(*mut SDL_Renderer, bool)>,
     canvas: &Canvas<Window>,
@@ -334,11 +336,11 @@ fn pixel_art_blends(
 }
 
 /// Whether pixel art mode blends on a renderer of this driver. SDL 3.4.18
-/// takes the mode on any renderer, but samples with nearest where it has
-/// no shader for it: the software renderer, Direct3D 9, and OpenGL ES 2,
-/// whose shader needs `fwidth` and `textureGrad`, built only when
-/// `OPENGLES_300` is defined, which SDL's build never does. OpenGL has
-/// the shader in GLSL 1.30, asked about apart.
+/// accepts the mode on any renderer, but samples with nearest where it has
+/// no shader for it: the software renderer, Direct3D 9, and OpenGL ES 2.
+/// The OpenGL ES 2 shader needs `fwidth` and `textureGrad`, and is built
+/// only when `OPENGLES_300` is defined, which SDL's build never does.
+/// OpenGL has the shader in GLSL 1.30, which is checked separately.
 fn driver_blends_pixel_art(name: &str) -> bool {
     matches!(
         name,
@@ -350,7 +352,8 @@ fn driver_blends_pixel_art(name: &str) -> bool {
 fn glsl_version() -> Option<(u32, u32)> {
     const GL_SHADING_LANGUAGE_VERSION: u32 = 0x8B8C;
     // SAFETY: only for the opengl renderer, on its thread, where a context
-    // of that driver is current; the string is GL's, read at once.
+    // of that driver is current. The string belongs to GL and is read
+    // immediately.
     unsafe {
         let get = SDL_GL_GetProcAddress(c"glGetString".as_ptr())?;
         let get: extern "C" fn(u32) -> *const std::ffi::c_char = std::mem::transmute(get);
@@ -425,8 +428,8 @@ mod tests {
                 let display = crate::simple_ui::display_rect(ui, out, size);
                 let scale = display.w / ui.0 as f32;
                 assert_eq!(display.h / ui.1 as f32, scale, "{out:?} {size:?}");
-                // Medium is a half more than a whole scale where Normal's
-                // is odd, and drawn as pixel art then.
+                // Medium is a whole scale plus a half when the scale of
+                // Normal is odd, and is then drawn as pixel art.
                 let whole = scale.fract() == 0.0;
                 assert!(whole || size == SimpleUiSize::Medium && scale.fract() == 0.5);
                 let want = if whole {

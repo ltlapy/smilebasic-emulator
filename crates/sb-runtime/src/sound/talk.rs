@@ -2,7 +2,7 @@
 //! Klatt formant synthesizer (klattsch-core). Kana become phoneme letters,
 //! the letters become morae, and each mora a few targets for the
 //! synthesizer to glide between. MML's sung notes (`*WA,C4`) use the
-//! same phonemes on a [`Singer`] of each channel's own.
+//! same phonemes on each channel's own [`Singer`].
 //!
 //! None of this is SmileBASIC 4's own voice; it only says the same words.
 
@@ -33,21 +33,21 @@ const SHORTEST_VOWEL: f64 = 70.0;
 const CLOSURE: f64 = 45.0;
 const BURST: f64 = 15.0;
 const FRICATIVE: f64 = 70.0;
-/// ち, じ and つ: a shorter closure and burst than a stop's, then the
+/// ち, じ and つ: a shorter closure and burst than a stop has, then the
 /// fricative they are released into.
 const AFFRICATE_CLOSURE: f64 = 30.0;
 const AFFRICATE_BURST: f64 = 8.0;
 const AFFRICATE_FRICATION: f64 = 45.0;
 const SONORANT: f64 = 45.0;
 const GLIDE: f64 = 40.0;
-/// 、 and 。, as long as the help's example says: it writes
+/// 、 and 。, with the lengths from the help's example: it writes
 /// "こんにちわ。わたしは、" as "koqnichiwa######watashiwa##".
 const SHORT_PAUSE: f64 = 200.0;
 const LONG_PAUSE: f64 = 600.0;
 /// `#`: 0.1 seconds without sound.
 const BREAK: f64 = 100.0;
-/// What TALKCHK still counts after the last sound: 20 vowels keep it
-/// set for 121 frames.
+/// The time after the last sound during which TALKCHK stays set: 20
+/// vowels keep it set for 121 frames.
 // UNVERIFIED: whether this is silence or the voice's own delay.
 const TAIL: f64 = 205.0;
 /// Glides between targets.
@@ -57,17 +57,17 @@ const QUICK: f64 = 8.0;
 /// The voice's pitch without a `<P…>`: one pitch, with no fall through a
 /// phrase or before 、 and 。.
 const BASE_PITCH: f32 = 100.0;
-/// With a `<P…>`, 128 included, the voice speaks at about this over P Hz
-/// (`<P64>` 314 Hz, `<P256>` 79 Hz) and its pitch moves through the
-/// phrase: see [`INTONATION`].
+/// With a `<P…>`, 128 included, the voice speaks at about this divided
+/// by P, in Hz (`<P64>` 314 Hz, `<P256>` 79 Hz), and its pitch moves
+/// through the phrase: see [`INTONATION`].
 const PITCH_TIMES_P: f32 = 20100.0;
-// What `<P…>` did before: (128 / P) to this power times the base pitch.
+// The old rule of `<P…>`: (128 / P) to this power times the base pitch.
 // const PITCH_POWER: f32 = 0.35;
 /// With a `<P…>`, the first mora is this much above the pitch, the last
-/// this much below, and those between at it: あいうえお at `<P128>` goes
-/// 180, 157, 160, 160 and 110 Hz.
-// UNVERIFIED: seen on あいうえお alone, at five values of P; how longer
-// phrases, 、 and 。 move it.
+/// this much below, and those between at the pitch: あいうえお at
+/// `<P128>` is spoken at 180, 157, 160, 160 and 110 Hz.
+// UNVERIFIED: seen on あいうえお only, at five values of P; the effect
+// of longer phrases, 、 and 。 is unchecked.
 const INTONATION: (f32, f32) = (1.14, 0.70);
 /// The rate the voice's pitch periods are counted in: a period is a
 /// whole number of these samples, so A4 sings at 16000 / 36 = 444.4 Hz.
@@ -81,14 +81,14 @@ const SINGING_GAIN: f32 = 1.88;
 // /// as it goes.
 // const PITCH_START: f32 = 1.06;
 // const PITCH_END: f32 = 0.88;
-/// Where a falling syllable's pitch ends, as a part of where it starts.
+/// The end pitch of a falling syllable, as a fraction of its start pitch.
 /// Nothing falls now: SmileBASIC 4 speaks flat.
 const FALL: f32 = 0.8;
 
 /// `hz` moved to the nearest pitch whose period is a whole number of
 /// [`PERIOD_RATE`] samples, for `TALK`.
-// UNVERIFIED: rounded to the nearest period, or cut down to it as sung
-// notes are; `<P64>`'s 314 Hz fits the nearest.
+// UNVERIFIED: rounded to the nearest period, or cut down to it the same
+// as for sung notes; `<P64>`'s 314 Hz matches the nearest.
 pub(crate) fn whole_period(hz: f32) -> f32 {
     if hz <= 0.0 {
         return hz;
@@ -97,7 +97,7 @@ pub(crate) fn whole_period(hz: f32) -> f32 {
 }
 
 /// `hz` with its period cut down to a whole number of [`PERIOD_RATE`]
-/// samples, as sung notes have it: C5 sings at 533.3 Hz, F4 at 355.6.
+/// samples, the rule for sung notes: C5 sings at 533.3 Hz, F4 at 355.6.
 pub(crate) fn sung_period(hz: f32) -> f32 {
     if hz <= 0.0 {
         return hz;
@@ -222,11 +222,12 @@ const TABLE: &[(char, &str)] = &[
 fn kana_letters(text: &str) -> String {
     let mut out = String::new();
     let chars: Vec<char> = text.chars().collect();
-    // What ー repeats: the last vowel in `out`. It is kept rather than
-    // looked for, which would make long text with few vowels quadratic.
+    // The vowel ー repeats: the last vowel in `out`. It is kept rather
+    // than searched for; a search would make long text with few vowels
+    // quadratic.
     let mut last_vowel = None;
     for (i, &c) in chars.iter().enumerate() {
-        // Katakana sit 0x60 above hiragana.
+        // Katakana are 0x60 above hiragana.
         let c = match c {
             'ァ'..='ヶ' => char::from_u32(c as u32 - 0x60).unwrap_or(c),
             c => c,
@@ -385,7 +386,7 @@ fn morae(text: &str) -> Vec<Mora> {
             "sh" | "ch" | "ts" => (rest.clone(), 2),
             _ => (c.to_string(), 1),
         };
-        // TALK and sung notes skip letters that are no phoneme (`$xa`,
+        // TALK and sung notes skip letters that are not a phoneme (`$xa`,
         // `*XA,C`): neither is an error.
         let Some(cons) = consonant(&letters) else {
             i += 1;
@@ -435,7 +436,7 @@ fn voiceless(consonant: Option<&str>) -> bool {
 struct Planner<'a> {
     table: &'a HashMap<&'static str, PhonemeParams>,
     events: Vec<ScheduleEvent>,
-    /// Where the next event goes, in samples.
+    /// The position of the next event, in samples.
     at: f64,
     speed: f64,
     pitch: f32,
@@ -514,12 +515,12 @@ impl Planner<'_> {
         }
     }
 
-    /// The consonant's part of a mora; gives the milliseconds it took.
+    /// The consonant's part of a mora; returns the milliseconds it took.
     fn consonant(&mut self, name: &'static str, f0: f32) -> f64 {
         match name {
             "CH" | "JH" | "TS" => {
                 // A stop released into a fricative: ち is t then し's
-                // hiss, じ the same voiced, つ t then す's.
+                // hiss, じ the same voiced, つ t then す's hiss.
                 let (stop, fricative) = match name {
                     "CH" => ("CH", "SH"),
                     "JH" => ("JH", "ZH"),
@@ -621,7 +622,7 @@ impl Talk {
             })
             .collect();
         // Phoneme letters follow a `$` that starts the text, as in
-        // `$<S128>koqnichiwa`. A `$` after a control string is no mark:
+        // `$<S128>koqnichiwa`. A `$` after a control string marks nothing:
         // `<V16>$a` is read as kana, and says nothing.
         let letters = match text.strip_prefix('$') {
             Some(letters) => letters.to_string(),
@@ -741,7 +742,7 @@ impl Talk {
         self.synth
             .queue_schedule(Schedule::from_sample_events(RATE, events));
         // Nothing to say, or one mora, keeps TALKCHK set only until the
-        // next frame, though the mora sounds on.
+        // next frame, though the mora keeps sounding.
         // UNVERIFIED: whether one mora alone sounds at all.
         self.left = if spoken == 0 { 0 } else { total };
         self.busy = if spoken <= 1 { 1 } else { total };
@@ -779,7 +780,7 @@ impl Talk {
     }
 }
 
-/// How long a sung note takes to fall silent once let go.
+/// The time a sung note takes to fall silent after it is released.
 const SUNG_RELEASE: f64 = 30.0;
 
 /// The pitch of MIDI key `key`, `cents` above it, in Hz.
@@ -789,13 +790,13 @@ pub(crate) fn key_hz(key: i32, cents: i32) -> f32 {
 }
 
 /// One MML channel's singing voice, for `*WA,C4`: the phonemes said at
-/// the note's pitch, the last vowel held until the note is let go.
+/// the note's pitch, the last vowel held until the note is released.
 pub(crate) struct Singer {
     synth: FormantSynth,
     buffer: Vec<f32>,
     /// The note's pitch, before a portamento moves it.
     hz: f32,
-    /// Samples left of the release once let go.
+    /// Samples left of the release after the note is released.
     release: Option<u32>,
     sounding: bool,
 }
@@ -812,9 +813,10 @@ impl Singer {
     }
 
     /// Starts singing `letters` (SmileBASIC's phoneme letters) at `hz`
-    /// over a note of `ms`. Each mora gets an even part of the note, its
-    /// consonant shortened in a short one; a lone consonant is sung with
-    /// u. False, and silent, when the letters have nothing to sing.
+    /// over a note of `ms`. Each mora gets an equal part of the note, its
+    /// consonant shortened when that part is short; a lone consonant is
+    /// sung with u. Returns false, and stays silent, when the letters have
+    /// nothing to sing.
     // UNVERIFIED: how SmileBASIC 4 shares a note between several morae,
     // and how long its consonants are.
     pub(crate) fn sing(&mut self, letters: &str, hz: f32, ms: f64) -> bool {
@@ -864,7 +866,7 @@ impl Singer {
             plan.at = plan.at.max(end);
         }
         let mut events = plan.events;
-        // The pitch is the note's alone, which a portamento then moves.
+        // The pitch comes only from the note, and a portamento moves it.
         for e in &mut events {
             e.target.f0 = None;
         }
@@ -881,7 +883,7 @@ impl Singer {
         true
     }
 
-    /// The note goes on at another pitch, for a slur.
+    /// Continues the note at another pitch, for a slur.
     pub(crate) fn retune(&mut self, hz: f32) {
         self.hz = hz;
         self.bend(0.0);
@@ -897,7 +899,7 @@ impl Singer {
         self.synth.set_target(update, samples(QUICK) as u32);
     }
 
-    /// Lets the note go: it falls silent.
+    /// Releases the note: it falls silent.
     pub(crate) fn release(&mut self) {
         if self.sounding && self.release.is_none() {
             let quiet = ParamUpdate {
@@ -908,7 +910,7 @@ impl Singer {
                 aspiration: Some(0.0),
                 ..ParamUpdate::default()
             };
-            // Whatever of the schedule is left would sound again.
+            // Any part of the schedule that is left would sound again.
             self.synth.queue_schedule(Schedule::empty(RATE));
             let n = samples(SUNG_RELEASE) as u32;
             self.synth.set_target(quiet, n);
@@ -949,8 +951,8 @@ impl Singer {
 mod tests {
     use super::*;
 
-    /// `kana_letters` as it was when it looked for the last vowel again
-    /// for every character: the output must stay what this gives.
+    /// The old `kana_letters`, which searched for the last vowel again for
+    /// every character. `kana_letters` must return the same output.
     fn kana_letters_by_search(text: &str) -> String {
         let mut out = String::new();
         let chars: Vec<char> = text.chars().collect();
@@ -1003,8 +1005,8 @@ mod tests {
 
     #[test]
     fn kana_letters_match_searching_for_the_vowel() {
-        // Every kana in the table, what changes `out` other than through
-        // it, and letters that are kept or dropped.
+        // Every kana in the table, the characters that change `out` other
+        // than through it, and letters that are kept or dropped.
         let mut alphabet: Vec<char> = TABLE.iter().map(|(k, _)| *k).collect();
         alphabet.extend("ゃゅょぁぃぅぇぉーー～〜はは、、ャュョァィゥェォカキシチジン".chars());
         alphabet.extend("<>0S9#aiueoxyz漢".chars());
@@ -1024,7 +1026,7 @@ mod tests {
         }
     }
 
-    /// These took minutes when every character scanned what came before.
+    /// These took minutes when every character scanned the text before it.
     #[test]
     fn long_text_takes_time_in_step_with_its_length() {
         let n = 2_000_000;
@@ -1166,7 +1168,7 @@ mod tests {
     }
 
     /// ち, つ and じ are released into a fricative, not straight into
-    /// the vowel as てぃ's ti and でぃ's di are.
+    /// the vowel the way てぃ's ti and でぃ's di are.
     #[test]
     fn affricates_hiss_after_the_burst() {
         assert!(table().contains_key("ZH"));

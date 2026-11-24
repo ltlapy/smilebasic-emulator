@@ -1,7 +1,7 @@
 //! Short notices at the bottom of the window, shown instead of asking
 //! when file questions are set to notify. A program may read and write
-//! many files at once, so notices stack, repeats are counted, and the
-//! oldest beyond what fits are summed up in one line.
+//! many files in a short time, so notices stack, repeats are counted,
+//! and the oldest notices that do not fit are summed up in one line.
 
 use std::collections::VecDeque;
 
@@ -21,7 +21,7 @@ const HEIGHT: u32 = CHAR + 2 * PAD;
 #[derive(Debug)]
 struct Toast {
     text: String,
-    /// How many times the same notice came in a row.
+    /// The number of times the same notice came in a row.
     count: u32,
     frames_left: u32,
 }
@@ -84,9 +84,9 @@ impl Toasts {
         lines
     }
 
-    /// Where each notice goes on a frame of `size`, centered at the
-    /// bottom, the newest lowest, with its text wrapped to the frame's
-    /// width; the oldest go first when they do not all fit.
+    /// Returns the place of each notice on a frame of `size`: centered at
+    /// the bottom, the newest lowest, with its text wrapped to the frame
+    /// width. The oldest are dropped first when they do not all fit.
     fn places(&self, (fw, fh): (u32, u32)) -> Vec<(Rect, Vec<String>)> {
         let room = fw.saturating_sub(4 * PAD).max(CHAR);
         let mut y = fh.saturating_sub(PAD);

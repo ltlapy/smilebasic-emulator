@@ -11,8 +11,8 @@ use crate::ui::{
 };
 
 const HINT: &str = "Left/Right: page  F2: size  Esc: close";
-/// The panel is at least this many characters wide, as SmileBASIC 4's
-/// help is.
+/// The panel is at least this many characters wide, like the help of
+/// SmileBASIC 4.
 const MIN_COLS: u32 = 38;
 /// The scroll bar's width, and its space.
 const BAR: u32 = 8;
@@ -116,8 +116,8 @@ impl HelpViewer {
         self.scroll = self.scroll.min(self.max_scroll());
     }
 
-    /// Goes on a display of another size, as when the editor's window is
-    /// resized, keeping the page.
+    /// Moves to a display of another size, for example when the editor
+    /// window is resized, and keeps the page.
     pub fn set_size(&mut self, size: (u32, u32)) {
         if size != self.size {
             self.size = size;

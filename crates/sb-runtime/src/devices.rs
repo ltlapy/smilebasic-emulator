@@ -15,10 +15,11 @@ use crate::input::{in_range, ints, out_of_range, reals};
 use crate::runtime::{Command, Runtime, no_form};
 use crate::sprites::SPRITES;
 
-/// How many frames each of VIBRATE's patterns 1 to 62 lasts, measured on
-/// SmileBASIC 4.4.9 (TTEST24) as frames until `VIBRATE(1,0)` read 0; 0
-/// for those still going after two seconds (pattern 40 after five), which
-/// last until stopped here.
+/// The number of frames that each of VIBRATE's patterns 1 to 62 lasts,
+/// measured on SmileBASIC 4.4.9 (TTEST24) as the frames until
+/// `VIBRATE(1,0)` read 0. A 0 marks a pattern still running after two
+/// seconds (pattern 40 after five). Here such a pattern lasts until it is
+/// stopped.
 #[rustfmt::skip]
 const PATTERN_FRAMES: [u32; 62] = [
     22, 16, 16, 12, 35, 33, 66, 61, 57, 80,
@@ -83,10 +84,10 @@ impl Runtime {
             // The camera starts and stops, and never sees anything. Without
             // XCTRLSTYLE's IR flag it is not available (checked on
             // hardware).
-            // Each mode takes its own
-            // count of settings after the controller and the mode, each
-            // with its range: clustering (0) six, image transfer (1, on
-            // controller 1 only) four, moment (2) three.
+            // Each mode takes its own count of settings after the
+            // controller and the mode, each with its range: clustering (0)
+            // six, image transfer (1, on controller 1 only) four, moment (2)
+            // three.
             (Command::Irstart, Want::Outs(0), 2..) => {
                 let pad = pad(&args[0])?;
                 if !self.input.ir_allowed {
@@ -124,9 +125,10 @@ impl Runtime {
                 let pad = pad(&args[0])?;
                 Ok(ints(&[self.input.ir_state[pad]]))
             }
-            // A camera never started is no camera, and mode 1 cannot be read.
-            // Clustering and moment modes both give a 48-row array, and a
-            // camera stopped by IRSTOP no entries, without an error.
+            // A camera that was never started is not available, and mode 1
+            // cannot be read. Clustering and moment modes both return a
+            // 48-row array. A camera stopped by IRSTOP returns no entries,
+            // without an error.
             (Command::Irread, Want::Outs(4), 1) => {
                 let pad = pad(&args[0])?;
                 let count = match self.input.ir_state[pad] {

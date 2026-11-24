@@ -18,21 +18,21 @@ use crate::ui::{
 const WIDTH: u32 = 1100;
 const HEIGHT: u32 = 620;
 const PAGES_WIDTH: u32 = 180;
-/// Lines under the settings for what the chosen one does.
+/// Lines under the settings for the description of the chosen one.
 const ABOUT_LINES: usize = 3;
 const HINT: &str = "Up/Down: choose  Tab: pages  Space, Left/Right: set  Esc: close";
 
-/// How a setting is set.
+/// The control that sets a setting.
 enum Control {
     Check(fn(&Settings) -> bool, fn(&mut Settings)),
-    /// One of the options, shown on a line of their own.
+    /// One of the options, shown on their own line.
     Choice(
         &'static [&'static str],
         fn(&Settings) -> usize,
         fn(&mut Settings, usize),
     ),
-    /// The program F9, F10 or F11 (0 to 2) starts, with buttons under it
-    /// to choose one, set none or go back to the default.
+    /// The program that F9, F10 or F11 (0 to 2) starts, with buttons under
+    /// it to choose one, set none or go back to the default.
     Tool(usize),
 }
 
@@ -88,7 +88,7 @@ const fn tool(n: usize) -> Row {
 /// line up.
 const TOOL_LABEL_WIDTH: usize = 8;
 
-/// What a tool row shows for the program set.
+/// Returns the text a tool row shows for the program that is set.
 fn tool_label(file: &str) -> &str {
     match file {
         "" => "(none)",
@@ -116,7 +116,8 @@ fn source_index(source: FontSource) -> usize {
     SOURCES.iter().position(|&s| s == source).unwrap_or(0)
 }
 
-/// A row choosing the 8- (0) or 16-pixel (1) font page's source.
+/// A row that chooses the source of the 8-pixel (0) or 16-pixel (1) font
+/// page.
 const fn program_font(n: usize) -> Row {
     Row {
         label: PROGRAM_FONT[n],
@@ -555,7 +556,7 @@ pub enum Outcome {
     /// The set of bundled 16-pixel glyphs changed; the frontend draws
     /// with it.
     BundledGlyphs,
-    /// Ask for the program tool `n` (0 to 2) starts.
+    /// Ask for the program that tool `n` (0 to 2) starts.
     ChooseTool(usize),
 }
 
@@ -602,7 +603,7 @@ impl SettingsWindow {
             x: f.x + 2 * PAD,
             y: f.y + LINE + 2 * PAD,
             w: PAGES_WIDTH,
-            // Under it: what the chosen setting does, and the hint.
+            // Under it: the description of the chosen setting, and the hint.
             h: f.h - 6 * LINE - 5 * PAD,
         }
     }
@@ -777,7 +778,8 @@ impl SettingsWindow {
     }
 
     /// A click on a page opens it; on a check flips it; on an option picks
-    /// it; on a button presses it. One outside the window closes it.
+    /// it; on a button presses it. A click outside the window closes the
+    /// window.
     pub fn click(&mut self, at: (i32, i32), settings: &mut Settings) -> Outcome {
         if !self.frame().contains(at) {
             return Outcome::Close;
@@ -861,7 +863,7 @@ impl SettingsWindow {
                 }
             }
         }
-        // What the chosen setting does.
+        // The description of the chosen setting.
         let rows = self.rows_rect();
         let about = self.rows()[self.chosen].about;
         let width = f.w - 4 * PAD;
@@ -900,7 +902,7 @@ mod tests {
         // General: Space flips Upper-case letters.
         w.key(Keycode::Space, &mut s);
         assert!(!s.upper_case_letters);
-        // Up goes round to the last row, the language; Left goes round.
+        // Up wraps around to the last row, the language; Left wraps around.
         w.key(Keycode::Up, &mut s);
         w.key(Keycode::Left, &mut s);
         assert_eq!(s.language, Language::Japanese);
@@ -1006,7 +1008,7 @@ mod tests {
         assert_eq!(w.key(Keycode::Return, &mut s), Outcome::ChooseTool(0));
         w.key(Keycode::Delete, &mut s);
         assert_eq!(s.tools[0], "");
-        // Left goes round to Default, which a move to another row forgets.
+        // Left wraps around to Default, which a move to another row forgets.
         w.key(Keycode::Left, &mut s);
         w.key(Keycode::Space, &mut s);
         assert_eq!(s.tools[0], TOOLS[0]);
@@ -1042,7 +1044,7 @@ mod tests {
             let rows = w.rows_rect();
             assert!(last.y + last.h <= rows.y + rows.h, "{}", p.title);
             let f = w.frame();
-            // What the chosen setting does, above the hint.
+            // The description of the chosen setting, above the hint.
             let about_bottom = rows.y + rows.h + PAD + ABOUT_LINES as u32 * LINE;
             assert!(about_bottom <= f.y + f.h - LINE - PAD, "{}", p.title);
             let about_width = f.w - 4 * PAD;

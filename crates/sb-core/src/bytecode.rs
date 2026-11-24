@@ -15,7 +15,7 @@ pub enum Slot {
     Local(u32),
 }
 
-/// Which callbacks CALL runs: SPFUNC's or TFUNC's.
+/// The callbacks that CALL runs: SPFUNC or TFUNC callbacks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Callbacks {
     Sprite,
@@ -40,12 +40,12 @@ impl Want {
     }
 }
 
-/// What an INPUT target accepts.
+/// The kind of value an INPUT target accepts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputKind {
     Number,
     Str,
-    /// As the name of a variable in this slot says, known only when it runs.
+    /// Decided by the name of a variable in this slot, known only when it runs.
     Named(Slot),
 }
 
@@ -67,11 +67,11 @@ pub enum Op {
     Load(Slot),
     /// `[value] -> []`
     Store(Slot),
-    /// Direct mode's DIM and VAR of a global: Duplicate variable if it
-    /// exists already, from this line or an earlier one; otherwise it
+    /// DIM and VAR of a global in DIRECT mode: Duplicate variable if it
+    /// already exists, from this line or an earlier one. Otherwise it
     /// exists from now on, even if what follows fails. An array starts as
-    /// the omitted value (TYPEOF 0) until its DIM finishes, a variable as
-    /// zero (checked on hardware).
+    /// the omitted value (TYPEOF 0) until its DIM finishes, and a variable
+    /// starts as zero (checked on hardware).
     Declare {
         slot: u32,
         array: bool,
@@ -92,8 +92,8 @@ pub enum Op {
     },
     Unary(UnaryOp),
     Binary(BinaryOp),
-    /// INC's `+`: a string is added to where it is, so that the caller's
-    /// string grows when a DEF's parameter does.
+    /// INC's `+`: a string is appended in place, so that the caller's
+    /// string grows when a DEF's parameter grows.
     Append,
     /// `[array, v1..vn] -> [array]`: sets the first elements.
     FillArray(u32),
@@ -109,7 +109,7 @@ pub enum Op {
     /// `[cond] -> []`
     JumpIfFalse(Addr),
     /// `[cond] -> []`: `JumpIfFalse` for an `IF` or `ELSEIF` whose
-    /// condition is an array element, counted apart for the console's
+    /// condition is an array element, counted separately for the console's
     /// speed ([`crate::vm::Work::element_tests`]).
     TestIfFalse(Addr),
     JumpIfTrue(Addr),
@@ -231,9 +231,9 @@ pub enum Op {
     End,
     /// Does nothing: marks where a statement starts.
     Nop,
-    /// Stops with this error when it runs: a statement SmileBASIC 4 only
-    /// refuses once it gets there. The string, if any, is the command the
-    /// message names.
+    /// Stops with this error when it runs: a statement that SmileBASIC 4
+    /// refuses only when execution reaches it. The string, if any, is the
+    /// command the message names.
     Fail(crate::error::ErrorKind, Option<u32>),
     /// `[file or slot, slot?] -> []`: EXEC.
     Exec(u8),
@@ -253,8 +253,8 @@ pub struct VarInfo {
     /// Declared by a DIM (or VAR) with sizes: until that runs, it holds
     /// nothing (#T_DEFAULT).
     pub array: bool,
-    /// Without a suffix, it starts as integer 0: OPTION DEFINT stands
-    /// before where it is first seen.
+    /// Without a suffix, it starts as integer 0: OPTION DEFINT appears
+    /// before the variable is first seen.
     pub int: bool,
 }
 
@@ -294,7 +294,7 @@ pub struct DefInfo {
     /// The line and column of the DEF statement.
     pub at: (u32, u32),
     pub entry: Addr,
-    /// Where the code after the body starts.
+    /// The address where the code after the body starts.
     pub end: Addr,
     pub is_function: bool,
     /// COMMON DEF: callable from other program slots.
@@ -331,10 +331,10 @@ pub struct Compiled {
     pub data: Vec<Literal>,
     /// DATA position each top-level label refers to for RESTORE.
     pub data_labels: HashMap<String, u32>,
-    /// The same for the labels in each DEF, by DEF index: a DEF's labels
-    /// are its own, as for GOTO.
+    /// The same for the labels in each DEF, by DEF index: the labels of a
+    /// DEF are its own, the same as for GOTO.
     pub def_data_labels: Vec<HashMap<String, u32>>,
-    /// OPTION DEFINT stands somewhere in the program (see
+    /// OPTION DEFINT appears somewhere in the program (see
     /// [`VarInfo::int`]).
     pub default_int: bool,
     /// Native code for some of `fast`'s loops, made when the VM takes the

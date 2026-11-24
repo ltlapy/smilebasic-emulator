@@ -19,10 +19,10 @@ U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
 `crates/sb-runtime/fonts/symbols.txt` at 8 pixels, and drawn at twice that
 size in the 16-pixel font.
 
-The stand-in font's glyphs sit on the font page (GRP5) where SmileBASIC 4's
-own font has them, so programs that draw their own font page work without
-importing. For this the emulator carries the order of SmileBASIC 4's font
-page, which glyph number each character code has, taken from its font.map
+The stand-in font's glyphs are at the same positions on the font page (GRP5)
+as in SmileBASIC 4's own font, so programs that draw their own font page work
+without importing. For this the emulator includes the order of SmileBASIC 4's
+font page, taken from its font.map: the glyph number of each character code
 (`crates/sb-runtime/fonts/sb4-order`). It holds none of SmileBASIC 4's
 glyphs or metrics.
 
@@ -53,16 +53,16 @@ instead. It has three sources:
        (JIS X 0213), then [Unifont JP](https://unifoundry.com/unifont/) (the
        whole Basic Multilingual Plane, and the JIS X 0213 kanji above it).
 
-     Each set ends with the other set's fonts, for the characters it lacks,
-     so both draw the same characters: the antialiased set takes Hangul,
-     most symbols and the rarer kanji from the dot fonts, and the pixel set
-     takes the few characters above U+FFFF that only M PLUS 1p Bold has,
-     such as double-struck letters.
+     Each set ends with the other set's fonts for the characters it lacks,
+     so both sets draw the same characters. The antialiased set takes
+     Hangul, most symbols and the rarer kanji from the dot fonts. The pixel
+     set takes the few characters above U+FFFF that only M PLUS 1p Bold
+     has, such as double-struck letters.
 
    Izumi Gothic 16 and Unifont JP are dot fonts drawn in one-pixel
    strokes. The build makes them bold: each stroke grows one pixel to the
-   side, but one-pixel gaps between strokes stay open, and so does the
-   side column of the cell where the glyph leaves it empty, so neighbors
+   side, but one-pixel gaps between strokes stay open. The side column of
+   the cell also stays open where the glyph leaves it empty, so neighbors
    do not touch.
 
    Misaki Gothic 2nd is free to use, copy and change under its author's
@@ -72,9 +72,9 @@ instead. It has three sources:
 
    Fusion Pixel and Noto Sans SC draw the CJK characters they share with
    Japanese in their Simplified Chinese forms, so they come after the
-   Japanese fonts: they only fill in characters the fonts before them lack,
-   and kana and Japanese kanji keep the glyphs of GalmuriMono7, M PLUS 1p
-   Bold and Izumi Gothic 16. Unifont JP draws every GB2312 character, so in
+   Japanese fonts. They only fill in characters that the fonts before them
+   lack, and kana and Japanese kanji keep the glyphs of GalmuriMono7, M PLUS
+   1p Bold and Izumi Gothic 16. Unifont JP draws every GB2312 character, so in
    the pixel set Noto Sans SC adds none.
 
 The editor looks in them in this order. "Editor's first font" on the same page
@@ -94,16 +94,16 @@ cell. No glyph is stretched or made larger:
   16-pixel cell stays 8 pixels, centered; a glyph larger than the cell is
   made smaller to fit.
 - An outline font is drawn at the cell's size: its em fills the cell, or 15
-  of 16 pixels for M PLUS 1p Bold, as SmileBASIC 4 draws that face. At 8
-  pixels a pixel is on or off; at 16 pixels the edges keep their gray, as on
-  SmileBASIC 4's 16-pixel font page.
+  of 16 pixels for M PLUS 1p Bold, the way SmileBASIC 4 draws that face. At
+  8 pixels a pixel is on or off; at 16 pixels the edges keep their gray, as
+  on SmileBASIC 4's 16-pixel font page.
 
 No bundled font is an emoji font. At 16 pixels the emoji-range characters of
 the Basic Multilingual Plane (such as ☀, ★ and ✅) come from M PLUS 1p Bold
 or Unifont JP, in one color; those above U+FFFF keep the box, as do most
 emoji at 8 pixels. A font file can supply them.
 
-If the file cannot be read, the editor goes back to the bundled fonts, clears
+If the file cannot be read, the editor falls back to the bundled fonts, clears
 the setting and says why. In `settings.txt` the settings are
 `editor_extra_font=PATH` (empty for none),
 `editor_font_first=smilebasic`, `file` or `bundled`, and
@@ -139,11 +139,11 @@ half-width glyphs come from:
   (`crates/sb-runtime/fonts/neodgm`), then Unifont JP for what it lacks,
   such as half-width kana.
 
-In the editor, the font file comes before these when it draws a character
-half-width (a BDF glyph at most half as wide as the font's full-width ones,
-or an outline glyph at most 0.6 em wide), unless "Editor's first font" puts
-the bundled fonts first. SmileBASIC's own glyph squeezed to half its width is
-the last resort. The menus and windows use the bundled glyphs.
+In the editor, the font file comes before these when the file draws a
+character half-width (a BDF glyph at most half as wide as the font's
+full-width ones, or an outline glyph at most 0.6 em wide), unless "Editor's
+first font" puts the bundled fonts first. SmileBASIC's own glyph squeezed to
+half its width is the last resort. The menus and windows use the bundled glyphs.
 
 ## Font of the menus and windows
 
@@ -151,17 +151,17 @@ File > Settings > Fonts > "Menus and windows" picks the font of the menu bar,
 the settings window and the emulator's other windows:
 
 - 16-pixel (the default): SmileBASIC's 16-pixel font with its gray edges,
-  as SmileBASIC 4 draws it, and the half-width glyphs above. With an
+  the way SmileBASIC 4 draws it, and the half-width glyphs above. With an
   imported font, Unicode characters it lacks come from the editor's bundled
   16-pixel glyphs, in the set "Bundled 16-pixel glyphs" picks, instead of
-  the box. A character beyond U+FFFF takes two cells, with its
-  glyph on the first, as in the editor;
+  the box. A character beyond U+FFFF takes two cells, with its glyph on the
+  first, as in the editor;
 - Smooth: outlines with soft edges, drawn for a 16-pixel cell. Half-width
   characters come from [M PLUS Code Latin](https://github.com/coz-m/MPLUS_FONTS)
   50 Bold, a monospaced Latin face half an em wide, then M PLUS 1p Bold's
   half-width forms. Other characters come from the editor's bundled 16-pixel
-  fonts. SmileBASIC's own symbols and what none of them has come from
-  SmileBASIC's font.
+  fonts. SmileBASIC's own symbols, and characters that none of these fonts
+  has, come from SmileBASIC's font.
 
 In `settings.txt` this is `ui_font=16` or `smooth`. Earlier versions also
 had `ui_font=8`, the 8-pixel fonts doubled; it now loads as `16`. Text the
@@ -191,27 +191,27 @@ The importer copies these into the emulator's data directory:
 - the default sprite image `GDEFGRP`
 - the English help (`HelpData.idx`, `HelpData.dat`)
 
-It takes these out of the game's files:
+It extracts these from the game's files:
 
 - the default sprite definitions (SPDEF), from the executable `main`
 - the instruments, preset songs and sound effects, from the sound archive
   `petc4.bfsar`
 
-Each file is written in full under a temporary name, then takes its place.
-A link in the output folder is replaced by the file, and the file it
-pointed to is left as it was.
+Each file is written in full under a temporary name, then renamed to its
+final name. A link in the output folder is replaced by the file, and the file
+it pointed to is left unchanged.
 
 Without the ExeFS, sprite definitions are a plain grid of 16x16 cells. The first
 release's ExeFS has only definitions 0-4095; the others are empty.
 
 A sound archive imported by an older version of the importer kept one channel
-of each waveform, so its stereo waveforms, such as `BEEP 152`'s, play in mono.
-Import again to get both channels.
+of each waveform, so its stereo waveforms, such as the waveform of `BEEP 152`,
+play in mono. Import again to get both channels.
 
-It also copies SmileBASIC 4's own projects `#SYS`, `#TOOL`, `#EXAMPLE` and
-`#GUIDE` into the projects folder, as plain files like the project manager's
-Import. It never replaces a file already there, and leaves out a file that
-has a link in its place.
+The importer also copies SmileBASIC 4's own projects `#SYS`, `#TOOL`,
+`#EXAMPLE` and `#GUIDE` into the projects folder, as plain files, like Import
+in the project manager. It never replaces a file already there, and skips a
+file that has a link in its place.
 
 | Option | Effect |
 |---|---|
@@ -226,7 +226,7 @@ has a link in its place.
 | `--midi DIR` | Also write the preset songs into DIR as MIDI files |
 | `--gm` | With `--sf2` and `--midi`, number instruments as General MIDI and Roland GS do |
 
-Each MIDI file runs up to where the song has gone round its loop once. Its pitch
+Each MIDI file ends at the point where the song has looped once. Its pitch
 bend range is 24 semitones.
 
 ### Banks

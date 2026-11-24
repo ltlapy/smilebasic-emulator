@@ -1,13 +1,13 @@
 //! LMATRIX's 4x4 form with no shader. `SDL_RenderGeometry` has no W, so a triangle
-//! maps its image evenly where a true perspective does not: an element goes out as
+//! maps its image evenly, which a true perspective does not. An element is drawn as
 //! a grid of small triangles, each corner exactly where the matrix puts it. Straight
-//! edges stay straight and where they are; what is off is a texel's place inside a
-//! cell, by what [`Plane::off_at`] measures, and a grid is chosen to keep that small.
+//! edges stay straight and in place. The error is in the place of a texel inside a
+//! cell. [`Plane::off_at`] measures it, and the grid is chosen to keep it small.
 //!
-//! All of what decides what shows is linear on the element: X, Y, Z and W of a point
-//! are each a sum of its coordinates. So the rules the CPU tests pixel by pixel, W
-//! above 0 and Z / W from -1 to 1, cut the element along straight lines, and that is
-//! done here before any drawing, as the frame's edges are.
+//! Everything that decides what shows is linear on the element: X, Y, Z and W of a
+//! point are each a sum of its coordinates. So the rules that the CPU tests pixel by
+//! pixel, W above 0 and Z / W from -1 to 1, cut the element along straight lines.
+//! Those cuts are made here before any drawing, the same as the frame's edges.
 
 use sb_runtime::compose::{self, Affine};
 
@@ -19,7 +19,8 @@ const MOST_CORNERS: usize = 4 + 7;
 /// An element's plane through a 4x4 matrix.
 #[derive(Clone, Copy)]
 pub struct Plane {
-    /// X, Y, Z and W, each as what `(x, y, 1)` on the element is multiplied by.
+    /// X, Y, Z and W, each as the row that `(x, y, 1)` on the element is
+    /// multiplied by.
     rows: [[f64; 3]; 4],
     /// The frame's size.
     frame: (f64, f64),
@@ -33,8 +34,8 @@ pub struct Corner {
 }
 
 impl Plane {
-    /// `place` takes the element to the frame's pixels of the layer drawn flat,
-    /// `sample` of them to one of the layer's. None if the matrix shows nothing
+    /// `place` maps the element to the frame pixels of the layer drawn flat, with
+    /// `sample` of those pixels per layer pixel. None if the matrix shows nothing
     /// on the CPU either.
     pub fn new(m: &[f64; 16], sample: u32, place: &Affine, frame: (u32, u32)) -> Option<Plane> {
         if !compose::can_project(m) || place.inverse().is_none() {
@@ -58,7 +59,7 @@ impl Plane {
         row[0] * x + row[1] * y + row[2]
     }
 
-    /// Where a point in front goes on the frame.
+    /// Projects a point in front onto the frame.
     fn on_frame(&self, p: (f64, f64)) -> (f64, f64) {
         let [rx, ry, _, rw] = self.rows;
         let w = Self::eval(rw, p);
@@ -74,7 +75,7 @@ impl Plane {
     /// which also keeps W above 0.
     fn planes(&self) -> [[f64; 3]; 6] {
         let [rx, ry, rz, rw] = self.rows;
-        // Two pixels past each edge, so that a cut there is not to be seen.
+        // Two pixels past each edge, so that a cut there is not visible.
         let (mx, my) = (1.0 + 4.0 / self.frame.0, 1.0 + 4.0 / self.frame.1);
         let plus = |a: [f64; 3], k: f64, b: [f64; 3]| std::array::from_fn(|i| a[i] * k + b[i]);
         [
@@ -87,17 +88,18 @@ impl Plane {
         ]
     }
 
-    /// How far off, in frame pixels, a texel is at the middle of a run from `p`
-    /// to `p + d`, when the run is mapped evenly and not by the true perspective.
+    /// The distance in frame pixels by which a texel at the middle of a run from
+    /// `p` to `p + d` is off, when the run is mapped evenly and not by the true
+    /// perspective.
     fn off_at(&self, p: (f64, f64), d: (f64, f64)) -> f64 {
         let (a, b) = (self.on_frame(p), self.on_frame((p.0 + d.0, p.1 + d.1)));
         let m = self.on_frame((p.0 + d.0 / 2.0, p.1 + d.1 / 2.0));
         ((a.0 + b.0) / 2.0 - m.0).hypot((a.1 + b.1) / 2.0 - m.1)
     }
 
-    /// Hands out triangles covering what shows of the rectangle from `(0, 0)` to
-    /// `size` on the element, off by at most about `tolerance` pixels inside.
-    /// How many cells it was split into.
+    /// Passes to `triangle` the triangles that cover the visible part of the
+    /// rectangle from `(0, 0)` to `size` on the element, off by at most about
+    /// `tolerance` pixels inside. Returns the number of cells it was split into.
     pub fn triangles(
         &self,
         size: (f64, f64),
@@ -125,7 +127,7 @@ impl Plane {
         let (across, down) = self.grid(points, (x0, y0, x1, y1), tolerance);
         let (dx, dy) = ((x1 - x0) / f64::from(across), (y1 - y0) / f64::from(down));
         let point = |i: u32, j: u32| {
-            // The far side is the very point, not a sum come near it.
+            // The far side is the exact point, not a sum that only comes close.
             let px = if i == across {
                 x1
             } else {
@@ -172,8 +174,9 @@ impl Plane {
         across * down
     }
 
-    /// How many cells across and down keep what [`Plane::off_at`] says under
-    /// `tolerance`, looking where the element is nearest, where it is worst.
+    /// The number of cells across and down that keeps what [`Plane::off_at`]
+    /// reports under `tolerance`, measured where the element is nearest,
+    /// where the error is worst.
     fn grid(
         &self,
         points: &[(f64, f64)],
@@ -181,7 +184,7 @@ impl Plane {
         tolerance: f64,
     ) -> (u32, u32) {
         let rw = self.rows[3];
-        // With W the same all over it maps evenly, and one cell is right.
+        // With the same W everywhere, the mapping is even and one cell is enough.
         if rw[0] == 0.0 && rw[1] == 0.0 {
             return (1, 1);
         }
@@ -233,8 +236,8 @@ impl Corners {
     }
 }
 
-/// What of `from` lies where `plane` is at least 0, into `to`. Whether anything
-/// was cut off.
+/// Writes into `to` the part of `from` where `plane` is at least 0. Returns
+/// whether anything was cut off.
 fn cut_by(from: &Corners, plane: [f64; 3], to: &mut Corners) -> bool {
     let side = |p: (f64, f64)| Plane::eval(plane, p);
     to.n = 0;
@@ -337,7 +340,8 @@ mod tests {
         }
     }
 
-    /// Edges fall where the CPU's do, to within what ties on a line can make.
+    /// Edges fall where the CPU's edges fall, within the error that ties on a
+    /// line can cause.
     #[test]
     fn what_shows_is_where_the_cpu_shows_it() {
         for lean in [0.0, 0.001, 0.01, -0.002] {
@@ -355,7 +359,7 @@ mod tests {
     #[test]
     fn what_is_behind_does_not_show() {
         let mut m = leaning(-0.01);
-        // X = 0 at the layer's left, so what is in front, x below 100, comes on.
+        // X = 0 at the layer's left, so the part in front, x below 100, shows.
         m[12] = 0.0;
         let (both, only_cpu, only_grid) = compare(&m, &shifted(0.0, 20.0), (200, 80));
         assert!(both > 1000, "{both}");
@@ -363,16 +367,16 @@ mod tests {
             only_cpu + only_grid < both / 50,
             "{only_cpu} {only_grid} of {both}"
         );
-        // All of it is past where W falls to 0.
+        // All of it is past the line where W falls to 0.
         let (both, _, only_grid) = compare(&m, &shifted(150.0, 20.0), (40, 40));
         assert_eq!((both, only_grid), (0, 0));
     }
 
-    /// Z / W from -1 to 1 is a line across the element, as the CPU has it.
+    /// Z / W from -1 to 1 is a line across the element, the same as on the CPU.
     #[test]
     fn depth_cuts_where_the_cpu_cuts() {
         let mut m = leaning(0.0);
-        // Z = x / 60 - 2: from 60 to 180 of the layer's x is what shows.
+        // Z = x / 60 - 2: the layer's x from 60 to 180 shows.
         (m[2], m[14]) = (1.0 / 60.0, -2.0);
         let (both, only_cpu, only_grid) = compare(&m, &shifted(0.0, 0.0), (320, 100));
         assert_eq!(both, 120 * 100);
@@ -385,7 +389,7 @@ mod tests {
         assert!(Plane::new(&m, 1, &Affine::IDENTITY, FRAME).is_none());
     }
 
-    /// How finely it splits: more with more lean, none with none.
+    /// The grid splits more finely with more lean, and not at all with none.
     #[test]
     fn a_grid_grows_with_the_perspective() {
         let cells = |lean: f64| {

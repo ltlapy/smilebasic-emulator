@@ -1,6 +1,6 @@
-//! The line typed in direct mode or for INPUT and LINPUT, edited where
-//! it is on the console: the cursor moves along it, Shift selects in
-//! direct mode, and the line is drawn again after each change.
+//! The line typed in DIRECT mode or for INPUT and LINPUT, edited in place
+//! on the console: the cursor moves along it, Shift selects in DIRECT
+//! mode, and the line is drawn again after each change.
 
 use crate::complete::Completion;
 use crate::text::{Cell, TextScreen, attr};
@@ -20,9 +20,9 @@ pub mod commands {
     pub const DELETE_TO_END: u16 = 0xF8F6;
 }
 
-/// SmileBASIC 4's codes of keys that are not characters, as `PUSHKEY` takes
-/// them and they wait in the key buffers. INKEY$ gives other values for them:
-/// see [`crate::runtime::key_value`].
+/// SmileBASIC 4's codes for keys that are not characters, as `PUSHKEY` takes
+/// them and as they wait in the key buffers. INKEY$ returns other values for
+/// them: see [`crate::runtime::key_value`].
 pub mod codes {
     pub const UP: u32 = 0x10000;
     pub const DOWN: u32 = 0x10001;
@@ -47,23 +47,24 @@ pub mod codes {
     pub const ESCAPE: u32 = 0x10029;
     pub const INSERT: u32 = 0x10053;
     pub const ENTER: u32 = 0x0D;
-    /// Marks a key a controller typed, which `INKEY$(1)` passes over.
+    /// Marks a key typed by a controller, which `INKEY$(1)` skips.
     pub const FROM_PAD: u32 = 0x20000;
     /// The code itself, without [`FROM_PAD`].
     pub const CODE: u32 = FROM_PAD - 1;
 }
 
-/// The most characters a line holds; one more typed is dropped, whatever
-/// the console's size.
+/// The most characters a line holds, for any console size. A character
+/// typed past that is dropped.
 pub const LINE_MAX: usize = 256;
 
-/// A line end, as CLIPBOARD's text can put one into the line.
+/// A line end, which text from CLIPBOARD can put into the line.
 const LINE_END: u16 = 0x0A;
 
-/// How many of the console's rows a line keeps free under its cursor: the
-/// one below it and those the hint bar at the bottom of the display covers
-/// whole. `height` and `aspect` are XSCREEN's, `cell` the console's
-/// character size. The bar is 16 pixels of a 1280x720 display.
+/// Returns the number of console rows that a line keeps free under its
+/// cursor: the row below it and the rows that the hint bar at the bottom of
+/// the display covers whole. `height` and `aspect` come from XSCREEN, and
+/// `cell` is the console's character size. The bar is 16 pixels high on a
+/// 1280x720 display.
 pub fn rows_kept_free(height: u32, aspect: f64, cell: u32) -> i64 {
     let (height, aspect) = (height as f32, aspect as f32);
     let shown = if 720.0 / height <= 1280.0 / (aspect * height) {
@@ -75,7 +76,8 @@ pub fn rows_kept_free(height: u32, aspect: f64, cell: u32) -> i64 {
 }
 
 /// Scrolls the console up so that its cursor is `free` rows or more above
-/// its bottom, as all that direct mode, INPUT and LINPUT print does.
+/// its bottom. DIRECT mode, INPUT and LINPUT do this for everything they
+/// print.
 pub fn keep_rows_free(console: &mut TextScreen, free: i64) {
     let (x, y) = console.cursor();
     // A console too small for that keeps its first row.
@@ -99,14 +101,14 @@ const D_END: u32 = commands::DELETE_TO_END as u32;
 pub struct LineEdit {
     pub text: Vec<u16>,
     pub cursor: usize,
-    /// Whether the selection commands select: only direct mode's line
+    /// Whether the selection commands select: only the DIRECT mode line
     /// does. For INPUT and LINPUT they just move the cursor.
     pub selects: bool,
     /// The other end of the selection.
     anchor: Option<usize>,
     /// `SELECT_START` was given: plain moves keep the selection's other end.
     selecting: bool,
-    /// Where the line starts on the console, counted in cells from its
+    /// The start of the line on the console, counted in cells from its
     /// top left. Scrolling moves it up, above the console if need be.
     origin: i64,
     /// Cells from the origin drawn last time, cleared if the line got
@@ -123,7 +125,7 @@ pub struct LineEdit {
 
 impl LineEdit {
     /// A line starting at the console's cursor, keeping `free` rows free
-    /// under its own.
+    /// under its own cursor.
     pub fn new(console: &TextScreen, free: i64) -> LineEdit {
         let (w, _) = console.size();
         let (x, y) = console.cursor();
@@ -152,10 +154,10 @@ impl LineEdit {
         (p >= 0).then(|| (p % w, p / w))
     }
 
-    /// Where character `i` of the line goes, or the cursor before it, in
-    /// cells from the console's top left on a console `w` wide. A line end
-    /// pasted into the line shows as a line break: what follows it starts
-    /// the next row.
+    /// Returns the position of character `i` of the line, or of the cursor
+    /// before it, in cells from the console's top left on a console `w`
+    /// wide. A line end pasted into the line shows as a line break: the
+    /// text after it starts the next row.
     fn place(&self, i: usize, w: i64) -> i64 {
         let before = &self.text[..i.min(self.text.len())];
         if !before.contains(&LINE_END) {
@@ -177,14 +179,14 @@ impl LineEdit {
         Some(self.text[from..to].to_vec())
     }
 
-    /// Puts other text in, with the cursor at its end.
+    /// Replaces the text, with the cursor at its end.
     pub fn set_text(&mut self, text: Vec<u16>) {
         self.cursor = text.len();
         self.text = text;
         self.drop_selection();
     }
 
-    /// Ends the selection, leaving the text and the cursor as they are.
+    /// Ends the selection and leaves the text and the cursor unchanged.
     pub fn drop_selection(&mut self) {
         self.anchor = None;
         self.selecting = false;
@@ -228,10 +230,11 @@ impl LineEdit {
     }
 
     /// Edits with a character, one of the [`codes`] or one of the
-    /// [`commands`]. Enter, the history keys and the clipboard's are the
-    /// caller's. Any code under `&H10000` goes in as a character, control
-    /// characters too, as `PUSHKEY` can type them. Tells whether the cursor's
-    /// blink starts again, as it does for all but a move that could not move.
+    /// [`commands`]. The caller handles Enter, the history keys and the
+    /// clipboard keys. Any code under `&H10000` is typed as a character,
+    /// control characters too, as `PUSHKEY` can type them. Returns whether
+    /// the cursor blink restarts, which it does for all but `INSERT` and a
+    /// move left or right that could not move.
     pub fn key(&mut self, code: impl Into<u32>) -> bool {
         let code = code.into();
         let before = (self.cursor, self.anchor);
@@ -287,8 +290,9 @@ impl LineEdit {
     fn type_char(&mut self, c: u16) {
         let len = self.text.len();
         if self.overwrite {
-            // As in SmileBASIC 4, the selection goes after the character is
-            // written and the cursor moved on, so it can take the character.
+            // As in SmileBASIC 4, the selection is deleted after the
+            // character is written and the cursor moves on, so the deletion
+            // can include the character.
             match self.text.get_mut(self.cursor) {
                 Some(old) => *old = c,
                 None if len < LINE_MAX => self.text.push(c),
@@ -306,7 +310,7 @@ impl LineEdit {
 
     /// Draws the line where it started, scrolling the console up if its
     /// end would go below it or the cursor into the rows kept free, and
-    /// puts the console's cursor at the line's.
+    /// puts the console's cursor at the line's cursor.
     pub fn draw(&mut self, console: &mut TextScreen) {
         let (w, h) = console.size();
         let (w, h) = (i64::from(w), i64::from(h));
@@ -356,17 +360,18 @@ impl LineEdit {
         self.place_cursor(console);
     }
 
-    /// Puts the console's cursor at the line's.
+    /// Puts the console's cursor at the line's cursor.
     fn place_cursor(&self, console: &mut TextScreen) {
         let w = i64::from(console.size().0);
         let p = self.place(self.cursor, w).max(0);
         let _ = console.locate(Some((p % w) as i32), Some((p / w) as i32));
     }
 
-    /// Ends the line with Enter: the console goes on from the row under the
-    /// cursor, wherever on the line that is. So a line that fills its last row
-    /// leaves an empty row, as the cursor is on the next one already, and
-    /// Enter after Home has what follows printed over the line's second row.
+    /// Ends the line with Enter: the console continues from the row under
+    /// the cursor, whichever row of the line the cursor is on. So a line that
+    /// fills its last row leaves an empty row, because the cursor is already
+    /// on the next row, and after Home, Enter makes the next output print
+    /// over the second row of the line.
     pub fn finish(mut self, console: &mut TextScreen) -> Vec<u16> {
         // A selection stays on the console: Enter does not draw the line
         // again.
@@ -461,7 +466,7 @@ mod tests {
     }
 
     /// TEST56: Shift with a move during INPUT moves the cursor and selects
-    /// nothing, so that Backspace takes one character and nothing is drawn
+    /// nothing, so that Backspace deletes one character and nothing is drawn
     /// inverted.
     #[test]
     fn input_lines_do_not_select() {
@@ -480,8 +485,9 @@ mod tests {
         assert_eq!(line.selected_text(), None);
     }
 
-    /// TEST60: the codes `PUSHKEY` takes. Selecting goes on through plain
-    /// moves, and Tab types a space where a control character goes in as it is.
+    /// TEST60: the codes that `PUSHKEY` takes. Selecting continues through
+    /// plain moves, and Tab types a space, but a control character is typed
+    /// unchanged.
     #[test]
     fn the_codes_select_and_type() {
         let mut c = console();
@@ -506,7 +512,7 @@ mod tests {
         assert_eq!(c.cell(4, 0).code, 32);
     }
 
-    /// TEST60: Enter goes on from under the cursor.
+    /// TEST60: Enter continues from the row under the cursor.
     #[test]
     fn enter_goes_on_under_the_cursor() {
         let mut big = TextScreen::new(80, 80);
@@ -536,7 +542,7 @@ mod tests {
         assert_eq!(line.cursor, 2);
         line.draw(&mut c);
         assert_eq!(row(&c, 0), "XYC..");
-        // Past the end it adds, as it does when inserting.
+        // Past the end it adds characters, the same as inserting does.
         typing(&mut line, "ZW");
         line.draw(&mut c);
         assert_eq!(row(&c, 0), "XYZW.");
@@ -575,7 +581,7 @@ mod tests {
         );
         assert_eq!(c.cursor(), (2, 1));
         assert_eq!(line.cell_of(3, 5), Some((0, 1)));
-        // Taking the line end out joins the rows again.
+        // Removing the line end joins the rows again.
         line.key(codes::HOME);
         for _ in 0..3 {
             line.key(codes::RIGHT);
@@ -596,8 +602,8 @@ mod tests {
         let mut line = LineEdit::new(&c, 1);
         typing(&mut line, "ABC");
         line.draw(&mut c);
-        // The cursor would go past the row above the last: a row goes up
-        // for it, and the last stays free.
+        // The cursor would go past the row above the last: the console
+        // scrolls up a row, and the last row stays free.
         assert_eq!(
             [row(&c, 0), row(&c, 1), row(&c, 2)],
             ["..ABC", ".....", "....."]
@@ -668,7 +674,8 @@ mod tests {
         assert_eq!(c.cursor(), (0, 0));
         line.key(codes::END);
         line.draw(&mut c);
-        // The cursor went back to its row, which is the last: up it goes.
+        // The cursor moved back to its row, which is the last, so the
+        // console scrolls up.
         assert_eq!([row(&c, 0), row(&c, 1)], ["FGHIJ", "K...."]);
         assert_eq!(c.cursor(), (1, 1));
     }
@@ -680,7 +687,8 @@ mod tests {
         typing(&mut line, &"\u{D55C}".repeat(300));
         assert_eq!(line.text.len(), LINE_MAX);
         assert_eq!(line.cursor, LINE_MAX);
-        // Nor in the middle, and a full line's selection stays.
+        // Typing in the middle adds nothing either, and the selection of a
+        // full line stays.
         line.key(codes::LEFT);
         line.key(SELECT_LEFT);
         line.key(0x41u16);

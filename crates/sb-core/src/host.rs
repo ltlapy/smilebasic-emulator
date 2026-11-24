@@ -10,7 +10,7 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::value::Value;
 use crate::vm::Work;
 
-/// What EXEC goes on with, from [`Host::exec_source`].
+/// What EXEC continues with, returned by [`Host::exec_source`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Exec {
     /// Run this source in the slot.
@@ -29,10 +29,10 @@ pub trait Host {
     /// [`Value::Default`]. Must return exactly `want.count()` values.
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>>;
 
-    /// [`Host::call`], with the values put in `out`, which is empty and
-    /// kept by the VM from call to call, so that a host can give a result
-    /// without allocating a list for it. What is in `out` after an error
-    /// is dropped.
+    /// [`Host::call`], with the values put in `out`. The VM keeps `out`
+    /// from call to call and passes it empty, so that a host can return a
+    /// result without allocating a list for it. Anything in `out` after an
+    /// error is dropped.
     fn call_into(
         &mut self,
         id: u32,
@@ -44,14 +44,14 @@ pub trait Host {
         Ok(())
     }
 
-    /// The work the VM has done so far, given before each [`Host::call`]
+    /// The work the VM has done so far, passed before each [`Host::call`]
     /// when [`crate::vm::Vm::report_work`] asks for it.
     fn work(&mut self, _work: Work) {}
 
-    /// Whether the time the host gives the VM has run out, asked after
-    /// each [`Host::call`] and PRINT when [`crate::vm::Vm::report_work`]
-    /// is on. The VM then stops with [`crate::vm::Status::Running`], as
-    /// when its budget is spent.
+    /// Whether the time that the host gives the VM has run out. The VM asks
+    /// after each [`Host::call`] and PRINT when [`crate::vm::Vm::report_work`]
+    /// is on. If the time has run out, the VM stops with
+    /// [`crate::vm::Status::Running`], the same as when its budget is spent.
     fn out_of_time(&self) -> bool {
         false
     }
@@ -78,47 +78,48 @@ pub trait Host {
     }
 
     /// EXEC: loads the program file `file`, if given, into program slot
-    /// `slot`, and gives the slot's source to run there.
+    /// `slot`, and returns the source of the slot to run there.
     fn exec_source(&mut self, _file: Option<&[u16]>, _slot: i32) -> Result<Exec> {
         Err(ErrorKind::IllegalFunctionCall.into())
     }
 
     /// The name of the file program slot `slot` was loaded from or saved
-    /// to, as PRGNAME$ gives it; `#_FILENAME` in that slot's program.
+    /// to, in the form PRGNAME$ returns; `#_FILENAME` in the program of
+    /// that slot.
     fn program_name(&self, _slot: usize) -> Vec<u16> {
         Vec::new()
     }
 
-    /// The VM went on in program slot `slot`, which runs `program`.
+    /// The VM is now in program slot `slot`, which runs `program`.
     fn entered_slot(&mut self, _slot: usize, _program: &Rc<Compiled>) {}
 
     /// The callback CALL SPRITE or CALL TEXT runs after number `after`
     /// (-1 to start): its number, which CALLIDX() reports, and a
     /// `"@label"` to GOSUB or the name of a DEF command to call. Asked
-    /// anew each time, so callbacks set or cleared by earlier ones count.
+    /// again each time, so callbacks set or cleared by earlier ones count.
     fn next_callback(&mut self, _kind: Callbacks, _after: i32) -> Option<(i32, Vec<u16>)> {
         None
     }
 
-    /// What CALLIDX() reports once CALL SPRITE or CALL TEXT has ended:
-    /// one past the last number it went through.
+    /// The value CALLIDX() reports after CALL SPRITE or CALL TEXT has
+    /// ended: one past the last number it went through.
     fn callbacks_end(&self, _kind: Callbacks) -> i32 {
         0
     }
 
-    /// READ's place in the DATA, handed over before each [`Host::call`],
-    /// and the DEF of the running program the call is made in, whose
-    /// DATA labels a `"@label"` finds first.
+    /// READ's place in the DATA, passed before each [`Host::call`], and the
+    /// DEF of the running program that the call is made in. A `"@label"`
+    /// finds the DATA labels of that DEF first.
     fn set_data_pos(&mut self, _pos: usize, _def: Option<u32>) {}
 
-    /// READ's place after a [`Host::call`], which commands that read DATA
-    /// from a `"@label"` move; `None` leaves it.
+    /// READ's place after a [`Host::call`]. Commands that read DATA from a
+    /// `"@label"` move it. `None` leaves it unchanged.
     fn data_pos(&self) -> Option<usize> {
         None
     }
 
-    /// Arrays the host keeps in memory of its own, such as a graphic
-    /// page's, which FREEMEM leaves out.
+    /// Arrays that the host keeps in its own memory, such as the array of a
+    /// graphic page. FREEMEM skips them.
     fn own_arrays(&self) -> Vec<crate::value::ArrayRef> {
         Vec::new()
     }

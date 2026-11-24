@@ -39,7 +39,8 @@ pub enum UiFont {
     Smooth,
 }
 
-/// What draws the screens: GPU rendering if a test at start-up passes, or CPU always.
+/// The renderer of the screens: GPU rendering if a test at start-up
+/// passes, or CPU always.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Renderer {
     Auto,
@@ -49,7 +50,7 @@ pub enum Renderer {
 impl Renderer {
     pub const DEFAULT: Renderer = Renderer::Auto;
 
-    /// The one that is not this.
+    /// The other renderer.
     pub const fn other(self) -> Renderer {
         match self {
             Renderer::Auto => Renderer::Cpu,
@@ -58,8 +59,9 @@ impl Renderer {
     }
 }
 
-/// How the Simple UI scales the screen to its display, which is rarely a
-/// whole number of times the screen's size and can be smaller than it.
+/// The Simple UI's filter for scaling the screen to its display, which is
+/// rarely a whole number of times the screen's size and can be smaller
+/// than it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SimpleUiFilter {
     /// The pixel art filter where the screen is drawn larger than its
@@ -85,8 +87,8 @@ impl SimpleUiFilter {
         SimpleUiFilter::Xscreen,
     ];
 
-    /// The choice `step` places after this one, round from the last to
-    /// the first.
+    /// The choice `step` places after this one, wrapping around from the
+    /// last to the first.
     pub fn step(self, step: isize) -> SimpleUiFilter {
         let n = Self::ALL.len() as isize;
         let at = Self::ALL.iter().position(|&f| f == self).unwrap_or(0) as isize;
@@ -94,7 +96,7 @@ impl SimpleUiFilter {
     }
 }
 
-/// How large the Simple UI draws its own screens: the game list, the
+/// The size the Simple UI draws its own screens at: the game list, the
 /// pause menu, dialogs and notices. The program's screen keeps its size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SimpleUiSize {
@@ -118,8 +120,8 @@ impl SimpleUiSize {
         SimpleUiSize::Large,
     ];
 
-    /// The choice `step` places after this one, round from the last to
-    /// the first.
+    /// The choice `step` places after this one, wrapping around from the
+    /// last to the first.
     pub fn step(self, step: isize) -> SimpleUiSize {
         let n = Self::ALL.len() as isize;
         let at = Self::ALL.iter().position(|&s| s == self).unwrap_or(0) as isize;
@@ -135,25 +137,26 @@ pub struct Settings {
     pub half_width_on_save: bool,
     /// SAVE, SAVEV, SAVEG, DELETE, RENAME and METASAVE write in SmileBASIC
     /// 4's own `#` projects instead of raising Can't SAVE to system
-    /// project, and Ctrl+S saves there. Not SmileBASIC 4's.
+    /// project, and Ctrl+S saves there. SmileBASIC 4 does not do this.
     pub write_system_projects: bool,
     /// The editor wraps long lines instead of scrolling sideways.
     pub editor_wrap: bool,
-    /// The editor draws line numbers on SmileBASIC 4's number tiles; off,
-    /// in as many plain digits as the last line needs.
+    /// The editor draws line numbers on SmileBASIC 4's number tiles; when
+    /// off, in as many plain digits as the last line needs.
     pub editor_number_tiles: bool,
     /// An overview of the program behind the editor's right side.
     pub editor_map: bool,
-    /// The editor shows in a window of its own, beside the screen, so
-    /// that programs go on while it is open.
+    /// The editor shows in a separate window, beside the screen, so that
+    /// programs continue while it is open.
     pub editor_window: bool,
-    /// That window opens where it was last, as large as it was.
+    /// That window opens at its last position and size.
     pub editor_window_keep_place: bool,
     /// A program that ENDs or is stopped with the Break key leaves the
-    /// screens and sound as ACLS and SNDSTOP do. Not SmileBASIC 4's.
+    /// screens and sound the way ACLS and SNDSTOP leave them. SmileBASIC 4
+    /// does not do this.
     pub tidy_on_end: bool,
-    /// Where that window was last, and its size: x, y, width and height
-    /// in the system's window coordinates.
+    /// The last position and size of the editor's window: x, y, width and
+    /// height in the system's window coordinates.
     pub editor_window_place: Option<[i32; 4]>,
     /// The editor draws the 8- or the 16-pixel font.
     pub editor_font: FontSize,
@@ -162,30 +165,32 @@ pub struct Settings {
     /// reports.
     pub editor_tab_step: u32,
     pub editor_colors: Palette,
-    /// A BDF, TrueType or OpenType file the editor draws characters from
-    /// that SmileBASIC's font lacks, before its bundled ones; `None` for
-    /// the bundled ones alone.
+    /// A BDF, TrueType or OpenType file for the characters SmileBASIC's
+    /// font lacks, which the editor tries before its bundled ones; `None`
+    /// for the bundled ones alone.
     pub editor_extra_font: Option<String>,
     /// The editor draws half-width characters half a cell wide; each
-    /// still takes one column. Not SmileBASIC 4's.
+    /// still takes one column. SmileBASIC 4 has no such setting.
     pub editor_half_width: bool,
     /// The font source the editor looks characters up in first; the
     /// others follow in the order of [`FontSource`].
     pub editor_font_first: FontSource,
-    /// The font source whose glyphs replace SmileBASIC's on the font page,
-    /// for the 8- and the 16-pixel font. Not SmileBASIC 4's unless it is
-    /// SmileBASIC's font.
+    /// The font source whose glyphs replace SmileBASIC's glyphs on the
+    /// font page, for the 8- and the 16-pixel font. SmileBASIC 4 always
+    /// uses its own font there.
     pub program_font: [FontSource; 2],
-    /// Which bundled 16-pixel glyphs come first, wherever they are drawn:
-    /// the editor, the fallback font, the menus and windows.
+    /// The bundled 16-pixel glyphs that come first, in every place they
+    /// are drawn: the editor, the fallback font, the menus and windows.
     pub bundled_glyphs16: BundledSet,
     pub file_confirm: FileConfirm,
     /// A file question has already said how to turn such questions off.
     pub file_hint_shown: bool,
-    /// How the screen is scaled to the window; `None` follows XSCREEN.
+    /// The filter that scales the screen to the window; `None` follows
+    /// XSCREEN.
     pub screen_filter: Option<Filter>,
     /// The main window covers its display, as View > Fullscreen sets it
-    /// on the desktop. The Simple UI is fullscreen whatever this says.
+    /// on the desktop. The Simple UI is fullscreen regardless of this
+    /// setting.
     pub fullscreen: bool,
     /// The main window's size out of fullscreen when the emulator last
     /// quit, in the system's window coordinates, which View > Window size
@@ -196,15 +201,15 @@ pub struct Settings {
     pub keep_16_9: bool,
     /// View > "Wait for vsync": the main window's presents wait for the
     /// display's refresh, which paces the frames on a 60 Hz display.
-    /// Off, the frames go by the clock.
+    /// When off, the clock paces the frames.
     pub vsync: bool,
-    /// Who draws the screens.
+    /// The renderer of the screens.
     pub renderer: Renderer,
     /// Keys also press the first controller's buttons.
     pub keyboard_buttons: bool,
-    /// Controllers' A and B trade places, as do X and Y, for programs and
-    /// for the emulator's own screens: for controllers with A at the
-    /// bottom. Not SmileBASIC 4's.
+    /// Controllers' A and B are swapped, and so are X and Y, for programs
+    /// and for the emulator's own screens: for controllers with A at the
+    /// bottom. SmileBASIC 4 does not do this.
     pub swap_ab_xy: bool,
     /// Play SmileBASIC 4's own instruments when they are imported.
     pub smilebasic_instruments: bool,
@@ -213,7 +218,7 @@ pub struct Settings {
     pub sound_font: Option<String>,
     pub language: Language,
     /// Error messages are followed by a line explaining them in Japanese,
-    /// as SmileBASIC 4's Japanese edition prints.
+    /// as SmileBASIC 4's Japanese edition does.
     pub localized_errors: bool,
     /// The font of the emulator's menus and windows.
     pub ui_font: UiFont,
@@ -222,16 +227,16 @@ pub struct Settings {
     /// it with MOUSE X,Y. (The key keeps its old name.)
     pub keep_mouse_cursor: bool,
     /// The right stick moves the mouse pointer and R3 is its left button,
-    /// as SmileBASIC 4's option for the R Stick does, while no program
-    /// runs or the program shows the cursor; and with Select held
-    /// whatever the program does.
+    /// like SmileBASIC 4's option for the R Stick, while no program runs
+    /// or the program shows the cursor; and with Select held regardless of
+    /// what the program does.
     pub right_stick_mouse: bool,
-    /// What only #SYS's programs may do works in any program: so far,
-    /// HELPINFO OUT reading the editor's cursor.
+    /// Anything that only #SYS's programs may do works in any program: so
+    /// far, HELPINFO OUT reading the editor's cursor.
     pub helpinfo_cursor: bool,
     /// The help panel draws its glyphs this many times their size.
     pub help_text_size: u32,
-    /// Completion's list shows in direct mode, and in the editor.
+    /// Completion's list shows in DIRECT mode, and in the editor.
     pub complete_direct: bool,
     pub complete_editor: bool,
     /// Letters typed before the list shows.
@@ -243,8 +248,8 @@ pub struct Settings {
     pub complete_all_slots: bool,
     /// Enter takes the chosen word, besides Tab.
     pub complete_enter: bool,
-    /// How commands are used shows under the list and while typing
-    /// their arguments.
+    /// The forms of commands show under the list and while their
+    /// arguments are typed.
     pub complete_hints: bool,
     /// Hints show by the cursor instead of at the bottom of the screen.
     pub complete_above: bool,
@@ -253,13 +258,14 @@ pub struct Settings {
     pub debug_open_editor: bool,
     /// The debugger's panel draws its glyphs this many times their size.
     pub debug_text_size: u32,
-    /// How fast programs run: as fast as they can, or about as fast as on
-    /// a Switch 2 or a Switch 1.
+    /// The speed programs run at: as fast as they can, or about as fast as
+    /// on a Switch 2 or a Switch 1.
     pub speed: Speed,
     /// Frames pass while a program too slow for the computer is part-way
-    /// through its main loop, so that it keeps time. Off by default: the
-    /// trip keeps its frame and the program slows down instead (the
-    /// frontend sets `Machine::keep_frames` to the opposite).
+    /// through its main loop, so that it keeps time. Off by default: an
+    /// iteration of the program's main loop keeps its frame and the
+    /// program slows down instead (the frontend sets
+    /// `Machine::keep_frames` to the opposite).
     pub skip_frames: bool,
     /// A notice says where `skip_frames` is when a program runs slower
     /// than real time for a while. On by default.
@@ -274,10 +280,10 @@ pub struct Settings {
     /// a small screen: fullscreen, a game list instead of DIRECT mode, no
     /// menu bar.
     pub simple_ui: bool,
-    /// How the Simple UI scales the screen; `screen_filter` is the
-    /// desktop's.
+    /// The Simple UI's filter for scaling the screen; `screen_filter` is
+    /// the one for the desktop.
     pub simple_ui_filter: SimpleUiFilter,
-    /// How large the Simple UI draws its own screens.
+    /// The size the Simple UI draws its own screens at.
     pub simple_ui_size: SimpleUiSize,
     /// The Simple UI's welcome screen has been shown. It asks for A
     /// and sets `swap_ab_xy` by the button pressed.
@@ -507,7 +513,7 @@ fn choice_name<T: PartialEq>(table: &[(T, &'static str)], value: &T) -> &'static
         .map_or("", |(_, n)| n)
 }
 
-/// Four numbers apart by commas, with a size above zero.
+/// Four numbers separated by commas, with a size above zero.
 fn parse_place(value: &str) -> Option<[i32; 4]> {
     let mut parts = value.split(',').map(|n| n.trim().parse::<i32>());
     let mut place = [0; 4];
@@ -735,7 +741,8 @@ impl Settings {
             .iter()
             .find(|(f, _)| *f == self.screen_filter)
             .map_or("nearest", |(_, n)| n);
-        // Only a choice is kept, so that the default can change for all who made none.
+        // Only a choice is kept, so that the default can change for
+        // anyone who made none.
         let renderer = match self.renderer {
             r if r == Renderer::DEFAULT => "",
             Renderer::Auto => "renderer=auto\n",
@@ -940,7 +947,7 @@ mod tests {
         let s = Settings::from_text("skip_frames=true\nslow_hint=false\n");
         assert!(s.skip_frames && !s.slow_hint);
         // keep_frames, the setting's name for a few hours on main, means
-        // nothing now, as any unknown key.
+        // nothing now, like any unknown key.
         let s = Settings::from_text("keep_frames=true\nkeep_frames=false\nno_such_key=1\n");
         assert_eq!(s, Settings::default());
     }
@@ -1081,7 +1088,7 @@ mod tests {
     }
 
     /// The setting that made Ctrl+C stop programs is gone: a file that
-    /// still has it loads, and the next save leaves it out.
+    /// still has it loads, and the next save does not write it.
     #[test]
     fn drops_ctrl_c_stops() {
         let s = Settings::from_text("ctrl_c_stops=true\neditor_wrap=true\n");

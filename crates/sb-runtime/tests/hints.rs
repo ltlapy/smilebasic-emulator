@@ -48,7 +48,7 @@ fn slice(chars: &[char], (a, b): (usize, usize)) -> String {
     chars[a..b].iter().collect()
 }
 
-/// What to type for an argument.
+/// The text to type for an argument.
 fn sample(text: &str) -> &'static str {
     match text.chars().next() {
         Some('"') => "\"A\"",
@@ -57,7 +57,7 @@ fn sample(text: &str) -> &'static str {
     }
 }
 
-/// What to type between two arguments, from the form's text between
+/// The text to type between two arguments, from the form's text between
 /// them: `None` where a new statement starts.
 fn separator(between: &str) -> Option<String> {
     let rest = between.trim_matches(|c: char| "[]. …".contains(c));
@@ -126,7 +126,7 @@ fn every_form_of_the_help() {
     let (mut forms, mut arguments) = (0, 0);
     let mut failures = Vec::new();
     for topic in topics {
-        // The start page and MML's pages are no command's.
+        // The start page and the pages of MML belong to no command.
         if matches!(topic, "DEFAULTHELPKEY" | "MML") {
             continue;
         }

@@ -1,4 +1,4 @@
-//! Programs run at a console's speed: as much work a frame as on the
+//! Programs run at a console's speed: as much work per frame as on the
 //! console, with frames missed when a program needs more.
 
 use sb_runtime::Runtime;
@@ -8,7 +8,7 @@ use sb_runtime::machine::Machine;
 use sb_runtime::speed::Speed;
 use sb_runtime::storage::Storage;
 
-/// A busy loop's passes in three frames, from the start of one.
+/// The passes of a busy loop in three frames, from the start of a frame.
 const BUSY: &str = "VSYNC:T=MAINCNT():WHILE MAINCNT()-T<3:INC N:WEND:?N\n";
 
 /// An empty FOR's time for 10000 passes.
@@ -56,10 +56,10 @@ fn passes(speed: Speed, source: &str) -> f64 {
     line.trim().parse().unwrap_or_else(|_| panic!("{line:?}"))
 }
 
-/// `WHILE MAINCNT()-T<60:INC N:WEND` went round 2338972 times on a
-/// Switch 1 and 6317043 times on a Switch 2 (TEST65, 4.4.9). The costs
-/// are fitted to many kinds of work at once, so one loop comes within a
-/// few percent: 3 on a Switch 1, 7 on a Switch 2.
+/// `WHILE MAINCNT()-T<60:INC N:WEND` repeated 2338972 times on a Switch 1
+/// and 6317043 times on a Switch 2 (TEST65, 4.4.9). The costs are fitted
+/// to many kinds of work at the same time, so one loop comes within a few
+/// percent: 3 on a Switch 1, 7 on a Switch 2.
 #[test]
 fn a_busy_loop_goes_round_as_often_as_on_the_console() {
     let consoles = [
@@ -76,15 +76,15 @@ fn a_busy_loop_goes_round_as_often_as_on_the_console() {
     }
 }
 
-/// Unlimited runs a million instructions a frame without a time limit,
-/// as before there was a choice.
+/// Unlimited runs a million instructions per frame without a time limit,
+/// as it did before there was a choice.
 #[test]
 fn unlimited_runs_as_before() {
     assert_eq!(passes(Speed::Unlimited, BUSY), 214_286.0);
 }
 
 /// A frame's work that takes 1.5 frames on the console makes a VSYNC loop
-/// lose a frame in two, as SmileBASIC 4 does.
+/// lose a frame in two, the same as SmileBASIC 4 does.
 #[test]
 fn a_slow_frame_misses_vsyncs() {
     let source = |work: u32| {
@@ -94,7 +94,7 @@ fn a_slow_frame_misses_vsyncs() {
              ?MAINCNT()-T\n"
         )
     };
-    // The FOR's passes in a frame, from what 10000 take.
+    // The passes of the FOR in a frame, computed from the time 10000 take.
     let per_frame = 16_667.0 * 10_000.0 / passes(Speed::Switch1, TIMED);
     let fits = passes(Speed::Switch1, &source((per_frame * 0.5) as u32));
     assert_eq!(fits, 20.0);
@@ -112,9 +112,9 @@ fn perfend_gives_the_consoles_time() {
     assert!(passes(Speed::Switch2, TIMED) < us);
 }
 
-/// Host commands count toward the frame as the VM's work does: 100 GCLS
-/// of a whole page, 0.4 s on a Switch 1, take 24 frames of MAINCNT, not
-/// none.
+/// Host commands count toward the frame the same as the VM's work does:
+/// 100 GCLS of a whole page, 0.4 s on a Switch 1, take 24 frames of
+/// MAINCNT, not none.
 #[test]
 fn host_commands_use_up_frames() {
     let source = "VSYNC:T=MAINCNT():PERFBEGIN 0\n\
@@ -204,7 +204,7 @@ fn the_column_of_a_fills_edge_sets_its_cost() {
     assert!((780.0..880.0).contains(&x22), "{x22} us");
 }
 
-/// Changing 64 sprites in turn costs what changing one does; changing
+/// Changing 64 sprites in turn costs the same as changing one; changing
 /// 1024 in turn costs more on a Switch 1 (TEST69, TEST70).
 #[test]
 fn changing_many_sprites_in_turn_costs_more() {
@@ -227,8 +227,8 @@ fn pair(line: &str) -> (f64, f64) {
     pair.0.zip(pair.1).unwrap_or_else(|| panic!("{line:?}"))
 }
 
-/// MILLISEC keeps the console's clock, as PERFEND does, not the
-/// computer's.
+/// MILLISEC keeps the console's clock, the same as PERFEND does, not the
+/// clock of the computer.
 #[test]
 fn millisec_follows_the_consoles_clock() {
     let source = "VSYNC:M=MILLISEC():PERFBEGIN 0\n\
@@ -306,7 +306,7 @@ fn gputchr_of_user_characters_costs_by_mode() {
     assert!((6.0..7.2).contains(&own), "{own} us");
 }
 
-/// GCOPY with a color code costs more a pixel than without, and more in
+/// GCOPY with a color code costs more per pixel than without, and more in
 /// the blending modes: 16x16 took 5.97 us in mode 1 and 15.2 us in mode
 /// 3 on a Switch 1 (TEST73). GPUTCHRP's width costs its call.
 #[test]
@@ -327,7 +327,7 @@ fn gcopy_with_a_color_costs_by_mode() {
     assert!(us < 150.0, "{us} us");
 }
 
-/// The first LOADG of a file costs more than the next ones, as the
+/// The first LOADG of a file costs more than the next ones, because the
 /// console reads a file faster once it has read it (TEST69 to TEST71).
 #[test]
 fn a_file_read_the_first_time_costs_more() {
@@ -406,9 +406,9 @@ fn a_for_in_a_def_costs_more() {
 }
 
 /// CHR$ of one of the codes the last four CHR$ made costs only its call,
-/// and of another code more: TEST76 times CHR$ of one to four codes in
-/// turn at 163 to 177 ns on a Switch 1, where TPERF's VSTR, which makes 16
-/// codes in turn, and HGLIB's conversions need more.
+/// and CHR$ of another code costs more. TEST76 times CHR$ of one to four
+/// codes in turn at 163 to 177 ns on a Switch 1, while TPERF's VSTR, which
+/// makes 16 codes in turn, and HGLIB's conversions need more.
 #[test]
 fn chr_of_a_new_code_costs_more() {
     let chr = |mask: u32| {
@@ -419,14 +419,14 @@ fn chr_of_a_new_code_costs_more() {
         passes(Speed::Switch1, &chr(3)),
         passes(Speed::Switch1, &chr(15)),
     );
-    // But the first four, which are new.
+    // Except the first four, which are new.
     assert!((four - same).abs() < 3.0, "{same} us, {four} us");
     assert!(new > same + 300.0, "{same} us, {new} us");
 }
 
-/// LEN costs what reading a variable does, as ABS does, and SIN of a
-/// number past a quarter of pi more than of a small one: TEST76's SIN of
-/// 1 to 1000000.5 took 152 to 197 ns on a Switch 1, of 0.5 110 ns.
+/// LEN costs the same as reading a variable, like ABS. SIN of a number
+/// past a quarter of pi costs more than SIN of a small one: TEST76's SIN
+/// of 1 to 1000000.5 took 152 to 197 ns on a Switch 1, and of 0.5 110 ns.
 #[test]
 fn cheap_builtins_cost_no_call() {
     let time = |body: &str| {
@@ -460,7 +460,7 @@ fn rgb_of_constants_costs_a_number() {
     assert!(time("A=RGB(R,2,3)") > time("A=1") + 100.0);
 }
 
-/// GLOAD of palette indices costs more a pixel than of colors: TEST74's
+/// GLOAD of palette indices costs more per pixel than of colors: TEST74's
 /// 400x216 took 0.24 ms on a Switch 1.
 #[test]
 fn gload_of_palette_indices_costs_more() {
@@ -478,8 +478,8 @@ fn gload_of_palette_indices_costs_more() {
     assert!(colors < indices * 0.75, "{colors} us, {indices} us");
 }
 
-/// SPROT among commands for a few sprites costs less, as TEST76's of one,
-/// two or ten sprites in turn take 285 ns each on a Switch 1, where
+/// SPROT among commands for a few sprites costs less: TEST76's SPROT of
+/// one, two or ten sprites in turn takes 285 ns each on a Switch 1, while
 /// TEST70's sprite loop over a hundred sprites needs more.
 #[test]
 fn sprot_in_a_row_costs_less() {
@@ -494,7 +494,7 @@ fn sprot_in_a_row_costs_less() {
         passes(Speed::Switch1, &rot("1")),
         passes(Speed::Switch1, &rot("I MOD 100")),
     );
-    // But the first, while the SPSETs of a hundred sprites are among the
+    // Except the first, while the SPSETs of a hundred sprites are among the
     // last commands.
     assert!((two - row).abs() < 3.0, "{row} us, {two} us");
     assert!(row + 400.0 < many, "{row} us, {many} us");

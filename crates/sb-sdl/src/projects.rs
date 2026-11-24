@@ -5,9 +5,9 @@
 //! and icon. Drawn over the screen like the menu bar, it takes all input
 //! while it is open.
 //!
-//! The projects are on the left; on the right, an info area above the
-//! files shows what the list clicked last has selected: the project, or
-//! a preview of the file. Expanded, it covers the files and edits the
+//! The projects are on the left. On the right, an info area above the
+//! files shows the selection of the list clicked last: the project, or a
+//! preview of the file. When expanded, it covers the files and edits the
 //! project's metadata.
 
 use sb_runtime::Framebuffer;
@@ -45,29 +45,30 @@ const LIST_WIDTH: u32 = 460;
 /// The height of a project's row: its icon, beside its title over its
 /// folder's name.
 const ROW: u32 = 2 * LINE;
-/// The folder's name under the title.
+/// The color of the folder name under the title.
 pub(crate) const FOLDER: u32 = 0xFFB0_B0B0;
 /// The gap between a project's icon and its title.
 const ICON_GAP: u32 = 6;
 /// The current project's row when it is not selected: a faint tint,
-/// darker and greyer than both selection colours (HIGHLIGHT, BORDER).
+/// darker and grayer than both selection colors (HIGHLIGHT, BORDER).
 const CURRENT_TINT: u32 = 0xFF2A_3240;
 /// The bar at the far left of the current project's row, left of its
 /// icon, shown whether the row is selected or not.
 const CURRENT_BAR: u32 = 0xFF8C_B8FF;
 const CURRENT_BAR_WIDTH: u32 = 4;
-/// How far the mouse moves with a file before it is being dragged.
+/// The distance that the mouse moves with a file before a drag starts.
 const DRAG_START: i32 = 6;
 pub(crate) const ERROR: u32 = 0xFFFF_8080;
 /// The longest name the name box takes, a little over the limit so that
 /// a name that is too long gets an error rather than being cut short.
 const MAX_TYPED: usize = 40;
-/// The info area's height, and its height expanded over the files.
+/// The info area's height.
 const INFO_HEIGHT: u32 = 136;
+/// The info area's height expanded over the files.
 const INFO_EXPANDED: u32 = 420;
 /// The face of the info area and of the lists.
 pub(crate) const PANEL: u32 = 0xFF12_141A;
-/// Where text and pictures are shown inside the info area.
+/// The background behind text and pictures inside the info area.
 pub(crate) const WELL: u32 = 0xFF0B_0C10;
 /// The project's icon in the info area: the 40-pixel one at twice its
 /// size, each pixel a 2x2 square.
@@ -82,8 +83,9 @@ const DESCRIPTION_ROWS: u32 = 9;
 const MARK_WIDTH: u32 = CHAR + 3 * PAD;
 /// The View button's face, and its face under the mouse.
 const VIEW: (u32, u32) = (0xFF1E_4E9A, HIGHLIGHT);
-/// The files' text and outline while the info area covers them.
+/// The files' text while the info area covers them.
 const DIM_TEXT: u32 = 0xFF50_5050;
+/// The files' outline while the info area covers them.
 const DIM_BORDER: u32 = 0xFF40_4040;
 /// A menu's line between groups of items.
 pub(crate) const SEPARATOR: u32 = 0xFF44_485A;
@@ -95,7 +97,7 @@ enum Button {
     /// Run the selected project's MAIN.PRG, switching to it first.
     Run,
     Switch,
-    /// Opens the menu of the rest that can be done with projects.
+    /// Opens the menu of the other actions on projects.
     ProjectMore,
     New,
     Rename,
@@ -110,7 +112,7 @@ enum Button {
     View,
     /// Load the selected program into a slot.
     LoadTo,
-    /// Opens the menu of the rest that can be done with files.
+    /// Opens the menu of the other actions on files.
     FileMore,
     CopyTo,
     RenameFile,
@@ -142,8 +144,8 @@ const PROJECT_MORE: [Option<Button>; 8] = [
     None,
     Some(Button::Delete),
 ];
-/// View is here as well, for the TXT files whose place in the toolbar
-/// Run selected takes.
+/// View is here as well, for the TXT files: for them, Run selected takes
+/// the place of View in the toolbar.
 const FILE_MORE: [Option<Button>; 6] = [
     Some(Button::View),
     None,
@@ -241,7 +243,7 @@ impl File {
     }
 }
 
-/// A file to copy, rename or delete, wherever it is.
+/// A file to copy, rename or delete, in any project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Source {
     project: String,
@@ -286,7 +288,7 @@ pub enum Outcome {
     },
 }
 
-/// Where the manager's focus and file selection were, to come back to.
+/// The focus and file selection of the manager, to return to.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Memory {
     files: bool,
@@ -305,14 +307,14 @@ pub struct Open {
     pub home: bool,
 }
 
-/// What a chosen folder or file is for.
+/// The purpose of a chosen folder or file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Transfer {
     /// Export the named project into it, in SmileBASIC 4's files.
     Export(String),
-    /// Import SmileBASIC 4's project in it as a new project.
+    /// Import the SmileBASIC 4 project in it as a new project.
     Import,
-    /// An image to make the named project's icon of.
+    /// An image to make the icon of the named project from.
     Icon(String),
 }
 
@@ -337,8 +339,8 @@ struct NameBox {
     message: Option<String>,
 }
 
-/// An event put off to ask first whether to drop unsaved edits of the
-/// metadata, done again if they are dropped.
+/// An event postponed to ask first whether to drop unsaved edits of the
+/// metadata. It is done again if they are dropped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Deferred {
     Click((i32, i32)),
@@ -360,9 +362,10 @@ enum Pending {
     /// Export a project into a folder that already holds one.
     Export(String, PathBuf),
     DeleteFile(Source),
-    /// Copy a file over one of the same name, in a project and as a name.
+    /// Copy a file over one of the same name: the source, the project to
+    /// copy into, and the name.
     Copy(Source, String, String),
-    /// Drop the metadata's edits, then go on with the event.
+    /// Drop the metadata's edits, then continue with the event.
     Discard(Deferred),
 }
 
@@ -380,8 +383,8 @@ enum Mode {
     View(Box<Viewer>),
 }
 
-/// Which list Up and Down move in; Tab switches. The info area shows
-/// what this list has selected.
+/// The list that Up and Down move in; Tab switches it. The info area
+/// shows the selection of this list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Focus {
     Projects,
@@ -422,8 +425,8 @@ fn big_icon(pixels: &[u32]) -> Option<Picture> {
     shown_icon(pixels).then(|| Picture::scaled(pixels, (side, side), (BIG_ICON, BIG_ICON)))
 }
 
-/// An image made an icon: fitted into its square, keeping its shape,
-/// and centred on transparent pixels.
+/// Makes an icon of an image: fitted into its square, keeping its shape,
+/// and centered on transparent pixels.
 fn icon_from(img: &image::Image) -> Vec<i32> {
     let side = ICON_SIZE as u32;
     let (w, h) = (img.width as u32, img.height as u32);
@@ -466,9 +469,10 @@ struct MetaEdit {
     picture: Option<Picture>,
     /// As read, or as last saved.
     saved: (String, String, Vec<i32>),
-    /// Whether anything differs from `saved`, kept up as it is edited.
+    /// Whether anything differs from `saved`, updated on each edit.
     dirty: bool,
-    /// Where the keys go; `None` leaves them to the project list.
+    /// The part that the keys go to; `None` leaves them to the project
+    /// list.
     focus: Option<Field>,
 }
 
@@ -487,10 +491,10 @@ impl MetaEdit {
     }
 }
 
-/// What the info area shows, read when the selection changes.
+/// The contents of the info area, read when the selection changes.
 enum Info {
     Project {
-        /// How many files, and their size.
+        /// The number of files, and their size.
         summary: String,
         icon: Option<Picture>,
     },
@@ -543,15 +547,15 @@ pub struct ProjectManager {
     mode: Mode,
     mouse: Option<(i32, i32)>,
     drag: Option<Drag>,
-    /// When the storage folder and the selected project's folder last
-    /// changed, as the lists were read.
+    /// The modification times of the storage folder and the selected
+    /// project's folder, taken when the lists were read.
     read_at: (Option<SystemTime>, Option<SystemTime>),
     /// The lists wait to be read again until the window goes back to
     /// browsing.
     stale: bool,
 }
 
-/// Whether a folder's name can be used as a project name as it is.
+/// Whether a folder's name can be used unchanged as a project name.
 pub(crate) fn usable(name: &str) -> bool {
     name.is_empty() || check_project_name(name).is_ok_and(|n| n == name)
 }
@@ -593,7 +597,7 @@ fn popup_rect(frame: Rect, popup: &Popup) -> Rect {
     }
 }
 
-/// A menu item's place, or a line's between groups.
+/// The place of a menu item, or of a line between groups.
 fn popup_item(frame: Rect, popup: &Popup, i: usize) -> Rect {
     let all = popup_rect(frame, popup);
     let above: u32 = popup.items[..i].iter().map(|&i| item_height(i)).sum();
@@ -644,7 +648,8 @@ impl ProjectManager {
         manager
     }
 
-    /// What [`ProjectManager::reopen`] needs to come back as it was left.
+    /// The state that [`ProjectManager::reopen`] needs to restore the
+    /// manager to how it was left.
     pub fn memory(&self) -> Memory {
         Memory {
             files: self.focus == Focus::Files,
@@ -689,10 +694,11 @@ impl ProjectManager {
     }
 
     /// Reads the lists again for projects and files that other programs
-    /// added, removed or renamed, keeping what is selected. Unless
-    /// `always`, only when the folders' times say something changed in
-    /// them. A question, a menu or a name box waits: it acts on what was
-    /// selected when it opened.
+    /// added, removed or renamed, keeping the selection. Unless `always`
+    /// is set, it reads only when the modification times of the folders
+    /// show a change in them. While a question, a menu or a name box is
+    /// open, the reading waits, because that window acts on the selection
+    /// from when it opened.
     pub fn reread(&mut self, storage: &Storage, always: bool) {
         self.stale |= always;
         if let Mode::Copy(picker, _) = &mut self.mode {
@@ -715,7 +721,7 @@ impl ProjectManager {
         let (kept, focus, file_scroll) = (self.file_selected, self.focus, self.file_scroll);
         let clicked = self.clicked;
         self.refresh(storage, Some(&project));
-        // A project gone leaves the one that took its place selected.
+        // When the project is gone, the one that took its place is selected.
         if self.selected_name() != project {
             self.select(selected, storage);
             self.sync(storage);
@@ -954,8 +960,8 @@ impl ProjectManager {
         }
     }
 
-    /// Where a project row's title and folder name start: just right of
-    /// its icon.
+    /// The left edge of a project row's title and folder name: just right
+    /// of its icon.
     fn title_x(row: Rect) -> u32 {
         row.x + PAD + ICON_SIZE as u32 + ICON_GAP
     }
@@ -1014,7 +1020,7 @@ impl ProjectManager {
         }
     }
 
-    /// Where the preview of a file goes in the info area, under its name.
+    /// The place of a file's preview in the info area, under its name.
     fn preview_rect(&self) -> Rect {
         let r = self.info_rect();
         let x = r.x + 2 + PAD;
@@ -1110,7 +1116,8 @@ impl ProjectManager {
         self.expanded && self.right().contains(at) && !self.info_rect().contains(at)
     }
 
-    /// The item `step` on from `from` that can be chosen, round the end.
+    /// The first item that can be chosen, moving by `step` from `from` and
+    /// wrapping around the ends.
     fn next_item(&self, popup: &Popup, from: Option<usize>, step: isize) -> Option<usize> {
         let n = popup.items.len() as isize;
         let start = from.map_or(if step > 0 { -1 } else { n }, |i| i as isize);
@@ -1143,7 +1150,7 @@ impl ProjectManager {
 
     /// Reads the info area's contents again if the selection changed,
     /// and starts or ends editing the metadata to match. Every event
-    /// that can change what is selected ends with this.
+    /// that can change the selection ends with this.
     fn sync(&mut self, storage: &Storage) {
         let key = InfoKey {
             project: self.selected_name().to_string(),
@@ -1459,8 +1466,8 @@ impl ProjectManager {
 
     /// A double click on a project runs it, or switches to it if it has
     /// no MAIN.PRG; on the current project with none, it closes. It
-    /// counts only if the click before it hit the same project; one that
-    /// went to another project is a click on this one.
+    /// counts only if the click before it hit the same project. If that
+    /// click hit another project, it counts as a click on this one.
     pub fn double_click(
         &mut self,
         at: (i32, i32),
@@ -1530,7 +1537,7 @@ impl ProjectManager {
         self.sync(storage);
     }
 
-    /// Letting go of the left button: a file dragged onto a project is
+    /// The left button was released: a file dragged onto a project is
     /// copied there under its own name.
     pub fn release(&mut self, at: (i32, i32), storage: &Storage) {
         let Some(drag) = self.drag.take() else {
@@ -1556,14 +1563,15 @@ impl ProjectManager {
         self.sync(storage);
     }
 
-    /// A controller, mostly as keys: the pad moves and B (the bottom face
-    /// button) is Esc, as SmileBASIC 4's buttons are placed. A (the right
-    /// one) runs: the project's MAIN.PRG on the project list, the file (or
-    /// views it) on the files, as the toolbars' green buttons do; in the
-    /// menus, dialogs, viewer and the info area's fields it is Enter. X
-    /// goes between the lists (Tab), Y expands or collapses the info area,
-    /// and L and R move up and down a page, one step a press. The list's
-    /// `⋯` menu opens with the mouse or keys only; L, R or B closes it.
+    /// Handles a controller, mostly as keys: the D-pad moves and B (the
+    /// bottom face button) is Esc, matching the button placement of
+    /// SmileBASIC 4. A (the right one) runs the project's MAIN.PRG on the
+    /// project list, and runs (or views) the file on the files, the same as
+    /// the green toolbar buttons do. In the menus, dialogs, viewer and the
+    /// info area's fields, it is Enter. X switches between the lists (Tab),
+    /// Y expands or collapses the info area, and L and R move up and down a
+    /// page, one step per press. The list's `⋯` menu opens with the mouse or
+    /// keys only; L, R or B closes it.
     pub fn pad(&mut self, button: Pad, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
         let browsing = matches!(self.mode, Mode::Browse);
         if browsing && button == Pad::East && !self.in_field() {
@@ -1609,8 +1617,8 @@ impl ProjectManager {
         outcome
     }
 
-    /// Which kind of screen the manager is on (list, name box, dialog,
-    /// ...), so that a change can be told.
+    /// The id of the kind of screen the manager is on (list, name box,
+    /// dialog, ...), so that a change can be detected.
     pub fn mode_id(&self) -> usize {
         match self.mode {
             Mode::Browse => 0,
@@ -1643,9 +1651,10 @@ impl ProjectManager {
 
     /// Up and Down choose a project, or a file after Tab. Enter switches to
     /// the project, or loads the file into a slot. F5 runs the selected
-    /// project's MAIN.PRG on the project list, as A does, and the selected
-    /// program on the files, as Run selected does. Space expands the info area, and the menu key opens the list's `⋯`
-    /// menu. Esc collapses the info area or closes; F12 closes.
+    /// project's MAIN.PRG on the project list, the same as A does, and the
+    /// selected program on the files, the same as Run selected does. Space
+    /// expands the info area, and the menu key opens the list's `⋯` menu.
+    /// Esc collapses the info area or closes; F12 closes.
     pub fn key(&mut self, key: Keycode, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
         let outcome = self.key_in(key, storage, unsaved);
         self.sync(storage);
@@ -1776,7 +1785,7 @@ impl ProjectManager {
             if self.dirty() {
                 return self.ask_discard(Deferred::Key(key));
             }
-            // Never View, as A would on a DAT or GRP file: F5 only runs.
+            // Never View, which A does on a DAT or GRP file: F5 only runs.
             let run = match self.focus {
                 Focus::Projects => Button::Run,
                 Focus::Files => Button::RunFile,
@@ -2017,10 +2026,10 @@ impl ProjectManager {
         Outcome::Stay
     }
 
-    /// Writes the edited metadata as the emulator keeps it, as METASAVE
-    /// does: `@META.TXT` and `@ICON.PNG`, each whole or not at all, and
-    /// then deletes SmileBASIC 4's `META`, so that no stale copy stays
-    /// behind. Export makes it again from these.
+    /// Writes the edited metadata in the form the emulator keeps it in, the
+    /// same as METASAVE does: `@META.TXT` and `@ICON.PNG`, each whole or not
+    /// at all. It then deletes SmileBASIC 4's `META`, so that no stale copy
+    /// stays behind. Export makes `META` again from these.
     fn save_meta(&mut self, storage: &Storage) {
         let Some(edit) = &mut self.edit else {
             return;
@@ -2052,8 +2061,8 @@ impl ProjectManager {
         }
     }
 
-    /// Goes on with `transfer` once the frontend's folder or file dialog
-    /// has given `folder`.
+    /// Continues `transfer` once the frontend's folder or file dialog has
+    /// returned `folder`.
     pub fn folder_chosen(&mut self, transfer: Transfer, folder: PathBuf, storage: &Storage) {
         if !matches!(self.mode, Mode::Browse) {
             return;
@@ -2093,7 +2102,7 @@ impl ProjectManager {
         }
     }
 
-    /// What the window choosing where to copy to gave.
+    /// Handles the outcome of the window that chooses where to copy to.
     fn picked(&mut self, outcome: file_dialogs::Outcome, storage: &Storage) -> Outcome {
         match outcome {
             file_dialogs::Outcome::Close => self.mode = Mode::Browse,
@@ -2108,8 +2117,8 @@ impl ProjectManager {
         Outcome::Stay
     }
 
-    /// Selects the project's files again, keeping the selected one's
-    /// place, or selecting the file named.
+    /// Selects the project's files again, keeping the position of the
+    /// selected file, or selecting the named file.
     fn reselect_files(&mut self, storage: &Storage, name: Option<(FileKind, &str)>) {
         let (kept, focus) = (self.file_selected, self.focus);
         self.select(self.selected, storage);
@@ -2223,8 +2232,8 @@ impl ProjectManager {
     }
 
     /// Switches to `name`, first asking if slots have unsaved edits
-    /// (unless `asked`), or for a new name if the folder's breaks the rules.
-    /// Then opens `then`, if given.
+    /// (unless `asked`), or asking for a new name if the folder name breaks
+    /// the rules. Then opens `then`, if given.
     fn switch(
         &mut self,
         name: String,
@@ -3233,7 +3242,7 @@ mod tests {
         assert_eq!(plain.title, "PLAIN");
         assert!(plain.icon.is_none());
         assert_eq!(m.listed[0].title, "[WORKSPACE]");
-        // Two lines of text to a row.
+        // Two lines of text per row.
         assert_eq!(m.row(1).h, 2 * LINE);
         let mut fb = Framebuffer::new(1280, 720);
         m.draw(&mut fb, &Font::blank(), false);
@@ -3306,8 +3315,8 @@ mod tests {
         // Past the bar and the icon, under the text.
         let body = (PAD + ICON_SIZE as u32 + 2, ROW - 3);
         let bar = (3, ROW / 2);
-        // The current project opens selected: the selection's colour,
-        // with the bar at the far left.
+        // The current project opens selected: the selection color, with
+        // the bar at the far left.
         assert_eq!(m.selected_name(), "B");
         assert_eq!(pixel(&m, 2, body), HIGHLIGHT);
         assert_eq!(pixel(&m, 2, bar), CURRENT_BAR);
@@ -3319,7 +3328,8 @@ mod tests {
         assert_eq!(pixel(&m, 2, body), CURRENT_TINT);
         assert_eq!(pixel(&m, 2, bar), CURRENT_BAR);
         assert_ne!(pixel(&m, 0, body), CURRENT_TINT);
-        // The tint differs from both selection colours and the buttons'.
+        // The tint differs from both selection colors and from the color of
+        // the buttons.
         for other in [HIGHLIGHT, BORDER, BACKGROUND | 0xFF00_0000] {
             assert_ne!(CURRENT_TINT, other);
         }
@@ -3452,7 +3462,8 @@ mod tests {
 
         std::fs::write(game.join("TA"), "?1").unwrap();
         std::fs::create_dir(tmp.0.join("ADDED")).unwrap();
-        // The folders' times as the lists were read: nothing to read again.
+        // The folders' modification times when the lists were read: nothing
+        // to read again.
         m.read_at = (s.changed_at(None), s.changed_at(Some("GAME")));
         m.reread(&s, false);
         assert_eq!((m.projects.len(), names(&m)), (3, vec!["B".to_string()]));
@@ -3467,7 +3478,7 @@ mod tests {
         );
         assert_eq!(m.focus, Focus::Files);
 
-        // A question waits, and the lists come once it is answered.
+        // A question waits, and the lists are read once it is answered.
         std::fs::remove_file(game.join("TB")).unwrap();
         m.press(Button::DeleteFile, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Ask(..)));
@@ -3644,7 +3655,7 @@ mod tests {
         let mut s = Storage::new(tmp.0.clone());
         s.create_project("GAME").unwrap();
         // SmileBASIC 4's own META is read until the emulator's files are
-        // saved, and then goes.
+        // saved, and then it is deleted.
         let sb4 = sb_runtime::transfer::export_meta(
             &Meta {
                 title: "Old".encode_utf16().collect(),
@@ -3883,7 +3894,7 @@ mod tests {
         m.pad(Pad::East, &mut s, &[]);
         assert!(matches!(m.mode, Mode::View(_)));
         // On the project list, A runs MAIN.PRG, switching first; with no
-        // MAIN.PRG it does nothing, as Run is disabled.
+        // MAIN.PRG it does nothing, because Run is disabled.
         m.mode = Mode::Browse;
         m.pad(Pad::North, &mut s, &[]);
         assert_eq!(m.focus, Focus::Projects);
@@ -3958,11 +3969,12 @@ mod tests {
                 home: true,
             },
         };
-        // With no MAIN.PRG it does nothing, as Run is disabled.
+        // With no MAIN.PRG it does nothing, because Run is disabled.
         let mut m = ProjectManager::new(&s, (1280, 720));
         assert_eq!(m.key(Keycode::F5, &mut s, &[]), Outcome::Stay);
         assert!(matches!(m.mode, Mode::Browse));
-        // On the project list it runs MAIN.PRG, switching first, as A does.
+        // On the project list it runs MAIN.PRG, switching first, the same
+        // as A does.
         m.key(Keycode::Down, &mut s, &[]);
         assert_eq!(m.selected_name(), "GAME");
         assert_eq!(m.key(Keycode::F5, &mut s, &[]), main);
@@ -4028,7 +4040,7 @@ mod tests {
         m.key(Keycode::End, &mut s, &[]);
         assert_eq!(m.focus, Focus::Files);
         assert_eq!(m.selected_file().unwrap().kind, FileKind::Dat);
-        // Neither MAIN.PRG nor the viewer A would open.
+        // Neither MAIN.PRG nor the viewer that A would open.
         assert_eq!(m.key(Keycode::F5, &mut s, &[]), Outcome::Stay);
         assert!(matches!(m.mode, Mode::Browse));
     }

@@ -48,18 +48,19 @@ If something is missing, the tool lists the commands to install it and stops. It
 nothing.
 
 `--unchecked-vars`, off by default, builds with sb-core's `unchecked-vars` feature, and
-goes with `--test` too. The fused code then reads and writes variables without a bounds
+applies to `--test` too. The fused code then reads and writes variables without a bounds
 check on each, for about a tenth fewer instructions on arithmetic on a Cortex-A35. A bug in
-what stands in for that check would be memory unsafety that a program can reach; see
-[security.md](../development/security.md). Help > About shows `unchecked-vars` after the version.
+the checks that replace it (`fuse::check` and `run_fused`) would be memory unsafety that a
+program can reach; see [security.md](../development/security.md). Help > About shows
+`unchecked-vars` after the version.
 
-`--jit`, off by default and a prototype, builds with sb-core's `jit` feature, and goes with
-`--test` too, which then runs the generated aarch64 code under qemu. Hot loops of numbers
+`--jit`, off by default and a prototype, builds with sb-core's `jit` feature, and applies
+to `--test` too, which then runs the generated aarch64 code under qemu. Hot loops of numbers
 run as native code; see [jit-design.md](../performance/jit-design.md) for what it covers, what it costs and
-why it stays off. `--bench` prints what compiling took, and `SB_JIT=0` runs the same binary
-without native code. armhf builds stay interpreted: build them without `--jit`.
+why it stays off. `--bench` prints the cost of making the native code, and `SB_JIT=0` runs
+the same binary without native code. armhf builds stay interpreted: build them without `--jit`.
 
-## What you get
+## Build output
 
 `target/TRIPLE/dist/` holds `smilebasic` and `smilebasic-check`, where `TRIPLE` is the Rust
 target from the table. The tool prints their sizes, the newest glibc they need, the
@@ -70,25 +71,25 @@ gbm, ALSA, PulseAudio and udev when it starts, so a device without one of them l
 backend and nothing more. The build needs only those libraries' headers from your `-devel`
 packages, and no x86-64 library reaches the linker. EGL and GLES2 headers come with SDL.
 
-Both builds need glibc 2.17, the oldest Rust supports and aarch64's first. `--glibc` raises
-it. Delete `target/TRIPLE` after changing it.
+Both builds need glibc 2.17, the oldest that Rust supports and the first with aarch64
+support. `--glibc` raises it. Delete `target/TRIPLE` after changing it.
 
 The armhf build takes Rust's `armv7-unknown-linux-gnueabihf`, which is ARMv7-A, Thumb-2 and
 VFPv3 with 32 double registers, and adds NEON with `-C target-feature=+neon`. A Cortex-A35
 has all of it in 32-bit mode, as does every other ARMv8-A Cortex-A core. The standard
 library and SDL are built without NEON.
 
-NEON is in because it pays. Counted under `qemu-arm`, with each TPERF scene run alone for 4
-to 25 frames and the start-up taken out, it cuts instructions by this much. Every checksum
-stays the same, and all of TPERF's 10500 frames give the x86-64 checksum with NEON and
-without.
+NEON is enabled because it pays off. Counted under `qemu-arm`, with each TPERF scene run
+alone for 4 to 25 frames and the start-up excluded, it cuts instructions by this much.
+Every checksum stays the same, and all of TPERF's 10500 frames give the x86-64 checksum
+with NEON and without.
 
 | Start-up | SPROT | GALPHA | GTRI | LCOMP | LBLUR | GAME |
 |---|---|---|---|---|---|---|
 | 6% | 3% | 6% | 5% | 15% | 12% | 8% |
 
 SDL asks for a 64-bit `time_t` on 32-bit glibc, which needs glibc 2.34. Below that, the
-tool builds SDL with a 32-bit one, as Rust's standard library uses.
+tool builds SDL with a 32-bit one, which is what Rust's standard library uses.
 
 ## Check it on the PC
 
@@ -107,14 +108,14 @@ python3 tools/build_handheld.py --run smilebasic-check --bench --fixed 1200 DIR 
 python3 tools/build_handheld.py --test --no-fail-fast
 ```
 
-Put `--arch armhf` first for the armhf build. Both lines run under `qemu-aarch64` with a
-Cortex-A35's instruction set, or `qemu-arm` with a Cortex-A8's: the armhf baseline, without
-the integer divide and VFPv4 of later cores. An x86-64 build of the same line must print
-the same checksum. A difference is a real finding, most likely in floating point. Times
-under qemu say nothing about the device.
+Put `--arch armhf` first for the armhf build. Both lines run under `qemu-aarch64` with the
+Cortex-A35 instruction set, or `qemu-arm` with the Cortex-A8 instruction set: the armhf
+baseline, without the integer divide and VFPv4 of later cores. An x86-64 build of the same
+line must print the same checksum. A difference is a real finding, most likely in floating
+point. Times under qemu say nothing about the device.
 
 `--test` skips `sb-sdl`. `a_busy_subprogram_keeps_to_the_frames_time` times a 2 ms limit and
-can fail on a busy machine, natively too. Run it alone to tell.
+can fail on a busy machine, natively too. Run it alone to see whether it still fails.
 
 `smilebasic` runs too, with `SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy` and no window.
 Only the device can test KMSDRM and GLES2.
@@ -148,10 +149,10 @@ perf stat -e instructions:u,cycles:u -- \
     ./smilebasic-check --bench --fixed 400 "$XDG_DATA_HOME/smilebasic-emulator/projects/NAME" PROGRAM
 ```
 
-Without `perf`, run the last line from `./smilebasic-check` on for times.
+To get times without `perf`, run the last command without its `perf stat ... --` prefix.
 
-SDL looks for `libEGL.so.1` and `libGLESv2.so.2`. If your driver uses other names, as a Mali
-blob may, set `SDL_VIDEO_EGL_DRIVER` and `SDL_VIDEO_GL_DRIVER` to its paths.
+SDL looks for `libEGL.so.1` and `libGLESv2.so.2`. If your driver uses other names (a
+Mali blob may), set `SDL_VIDEO_EGL_DRIVER` and `SDL_VIDEO_GL_DRIVER` to its paths.
 [benchmarking.md](../performance/benchmarking.md) explains the output.
 
 To play, start it with the Simple UI, which needs only the gamepad:

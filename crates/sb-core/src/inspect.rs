@@ -1,10 +1,10 @@
 //! INSPECT (`??`): a value's type and contents, one line each, for
-//! direct mode and, later, the debugger's variable views.
+//! DIRECT mode and, later, the debugger's variable views.
 
 use crate::value::{Array, ArrayData, ArrayRef, Str, Value, format_number};
 
-/// Characters of a string shown; a longer one is cut off there, without
-/// its closing quote.
+/// Characters of a string shown. A string of this length or longer is shown
+/// without its closing quote, and a longer one is cut off there.
 pub const STRING_CHARS: usize = 256;
 
 /// The lines INSPECT prints for `value`: `INT: 1`, `REAL: 1.50000000` or
@@ -17,9 +17,9 @@ pub fn lines(value: &Value) -> Vec<Str> {
 /// [`lines`] one at a time. An array's lines are made from the array as
 /// they are reached, so a page of a huge array costs a page of lines.
 ///
-/// The array is read as each line is made: an element changed after the
-/// first line shows its new value, and lines past an array made shorter
-/// are left out, the empty line too.
+/// The array is read as each line is made. An element changed after the
+/// first line shows its new value. If the array is made shorter, the lines
+/// past its end are skipped, and so is the empty line.
 #[derive(Clone, Debug)]
 pub struct Lines {
     what: What,
@@ -42,7 +42,7 @@ impl Lines {
         Lines { what, next: 0 }
     }
 
-    /// How many lines have been made.
+    /// The number of lines made so far.
     pub fn made(&self) -> usize {
         self.next
     }
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(text(&s), ["STRING[1]:", " [0]: (0)\"\"", ""]);
     }
 
-    /// The lines as INSPECT made them before [`Lines`], all at once.
+    /// The lines as INSPECT made them before [`Lines`], all in one call.
     fn eager(value: &Value) -> Vec<Str> {
         let Value::Array(a) = value else {
             return vec![scalar(value)];
@@ -276,7 +276,7 @@ mod tests {
         let Value::Array(a) = &v else { unreachable!() };
         a.borrow_mut().set(2, Value::Int(-1)).unwrap();
         assert_eq!(String::from_utf16_lossy(&one.next().unwrap()), " [2]: -1");
-        // Made shorter: the lines past its end, and the empty one, go.
+        // Made shorter: the lines past its end and the empty line are gone.
         *a.borrow_mut() = Array::new(ElemType::Int, vec![2]);
         assert!(!one.has_more());
         assert_eq!(one.next(), None);

@@ -464,9 +464,7 @@ pub fn highlight(line: &[u16]) -> (Vec<Role>, LineKind) {
     (roles, kind)
 }
 
-/// Where a decimal number starting at `i` ends, read as the lexer does:
-/// digits, a fraction, and an exponent only when digits follow it.
-/// What a line defines, for the editor's index: the label it starts
+/// Returns what a line defines, for the editor's index: the label it starts
 /// with, or the function its DEF names, as written.
 pub fn definition(line: &[u16]) -> Option<String> {
     let (roles, kind) = highlight(line);
@@ -511,6 +509,9 @@ pub fn definition(line: &[u16]) -> Option<String> {
     }
 }
 
+/// Returns the end of a decimal number starting at `i`, read the same way
+/// the lexer reads it: digits, a fraction, and an exponent only when digits
+/// follow it.
 fn number_end(line: &[u16], mut i: usize) -> usize {
     while is_digit(line.get(i)) {
         i += 1;

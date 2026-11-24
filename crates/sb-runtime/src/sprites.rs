@@ -34,7 +34,8 @@ pub mod attr {
 
 /// SPLINK flags: what a child takes from its parent besides position and Z.
 pub mod link {
-    /// Shown only while the parent is, and cleared a frame after it.
+    /// Shown only while the parent is shown, and cleared a frame after the
+    /// parent is cleared.
     pub const SHOWN: i32 = 1;
     pub const ROTATION: i32 = 2;
     pub const SCALE: i32 = 4;
@@ -159,7 +160,8 @@ pub fn var_number(vars: &Vars) -> f64 {
 /// Keys of SPVAR's and TVAR's variables up to this many characters are
 /// looked up. A longer key is never found.
 pub const MAX_KEY: usize = 1024;
-/// Variables of all the sprites and text screens of one program, at most.
+/// The most variables that all the sprites and text screens of one program
+/// can have.
 /// SmileBASIC 4 takes each from a pool of this many small blocks, which
 /// short strings share.
 pub const MAX_ENTRIES: usize = 2_097_152;
@@ -175,7 +177,7 @@ pub enum VarKey<'a> {
 /// A key as a command looks it up.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Key<'a> {
-    /// Variable 7, which has a place of its own for target "V".
+    /// Variable 7, which has its own place for target "V".
     Seven,
     Int(i32),
     Str(&'a [u16]),
@@ -183,12 +185,12 @@ pub(crate) enum Key<'a> {
     Unfound,
 }
 
-/// What a new variable takes of FREEMEM: nothing for a number key or a
-/// key of up to 16 characters, which SmileBASIC 4 keeps in its small
-/// blocks, and a block of its own for a longer key.
+/// Returns the FREEMEM bytes that a new variable takes: none for a
+/// number key or a key of up to 16 characters, which SmileBASIC 4 keeps in
+/// its small blocks, and a separate block for a longer key.
 // A key of 20-23 characters takes 192 bytes.
-// UNVERIFIED: other lengths: 32 bytes and the key's, rounded up to 64
-// bytes and at least 128, with a block's 64 bytes besides.
+// UNVERIFIED: other lengths: 32 bytes plus the size of the key, rounded up
+// to 64 bytes and at least 128, plus 64 bytes for the block.
 pub fn entry_bytes(chars: usize) -> usize {
     let size = 32 + 2 * chars;
     if size <= 64 {
@@ -293,10 +295,10 @@ impl Vars {
     }
 }
 
-/// The hash of [`Vars`]: a multiply and a rotate a word, as FxHash
-/// does, where the standard library's SipHash took about a third of an
-/// SPVAR call. A program can choose keys that collide, which makes its
-/// own SPVAR calls slow and nothing else.
+/// The hash of [`Vars`]: a multiply and a rotate per word, like FxHash.
+/// The standard library's SipHash took about a third of an SPVAR call.
+/// A program can choose keys that collide. That slows its own SPVAR calls
+/// and nothing else.
 #[derive(Default)]
 pub struct VarHasher(u64);
 
@@ -378,19 +380,19 @@ pub struct Sprite {
     pub col: Option<Collision>,
     /// SPCOLVEC's movement, or `None` to use `anim_move`.
     pub col_vel: Option<(f64, f64)>,
-    /// How far an XY slide moved the sprite in the last frame.
+    /// The movement an XY slide gave the sprite in the last frame.
     pub anim_move: (f64, f64),
     /// SPLINK's parent; position and Z are then relative to it.
     pub parent: Option<usize>,
     pub link_flags: i32,
-    /// Cleared on the next frame, as its parent was.
+    /// Cleared on the next frame, because its parent was cleared.
     pub clear_pending: bool,
     /// SPFUNC's callback for CALL SPRITE: a `"@label"` or a DEF name.
     pub func: Option<Vec<u16>>,
 }
 
-/// A number as SmileBASIC 4 keeps a sprite's rotation and scale: in
-/// single precision, so that `SPROT 0,-3.3` reads back -3.29999995.
+/// Rounds `v` to single precision, which SmileBASIC 4 keeps a sprite's
+/// rotation and scale in, so that `SPROT 0,-3.3` reads back -3.29999995.
 pub fn single(v: f64) -> f64 {
     f64::from(v as f32)
 }
@@ -422,7 +424,7 @@ impl Pose {
     }
 }
 
-/// Everything of a sprite that its drawing depends on, to tell whether a
+/// Everything about a sprite that its drawing depends on, to tell whether a
 /// command changed how it shows.
 #[derive(Clone, Copy, PartialEq)]
 pub struct Appearance {
@@ -497,43 +499,44 @@ impl Sprite {
 }
 
 pub struct Sprites {
-    /// Private, for [`Sprites::boxes`] to hear of what changes.
+    /// Private, so that [`Sprites::boxes`] is notified of every change.
     list: Vec<Sprite>,
-    /// Whether SPLINK has been used, as most programs never do and looking
-    /// for a sprite's children goes through them all.
+    /// Whether SPLINK has been used. Most programs never use it, and looking
+    /// for a sprite's children goes through all sprites.
     pub linked: bool,
     /// Sprites SPLINK has made parents since SPCLR last cleared them, the
     /// only ones that can have children, one bit each.
     parents: [u64; SPRITES / 64],
     pub defs: Vec<SpriteDef>,
-    /// What SPDEF without arguments restores.
+    /// The definitions that SPDEF without arguments restores.
     default_defs: Vec<SpriteDef>,
     /// SPPAGE and SPLAYER for sprites created from now on.
     pub new_page: i32,
     pub new_layer: i32,
     /// ANIMDEF definitions.
     pub anim_defs: Vec<Option<Anim>>,
-    /// Where SPHITSP() and SPHITRC() without arguments go on searching.
+    /// The search that SPHITSP() and SPHITRC() without arguments continue.
     pub hit_sp: Option<Search>,
     pub hit_rc: Option<Search>,
-    /// What SPHITINFO reports.
+    /// The details that SPHITINFO reports.
     pub hit_info: HitInfo,
-    /// A bit for each sprite that may have SPCOL's settings, as most have
-    /// none and a search would otherwise go through them all.
+    /// A bit for each sprite that may have SPCOL's settings. Most have none,
+    /// and a search would otherwise go through all sprites.
     may_collide: [u64; SPRITES / 64],
-    /// What a search needs of each sprite, side by side: going through whole
-    /// sprites reads memory a small machine has no room to keep near. Empty
-    /// until the first search. A sprite that cannot be hit has a mask of 0; one
-    /// with a parent is in `has_parent`, as its parent moves it too.
+    /// The part of each sprite that a search needs, side by side: going through
+    /// whole sprites reads memory that does not fit in the cache of a small
+    /// machine. Empty until the first search. A sprite that cannot be hit has
+    /// a mask of 0. A sprite with a parent is in `has_parent`, because its
+    /// parent moves it too.
     boxes: Vec<Body>,
     has_parent: [u64; SPRITES / 64],
-    /// A bit for each sprite whose box may no longer hold, and whether
-    /// any is set: the next search brings those up to date.
+    /// A bit for each sprite whose box may be out of date, and whether any is
+    /// set. The next search brings those boxes up to date.
     stale: [u64; SPRITES / 64],
     any_stale: bool,
-    /// A bit for each sprite that may be in use. Walking the list reads memory
-    /// a small machine has no room to keep near, for nothing when most sprites
-    /// are free.
+    /// A bit for each sprite that may be in use. When most sprites are free,
+    /// walking the list needlessly reads memory that does not fit in the cache
+    /// of a small machine.
     in_use: [u64; SPRITES / 64],
 }
 
@@ -678,7 +681,7 @@ impl Sprites {
         }
     }
 
-    /// Clears every sprite's variables, as starting a program does.
+    /// Clears every sprite's variables, the same as starting a program does.
     pub fn clear_vars(&mut self) {
         for s in &mut self.list {
             s.vars.clear();
@@ -702,8 +705,8 @@ impl Sprites {
         s
     }
 
-    /// SPCLR of one sprite. Children that follow its display go a frame
-    /// later; the others are unlinked, staying where they show (checked
+    /// SPCLR of one sprite. Children that follow its display are cleared a
+    /// frame later. The others are unlinked and stay where they show (checked
     /// on hardware for the position).
     // Z also becomes absolute.
     pub fn clear(&mut self, id: usize) {
@@ -795,7 +798,7 @@ impl Sprites {
         (0..SPRITES).filter(move |&i| self.list[i].used && self.list[i].parent == Some(id))
     }
 
-    /// A sprite's pose with its parents' applied.
+    /// A sprite's pose with its parents' poses applied.
     // An inherited rotation or scale also turns or scales the child's offset
     // from its parent.
     pub fn pose(&self, id: usize) -> Pose {
@@ -805,9 +808,9 @@ impl Sprites {
         let p = self.pose(parent);
         let f = s.link_flags;
         let mut pose = own;
-        // The offset is in the parent's turned and scaled space whatever
-        // the flags (checked on hardware); they decide whether the child's
-        // own image turns and scales too.
+        // The offset is in the parent's turned and scaled space, regardless of
+        // the flags (checked on hardware). The flags decide whether the
+        // child's own image turns and scales too.
         let (dx, dy) = (s.pos.0 * p.scale.0, s.pos.1 * p.scale.1);
         let (sin, cos) = p.rot.to_radians().sin_cos();
         let (dx, dy) = (dx * cos - dy * sin, dx * sin + dy * cos);
@@ -831,7 +834,7 @@ impl Sprites {
         pose
     }
 
-    /// Plays one frame of every sprite's animations, and gives whether
+    /// Plays one frame of every sprite's animations and returns whether
     /// any sprite shows differently. Sprites whose animation asks for it
     /// are cleared when it ends.
     pub fn animate(&mut self) -> bool {
@@ -920,7 +923,7 @@ impl Sprites {
             if Some(id) == search.skip {
                 continue;
             }
-            // Only with a parent does a sprite need its pose worked out.
+            // A sprite needs its pose worked out only if it has a parent.
             if self.has_parent[id / 64] >> (id % 64) & 1 != 0 {
                 let s = &self.list[id];
                 let hit_by = s
@@ -960,7 +963,7 @@ impl Sprites {
 }
 
 /// The page pixel a sprite shows at `(x, y)` of its own rectangle (before
-/// rotation and flipping). GRP-1 is white everywhere; off a page is
+/// rotation and flipping). GRP-1 is white everywhere; pixels off a page are
 /// transparent.
 pub fn sample(grp: &Graphics, page: i32, x: i32, y: i32) -> u32 {
     let Ok(p) = usize::try_from(page) else {
@@ -990,7 +993,7 @@ mod tests {
 
     const RED: u32 = 0xFFFF_0000;
     const BLUE: u32 = 0xFF00_00FF;
-    /// What a new frame starts as.
+    /// The starting color of a new frame.
     const BLACK: u32 = 0xFF00_0000;
 
     /// GRP4 with a 2x2 image at (0,0): red on the left column, blue on the
@@ -1295,7 +1298,7 @@ mod tests {
         assert_eq!(hits(&mut s, 0, 10, None), [0usize; 0]);
     }
 
-    /// The search as it goes through whole sprites, for comparing.
+    /// A search done by going through whole sprites, for comparison.
     fn searched_by_hand(s: &Sprites, source: &Body) -> Vec<usize> {
         (0..SPRITES)
             .filter(|&id| {
@@ -1375,7 +1378,7 @@ mod tests {
         s.sprite_mut(1).pos = (500.0, 500.0);
         s.clear(2);
         assert_eq!(s.next_hit(&mut search), Some(3));
-        // What is behind where the search has got to stays behind it.
+        // Sprites the search has already passed are not searched again.
         s.sprite_mut(0).pos = (1.0, 1.0);
         s.sprite_mut(4).shown = false;
         assert_eq!(s.next_hit(&mut search), Some(5));

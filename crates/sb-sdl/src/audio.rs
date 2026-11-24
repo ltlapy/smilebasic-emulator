@@ -1,9 +1,9 @@
 //! Playing the runtime's sound, and loading the SoundFont it plays with.
 //!
 //! The device's own thread takes the sound when it needs it, from an
-//! [`Output`] the main loop fills a frame at a time, so a late frame eats
-//! into a margin rather than leaving a gap, and the device's clock and the
-//! frames' never drift apart.
+//! [`Output`] that the main loop fills one frame at a time. A late frame
+//! then uses up part of a margin instead of leaving a gap, and the device
+//! clock and the frame clock never drift apart.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -39,7 +39,7 @@ impl AudioCallback<f32> for Pull {
 
 pub struct Audio {
     output: Arc<Mutex<Output>>,
-    /// Kept for the device to go on calling back.
+    /// Kept so that the device continues calling back.
     _stream: Option<AudioStreamWithCallback<Pull>>,
 }
 
@@ -81,15 +81,16 @@ impl Audio {
         }
     }
 
-    /// Where another thread can queue samples, as [`Audio::play`] does.
+    /// Returns a sink that another thread can use to queue samples, the
+    /// same way [`Audio::play`] queues them.
     pub fn sink(&self) -> Sink {
         Sink {
             output: self._stream.as_ref().map(|_| self.output.clone()),
         }
     }
 
-    /// What the device's buffer went through and the samples waiting in
-    /// it now, if there is a device.
+    /// Returns the counters of the device buffer and the number of samples
+    /// waiting in it now, if there is a device.
     pub fn stats(&self) -> Option<(Stats, usize)> {
         self._stream.as_ref()?;
         self.output.lock().ok().map(|o| (o.stats, o.queued()))
@@ -98,10 +99,10 @@ impl Audio {
 
 impl Drop for Audio {
     /// The sdl3 crate (0.20) frees the callback before it destroys the
-    /// stream, while the device's thread may be calling it or about to:
-    /// a `Pull` freed under it then writes into freed memory. Taking the
-    /// callback off the stream first ends that, as SDL takes the stream's
-    /// lock both to call the callback and to change it.
+    /// stream, while the device thread may be calling it or about to call
+    /// it. A `Pull` freed during that call then writes into freed memory.
+    /// Removing the callback from the stream first prevents that, because
+    /// SDL takes the stream lock both to call the callback and to change it.
     fn drop(&mut self) {
         if let Some(stream) = &self._stream {
             // SAFETY: the stream lives until `_stream` is dropped, after
@@ -134,14 +135,15 @@ impl Sink {
     }
 }
 
-/// Chunks looked at in a SoundFont; real ones have about 25.
+/// The maximum number of chunks checked in a SoundFont; real ones have
+/// about 25.
 const FONT_CHUNKS: usize = 256;
 
-/// Whether the chunks in a SoundFont's three lists fit in the file.
-/// rustysynth sets aside each chunk's size (up to 4 GB) before reading it,
-/// so this stops a few damaged bytes taking all the memory. It goes over
-/// what rustysynth reads and no more, so it refuses nothing that would
-/// have loaded: anything else odd is left for rustysynth to find.
+/// Whether the chunks in the three lists of a SoundFont fit in the file.
+/// rustysynth allocates each chunk's size (up to 4 GB) before reading it,
+/// so this keeps a few damaged bytes from taking all the memory. It checks
+/// what rustysynth reads and nothing more, so it refuses nothing that
+/// would have loaded. Any other fault is left for rustysynth to find.
 fn chunks_fit<R: Read + Seek>(reader: &mut R) -> std::io::Result<bool> {
     let len = reader.seek(SeekFrom::End(0))?;
     // After "RIFF", its size and "sfbk".
@@ -172,9 +174,9 @@ fn chunks_fit<R: Read + Seek>(reader: &mut R) -> std::io::Result<bool> {
     Ok(true)
 }
 
-/// Reads a SoundFont. rustysynth takes the indices between its tables on
-/// trust, and a file that gets them wrong makes it panic while loading;
-/// that is a damaged file like any other, not the end of the program.
+/// Reads a SoundFont. rustysynth trusts the indices between its tables,
+/// and a file with wrong ones makes it panic while loading. Such a file is
+/// a damaged file like any other, and it does not end the program.
 fn read_font<R: Read + Seek>(reader: &mut R) -> Result<SoundFont, String> {
     let damaged = |e: String| format!("not a SoundFont: {e}");
     if !chunks_fit(reader).map_err(|e| damaged(e.to_string()))? {

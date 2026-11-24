@@ -1,7 +1,7 @@
-//! The windows of Ctrl+S and Ctrl+L, after SmileBASIC 4's: a name to save
-//! the edited slot as, starting with its own, and a list of the programs
-//! in the projects to load into it. The settings pick F9 to F11's tools
-//! from the same list.
+//! The windows of Ctrl+S and Ctrl+L, modeled on those of SmileBASIC 4: a
+//! name to save the edited slot as, starting with the slot's own name, and
+//! a list of the programs in the projects to load into it. The settings
+//! pick the tools of F9 to F11 from the same list.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::project_label;
@@ -39,8 +39,9 @@ pub enum Outcome {
     Tool(usize, String),
 }
 
-/// A file as SUBRUN, SYSPARAM "TOOL1" and the picker's outcomes name it:
-/// `PROJECT/NAME`, with an empty project for the workspace.
+/// Returns a file name in the form that SUBRUN, SYSPARAM "TOOL1" and the
+/// picker's outcomes use: `PROJECT/NAME`, with an empty project for the
+/// workspace.
 pub fn file_spec(project: &str, name: &str) -> String {
     format!("{project}/{name}")
 }
@@ -148,21 +149,21 @@ struct Entry {
     info: Option<(u64, String)>,
 }
 
-/// What the file list is for.
+/// The purpose of the file list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
-    /// Ctrl+L: a program to load into this slot. What is typed narrows
+    /// Ctrl+L: a program to load into this slot. The typed text narrows
     /// the list.
     Load(usize),
     /// A file to copy into the project chosen here, under the name typed.
     Copy { kind: FileKind, name: String },
     /// The settings: a program for F9, F10 or F11 (0 to 2) to start.
-    /// What is typed narrows the list, as in loading.
+    /// The typed text narrows the list, the same as in loading.
     Tool(usize),
 }
 
-/// Ctrl+L's list of the programs of a project, or of the projects, to load
-/// from; also where the projects window copies a file to.
+/// The list of Ctrl+L: the programs of a project, or the projects, to load
+/// from. The projects window also uses it to choose where to copy a file.
 pub struct FilePicker {
     size: (u32, u32),
     purpose: Purpose,
@@ -171,19 +172,21 @@ pub struct FilePicker {
     project: Option<String>,
     /// The project's files, or the projects, before narrowing.
     all: Vec<Entry>,
-    /// The rows shown: the way up to the projects first, in a project.
+    /// The rows shown. In a project, the first row is the way up to the
+    /// projects.
     entries: Vec<Entry>,
     chosen: usize,
     scroll: usize,
     error: Option<String>,
-    /// The name box: what narrows the list, or the name to copy to.
+    /// The name box: the text that narrows the list, or the name to copy to.
     field: String,
-    /// When the listed folder last changed, as the list was read.
+    /// The modification time of the listed folder, taken when the list was
+    /// read.
     read_at: Option<SystemTime>,
 }
 
 impl FilePicker {
-    /// The current project's programs.
+    /// Opens on the programs of the current project.
     pub fn new(size: (u32, u32), slot: usize, storage: &Storage) -> FilePicker {
         FilePicker::open_at(size, Purpose::Load(slot), storage.project(), storage)
     }
@@ -203,8 +206,9 @@ impl FilePicker {
         FilePicker::open_at(size, purpose, project, storage)
     }
 
-    /// For tool `n`, 0 to 2: the programs of the project it is in now,
-    /// with it chosen, or of the current project if that one is gone.
+    /// For tool `n`, 0 to 2: the programs of the project the tool is in
+    /// now, with the tool chosen, or of the current project if that project
+    /// is gone.
     pub fn tool(size: (u32, u32), n: usize, now: &str, storage: &Storage) -> FilePicker {
         let (project, name) = now.split_once('/').unwrap_or(("", ""));
         let project = match storage.project_exists(project) {
@@ -284,8 +288,8 @@ impl FilePicker {
     }
 
     /// Reads the list again for files that other programs added, removed
-    /// or renamed, keeping the chosen row. Unless `always`, only when the
-    /// folder's time says something changed in it.
+    /// or renamed, keeping the chosen row. Unless `always` is set, it reads
+    /// only when the folder's modification time shows a change in it.
     pub fn reread(&mut self, storage: &Storage, always: bool) {
         if !always && storage.changed_at(self.project.as_deref()) == self.read_at {
             return;
@@ -298,7 +302,8 @@ impl FilePicker {
         self.choose(found.unwrap_or(chosen));
     }
 
-    /// Shows the rows that hold what is typed, when it narrows the list.
+    /// Shows the rows that contain the typed text, when the text narrows
+    /// the list.
     fn narrow(&mut self) {
         let typed = self.field.to_ascii_uppercase();
         let fits = |e: &Entry| {
@@ -364,8 +369,11 @@ impl FilePicker {
         }
     }
 
-    /// Enter on the chosen row: up to the projects, into a project, or
-    /// load a file. In copying, Enter in a project copies there.
+    /// Handles Enter on the chosen row: it goes up to the projects, opens a
+    /// project, or loads a file. When choosing a tool, it makes the file
+    /// that tool instead of loading it. When copying, Enter in a project
+    /// copies the file there under the name in the name box, and does
+    /// nothing while the box is empty.
     fn act(&mut self, storage: &Storage) -> Outcome {
         let Some(entry) = self.entries.get(self.chosen) else {
             return Outcome::Stay;
@@ -395,7 +403,7 @@ impl FilePicker {
         Outcome::Stay
     }
 
-    /// To the projects, with the one left chosen.
+    /// Goes up to the projects, with the project just left chosen.
     fn up(&mut self, storage: &Storage) {
         let left = self.project.take();
         if self.narrows() {
@@ -434,7 +442,7 @@ impl FilePicker {
             Keycode::PageDown => self.choose(self.chosen + page),
             Keycode::Home => self.choose(0),
             Keycode::End => self.choose(usize::MAX),
-            // Backspace erases what is typed, then goes up.
+            // Backspace erases the typed text, then goes up.
             Keycode::Backspace if !self.field.is_empty() => {
                 self.field.pop();
                 if self.narrows() {
@@ -464,8 +472,9 @@ impl FilePicker {
         }
     }
 
-    /// A click on a row acts on it, except that in copying a file's row
-    /// gives its name to copy over; one outside the window closes it.
+    /// A click on a row acts on it, but when copying, a click on a file's
+    /// row puts its name in the name box, to copy over that file. A click
+    /// outside the window closes it.
     pub fn click(&mut self, at: (i32, i32), storage: &Storage) -> Outcome {
         if !self.frame().contains(at) {
             return Outcome::Close;
@@ -633,7 +642,8 @@ mod tests {
         };
         std::fs::write(workspace.join("TA"), "").unwrap();
         std::fs::write(workspace.join("TC"), "?1").unwrap();
-        // The folder's time as the list was read: nothing to read again.
+        // The folder's modification time when the list was read: nothing to
+        // read again.
         p.read_at = storage.changed_at(Some(""));
         p.reread(&storage, false);
         assert_eq!(names(&p), ["B", "D"]);
@@ -643,7 +653,7 @@ mod tests {
         assert_eq!(names(&p), ["A", "B", "C", "D"]);
         assert_eq!(p.entries[p.chosen].name, "D");
         assert_eq!(p.entries[3].info.as_ref().map(|i| i.0), Some(2));
-        // A chosen file gone leaves its row chosen.
+        // When the chosen file is gone, its row stays chosen.
         std::fs::remove_file(workspace.join("TD")).unwrap();
         p.reread(&storage, true);
         assert_eq!(names(&p), ["A", "B", "C"]);

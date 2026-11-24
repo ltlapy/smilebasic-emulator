@@ -21,7 +21,7 @@ cargo build --profile dist --target x86_64-pc-windows-gnu
 ```
 
 Cargo finds the MinGW linker by itself, and CMake builds SDL with `x86_64-w64-mingw32-gcc`.
-Leave out `--profile dist` for a faster build that runs a little slower.
+Omit `--profile dist` for a faster build that runs a little slower.
 
 ## Build on Windows
 
@@ -32,7 +32,7 @@ This path is untested.
 3. Install [CMake](https://cmake.org/download/) and let it add itself to `PATH`.
 4. In the repository, run `cargo build --profile dist`.
 
-## What you get
+## Build output
 
 `target/x86_64-pc-windows-gnu/dist/` holds `smilebasic.exe`, `smilebasic-check.exe` and
 `smilebasic-import.exe`. A build on Windows puts them in `target\dist\`.
@@ -51,8 +51,8 @@ The emulator keeps its files in `%APPDATA%\smilebasic-emulator`, where Linux use
 ## Console output
 
 Release and `dist` builds of `smilebasic.exe` use the Windows GUI subsystem, so double-clicking
-the program opens no console window. It shows an error that stops it from starting in a
-message box.
+the program opens no console window. If an error stops it from starting, it shows the error in
+a message box.
 
 Started from a console, it prints there: `--help`, which renderer it uses, the fallback font
 notice, and the results of `SB_UI_BENCH` and `SB_GPU` from

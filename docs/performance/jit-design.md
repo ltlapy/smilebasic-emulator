@@ -15,29 +15,29 @@ numbers, and [security.md](../development/security.md) the rules for `unsafe` co
 **Go, with Cranelift, in stages, the feature off by default.** The
 prototype compiles loops of integer and real arithmetic, comparisons and
 integer FORs, and leaves everything else to the interpreter. On the
-handheld, TPERF's VINT scene takes 1.80 ms of program time a frame instead
+handheld, TPERF's VINT scene takes 1.80 ms of program time per frame instead
 of 7.99 (4.4 times as fast) and 3.9 times as fast as the `unchecked-vars`
 build; the covered loops run 2.2 to 3.7 times as fast, in step with
 aarch64 instruction counts that fall by 48 to 72%. Scenes it does not
 cover move by 5% or less, within the noise of code layout, and every
 checksum is the same.
 
-Three findings limit what it is worth as it stands:
+Three findings limit what it is worth in its current form:
 
 - **Coverage.** GAME, VREAL, VARRAY and VDEF gain nothing: their loops read
   array elements, call builtins or DEFs, which the prototype does not
   compile. Array elements (stage 3) are what games loop over.
-- **Compile time.** Cranelift takes about 1 ms an entry on the Cortex-A35,
+- **Compile time.** Cranelift takes about 1 ms per entry on the Cortex-A35,
   6.4 ms for a loop of six. Compiling every loop at load cannot ship;
   compiling only hot loops (stage 2) must come first.
 - **Size and trust.** 1.6 MB more in the aarch64 binary, about twice the
   CPU time for a clean build, and generated code that no Rust check or
   Miri covers. The operator tests found a Cranelift miscompilation.
 
-The boundary with the VM is clean: a region is entered at one entry,
-returns an address and the budget left, and fails back to `step` as a
-chain does. The VM needed one `match` arm, two calls after `fuse::check`,
-and the value layout fixed with `#[repr(u8)]`.
+The boundary with the VM is clean: a region is entered at one entry, returns
+an address and the budget left, and fails back to `step` the same as a chain
+does. The VM needed one `match` arm, two calls after `fuse::check`, and the
+value layout fixed with `#[repr(u8)]`.
 
 ## Where the time goes now
 
@@ -60,7 +60,7 @@ every address at compile time.
 | arm32, 32-bit x86 | no | dynasm-rs: x86 yes, arm32 no | possible, more stencils |
 | Binary size added (aarch64, `dist`, stripped `smilebasic-check`) | 1.57 MB (6.13 to 7.70 MB, measured) | under 100 KB (estimate) | stencils only, under 100 KB (estimate) |
 | Build time added | a clean x86-64 `release` build of `smilebasic-check`: 105 to 224 s of CPU, 40 to 67 s wall (measured) | small | an LLVM step at build time, or checked-in stencils |
-| Compile speed on a Cortex-A35 | 1.06 ms an entry, 6.4 ms a loop of six entries (measured); x86-64 6.7 times as fast | tens of µs a region (estimate: one pass, no register allocation) | fastest: memcpy and patch |
+| Compile speed on a Cortex-A35 | 1.06 ms per entry, 6.4 ms for a loop of six entries (measured); x86-64 6.7 times as fast | tens of µs per region (estimate: one pass, no register allocation) | fastest: memcpy and patch |
 | Code quality | register allocation, constant folding, GVN, instruction selection | what the templates give; values stay in memory between operations unless we write an allocator | stencils' quality, values pass through fixed registers or memory |
 | Work per architecture | none: the IR is the same | all of it: templates, encodings, calling convention, tests | one stencil set per architecture, built by a tool we own |
 | License | Apache-2.0 WITH LLVM-exception (Cranelift, regalloc2, target-lexicon), MIT/Apache (the rest) | dynasm-rs MPL-2.0 (file-level copyleft); templates ours | ours, but the build needs LLVM |
@@ -99,12 +99,12 @@ that jumps back, at most 64. Native code is one function per region. It
 starts at the head, runs entries and jumps between them directly, and
 returns when the next entry is outside the region, costs more than the
 budget left, or cannot do its work. A region that does not come back to its
-head is not compiled, as entering native code costs a call.
+head is not compiled, because entering native code costs a call.
 
 The VM puts `FastOp::Native(n)` in place of the head's entry. `run_fused`
 calls region `n` there and continues from the `pc` it returns. Every other
-address keeps its interpreter entry, so the interpreter can go on from any
-address where native code stops.
+address keeps its interpreter entry, so the interpreter can continue from
+any address where native code stops.
 
 ### Entry kinds
 
@@ -115,18 +115,19 @@ The prototype compiles:
   the six comparisons, unary `-`, `NOT`, `!`, truthiness, and the
   comparison and truth jumps;
 - the stack-free entries of numbers: `Nop`, `Jump`, `Move`, `AddStore` and
-  its kin with or without a constant, `VarsStore`, the `Unless*` jumps,
-  `VarsJump`, `VarsJumpTrue`;
-- `ForNext` when its TO and STEP are apart from the counter (`apart`) and
+  the related entries with or without a constant, `VarsStore`, the `Unless*`
+  jumps, `VarsJump`, `VarsJumpTrue`;
+- `ForNext` when its TO and STEP are separate from the counter (`apart`) and
   integers or integer constants.
 
 With the feature, the fuser weighs a chain's step at 5 instead of 6 tenths
 of an entry, so that a statement of two operators becomes a chain rather
-than two stack entries (`X#=X#+U#*T#`). Every form is the same program, as
-`tests/fused.rs` checks for both weights.
+than two stack entries (`X#=X#+U#*T#`). Every form is the same program;
+`tests/fused.rs` checks this for both weights.
 
-Next, by what loops spend: array elements (`Index1`, `Index2`,
-`StoreIndex*`), pure builtins, real FOR loops, then calls (see the plan).
+Next, in order of the time loops spend on them: array elements (`Index1`,
+`Index2`, `StoreIndex*`), pure builtins, real FOR loops, then calls (see the
+plan).
 
 ### Entering and leaving
 
@@ -145,7 +146,7 @@ registers, and stores `pc` and `left` back when it returns.
 
 ### Values and guards
 
-A variable may hold any kind of value whatever its suffix
+A variable may hold any kind of value regardless of its suffix
 ([sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md)), so every read tests the tag. The code
 generator tracks, for each value it works with, whether it is known to be
 an integer, known to be a real, or known only at run time (a variable
@@ -154,19 +155,19 @@ of known kinds is straight-line code; on a value known at run time, it
 tests the tags and takes an integer or a real path, which meet again after
 it. Constants, which fused steps carry, are known, and comparisons and bit
 operators always give integers, so most tests fold away. A read loads the
-tag and both payload readings; the tag says which counts.
+tag and both payload readings; the tag decides which one is used.
 
-A guard that fails ends the region with `FAIL` and the place to go on
+A guard that fails ends the region with `FAIL` and the place to continue
 from: the statement's start, or the last `Commit`'s target with the
-instructions charged to it, as a chain's failing step gives them now.
-`run_fused` then stops as it does for a failing chain, and `step` runs the
-statement one instruction at a time, with the interpreter's own rules and
-errors. Native code fails on:
+instructions charged to it, the same as a failing chain step gives them now.
+`run_fused` then stops the same way as for a failing chain, and `step` runs
+the statement one instruction at a time, with the interpreter's own rules
+and errors. Native code fails on:
 
 - a value that is not a number where one is needed (a string, an array, an
   omitted value);
 - `DIV` and `MOD` by 0, by -1 and by -2147483648, and `/` by zero: the
-  interpreter raises the error or works out the wrapped value;
+  interpreter raises the error or computes the wrapped value;
 - a real operand of `DIV`, `MOD`, `NOT` or a bit operator, which the
   interpreter truncates or checks;
 - a write over a string or an array, which must be dropped;
@@ -207,21 +208,22 @@ test.
 The tables are the slices `run_fused`'s `Vars` view holds: the globals'
 table (globals, then the chains' eight hidden places, then constants) and
 the running DEF's variables. Native code names places by table and index,
-as `fuse::Var` does, and turns them into constant offsets at compile time.
-The hidden places are kept in registers: they live only within an entry.
+the same as `fuse::Var` does, and turns them into constant offsets at
+compile time. The hidden places are kept in registers: they live only
+within an entry.
 
 ### Budget, `pc` and `executed`
 
 Each entry block starts with the interpreter's test, `len > left`, and
-leaves before the entry if it fails; else it subtracts `len`. A failure
-returns the budget as it was before the entry less what the chain charged
-before its last `Commit`. `run_fused` writes `pc` and `executed` from what
-native code returns, as from its own loop, so errors and resumption see
-the same values. `tests/fused.rs` runs its programs in slices of 1, 2,
-3, 5, 7, 13, 100 and 1,000,000 instructions, and `tests/fuse_random.rs`
-its random programs in slices of 1, 2, 5, 13 and 1,000,000, fused (with
-native code, in a `jit` build) and unfused, and compare where each slice
-ends, how it ends and what is printed.
+leaves before the entry if `len` is more than `left`; otherwise it subtracts
+`len`. A failure returns the budget from before the entry, minus what the
+chain charged before its last `Commit`. `run_fused` writes `pc` and
+`executed` from what native code returns, the same as from its own loop, so
+errors and resumption see the same values. `tests/fused.rs` runs its
+programs in slices of 1, 2, 3, 5, 7, 13, 100 and 1,000,000 instructions, and
+`tests/fuse_random.rs` its random programs in slices of 1, 2, 5, 13 and
+1,000,000, fused (with native code, in a `jit` build) and unfused, and both
+compare where each slice ends, how it ends and what is printed.
 
 ### What turns it off
 
@@ -237,16 +239,17 @@ and without it.
 The prototype ends a region at any call. The full version:
 
 - **DEF calls and returns within the slot**: the region calls the callee's
-  region, or returns to `run_fused`, which makes the call as it does now and
-  enters the callee's native code at its first loop. The frame is
-  `run_fused`'s business either way.
+  region, or returns to `run_fused`, which makes the call the way it does
+  now and enters the callee's native code at its first loop. `run_fused`
+  handles the frame either way.
 - **GOSUB and RETURN**: as now, in `run_fused`.
 - **Pure builtins** (`ABS`, `SQR`, `SIN`, `MIN` and the others
   `builtins::is_pure_call` names): native code calls `extern "C"`
   wrappers that take their arguments in a buffer, run the same Rust
   function `step` runs, and report failure as a status. Calling the same
-  Rust functions keeps their results to the bit; Cranelift's own `sqrt`
-  would match, but nothing else of the C library or `libm` need.
+  Rust functions keeps their results the same to the bit; Cranelift's own
+  `sqrt` would match, but no other function of the C library or `libm` is
+  required to.
 - **Host commands and the other builtins**: native code returns to
   `run_fast`, which calls `host_call` and `builtin_call` as now.
 
@@ -254,10 +257,10 @@ The prototype ends a region at any call. The full version:
 
 Native code calls nothing in the prototype, so nothing can unwind through
 it. Helpers called from native code in later stages must be `extern "C"`
-functions, which abort on an escaping panic since Rust 1.81; to keep
-`Internal Error` rather than an abort, each wraps its body in
-`catch_unwind` and returns a status that makes the region fail, after
-which `run_fused` re-raises the panic outside native code.
+functions, which abort on an escaping panic since Rust 1.81. To keep
+`Internal Error` rather than an abort, each helper wraps its body in
+`catch_unwind` and returns a status that makes the region fail. `run_fused`
+then re-raises the panic outside native code.
 
 ## Memory safety
 
@@ -268,7 +271,7 @@ emits, and that function records the highest index per table (`need`).
 
 | Invariant | Established by |
 |---|---|
-| `Value`'s layout is as `Layout` says | `#[repr(u8)]`; `layout()` from `offset_of!`; a test per target |
+| `Value`'s layout matches `Layout` | `#[repr(u8)]`; `layout()` from `offset_of!`; a test per target |
 | Every place native code touches is below `need` | `sb-jit`'s `place()`, the only address computation |
 | The tables are at least `need` long | `Native::enter` compares `need` with the `Vars` view's lengths before each call |
 | Nothing else uses the tables during the call | `Vars::native_tables` takes `&mut self` of the view that holds the borrows |
@@ -279,17 +282,18 @@ emits, and that function records the highest index per table (`need`).
 | Native code matches the calling convention | Cranelift's `CallConv::triple_default`, Rust's `extern "C"` |
 
 `fuse::check` still bounds the interpreter's own reads; a program with
-`FastOp::Native` entries when the VM takes it (another VM's, cloned) runs
-without fused code, as `check` refuses them.
+`FastOp::Native` entries when the VM takes it (one cloned from another VM)
+runs without fused code, because `check` refuses them.
 
 Checks that stay in native code, in aarch64 instructions: a tag test is a
 compare and a branch (2), a write's string test a load, compare and branch
 (3), the budget test of an entry a compare, branch and subtract (3), an
 overflow test one branch. There is no bounds check per access: `need` is
-compared once per call. Keeping one on each access, a compare with a length
-in a register and a branch, would add 2 instructions to each of the
-14 reads and writes of VINT's iteration (6 for the NEXT, 8 for the two
-statements), 28 instructions, a quarter of its 120 natively on aarch64.
+compared once per call. Keeping one on each access (a compare with a length
+in a register, and a branch) would add 2 instructions to each of the 14
+reads and writes in an iteration of VINT's loop (6 for the NEXT, 8 for the
+two statements). That is 28 instructions, a quarter of the 120 that the
+iteration runs natively on aarch64.
 
 ### W^X
 
@@ -298,19 +302,20 @@ statements), 28 instructions, a quarter of its 120 natively on aarch64.
 | Linux (prototype) | `mmap` read-write, copy, `mprotect` read-execute; on aarch64, `dc cvau`/`ic ivau` by `CTR_EL0`'s line sizes, then `isb` |
 | Windows | `VirtualAlloc` read-write, `VirtualProtect` to `PAGE_EXECUTE_READ`, `FlushInstructionCache` |
 | macOS on Apple Silicon | `mmap` with `MAP_JIT`, `pthread_jit_write_protect_np(0)` to write and `(1)` after, `sys_icache_invalidate`; signed builds need the `com.apple.security.cs.allow-jit` entitlement |
-| macOS on Intel | as Linux |
+| macOS on Intel | the same as Linux |
 | Systems that refuse executable memory (SELinux `execmem` denied, iOS, consoles) | `mmap` or `mprotect` fails, the region is not compiled, the program runs interpreted |
 
-Pages are never writable and executable at once. The handheld's kernel,
-4.4, maps executable memory a process wrote with no restriction.
+Pages are never writable and executable at the same time. The handheld's
+kernel, 4.4, does not restrict mapping memory a process wrote as executable.
 
 ### Code lifetime
 
 A program the VM holds is behind an `Rc` and never changes. Its native code
-lives in `Compiled::native` and goes with the program: a slot's program,
-EXEC's, a direct-mode line's. The prototype maps a page per region and frees
-it when the program drops; the full version puts a program's regions in one
-arena. Code is never patched after it is made.
+lives in `Compiled::native` and is dropped with the program: the program of
+a slot, of EXEC, or of a line typed in DIRECT mode. The prototype maps a
+page per region and frees it when the program is dropped; the full version
+puts a program's regions in one arena. Code is never patched after it is
+made.
 
 ### Tests
 
@@ -331,46 +336,47 @@ arena. Code is never patched after it is made.
 - AddressSanitizer on the Rust side (nightly `-Zsanitizer=address`): finds
   native writes that land in a redzone, not all out-of-bounds writes.
 - Under Miri, `attach` makes no native code (`cfg(miri)`), so Miri can
-  check the glue with the feature on, but not the native code; not run
-  yet.
+  check the glue with the feature on, but not the native code; Miri has
+  not been run with the feature on yet.
 
-What stays unprovable: that Cranelift compiles our IR correctly (it did
-not, once, above), and that the lowering is right for values the tests do
-not try. A code generator bug means wrong results in a program, which the
-user sees as SmileBASIC 4 behaving differently; if it reaches an address,
-memory corruption that an untrusted program can cause. The design keeps
-the second to the address function and `need`: a wrong operator or a
-wrong index within `need` gives wrong values, not unsafety. Like
-`unchecked-vars`, the feature is for builds whose users accept that.
+Two things stay unprovable: that Cranelift compiles our IR correctly (once
+it did not; see above), and that the lowering is right for values the tests
+do not try. A code generator bug means wrong results in a program, which the
+user sees as SmileBASIC 4 behaving differently. If the bug reaches an
+address, it means memory corruption that an untrusted program can cause. The
+design leaves only the address function and `need` able to cause memory
+corruption: a wrong operator or a wrong index within `need` gives wrong
+values, not unsafety.
+Like `unchecked-vars`, the feature is for builds whose users accept that.
 
 ## Determinism
 
 - **Floating point.** Cranelift emits IEEE double operations, one
-  instruction each (SSE2 on x86-64, scalar FP on aarch64), as rustc does
-  for the interpreter. It never fuses a multiply and an add. Integer to
-  real is `fcvt_from_sint`, exact as `f64::from(i32)`. Comparisons use
-  ordered conditions and `!=` the unordered one, as Rust's operators. NaN
-  bits come from the same hardware instructions as the interpreter's on
-  the same machine; Cranelift's NaN canonicalization is off.
-- **Integers.** Overflow is tested with Cranelift's `sadd_overflow` and its
-  kin; shifts take the count modulo 32, as `wrapping_shl`; `DIV` and `MOD`
-  run natively only where they cannot trap.
+  instruction each (SSE2 on x86-64, scalar FP on aarch64), the same as rustc
+  does for the interpreter. It never fuses a multiply and an add. Integer to
+  real is `fcvt_from_sint`, exact, like `f64::from(i32)`. Comparisons use
+  ordered conditions and `!=` the unordered one, the same as Rust's
+  operators. NaN bits come from the same hardware instructions as in the
+  interpreter on the same machine; Cranelift's NaN canonicalization is off.
+- **Integers.** Overflow is tested with Cranelift's `sadd_overflow` and the
+  related instructions; shifts take the count modulo 32, like
+  `wrapping_shl`; `DIV` and `MOD` run natively only where they cannot trap.
 - **The ISA.** The code generator targets each architecture's baseline,
   not the host's extensions, so every machine of an architecture runs the
   same instructions.
 
 TPERF's checksums at 400 and 3600 frames are the same with the feature on
 x86-64 and on aarch64 under qemu, and every device run's checksums match
-the default build's.
+those of the default build.
 
 ## Costs to the code base
 
-- **A crate and a feature.** `crates/sb-jit` (Cranelift, executable
-  memory, cache maintenance; it knows nothing of SmileBASIC) and
+- **A crate and a feature.** `crates/sb-jit` (Cranelift, executable memory,
+  cache maintenance; it has no knowledge of SmileBASIC) and
   `crates/sb-core/src/jit.rs` (which loops, the lowering of entries and
   steps, the call, the operator tests). The `jit` feature of `sb-core` is
-  forwarded by `sb-runtime`, `sb-check` and `sb-sdl`, as `unchecked-vars`
-  is, and `tools/build_handheld.py --jit` builds and tests it.
+  forwarded by `sb-runtime`, `sb-check` and `sb-sdl`, like `unchecked-vars`,
+  and `tools/build_handheld.py --jit` builds and tests it.
 - **Changes elsewhere, all behind `cfg(feature = "jit")`:** `Value` gets
   `#[repr(u8)]` (`value.rs`); `Compiled` a `native` field
   (`bytecode.rs`); `FastOp` a `Native` variant, `check` a refusal of it and
@@ -381,7 +387,7 @@ the default build's.
   as before, with no new `unsafe` and no new dependency in its binary.
 - **What every later change must also touch.** An operator's rules in
   `ops.rs`: its lowering in `sb-jit`, or a failure there; the operator
-  tests catch a mismatch. A new `FastOp` kind: nothing, as `jit::lower`
+  tests catch a mismatch. A new `FastOp` kind: nothing, because `jit::lower`
   leaves kinds it does not know to the interpreter; a new `Micro` kind: an
   arm in `jit::lower_micro`, whose match has no wildcard. A
   change to how `run_fused` charges the budget or where it stops: the same
@@ -401,26 +407,28 @@ The prototype is in `crates/sb-jit` and `crates/sb-core/src/jit.rs`, on
 
 ### Method
 
-As [benchmark-results.md](benchmark-results.md#variables-and-constants-from-d081e7a):
+The method is that of
+[benchmark-results.md](benchmark-results.md#variables-and-constants-from-d081e7a):
 x86-64 counts with `perf stat -e instructions:u` on the `release` build,
 aarch64 with qemu's Cortex-A35 model on the `dist` build cross-built by
 `tools/build_handheld.py`, from whole blocks under `setarch -R`. A loop's
-count is the difference of programs that run it 3200 and 6400 times, in a
-DEF of its own locals; a scene's is TPERF's, alone with `#ONLY`, over
-frames 3 to 83 (x86-64) and 3 to 6 (aarch64), program and CPU drawing.
+count is the difference between programs that run it 3200 and 6400 times,
+in a DEF with its own locals. A scene's count comes from TPERF, running the
+scene alone with `#ONLY`, over frames 3 to 83 (x86-64) and 3 to 6
+(aarch64), and covers the program and the CPU drawing.
 Four builds: the default, `unchecked-vars` (the interpreter's best),
 `jit`, and the `jit` binary with `SB_JIT=0` (no native code: what the
 feature costs where it does not apply). qemu runs the generated code:
 TPERF's checksums at 400 and 3600 frames are `e8e5f6dc467db861` and
 `a6e1ed07824b1ad8` with the feature, on x86-64 and on aarch64 under qemu,
-as without it.
+the same as without it.
 
 The device is the RK3326 handheld of the earlier sets, front end stopped,
 benchmark pinned to core 3, `--bench --fixed 80 --log`, the median of
 `run_us` over frames 10 to 69, best of three runs, the four builds
-alternating in rotated order. The loops ran 3000 times a frame with a
+alternating in rotated order. The loops ran 3000 times per frame with a
 `VSYNC` after, in a program that clears the console, so that every build's
-checksum is the same; they were.
+checksum is the same; it was.
 
 ### Loops
 
@@ -432,7 +440,7 @@ THEN X#=X#-100`, `W#=W#+0.01`). The others are controls the prototype
 does not compile: a GOSUB, a function DEF call, VREAL's loop (`SQR`,
 `SIN`) and VARRAY's (array elements).
 
-Instructions an iteration:
+Instructions per iteration of the loop:
 
 | Loop | aarch64 default | aarch64 unchecked | aarch64 jit | aarch64 jit off | x86-64 default | x86-64 unchecked | x86-64 jit | x86-64 jit off |
 |---|---|---|---|---|---|---|---|---|
@@ -450,7 +458,7 @@ With native code off, the jit build runs 2 to 4% more instructions than
 the default on the loops that native code would cover (VINT's 443.7 on
 aarch64, 492.3 on x86-64), and the same as with it on the others.
 
-Device, ms of program time a frame:
+Device, ms of program time per frame:
 
 | Loop | Default | Unchecked | Jit | Jit off | Jit against default | Jit against unchecked |
 |---|---|---|---|---|---|---|
@@ -464,12 +472,12 @@ Device, ms of program time a frame:
 The covered loops run 2.2 to 3.7 times as fast as the default build and 1.9
 to 3.2 times as fast as `unchecked-vars`, on the device as in the counts.
 The empty FOR, 44 aarch64 instructions natively, shows what is left:
-the loop reads its counter and its STEP slot from memory each round,
+the loop reads its counter and its STEP slot from memory each iteration,
 tests their tags, and writes the counter and both slots back.
 
 ### Scenes
 
-Instructions a frame, in millions:
+Instructions per frame, in millions:
 
 | Scene | aarch64 default | aarch64 unchecked | aarch64 jit | aarch64 jit off | x86-64 default | x86-64 unchecked | x86-64 jit | x86-64 jit off |
 |---|---|---|---|---|---|---|---|---|
@@ -480,7 +488,7 @@ Instructions a frame, in millions:
 | VDEF | 5.36 | 5.36 | 5.59 | 5.58 | 5.85 | 5.79 | 6.17 | 6.17 |
 | GAME | 19.94 | 19.42 | 19.97 | 19.97 | 28.22 | 27.45 | 28.36 | 28.36 |
 
-Device, ms of program time a frame:
+Device, ms of program time per frame:
 
 | Scene | Default | Unchecked | Jit | Jit off | Jit against default | Jit against unchecked |
 |---|---|---|---|---|---|---|
@@ -495,16 +503,16 @@ Device, ms of program time a frame:
 VINT, the one scene the prototype covers, takes 1.80 ms instead of 7.99,
 4.4 times as fast, and 3.9 times as fast as `unchecked-vars`. Its
 program runs 3.6 times fewer aarch64 instructions (7.7 against 2.2 million
-a frame, leaving out the CPU drawing's 0.4 million in the counts above),
-and native code runs about a fifth more of them a cycle on the in-order
-core: 0.83 ms a million against 1.03. The other scenes move by 5% or less
-against the default build, within the noise of code layout; their counts
-move by +0.2% (GAME) to +4.3% (VDEF) on aarch64 and +0.5% to +5.5% on
-x86-64, the same with native code off: what the feature costs where it
-does not apply, from `Value`'s fixed layout, the lower chain weight and
-where LLVM lays out `run_fused`. `unchecked-vars` stays ahead of the jit build on every
-uncovered scene, as the jit build does not take its unchecked reads; both
-features build together.
+per frame, not counting the 0.4 million of CPU drawing in the counts
+above), and native code runs about a fifth more of them per cycle on the
+in-order core: 0.83 ms per million against 1.03. The other scenes move by
+5% or less against the default build, within the noise of code layout.
+Their counts move by +0.2% (GAME) to +4.3% (VDEF) on aarch64 and +0.5% to
++5.5% on x86-64, the same with native code off. That is what the feature
+costs where it does not apply, from `Value`'s fixed layout, the lower chain
+weight and where LLVM lays out `run_fused`. `unchecked-vars` stays ahead of
+the jit build on every uncovered scene, because the jit build does not take
+its unchecked reads; both features build together.
 
 An earlier version tested every entry for `FastOp::Native` before the
 interpreter's `match` (to run the replaced entry when native code
@@ -521,17 +529,17 @@ through `step`.
 | 40 loops of four statements | 40 | 240 | 55,356 bytes | 254 ms | 38 ms |
 | TPERF (6262 entries) | 3 | 7 | 1,564 bytes | 28 ms | 5.9 ms |
 
-On the device a region of six entries takes 6.4 ms to compile, 1.06 ms an
+On the device a region of six entries takes 6.4 ms to compile, 1.06 ms per
 entry, and the largest TPERF region (three entries) 3.8 ms; x86-64 is 6.7
 times as fast. Making Cranelift's description of the machine takes 35 to 80
-µs once a thread. TPERF's other 20 ms on the device go to working out every
+µs once per thread. TPERF's other 20 ms on the device go to computing every
 entry's native form, which allocates for each of its 6262 entries. TPERF
 loads in 62 ms with the feature against 35 ms without. Native code is
-about 230 bytes of aarch64 an entry, 270 of x86-64.
+about 230 bytes of aarch64 per entry, 270 of x86-64.
 
 Compiling every loop at load is too slow for large programs on the device:
 a program of 400 loops would wait two and a half seconds. Stage 2 compiles
-a loop only when it has run often, and works out native forms only for the
+a loop only when it has run often, and computes native forms only for the
 entries of such loops.
 
 ### Size and build time
@@ -562,7 +570,7 @@ about 10% counts only where the instruction counts move with it.
    run some hundreds of times, not every loop at load (start-up cost
    below); one code arena per program; Windows and macOS executable
    memory; the replaced entry kept so that a region native code gives up
-   on runs interpreted rather than a `step` each time round; real FOR
+   on runs interpreted rather than a `step` each iteration; real FOR
    loops; counters, step and limit slots kept in registers through a
    loop and written back at its exits (the empty FOR is 44 aarch64
    instructions natively, mostly loads and stores of the three slots);
@@ -587,7 +595,7 @@ about 10% counts only where the instruction counts move with it.
    without leaving the loop's state in memory. VDEF, game loops of DEF
    calls and SPOFS. The gain here is the smallest per instruction
    compiled: a DEF call is about 300 aarch64 instructions of frame work
-   that native code does as the interpreter does.
+   that native code does the same way as the interpreter.
 
 Sensible places to stop: after stage 2, if programs people run are not
 the integer and real loops it covers (its gain on GAME is nil); after stage
@@ -597,8 +605,8 @@ dominate measured projects.
 
 ## Dependencies
 
-What the `jit` feature adds, at the versions Cargo picks for Rust 1.87.
-None is in a default build.
+The crates that the `jit` feature adds, at the versions Cargo picks for Rust
+1.87. None is in a default build.
 
 | Crate | Version | License |
 |---|---|---|
@@ -636,7 +644,7 @@ array checks are in.
 The gain where native code applies is far outside the device's noise: 4.4
 times on VINT and 2.2 to 3.7 times on the scalar loops, against 1.1 to 1.2
 times for `unchecked-vars`, the interpreter's best. The boundary with the
-VM needed no redesign. What it does not yet do is help a game: GAME's
+VM needed no redesign. It does not yet help a game: GAME's
 loops read array elements and call DEFs and builtins. Stage 2 is needed
 before the feature is usable at all (compile time), and stage 3 decides
 whether it is worth keeping: if GAME and the sprite scenes do not gain 10%

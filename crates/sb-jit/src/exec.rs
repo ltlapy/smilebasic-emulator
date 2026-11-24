@@ -57,8 +57,8 @@ impl Mem {
     /// Copies `code` into a new mapping and makes it executable.
     pub(crate) fn new(code: &[u8]) -> Result<Mem, String> {
         use std::ffi::c_void;
-        // The kernel rounds the length up to whole pages, whatever their
-        // size, for mmap, mprotect and munmap alike.
+        // The kernel rounds the length up to whole pages, regardless of the
+        // page size, for mmap, mprotect and munmap alike.
         let mapped = code.len().max(1);
         // SAFETY: a new private anonymous mapping, which aliases nothing.
         let ptr = unsafe {
@@ -80,7 +80,7 @@ impl Mem {
             mapped,
             len: code.len(),
         };
-        // SAFETY: the mapping is `mapped` bytes, writable, and ours alone.
+        // SAFETY: the mapping is `mapped` bytes, writable, and used by nothing else.
         unsafe { std::ptr::copy_nonoverlapping(code.as_ptr(), ptr, code.len()) };
         // SAFETY: the whole mapping, which `mem` owns.
         let made =
@@ -103,8 +103,8 @@ impl Mem {
 impl Drop for Mem {
     fn drop(&mut self) {
         #[cfg(target_os = "linux")]
-        // SAFETY: the mapping `new` made, which nothing uses once `self`
-        // goes: `Code::run` borrows `self` while code runs.
+        // SAFETY: the mapping `new` made, which nothing uses once `self` is
+        // dropped: `Code::run` borrows `self` while code runs.
         unsafe {
             os::munmap(self.ptr.cast(), self.mapped);
         }
@@ -117,7 +117,7 @@ impl Drop for Mem {
 /// `ptr..ptr + len`: Arm's caches for data and instructions are not kept
 /// coherent by the hardware. The same sequence as libgcc's `__clear_cache`.
 /// The code runs only on the thread that wrote it, so no other core needs
-/// telling.
+/// to be told.
 #[cfg(target_arch = "aarch64")]
 fn flush_icache(ptr: *mut u8, len: usize) {
     use std::arch::asm;
@@ -129,7 +129,8 @@ fn flush_icache(ptr: *mut u8, len: usize) {
     unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr, options(nomem, nostack)) };
     let dline = 4usize << ((ctr >> 16) & 0xF);
     let iline = 4usize << (ctr & 0xF);
-    // IDC: the data cache need not be cleaned to the point of unification.
+    // IDC: the data cache does not need to be cleaned to the point of
+    // unification.
     if ctr & (1 << 28) == 0 {
         let mut at = start & !(dline - 1);
         while at < end {
@@ -140,7 +141,7 @@ fn flush_icache(ptr: *mut u8, len: usize) {
     }
     // SAFETY: barriers only.
     unsafe { asm!("dsb ish", options(nostack)) };
-    // DIC: the instruction cache need not be invalidated.
+    // DIC: the instruction cache does not need to be invalidated.
     if ctr & (1 << 29) == 0 {
         let mut at = start & !(iline - 1);
         while at < end {

@@ -29,7 +29,8 @@ fn array(v: &Value) -> Result<ArrayRef> {
 }
 
 /// `a`, argument `v`, must hold reals: SmileBASIC 4 writes FFTWFN's
-/// window and BQPARAM's coefficients as reals, and BIQUAD reads them so.
+/// window and BQPARAM's coefficients as reals, and BIQUAD reads them as
+/// reals.
 fn check_reals(a: &ArrayRef, v: &Value) -> Result<()> {
     if a.borrow().elem_type() != ElemType::Real {
         return Err(mismatch(v));
@@ -41,11 +42,12 @@ fn reals(a: &Array) -> Result<Vec<f64>> {
     (0..a.len()).map(|i| a.get(i).to_real()).collect()
 }
 
-/// FFT's window of `n` reals. An int array's elements are taken two at a
-/// time as the bits of one real, the first the low half, as SmileBASIC 4
-/// reads the int array's memory as reals; it then reads the second half
-/// of the window past the array's end, which is taken as 0 here.
-/// UNVERIFIED: the reals made of nonzero ints, and what lies past the end.
+/// FFT's window of `n` reals. The elements of an int array are taken two
+/// at a time as the bits of one real, the first as the low half, the same
+/// as SmileBASIC 4, which reads the memory of the int array as reals. It
+/// then reads the second half of the window past the end of the array,
+/// which is taken as 0 here.
+/// UNVERIFIED: the reals made of nonzero ints, and the values past the end.
 fn window_reals(a: &Array, n: usize) -> Result<Vec<f64>> {
     let ArrayData::Int(ints) = &a.data else {
         return reals(a);
@@ -87,7 +89,7 @@ fn turn(k: usize, len: usize) -> (f64, f64) {
     (2.0 * PI * k as f64 / len as f64).sin_cos()
 }
 
-/// In-place radix-2 transform; `inverse` turns the sign of the angle.
+/// In-place radix-2 transform; `inverse` flips the sign of the angle.
 fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
     let n = re.len();
     let mut j = 0;
@@ -106,8 +108,8 @@ fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
     let sign = if inverse { 1.0 } else { -1.0 };
     let mut len = 2;
     while len <= n {
-        // Each angle once for all the blocks, which do their sums in the
-        // same order as block by block.
+        // Each angle is computed once for all the blocks. The blocks do
+        // their sums in the same order as they would block by block.
         for k in 0..len / 2 {
             let (s, c) = turn(k, len);
             let s = sign * s;
@@ -127,13 +129,14 @@ fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
 
 /// FFT and IFFT: `out_re, out_im, in_re, in_im [, window]`, all arrays of
 /// one power-of-two length; the outputs may be the inputs.
-// The forward transform is not scaled and the inverse divides by the
-// length; a bad length is an Illegal function call. SmileBASIC 4
-// takes the length from in_re: not a power of two names nothing,
-// and another array of another length is named. The window must be an
-// array of reals, named if not. It does not look at out_re's length and
-// writes the length's worth of results into it; ours refuses a shorter
-// one, naming it.
+// The forward transform is not scaled, and the inverse divides by the
+// length. A bad length is an Illegal function call. SmileBASIC 4 takes
+// the length from in_re: a length that is not a power of two names
+// nothing, and another array of a different length is named. The window
+// may be an int or real array. A string array, as the window or any other
+// argument, is a Type mismatch and is named. SmileBASIC 4 does not look at
+// the length of out_re and writes a full length of results into it. This
+// code refuses a shorter one, naming it.
 fn fourier(args: &[Value], inverse: bool) -> Result<Vec<Value>> {
     let arrays = args.iter().map(array).collect::<Result<Vec<_>>>()?;
     let n = arrays[2].borrow().len();
@@ -150,8 +153,8 @@ fn fourier(args: &[Value], inverse: bool) -> Result<Vec<Value>> {
             );
         }
     }
-    // An int window is no error: SmileBASIC 4 reads its bytes as reals
-    // (checked on hardware), see `window`.
+    // An int window is not an error: SmileBASIC 4 reads its bytes as reals
+    // (checked on hardware), see `window_reals`.
     for (a, v) in arrays.iter().zip(args) {
         if a.borrow().elem_type() == ElemType::Str {
             return Err(mismatch(v));
@@ -223,7 +226,8 @@ pub(super) fn fftwfn(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     Ok(vec![])
 }
 
-/// The coefficient array `a`, argument `v`, needs room for all of them.
+/// Checks that the coefficient array `a`, argument `v`, has room for all
+/// the coefficients.
 fn check_coefficients(a: &ArrayRef, v: &Value) -> Result<()> {
     if a.borrow().len() < COEFFICIENTS {
         return Err(Error::with_detail(
@@ -251,11 +255,11 @@ fn channels(a: &Array) -> Result<(usize, usize)> {
 /// BIQUAD out, in, coefficients: filters each channel, carrying the last
 /// two inputs and outputs over from the previous call in the
 /// coefficients' elements 5 to 8 (mono or left) and 9 to 12 (right).
-// Each four is in[t-1], in[t-2], out[t-1], out[t-2]. Output and input
-// must have as many channels. An output shorter than the input is an
-// error naming the input; in a longer one only the input's length is
-// filtered, and the rest is left alone. The coefficients' number is looked
-// at after the channels.
+// Each group of four is in[t-1], in[t-2], out[t-1], out[t-2]. Output and
+// input must have the same number of channels. An output shorter than the
+// input is an error naming the input. In a longer one only the input's
+// length is filtered, and the rest is left unchanged. The number of
+// coefficients is looked at after the channels.
 pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let output = number_array(&args[0])?;
     let input = number_array(&args[1])?;
@@ -311,11 +315,11 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 /// BQPARAM coefficients, type, rate, cutoff, Q or bandwidth [, gain]: the
 /// coefficients of Robert Bristow-Johnson's Audio EQ Cookbook, divided by
 /// a0, with the band-pass at a 0 dB peak and shelves taking Q (all eight
-/// types match hardware to five places). Elements 5 to 12 are left alone.
-// Checked on hardware: the gain is given for types 5 to 7 only, else
-// Wrong number of arguments naming the type, checked before the values;
-// a zero rate or Q is an Illegal function call naming it (TEST62). The
-// types of all the arguments come before the array's length.
+/// types match hardware to five places). Elements 5 to 12 are left unchanged.
+// Checked on hardware: the gain is given for types 5 to 7 only, or the
+// call is a Wrong number of arguments naming the type, checked before the
+// values; a zero rate or Q is an Illegal function call naming it (TEST62).
+// The types of all the arguments are looked at before the array's length.
 pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let params = array(&args[0])?;
     if let Some(v) = (args[1..].iter()).find(|v| !v.is_number() && !matches!(v, Value::Default)) {

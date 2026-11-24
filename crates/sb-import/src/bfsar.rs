@@ -10,14 +10,15 @@ type Result<T> = std::result::Result<T, String>;
 
 /// Ranges of keys an instrument's table may have: there are 128 keys.
 const KEY_RANGES: usize = 128;
-/// Regions in the whole bank, which many instruments sharing one table
-/// could otherwise multiply. SmileBASIC 4's bank has about 2,500.
+/// The most regions in the whole bank, because many instruments sharing
+/// one table could otherwise multiply them. SmileBASIC 4's bank has about
+/// 2,500.
 const REGIONS: usize = 1 << 16;
 /// Songs and effects of each kind: the numbers the file format can store.
 const SEQUENCE_NUMBERS: usize = 1 << 16;
-/// How many times the file's own size its sequences' code may take, as
-/// many sounds may name one big file: each sound keeps a copy of its file.
-/// SmileBASIC 4's take less than the file.
+/// The most sequence code, as a multiple of the file's own size, because
+/// many sounds may name one big file and each sound keeps a copy of its
+/// file. SmileBASIC 4's sequences take less than the file.
 const SEQUENCE_CODE_TIMES_FILE: usize = 2;
 
 const DAMAGED: &str = "damaged: an offset points outside the file";
@@ -34,9 +35,9 @@ impl<'a> Bytes<'a> {
     }
 
     /// `base + offset`, if that is inside the file. Every place in the
-    /// file passes through here or `slice` first, so what is added to one
-    /// afterwards (a field's offset, an entry's) cannot overflow, even
-    /// where a usize has 32 bits.
+    /// file passes through here or `slice` first, so a field or entry
+    /// offset added to one afterwards cannot overflow, even where a usize
+    /// has 32 bits.
     fn at(self, base: usize, offset: usize) -> Result<usize> {
         base.checked_add(offset)
             .filter(|&at| at <= self.0.len())
@@ -98,8 +99,8 @@ impl<'a> Bytes<'a> {
     }
 }
 
-/// Where each of the archive's files is, by file number; `None` for a
-/// file kept outside it.
+/// The offset of each of the archive's files, by file number; `None` for
+/// a file kept outside it.
 fn files(d: Bytes) -> Result<Vec<Option<usize>>> {
     let info = d.block(0, b"FSAR", 0x2001)?;
     let data = d.block(0, b"FSAR", 0x2002)?;
@@ -136,8 +137,9 @@ fn names(d: Bytes) -> Result<Vec<String>> {
     let strings = d.block(0, b"FSAR", 0x2000)?;
     let (_, table) = d.reference(strings, strings)?;
     let table = table.ok_or("no string table")?;
-    // Names each cost a copy; many naming the same big text must not
-    // multiply it. Real names do not overlap, so they fit in the file.
+    // Each name costs a copy, so many names pointing at the same big text
+    // must not multiply it. Real names do not overlap, so they fit in the
+    // file.
     let mut total = 0usize;
     (0..d.offset(table)?)
         .map(|i| {
@@ -242,8 +244,8 @@ pub fn bank(archive: &[u8]) -> Result<Bank> {
     let add = |bank: &mut Bank, info: &WaveInfo, bytes: &[u8]| {
         let start = bank.data.len();
         // Waves that share or overlap their bytes would be copied again
-        // each time, many times the file's size from a small table.
-        // Real waves are apart, so they fit in the file.
+        // each time, and a small table could then make many times the
+        // file's size. Real waves are separate, so they fit in the file.
         if bytes.len() > archive.len() - start {
             return Err("damaged: the waveforms overlap".to_string());
         }
@@ -324,8 +326,8 @@ fn key_regions(d: Bytes, kind: u16, at: usize, out: &mut Vec<Region>) -> Result<
                 low = high.saturating_add(1);
             }
         }
-        // A region for each key, as drum sets have; neighbouring keys
-        // that share a region become one range.
+        // A region for each key, as in drum sets; neighboring keys that
+        // share a region become one range.
         0x6002 => {
             let (min, max) = (d.u8(at)?, d.u8(at + 1)?);
             let mut last: Option<(usize, u8)> = None;
@@ -354,7 +356,7 @@ fn key_region(d: Bytes, at: usize, keys: (u8, u8)) -> Result<Region> {
     let velocities = velocities.ok_or("empty key region")?;
     let region = match kind {
         0x6000 => d.reference(velocities, velocities)?.1,
-        // Ranges: take the first, for the loudest notes being rare.
+        // Ranges: take the first, because the loudest notes are rare.
         0x6001 => {
             let n = d.offset(velocities)?;
             let refs = n
@@ -428,8 +430,8 @@ fn war_waves<'a>(d: Bytes<'a>, at: usize) -> Result<Vec<Channels<'a>>> {
         .collect()
 }
 
-/// One FWAV: its first channel, and its second for the few of SmileBASIC
-/// 4's waves that are stereo. More channels are not kept.
+/// One FWAV: its first channel, and its second for the few SmileBASIC 4
+/// waves that are stereo. More channels are not kept.
 fn wave<'a>(d: Bytes<'a>, at: usize) -> Result<Channels<'a>> {
     let info = d.block(at, b"FWAV", 0x7000)?;
     let channels = info + 0x14;
@@ -466,8 +468,8 @@ fn channel<'a>(d: Bytes<'a>, at: usize, i: usize) -> Result<(WaveInfo, &'a [u8])
             for (i, c) in coefs.iter_mut().enumerate() {
                 *c = d.i16(adpcm + 2 * i)?;
             }
-            // After the coefficients: the start's context, then the
-            // loop's, each a predictor and scale, then two samples.
+            // After the coefficients: the start context, then the loop
+            // context, each a predictor and scale, then two samples.
             let loop_context = adpcm + 32 + 6;
             Encoding::Adpcm {
                 coefs,
@@ -528,7 +530,7 @@ mod tests {
         put(&mut info, &[0x0102, 32000, 14, 28, 14]);
         put(&mut info, &[1]);
         put(&mut info, &r(0x7100, 12));
-        // The channel: samples at 0 in the data, coefficients 0x14 on.
+        // The channel: samples at 0 in the data, coefficients from 0x14.
         put(&mut info, &r(0x1F00, 0));
         put(&mut info, &r(0x0300, 0x14));
         put(&mut info, &[0]);
@@ -543,7 +545,8 @@ mod tests {
         )
     }
 
-    /// `fwav` with two channels: the second's samples follow the first's.
+    /// `fwav` with two channels: the samples of the second follow those
+    /// of the first.
     fn stereo_fwav() -> Vec<u8> {
         let mut info = Vec::new();
         put(&mut info, &[0x0102, 32000, 14, 28, 14]);
@@ -790,8 +793,8 @@ mod tests {
         // A little repetition still fits in the file, and is kept.
         let a = fsar_with_repeated_waves(1);
         assert_eq!(bank(&a).unwrap().data.len(), 32);
-        // A table many times the wave's size would make the file's worth
-        // of bytes many times over.
+        // A table many times the wave's size would make many times the
+        // file's size in bytes.
         let a = fsar_with_repeated_waves(2000);
         let e = bank(&a).unwrap_err();
         assert!(e.contains("overlap"), "{e}");
@@ -867,8 +870,9 @@ mod tests {
                 .get(Kind::Song, 99)
                 .is_some()
         );
-        // A name as long as both of `fsar`'s, its number too large for
-        // the file format, and a list as long as it says would be huge.
+        // A name as long as both names of `fsar`, its number too large for
+        // the file format, and a list as long as the number says would be
+        // huge.
         let mut a = fsar();
         let strings = a.windows(7).position(|w| w == b"B07\0X1\0").unwrap();
         a[strings..strings + 7].copy_from_slice(b"B99999\0");
@@ -886,7 +890,7 @@ mod tests {
         let a = fsar_with(extra, 4096);
         let e = sequences(&a).unwrap_err();
         assert!(e.contains("too many sounds"), "{e}");
-        // Without so many it reads, keeping the file's code.
+        // Without so many references it reads, keeping the file's code.
         let a = fsar_with(0, 4096);
         let code = sequences(&a).unwrap().get(Kind::Song, 7).unwrap();
         assert_eq!(code.code.len(), 4096);

@@ -12,8 +12,8 @@ use crate::runtime::{Command, Runtime, checking, illegal, opt_int};
 use crate::storage;
 
 const TEXT_CHARS: usize = 256;
-/// The file name form cuts its caption as the others do, not at the
-/// manual's 39.
+/// The file name form cuts its caption the same as the other forms do, not
+/// at the 39 characters the manual gives.
 const CAPTION_CHARS: usize = 46;
 const NAME_CHARS: usize = 32;
 const DEFAULT_CAPTION: &str = "DIALOG";
@@ -24,8 +24,8 @@ const ANY_BITS: u32 = 0b111 << 14;
 /// Every button DIALOG can wait for, the touch screen's bit included.
 const BUTTON_BITS: i32 = (TOUCH_BIT << 1) as i32 - 1;
 const FRAMES_PER_SECOND: i32 = 60;
-/// How far the left stick goes over before it moves the focus between a
-/// dialog's buttons.
+/// The distance the left stick is pushed before it moves the focus between
+/// a dialog's buttons.
 // UNVERIFIED: the distance, and that each push moves it once.
 const FOCUS_STICK: f64 = 0.5;
 
@@ -35,7 +35,7 @@ pub enum DialogKind {
     /// the negative answer.
     Choice(Vec<&'static str>),
     /// Waits for any of these controller buttons (DIALOG's bit numbers),
-    /// without buttons of its own.
+    /// without its own buttons.
     Buttons(u32),
     /// A file name, typed in a field of at most `max` characters.
     Name { initial: String, max: usize },
@@ -63,22 +63,22 @@ pub(crate) struct Waiting {
     dialog: ProgramDialog,
     /// Frames before it closes by itself.
     frames_left: Option<u32>,
-    /// Buttons pressed since it opened, which choose when let go.
+    /// Buttons pressed since it opened, which choose when released.
     pressed: u32,
     /// The button of a choice that A chooses, which the D-pad, the left
     /// stick and the frontend move.
     focus: usize,
-    /// Which way the left stick was over last frame (-1, 0 or 1), or
-    /// `None` before the first frame, so that a stick held over as the
-    /// dialog opens moves nothing.
+    /// The direction the left stick was pushed in the last frame (-1, 0 or
+    /// 1), or `None` before the first frame, so that a stick already pushed
+    /// when the dialog opens moves nothing.
     stick: Option<i8>,
     /// For the dialog that says a file command failed: what the command
     /// returns once it is closed.
     failure: Option<Vec<Value>>,
-    /// Opened since [`link_dialogs`] last looked.
+    /// Opened since [`link_dialogs`] last checked.
     fresh: bool,
-    /// While the other interpreter's later dialog shows in place of this
-    /// one: this call's own form, which the answer is given in.
+    /// This call's own form, in which the answer is given, while the later
+    /// dialog of the other interpreter shows in place of this one.
     own: Option<DialogKind>,
     /// Waits for the answer [`link_dialogs`] passes on, without watching
     /// the controls or a timeout itself.
@@ -105,7 +105,7 @@ impl Waiting {
         }
     }
 
-    /// The buttons of a choice, if it is one.
+    /// The number of buttons of a choice, if it is one.
     fn choices(&self) -> Option<usize> {
         match &self.dialog.kind {
             DialogKind::Choice(labels) => Some(labels.len()),
@@ -113,10 +113,10 @@ impl Waiting {
         }
     }
 
-    /// Moves the focus of a choice by the D-pad's Left and Right going
-    /// down and by the left stick going over, one button each, stopping
-    /// at the ends.
-    // UNVERIFIED: that it stops at the ends rather than going round, and
+    /// Moves the focus of a choice by one button for each press of Left or
+    /// Right on the D-pad and each push of the left stick, and stops at the
+    /// ends.
+    // UNVERIFIED: that it stops at the ends rather than wrapping around, and
     // that Up and Down do nothing.
     fn steer(&mut self, input: &Input) {
         let Some(n) = self.choices() else {
@@ -143,7 +143,7 @@ impl Waiting {
     }
 }
 
-/// How the dialog that says a file command failed stands.
+/// The state of the dialog that says a file command failed.
 pub(crate) enum Failure {
     /// There is none.
     None,
@@ -201,7 +201,7 @@ fn lines(text: &str) -> Vec<String> {
     text.split(['\n', '\r']).map(str::to_string).collect()
 }
 
-/// A timeout in seconds, or in frames when negative; 0 waits for ever.
+/// A timeout in seconds, or in frames when negative; 0 waits forever.
 fn timeout(v: Option<&Value>) -> Result<Option<u32>> {
     Ok(match v.map(opt_int).transpose()?.flatten().unwrap_or(0) {
         0 => None,
@@ -235,9 +235,9 @@ impl Runtime {
         waiting.choices().map(|_| waiting.focus)
     }
 
-    /// Moves the focus of the program's dialog to button `i`, as the
-    /// frontend's keys and mouse do; a dialog without buttons to choose
-    /// from keeps none.
+    /// Moves the focus of the program's dialog to button `i`, for the
+    /// frontend's keys and mouse. A dialog without buttons to choose from
+    /// keeps no focus.
     pub fn set_dialog_focus(&mut self, i: usize) {
         if let Some(waiting) = self.dialog.as_mut()
             && let Some(n) = waiting.choices()
@@ -259,7 +259,7 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
-        // Each form checks its arguments in order, as SmileBASIC 4's
+        // Each form checks its arguments in order, the same as SmileBASIC 4's
         // handler does (4.4.8).
         let (dialog, frames) = match (want, args) {
             (Want::Outs(0), [message, rest @ ..]) if rest.len() <= 3 => {
@@ -288,9 +288,9 @@ impl Runtime {
                         return Err(e.of_arg(2));
                     }
                 };
-                // Cut to the most it takes, the initial name is checked as
-                // SmileBASIC 4's file commands check a name, and may have
-                // no project.
+                // After it is cut to the maximum length, the initial name is
+                // checked the same way SmileBASIC 4's file commands check a
+                // name, and it must have no project.
                 let initial = shortened(&text(initial)?, max);
                 if !storage::split_name(&initial).is_some_and(|parts| parts.project.is_none()) {
                     let detail = format!("{initial:?}");
@@ -335,13 +335,14 @@ impl Runtime {
         };
         let waiting = self.dialog.take().expect("a dialog was open");
         self.dialog_closed = Some(answer.clone());
-        // The frontend answers on Enter going down, and A on being let go,
-        // which the program would see in the frame the dialog returns in.
+        // The frontend answers when Enter is pressed, and A answers when A
+        // is released. The program would see either in the frame the dialog
+        // returns in.
         self.input.hide_presses();
-        // The answer is read by the dialog shown, which may be the other
-        // interpreter's, and given in the form this call asked for: a choice
-        // takes RESULT() 1 for any buttons pressed, and a wait for buttons
-        // -1 for the left of two.
+        // The answer is read by the dialog shown, which may belong to the
+        // other interpreter, and given in the form this call asked for. A
+        // choice takes RESULT() 1 for any buttons pressed, and a wait for
+        // buttons takes -1 for the left of two.
         let shown_buttons = match &waiting.dialog.kind {
             DialogKind::Choice(labels) => labels.len(),
             _ => 0,
@@ -385,7 +386,7 @@ impl Runtime {
 impl Runtime {
     /// A running program's file command failed: SmileBASIC 4 says so in a
     /// dialog with one button, and the command waits until it is closed,
-    /// however long that takes. Then RESULT() is 0 and the program goes on.
+    /// however long that takes. Then RESULT() is 0 and the program continues.
     // UNVERIFIED: the dialog for failures other than a missing file.
     pub(crate) fn open_failure(&mut self, what: &str, message: String) {
         let mut chars = message.chars();
@@ -404,8 +405,8 @@ impl Runtime {
         self.dialog.as_ref().is_some_and(|w| w.failure.is_some())
     }
 
-    /// Watches the dialog [`Runtime::open_failure`] opened, as DIALOG
-    /// watches its own: A or the frontend's answer closes it.
+    /// Watches the dialog [`Runtime::open_failure`] opened, the same way
+    /// DIALOG watches its own: A or the frontend's answer closes it.
     pub(crate) fn watch_failure(&mut self) -> Failure {
         let Some(waiting) = self.dialog.as_mut() else {
             return Failure::None;
@@ -456,8 +457,8 @@ impl Runtime {
 }
 
 impl Runtime {
-    /// The answer the open dialog gets this frame: the frontend's, or
-    /// from the controls, the touch screen or the timeout.
+    /// The answer the open dialog gets this frame: from the frontend, the
+    /// controls, the touch screen or the timeout.
     fn poll_dialog(&mut self) -> Option<DialogAnswer> {
         let waiting = self.dialog.as_mut()?;
         if let Some(answer) = self.dialog_answer.take() {
@@ -472,7 +473,7 @@ impl Runtime {
         let answer = (self.input).dialog_answer(&waiting.dialog.kind, since, waiting.focus);
         match &mut waiting.frames_left {
             _ if answer.is_some() => answer,
-            // Timing out answers 0, for a choice as for buttons.
+            // Timing out answers 0, both for a choice and for buttons.
             Some(0) => Some(DialogAnswer::Buttons(0)),
             Some(n) => {
                 *n -= 1;
@@ -483,19 +484,20 @@ impl Runtime {
     }
 }
 
-/// Makes the dialogs of the main and the sub interpreter one dialog, as
-/// SmileBASIC 4 has one for both: the text of the later call shows, and
-/// one answer closes both, in the same frame. Called after each
-/// interpreter's frame, the main one's first.
+/// Makes the dialogs of the main and the sub interpreter one dialog, the
+/// same as SmileBASIC 4, which has one for both. The text of the later call
+/// shows, and one answer closes both in the same frame. Called after the
+/// frame of each interpreter, the main interpreter first.
 ///
-/// The later call's dialog takes the place of the earlier one for good,
-/// with its own buttons and timeout. A main program behind the
-/// subprogram's dialog watches that dialog itself, as it runs first in a
-/// frame; a subprogram behind the main program's takes the answer passed
-/// on here, after the main program's frame and before its own.
+/// The dialog of the later call replaces the earlier one permanently, with
+/// its own buttons and timeout. A main program behind the dialog of the
+/// subprogram watches that dialog itself, because it runs first in a
+/// frame. A subprogram behind the dialog of the main program takes the
+/// answer passed on here, after the frame of the main program and before
+/// its own.
 ///
-/// Neither program stops while both wait, but for the dialog's stop
-/// answer, which stops both (see [`crate::machine::Machine::stop`]).
+/// Neither program stops while both wait, except for the stop answer of
+/// the dialog, which stops both (see [`crate::machine::Machine::stop`]).
 pub(crate) fn link_dialogs(main: &mut Runtime, sub: Option<&mut Runtime>) {
     let Some(sub) = sub else {
         main.dialog_closed = None;
@@ -527,8 +529,8 @@ fn link(from: &mut Runtime, to: &mut Runtime, to_is_sub: bool) {
             old.passive = to_is_sub;
         }
     }
-    // Should the later call go without an answer all the same, the
-    // earlier one waits on in its place, watching the controls itself.
+    // If the later call still ends without an answer, the earlier one keeps
+    // waiting in its place and watches the controls itself.
     if from.dialog.is_none()
         && to.dialog_answer.is_none()
         && let Some(waiting) = to.dialog.as_mut()
@@ -538,11 +540,11 @@ fn link(from: &mut Runtime, to: &mut Runtime, to_is_sub: bool) {
 }
 
 impl crate::input::Input {
-    /// What the controllers and touch screen answer a dialog with this
-    /// frame: A chooses the button with the focus and B the left of two,
-    /// whatever the focus, when let go after being pressed with the dialog
-    /// open (checked on hardware for A); a wait for buttons ends on any of
-    /// them going down.
+    /// The answer the controllers and touch screen give a dialog this frame.
+    /// A and B answer when released after being pressed with the dialog open
+    /// (checked on hardware for A): A chooses the button with the focus, and
+    /// B chooses the left of two regardless of the focus. A wait for buttons
+    /// ends when any of them is pressed.
     pub(crate) fn dialog_answer(
         &self,
         kind: &DialogKind,
@@ -557,8 +559,8 @@ impl crate::input::Input {
             DialogKind::Choice(labels) if labels.len() == 2 && released & 1 << B != 0 => {
                 Some(DialogAnswer::Choice(0))
             }
-            // The answer keeps the buttons waited for with #B_RANY, #B_LANY
-            // and #B_ANY as they go on, and leaves out other buttons held.
+            // The answer keeps the buttons waited for, with #B_RANY, #B_LANY
+            // and #B_ANY as they turn on, and removes other buttons held.
             DialogKind::Buttons(mask) => {
                 let touch = if self.touched() { TOUCH_BIT } else { 0 };
                 let bits = self.pressed() | touch;

@@ -1,7 +1,7 @@
 //! `smilebasic-import`: copies SmileBASIC 4's own resources from the
 //! user's extracted RomFS and ExeFS directories into the emulator's data
 //! directory, and its own projects into the emulator's projects folder.
-//! It is kept apart from the emulator, which only reads what this has
+//! It is separate from the emulator, which only reads what this tool has
 //! imported.
 
 mod bfsar;

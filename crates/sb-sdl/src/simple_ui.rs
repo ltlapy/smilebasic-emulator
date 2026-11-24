@@ -1,9 +1,9 @@
-//! The Simple UI: the frontend laid out for a small screen and a gamepad
-//! alone. The UI is as many pixels as the screen at a whole scale, or at
-//! one and a half times one at the Medium size, the
-//! emulator starts in a list of the projects instead of DIRECT mode,
-//! Select (SDL's Back, the − button) with A opens a pause menu, and Select
-//! with Start quits. Programs never see Select: BUTTON has no bit for it.
+//! The Simple UI: the frontend laid out for a small screen and only a
+//! gamepad. The UI has as many pixels as the screen at a whole scale, or at
+//! one and a half times a whole scale at the Medium size. The emulator
+//! starts in a list of the projects instead of DIRECT mode. Select (SDL's
+//! Back, the − button) with A opens a pause menu, and Select with Start
+//! quits. Programs never see Select: BUTTON has no bit for it.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::project_label;
@@ -30,12 +30,12 @@ const UI_LINES: u32 = 480;
 /// The smallest UI that the Simple UI's screens are laid out for.
 const SMALLEST_UI: (u32, u32) = (320, 240);
 
-/// How many half screen pixels a UI pixel takes on an output of `out`
-/// pixels: two for every 480 lines at [`SimpleUiSize::Normal`], and 1.5
-/// or 2 times that many at Medium and Large as long as the UI keeps
-/// 320x240 pixels. Normal and Large are whole scales; Medium is a half
-/// more than a whole one where Normal's is odd: 1.5 on a 640x480 or
-/// 1280x720 display, 3 on a 1920x1080 one.
+/// Returns the number of half screen pixels that a UI pixel takes on an
+/// output of `out` pixels: two for every 480 lines at
+/// [`SimpleUiSize::Normal`], and 1.5 or 2 times that many at Medium and
+/// Large as long as the UI keeps 320x240 pixels. Normal and Large are whole
+/// scales. Medium is a whole scale plus a half where the Normal scale is
+/// odd: 1.5 on a 640x480 or 1280x720 display, 3 on a 1920x1080 one.
 fn ui_halves((w, h): (u32, u32), size: SimpleUiSize) -> u32 {
     let normal = 2 * (h / UI_LINES).max(1);
     let most = (2 * w / SMALLEST_UI.0).min(2 * h / SMALLEST_UI.1);
@@ -47,11 +47,12 @@ fn ui_halves((w, h): (u32, u32), size: SimpleUiSize) -> u32 {
     }
 }
 
-/// The UI's size on an output of `out` pixels: the output at the scale
-/// [`ui_halves`] gives, so that the 16-pixel UI font stays sharp. 640x480 gives
-/// 640x480, 427x320 at Medium or 320x240 at Large; 1920x1080 gives
-/// 960x540, 640x360 or 480x270. At a scale that is not whole, the UI
-/// takes the part of a pixel left over, so that it covers the output.
+/// Returns the UI size on an output of `out` pixels: the output at the
+/// scale that [`ui_halves`] gives, so that the 16-pixel UI font stays
+/// sharp. 640x480 gives 640x480, 427x320 at Medium or 320x240 at Large;
+/// 1920x1080 gives 960x540, 640x360 or 480x270. At a scale that is not
+/// whole, the UI takes the part of a pixel left over, so that it covers
+/// the output.
 pub fn ui_size((w, h): (u32, u32), size: SimpleUiSize) -> (u32, u32) {
     let halves = ui_halves((w, h), size);
     let across = |n: u32| match halves % 2 {
@@ -61,11 +62,11 @@ pub fn ui_size((w, h): (u32, u32), size: SimpleUiSize) -> (u32, u32) {
     (across(w).max(1), across(h).max(1))
 }
 
-/// Where a UI of `ui` pixels goes on an output of `out` pixels at
-/// `size`: at the largest whole scale that fits, centered across and at
-/// the top, as the desktop's display is. At a scale that is not whole,
-/// it starts at the output's top left corner, on a whole pixel, and may
-/// go past the right and bottom edges by less than a pixel of its own.
+/// Returns the place of a UI of `ui` pixels on an output of `out` pixels
+/// at `size`: at the largest whole scale that fits, centered horizontally
+/// and at the top, the same as the desktop display. At a scale that is not
+/// whole, it starts at the top left corner of the output, on a whole pixel,
+/// and may go past the right and bottom edges by less than one UI pixel.
 pub fn display_rect((w, h): (u32, u32), (out_w, out_h): (u32, u32), size: SimpleUiSize) -> FRect {
     let halves = ui_halves((out_w, out_h), size);
     if halves % 2 == 1 && (w, h) == ui_size((out_w, out_h), size) {
@@ -82,10 +83,10 @@ pub fn display_rect((w, h): (u32, u32), (out_w, out_h): (u32, u32), size: Simple
     )
 }
 
-/// The UI and its place on an output of `out` pixels for the notices in
-/// the bottom right corner at UI size `size`: Normal's at Normal and
-/// Medium, Medium's at Large, so that on a small screen they cover less
-/// of the game. Never larger than `size`'s own.
+/// Returns the UI and its place on an output of `out` pixels for the
+/// notices in the bottom right corner at UI size `size`: the Normal UI at
+/// Normal and Medium, and the Medium UI at Large, so that on a small screen
+/// they cover less of the game. It is never larger than the UI of `size`.
 pub fn notice_place(out: (u32, u32), size: SimpleUiSize) -> ((u32, u32), FRect) {
     let size = match size {
         SimpleUiSize::Large => [SimpleUiSize::Medium, size]
@@ -98,11 +99,11 @@ pub fn notice_place(out: (u32, u32), size: SimpleUiSize) -> ((u32, u32), FRect) 
     (ui, display_rect(ui, out, size))
 }
 
-/// The filter the Simple UI scales the screen with, by `choice`, when the
-/// frame of `mode` is drawn `shown` pixels large. The screen fits the
-/// display at its aspect ratio whatever the filter, so it is seldom a
-/// whole number of times its size, and it can be smaller than its frame:
-/// XSCREEN goes up to 1280x720.
+/// Returns the filter that the Simple UI scales the screen with, by
+/// `choice`, when the frame of `mode` is drawn `shown` pixels large. The
+/// screen fits the display at its aspect ratio regardless of the filter, so
+/// it is seldom a whole number of times its size, and it can be smaller
+/// than its frame: XSCREEN goes up to 1280x720.
 pub fn screen_filter(choice: SimpleUiFilter, mode: &ScreenMode, (w, h): (f32, f32)) -> Filter {
     match choice {
         SimpleUiFilter::Auto => {
@@ -124,33 +125,34 @@ pub fn screen_filter(choice: SimpleUiFilter, mode: &ScreenMode, (w, h): (f32, f3
     }
 }
 
-/// What a press of Start is for.
+/// The purpose of a press of Start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
-    /// With Select held and the Simple UI on: quit the emulator, as the
-    /// frontends of such handhelds do.
+    /// With Select held and the Simple UI on: quit the emulator, the same
+    /// as the frontends of such handhelds do.
     Quit,
-    /// The + button, as ever.
+    /// The + button, as usual.
     Plus,
 }
 
-/// What the Simple UI's hotkeys remember. Whether Select is held comes
-/// from the one place that follows it, the right-stick mouse's `Select`.
+/// The state that the Simple UI's hotkeys remember. Whether Select is held
+/// comes from the one place that tracks it, the `Select` of the right-stick
+/// mouse.
 #[derive(Debug, Default)]
 pub struct Hotkeys {
-    /// The Start held now went down with Select, so its release is not
-    /// the + button's.
+    /// The Start held now was pressed with Select, so its release is not a
+    /// release of the + button.
     select_start: bool,
 }
 
 impl Hotkeys {
-    /// A went down: true when, with Select held and the Simple UI on, it opens
-    /// or closes the pause menu and is no press of A.
+    /// A was pressed. Returns true when, with Select held and the Simple UI
+    /// on, it opens or closes the pause menu and is not a press of A.
     pub fn a_down(&self, simple_ui: bool, select: bool) -> bool {
         simple_ui && select
     }
 
-    /// Start went down.
+    /// Start was pressed.
     pub fn start_down(&mut self, simple_ui: bool, select: bool) -> Start {
         if simple_ui && select {
             self.select_start = true;
@@ -160,25 +162,26 @@ impl Hotkeys {
         }
     }
 
-    /// Start went up. False when that Start went down with Select, so
-    /// that its release does not act as the + button's.
+    /// Start was released. Returns false when that Start was pressed with
+    /// Select, so that its release does not act as a release of the +
+    /// button.
     pub fn start_up(&mut self) -> bool {
         !std::mem::take(&mut self.select_start)
     }
 }
 
-/// What the pause menu offers.
+/// The choices of the pause menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Choice {
-    /// Close the menu; a paused program goes on.
+    /// Close the menu; a paused program continues.
     Resume,
     /// Run the program that the game list ran from the start.
     Restart,
     /// Stop the program and show the game list.
     List,
     Quit,
-    /// A setting changed, as [`PauseMenu::settings`] has it now; the menu
-    /// stays open.
+    // A setting changed, as `PauseMenu::settings` has it now; the menu
+    // stays open.
     Filter,
     UiSize,
     Swap,
@@ -220,7 +223,7 @@ impl MenuSettings {
         }
     }
 
-    /// Puts them in `s`, to show at once and be kept.
+    /// Puts them in `s`, to show immediately and be kept.
     pub fn apply(self, s: &mut Settings) {
         s.simple_ui_filter = self.filter;
         s.simple_ui_size = self.ui_size;
@@ -230,8 +233,8 @@ impl MenuSettings {
     }
 }
 
-/// The menu that Select+A opens, over a program or the game list: what it
-/// does first, then, below a divider, the settings.
+/// The menu that Select+A opens, over a program or the game list: its
+/// actions first, then the settings below a divider.
 pub struct PauseMenu {
     /// Top to bottom; `None` is the divider over the settings.
     rows: Vec<Option<Choice>>,
@@ -250,9 +253,9 @@ pub struct PauseMenu {
 }
 
 impl PauseMenu {
-    /// The menu for a program that `running` or waits after its error
-    /// (`program`), with Restart if `restart`, showing `settings`, in a
-    /// UI of `size`.
+    /// The menu with Restart if `restart`, showing `settings`, in a UI of
+    /// `size`. `running` means that a program runs; `program` means that a
+    /// program runs or waits after its error.
     pub fn new(
         running: bool,
         program: bool,
@@ -345,7 +348,7 @@ impl PauseMenu {
     }
 
     /// Up and Down move, Enter chooses, Esc and Backspace close. On a
-    /// setting, Left and Right change it, and Enter steps it on.
+    /// setting, Left and Right change it, and Enter steps it forward.
     pub fn key(&mut self, key: Keycode) -> Option<Choice> {
         let focused = self.focused();
         let setting = focused.is_setting();
@@ -378,8 +381,8 @@ impl PauseMenu {
     }
 }
 
-// The pause menu's layout and drawing, apart from what it offers and
-// where the focus is: a new look replaces this block alone.
+// The layout and drawing of the pause menu, separate from its choices and
+// its focus, so that a new look replaces only this block.
 
 /// The pause menu is at least this wide.
 const MENU_WIDTH: u32 = 256;
@@ -389,7 +392,7 @@ const MENU_HEADING: u32 = 32;
 const SETTINGS_HEADING: &str = "Settings";
 /// The room for an arrow on either side of a setting's value.
 const ARROW: u32 = 16;
-/// The version's 8x8 cells, half the height of the title's.
+/// The 8x8 cells of the version, half the height of the title cells.
 const VERSION_CELL: u32 = 8;
 /// At least this much between the title and the version.
 const VERSION_GAP: u32 = 16;
@@ -435,8 +438,8 @@ fn on_off(on: bool) -> &'static str {
     if on { "On" } else { "Off" }
 }
 
-/// The values' place: the widest value of any setting and a gap either
-/// side, so that the arrows stay put and line up.
+/// The width of the values: the widest value of any setting and a gap
+/// either side, so that the arrows stay in place and line up.
 fn value_width() -> u32 {
     let filters = SimpleUiFilter::ALL.map(filter_name);
     let sizes = SimpleUiSize::ALL.map(ui_size_name);
@@ -445,7 +448,7 @@ fn value_width() -> u32 {
     widest.max().unwrap_or(0) + PAD
 }
 
-/// What the menu needs across for a setting labelled `label`.
+/// The width that the menu needs for a setting labeled `label`.
 fn setting_width(label: &str) -> u32 {
     text_width(label) + PAD + 2 * ARROW + value_width()
 }
@@ -466,7 +469,7 @@ impl PauseMenu {
         }
     }
 
-    /// What a setting is set to, or nothing for the other rows.
+    /// The value of a setting, or nothing for the other rows.
     fn value(&self, choice: Choice) -> Option<&'static str> {
         let s = &self.settings;
         match choice {
@@ -483,7 +486,7 @@ impl PauseMenu {
         if self.running { "Paused" } else { "Menu" }
     }
 
-    /// Where the title goes in the frame `f`.
+    /// The place of the title in the frame `f`.
     fn title_place(&self, f: Rect) -> Rect {
         Rect {
             x: f.x + PAD,
@@ -493,8 +496,8 @@ impl PauseMenu {
         }
     }
 
-    /// Where `version` goes in the frame `f`: at the top right, its foot
-    /// level with the title's.
+    /// The place of `version` in the frame `f`: at the top right, with its
+    /// foot level with the foot of the title.
     fn version_place(f: Rect, version: &str) -> Rect {
         let w = VERSION_CELL * version.encode_utf16().count() as u32;
         Rect {
@@ -519,8 +522,8 @@ impl PauseMenu {
         [full, plain].into_iter().find(fits)
     }
 
-    /// The rows that fit in the UI at once, between the heading and the
-    /// hints, and at least one.
+    /// The number of rows that fit in the UI at the same time, between the
+    /// heading and the hints, and at least one.
     fn shown_rows(&self) -> usize {
         let room = (self.size.1.saturating_sub(LINE + 2 * PAD + MENU_HEADING) / LINE) as usize;
         room.clamp(1, self.rows.len())
@@ -574,8 +577,8 @@ impl PauseMenu {
         })
     }
 
-    /// Where a setting's value and its arrows go in its row `r`: the
-    /// left arrow, the value's place, the right arrow.
+    /// The places of a setting's value and its arrows in its row `r`: the
+    /// left arrow, the value, the right arrow.
     fn value_places(r: Rect) -> (Rect, Rect, Rect) {
         let slot = value_width();
         let right = (r.x + r.w).saturating_sub(PAD);
@@ -618,7 +621,7 @@ impl PauseMenu {
             let r = self.item(f, i);
             let y = r.y + (LINE - CHAR) / 2;
             let Some(choice) = row else {
-                // A dim heading, and a line on to the right.
+                // A dim heading, and a line to its right.
                 draw_text(fb, font, f.x + PAD, y, SETTINGS_HEADING, DISABLED);
                 let x = f.x + 2 * PAD + text_width(SETTINGS_HEADING);
                 let line = Rect {
@@ -656,13 +659,13 @@ impl PauseMenu {
     }
 }
 
-/// What the welcome screen says, below the emulator's name.
+/// The text of the welcome screen, below the emulator's name.
 const WELCOME_LINES: [&str; 3] = [
     "Runs SmileBASIC 4 games and programs.",
     "Select+A opens the menu.",
     "Select+Start quits.",
 ];
-/// Around the A on "Press A to continue".
+/// The text around the A in "Press A to continue".
 const PRESS: (&str, &str) = ("Press", "to continue");
 const WELCOME_NOTE: &str = "The button you press is used as A.";
 
@@ -670,20 +673,20 @@ const WELCOME_NOTE: &str = "The button you press is used as A.";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Welcomed {
     Stay,
-    /// Go on to the game list, with Swap A/B and X/Y set to this if a
+    /// Continue to the game list, with Swap A/B and X/Y set to this if a
     /// button said which is A.
     Continue(Option<bool>),
 }
 
-/// The screen the Simple UI shows the first time it starts: what this is,
-/// how to open the menu, and "Press A to continue". The button pressed for
-/// it is A from then on, the right or the bottom one, whatever the
-/// controller prints on it or the system's mapping makes of it.
+/// The screen that the Simple UI shows the first time it starts: what this
+/// is, how to open the menu, and "Press A to continue". The button pressed
+/// for it is A from then on, the right or the bottom one, regardless of the
+/// label printed on it or the system's mapping of it.
 pub struct Welcome {
-    /// SDL's right or bottom face button, by its place, that went down
-    /// while the screen showed. Its release goes on, so that a button held
-    /// when the screen came does nothing, and the setting does not change
-    /// under a held button.
+    /// SDL's right or bottom face button, by its place, that was pressed
+    /// while the screen showed. Its release continues to the game list, so
+    /// that a button held when the screen appeared does nothing, and the
+    /// setting does not change under a held button.
     pressed: Option<Button>,
     size: (u32, u32),
     /// The lines, wrapped to the UI's width.
@@ -718,8 +721,8 @@ impl Welcome {
         self.big_title = 2 * text_width(crate::TITLE) <= room;
     }
 
-    /// A button went down: `button` as [`crate::controls::face`] made it
-    /// with `swap`, the setting now.
+    /// A button was pressed: `button` as [`crate::controls::face`] maps it
+    /// with `swap`, the current setting.
     pub fn pad_down(&mut self, button: Button, swap: bool) {
         let placed = crate::controls::face(button, swap);
         if self.pressed.is_none() && matches!(placed, Button::East | Button::South) {
@@ -727,7 +730,8 @@ impl Welcome {
         }
     }
 
-    /// A button went up: the one pressed for the screen says which is A.
+    /// A button was released: the one pressed for the screen says which is
+    /// A.
     pub fn pad_up(&mut self, button: Button, swap: bool) -> Welcomed {
         let placed = crate::controls::face(button, swap);
         match self.pressed {
@@ -736,7 +740,7 @@ impl Welcome {
         }
     }
 
-    /// Enter goes on and leaves the setting alone.
+    /// Enter continues and leaves the setting unchanged.
     pub fn key(&self, key: Keycode) -> Welcomed {
         match key {
             Keycode::Return | Keycode::KpEnter => Welcomed::Continue(None),
@@ -744,7 +748,7 @@ impl Welcome {
         }
     }
 
-    /// How high the text is, from the name to the note.
+    /// The height of the text, from the name to the note.
     fn text_height(&self) -> u32 {
         let title = if self.big_title { 2 * LINE } else { LINE };
         let lines = (self.lines.len() + 1 + self.note.len()) as u32 * LINE;
@@ -779,7 +783,7 @@ impl Welcome {
             y += LINE;
         }
         y += PAD;
-        // "Press", the A as on the hints, "to continue".
+        // "Press", the A drawn the same as in the hints, "to continue".
         let (before, after) = PRESS;
         let cap = Cap::Name("A");
         let gap = CHAR / 2;
@@ -814,7 +818,7 @@ impl Welcome {
 // The bars at the top and the bottom of the Simple UI's screens, which
 // the game list and the pause menu share.
 
-/// What a hint shows for a button: its name, or an arrow for the D-pad.
+/// The label of a button in a hint: its name, or an arrow for the D-pad.
 #[derive(Clone, Copy)]
 enum Cap {
     Name(&'static str),
@@ -831,7 +835,8 @@ const CAP_HEIGHT: u32 = 20;
 const CAP_GAP: u32 = 2;
 /// Between hints.
 const HINT_GAP: u32 = 16;
-/// Behind everything: the Simple UI's screens cover the program's.
+/// The color behind everything: the Simple UI's screens cover the program
+/// screen.
 const BACKDROP: u32 = BACKGROUND | 0xFF00_0000;
 
 fn cap_width(cap: Cap) -> u32 {
@@ -846,7 +851,7 @@ fn hint_width((caps, label): Hint) -> u32 {
     caps + CAP_GAP + text_width(label)
 }
 
-/// How many of `hints` fit, in order, across a bar `w` wide.
+/// The number of `hints` that fit, in order, on a bar `w` pixels wide.
 fn hints_shown(w: u32, hints: &[Hint]) -> usize {
     let mut x = PAD;
     let fits = |&hint: &&Hint| {
@@ -879,7 +884,8 @@ fn bar(fb: &mut Framebuffer, w: u32, y: u32, line_y: u32) {
     );
 }
 
-/// The bar at the top: what shows, and where the selection is in it.
+/// The bar at the top: the name of what is shown, and the position of the
+/// selection in it.
 fn draw_top_bar(fb: &mut Framebuffer, font: &Font, w: u32, title: &str, counter: &str) {
     bar(fb, w, 0, LINE - 1);
     let y = (LINE - CHAR) / 2;
@@ -931,13 +937,13 @@ fn draw_cap(fb: &mut Framebuffer, font: &Font, r: Rect, cap: Cap) {
     }
 }
 
-/// A one-pixel outline in `color` round `r`, with ends as round as `r`
-/// is high, filled with `inside`.
+/// A one-pixel outline in `color` around `r`, with semicircular ends as
+/// high as `r`, filled with `inside`.
 fn pill(fb: &mut Framebuffer, r: Rect, color: u32, inside: u32) {
     if crate::ui::dry(fb, r, ("pill", r, color, inside)) {
         return;
     }
-    // Where a row of the shape `r` starts and ends across.
+    // The horizontal start and end of row `y` of the shape `r`.
     let span = |r: Rect, y: u32| {
         let radius = r.h as f32 / 2.0;
         let dy = (radius - (y as f32 + 0.5)).abs();
@@ -998,7 +1004,7 @@ pub enum Outcome {
     Notice(String),
 }
 
-/// Where the list was when a program ran from it, to come back to.
+/// The position of the list when a program ran from it, to return to.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Memory {
     project: Option<String>,
@@ -1022,8 +1028,8 @@ struct Programs {
 
 /// The list of projects that the Simple UI starts in and comes back to.
 /// It runs a project's MAIN.PRG, or one of its programs, and manages no
-/// files. This is what it lists and where the selection is; how it looks
-/// is [`ListView`]'s.
+/// files. This type holds what it lists and the position of the
+/// selection. [`ListView`] handles how it looks.
 pub struct GameList {
     size: (u32, u32),
     games: Vec<Game>,
@@ -1032,14 +1038,15 @@ pub struct GameList {
     programs: Option<Programs>,
     /// Why there is no list, if the projects could not be read.
     status: Option<String>,
-    /// Where the selection is, as `3/12`.
+    /// The position of the selection, as `3/12`.
     counter: String,
     view: ListView,
 }
 
 impl GameList {
-    /// The projects of `storage`, in a UI of `size`, back where `memory`
-    /// says. The workspace comes last, and only when it has programs.
+    /// The projects of `storage`, in a UI of `size`, at the position that
+    /// `memory` holds. The workspace comes last, and only when it has
+    /// programs.
     pub fn new(storage: &Storage, size: (u32, u32), memory: &Memory) -> GameList {
         let mut names = Vec::new();
         let mut status = None;
@@ -1085,7 +1092,8 @@ impl GameList {
         list
     }
 
-    /// Where the list is now, for [`GameList::new`] to come back to.
+    /// The current position of the list, for [`GameList::new`] to return
+    /// to.
     pub fn memory(&self) -> Memory {
         Memory {
             project: self.games.get(self.selected).map(|g| g.name.clone()),
@@ -1093,7 +1101,7 @@ impl GameList {
         }
     }
 
-    /// Which list it shows, so that a change can be told.
+    /// The id of the list it shows, so that a change can be detected.
     pub fn mode_id(&self) -> usize {
         usize::from(self.programs.is_some())
     }
@@ -1116,7 +1124,8 @@ impl GameList {
         }
     }
 
-    /// The first row shown for `selected` to show, from `scroll`.
+    /// Returns the first row to show so that `selected` shows, starting
+    /// from `scroll`.
     fn scrolled(selected: usize, scroll: usize, rows: usize) -> usize {
         if selected < scroll {
             selected
@@ -1140,7 +1149,7 @@ impl GameList {
         }
     }
 
-    /// The selection moved: what the counter says.
+    /// The selection moved: updates the text of the counter.
     fn moved(&mut self) {
         let (at, of) = match &self.programs {
             Some(p) => (p.selected, p.files.len()),
@@ -1257,13 +1266,14 @@ impl GameList {
     }
 }
 
-// The game list's layout and drawing, all of it, apart from what it lists
-// and where the selection is: a new look replaces this part alone.
+// All the layout and drawing of the game list, separate from what it lists
+// and the position of the selection, so that a new look replaces only this
+// part.
 
 /// The rows take this many twentieths of the UI's width, beside the
 /// selected project's info.
 const LIST_SHARE: u32 = 9;
-/// Where the rows start, below the top bar.
+/// The top of the rows, below the top bar.
 const BODY_TOP: u32 = LINE + PAD;
 /// The scroll thumb's width, in the gap right of the rows.
 const THUMB: u32 = 4;
@@ -1274,8 +1284,9 @@ const BIG_ICON: u32 = ICON_SCALE * ICON_SIZE as u32;
 const TITLE_LINES: usize = 2;
 /// Between its folder's name and its description.
 const ABOUT_GAP: u32 = 12;
-/// What marks an icon's place when a project has none.
+/// The color that fills the place of an icon when a project has none.
 const NO_ICON: u32 = PANEL;
+/// The color of the letter drawn in that place.
 const NO_ICON_TEXT: u32 = SEPARATOR;
 const PROJECTS_HINTS: [Hint; 4] = [
     (&[Cap::Name("A")], "Run"),
@@ -1290,7 +1301,8 @@ const PROGRAMS_HINTS: [Hint; 4] = [
     (&[Cap::Name("L"), Cap::Name("R")], "Page"),
 ];
 
-/// What the info beside the rows shows of a project, cut to fit there.
+/// The details of a project that the info beside the rows shows, cut to
+/// fit there.
 struct Info {
     title: Vec<String>,
     folder: String,
@@ -1300,24 +1312,27 @@ struct Info {
     letter: String,
 }
 
-/// Where the game list's parts go in a UI of a given size, and its text
-/// cut to fit there, made when the size or the list shown changes, so
-/// that drawing a frame cuts nothing.
+/// The places of the game list's parts in a UI of a given size, and its
+/// text cut to fit there. It is made when the size or the list shown
+/// changes, so that drawing a frame cuts nothing.
 struct ListView {
     size: (u32, u32),
     /// Between the bars.
     body: Rect,
     /// The rows: one title or program each.
     list: Rect,
-    /// The selected project's info, right of the rows. Beside a project's
-    /// programs the rows take its place.
+    /// The selected project's info, right of the rows. When a project's
+    /// programs are shown, the rows take its place.
     pane: Rect,
     rows: usize,
-    /// Each project's row, and its info.
+    /// Each project's row.
     titles: Vec<String>,
+    /// Each project's info.
     infos: Vec<Info>,
-    /// The programs shown, and the heading over them.
+    /// The programs shown.
     labels: Vec<String>,
+    /// The heading in the top bar: the project's title while its programs
+    /// are shown.
     heading: String,
 }
 
@@ -1395,12 +1410,12 @@ impl ListView {
         }
     }
 
-    /// Where the title starts in the pane, below the icon.
+    /// The top of the title in the pane, below the icon.
     fn title_top(&self) -> u32 {
         self.pane.y + PAD + BIG_ICON + PAD
     }
 
-    /// Where the description starts below `title_lines` of the title.
+    /// The top of the description, below `title_lines` lines of the title.
     fn about_top(&self, title_lines: usize) -> u32 {
         self.title_top() + (title_lines as u32 + 1) * LINE + ABOUT_GAP
     }
@@ -1414,7 +1429,8 @@ impl ListView {
         }
     }
 
-    /// Rows the list shows at once, at least one.
+    /// The number of rows that the list shows at the same time, at least
+    /// one.
     fn rows(&self) -> usize {
         self.rows
     }
@@ -1614,8 +1630,8 @@ mod tests {
         s
     }
 
-    /// UI sizes from the smallest handled to the largest expected, with
-    /// Medium's on 640x480 and 1280x720.
+    /// UI sizes from the smallest handled to the largest expected, with the
+    /// Medium sizes on 640x480 and 1280x720.
     const SIZES: [(u32, u32); 7] = [
         (320, 240),
         (427, 320),
@@ -1637,7 +1653,7 @@ mod tests {
         assert_eq!(ui_size((1920, 1080)), (960, 540));
         assert_eq!(ui_size((1280, 720)), (1280, 720));
         assert_eq!(ui_size((2560, 1440)), (853, 480));
-        // Smaller than the line count, a UI pixel is still a screen's.
+        // Below the line count, a UI pixel is still one screen pixel.
         assert_eq!(ui_size((320, 240)), (320, 240));
         let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
         assert_eq!(
@@ -1648,7 +1664,7 @@ mod tests {
             box_of(display_rect((960, 540), (1920, 1080), NORMAL)),
             (0.0, 0.0, 1920.0, 1080.0)
         );
-        // An odd output loses a pixel's part rather than its whole scale.
+        // An odd output loses part of a pixel rather than its whole scale.
         let r = display_rect(ui_size((2560, 1441)), (2560, 1441), NORMAL);
         assert_eq!(box_of(r), (0.5, 0.0, 2559.0, 1440.0));
     }
@@ -1666,8 +1682,8 @@ mod tests {
         ] {
             assert_eq!(ui_size(out, NORMAL), normal, "{out:?}");
             assert_eq!(ui_size(out, LARGE), large, "{out:?}");
-            // Either fills the output as the other does, so the program's
-            // screen keeps its place.
+            // Both fill the output the same way, so the program screen
+            // keeps its place.
             let place = |size| {
                 let r = display_rect(ui_size(out, size), out, size);
                 (r.x, r.y, r.w, r.h)
@@ -1686,11 +1702,11 @@ mod tests {
             ((1280, 720), 3, (854, 480)),
             ((800, 480), 3, (534, 320)),
             ((960, 544), 3, (640, 363)),
-            // 4.5 times, where Normal's is 3.
+            // 4.5 times, where the Normal scale is 3.
             ((2560, 1440), 9, (569, 320)),
-            // Where Normal's scale is even, 1.5 times it is whole.
+            // Where the Normal scale is even, 1.5 times it is whole.
             ((1920, 1080), 6, (640, 360)),
-            // No smaller than 320x240: as Normal.
+            // No smaller than 320x240: the same as Normal.
             ((480, 272), 2, (480, 272)),
             ((320, 240), 2, (320, 240)),
         ] {
@@ -1709,20 +1725,20 @@ mod tests {
                     assert!(shown >= out as f32 && shown < out as f32 + scale);
                 }
             } else {
-                // A whole scale, laid out as Normal and Large are.
+                // A whole scale, laid out the same way as Normal and Large.
                 let whole = (out.0 / ui.0).min(out.1 / ui.1);
                 assert_eq!(r.w, (ui.0 * whole) as f32, "{out:?}");
             }
         }
-        // Between Normal and Large, wherever the three differ.
+        // Between Normal and Large, on outputs where the three differ.
         for out in [(640, 480), (1280, 720), (2560, 1440)] {
             let [n, m, l] = SimpleUiSize::ALL.map(|size| ui_halves(out, size));
             assert!(n < m && m < l, "{out:?}");
         }
     }
 
-    /// The corner notices: Normal's scale at Normal and Medium, Medium's
-    /// at Large, at the bottom right corner of the UI.
+    /// The corner notices: the Normal scale at Normal and Medium, and the
+    /// Medium scale at Large, at the bottom right corner of the UI.
     #[test]
     fn notices_are_a_size_smaller() {
         let scale = |out, size| {
@@ -1733,13 +1749,14 @@ mod tests {
             ((640, 480), ((640, 480), 1.0), ((427, 320), 1.5)),
             ((1280, 720), ((1280, 720), 1.0), ((854, 480), 1.5)),
             ((1920, 1080), ((960, 540), 2.0), ((640, 360), 3.0)),
-            // Where the UI sizes are all one, so are the notices.
+            // When all the UI sizes are the same, the notices are too.
             ((320, 240), ((320, 240), 1.0), ((320, 240), 1.0)),
         ] {
             assert_eq!(scale(out, NORMAL), normal, "{out:?}");
             assert_eq!(scale(out, MEDIUM), normal, "{out:?}");
             assert_eq!(scale(out, LARGE), large, "{out:?}");
-            // The bottom right corner is the UI's, within a screen pixel.
+            // The bottom right corner matches that of the UI, within a
+            // screen pixel.
             for size in SimpleUiSize::ALL {
                 let (_, r) = notice_place(out, size);
                 let ui = display_rect(ui_size(out, size), out, size);
@@ -1748,7 +1765,8 @@ mod tests {
                 assert!((a.0 - b.0).abs() <= 1.0 && (a.1 - b.1).abs() <= 1.0);
             }
         }
-        // Where Large's scale is below Medium's, as on a tall output, Large's.
+        // Where the Large scale is below the Medium scale, for example on
+        // a tall output, the notices use the Large UI.
         let out = (800, 960);
         assert!(ui_halves(out, LARGE) < ui_halves(out, MEDIUM));
         assert_eq!(notice_place(out, LARGE).0, ui_size(out, LARGE));
@@ -1781,8 +1799,8 @@ mod tests {
             ..ScreenMode::new(320, 240)
         };
         assert_eq!(auto(&wide, (640.0, 320.0)), Filter::SmartNearest);
-        // The other choices take no notice of the scale, and Program
-        // takes XSCREEN's.
+        // The other choices ignore the scale, and Program takes the filter
+        // of XSCREEN.
         for (choice, filter) in [
             (SimpleUiFilter::PixelArt, Filter::SmartNearest),
             (SimpleUiFilter::Bilinear, Filter::Bilinear),
@@ -1809,8 +1827,8 @@ mod tests {
         assert!(keys.start_up(), "its release is the + button's");
         assert!(keys.a_down(true, true));
         assert_eq!(keys.start_down(true, true), Start::Quit);
-        // Its release is not the + button's, even with Select let go
-        // first.
+        // Its release is not a release of the + button, even when Select
+        // is released first.
         assert!(!keys.start_up());
         assert!(!keys.a_down(true, false));
         assert_eq!(keys.start_down(true, false), Start::Plus);
@@ -1876,7 +1894,7 @@ mod tests {
             menu.key(Keycode::Up);
         }
         assert_eq!(menu.focused(), Choice::Quit, "back over the divider");
-        // B and Esc close, wherever the focus is.
+        // B and Esc close, regardless of where the focus is.
         assert_eq!(menu.pad(Button::South), Some(Choice::Resume));
         assert_eq!(menu.key(Keycode::Escape), Some(Choice::Resume));
         assert_eq!(menu.pad(Button::North), None);
@@ -1899,7 +1917,7 @@ mod tests {
         assert_eq!(menu.key(Keycode::Left), Some(Choice::Filter));
         assert_eq!(menu.pad(Button::DPadLeft), Some(Choice::Filter));
         assert_eq!(menu.settings().filter, SimpleUiFilter::Xscreen, "round");
-        // A steps on, and the menu stays.
+        // A steps forward, and the menu stays open.
         assert_eq!(menu.pad(Button::East), Some(Choice::Filter));
         assert_eq!(menu.settings().filter, SimpleUiFilter::Auto);
         let names: Vec<&str> = (0..5)
@@ -1938,13 +1956,13 @@ mod tests {
         assert_eq!(menu.value(Choice::FrameSkip), Some("Off"));
         assert_eq!(menu.pad(Button::DPadLeft), Some(Choice::FrameSkip));
         assert_eq!(menu.value(Choice::FrameSkip), Some("On"));
-        // Presents wait for vsync until told not to.
+        // Presents wait for vsync until turned off.
         menu.key(Keycode::Down);
         assert_eq!(menu.value(Choice::Vsync), Some("On"));
         assert_eq!(menu.pad(Button::East), Some(Choice::Vsync));
         assert_eq!(menu.value(Choice::Vsync), Some("Off"));
         assert!(!menu.settings().vsync);
-        // What it changed goes into the settings, and nothing else.
+        // The changes go into the settings, and nothing else changes.
         let mut settings = Settings::default();
         menu.settings().apply(&mut settings);
         let changed = Settings {
@@ -1970,8 +1988,8 @@ mod tests {
                 let shown = menu.shown_rows();
                 let last = menu.item(f, shown - 1);
                 assert!(last.y + last.h + PAD <= f.y + f.h);
-                // Every row comes into sight as the focus goes down, the
-                // divider with the first setting.
+                // Every row comes into view as the focus moves down, and the
+                // divider shows with the first setting.
                 for _ in 0..menu.rows.len() {
                     let at = menu.focus;
                     assert!(menu.scroll <= at && at < menu.scroll + shown, "{size:?}");
@@ -2028,8 +2046,8 @@ mod tests {
                 menu.draw(&mut fb, &Font::blank());
             }
         }
-        // The build's options come after the version where they fit, as
-        // a version without a commit leaves room for.
+        // The build options come after the version where they fit; a
+        // version without a commit leaves room for them.
         let menu = menu(true, true, true, (640, 480));
         let f = menu.frame();
         let title = menu.title_place(f);
@@ -2059,7 +2077,7 @@ mod tests {
             let welcome = Welcome::new(ui);
             assert_eq!(welcome.lines.len(), WELCOME_LINES.len(), "{size:?}");
             assert!(welcome.big_title && welcome.text_height() <= ui.1);
-            // The hints keep the menu's.
+            // The hints keep the Menu hint.
             assert!(hints_shown(ui.0, &PROJECTS_HINTS) >= 3, "{size:?}");
         }
     }
@@ -2077,9 +2095,9 @@ mod tests {
     #[test]
     fn the_welcome_screen_takes_whichever_button_is_pressed_as_a() {
         for swap in [false, true] {
-            // The right one is A: the setting goes off; the bottom one
-            // turns it on. Either is read by its place, whatever the
-            // setting made of it.
+            // The right one as A turns the setting off; the bottom one
+            // turns it on. Either is read by its place, regardless of how
+            // the setting mapped it.
             for (placed, swapped) in [(Button::East, false), (Button::South, true)] {
                 let mut w = Welcome::new((640, 480));
                 let button = crate::controls::face(placed, swap);
@@ -2087,7 +2105,7 @@ mod tests {
                 assert_eq!(w.pad_up(button, swap), Welcomed::Continue(Some(swapped)));
             }
         }
-        // Enter goes on and leaves the setting alone.
+        // Enter continues and leaves the setting unchanged.
         let w = Welcome::new((640, 480));
         assert_eq!(w.key(Keycode::Return), Welcomed::Continue(None));
         assert_eq!(w.key(Keycode::KpEnter), Welcomed::Continue(None));
@@ -2097,7 +2115,7 @@ mod tests {
     #[test]
     fn the_welcome_screen_ignores_other_buttons_and_ones_held_before() {
         let mut w = Welcome::new((640, 480));
-        // Held when it came: only the release is seen.
+        // Held when the screen appeared: only the release is seen.
         assert_eq!(w.pad_up(Button::East, false), Welcomed::Stay);
         for other in [Button::North, Button::West, Button::DPadDown, Button::Start] {
             w.pad_down(other, false);
@@ -2244,7 +2262,8 @@ mod tests {
         assert_eq!(back.mode_id(), 1);
         assert_eq!(back.programs.as_ref().unwrap().selected, 1);
         assert_eq!(back.counter, "2/3");
-        // A project gone since starts at the top.
+        // When the project has been deleted since then, the list starts at
+        // the top.
         std::fs::remove_dir_all(tmp.0.join("GAME02")).unwrap();
         let back = GameList::new(&s, (640, 480), &memory);
         assert_eq!((back.selected, back.mode_id()), (0, 0));
@@ -2265,12 +2284,13 @@ mod tests {
             // Between the bars.
             assert!(v.list.y >= LINE && v.list.y + v.list.h <= h - LINE);
             assert!(v.pane.y + v.pane.h <= h - LINE);
-            // The title's lines and the folder's below the icon, at least.
+            // At least the lines of the title and the folder name fit below
+            // the icon.
             let folder_bottom = v.title_top() + (TITLE_LINES as u32 + 1) * LINE;
             assert!(folder_bottom + PAD <= v.pane.y + v.pane.h, "{size:?}");
             let mut fb = Framebuffer::new(w, h);
             list.draw(&mut fb, &Font::blank());
-            // The programs take the whole width, but for the thumb.
+            // The programs take the whole width, except for the thumb.
             list.pad(Button::North, &s);
             let v = &list.view;
             assert_eq!(v.list.x + v.list.w + PAD, w);
@@ -2332,7 +2352,7 @@ mod tests {
                 fb.get(at.x + 2, at.y).map(|p| p & 0xFF_FFFF),
                 Some(0x12_3456)
             );
-            // One with no icon has a place for it all the same.
+            // A project with no icon still has a place for it.
             list.pad(Button::DPadDown, &s);
             assert_eq!(list.view.infos[1].letter, "G");
             list.draw(&mut fb, &Font::blank());

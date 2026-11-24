@@ -1,6 +1,6 @@
-//! MOUSE and TOUCH with their flag 1 go by SmileBASIC 4's 1280x720
-//! display in the Simple UI too, whose own display is the output's size,
-//! in runs with no window shown.
+//! MOUSE and TOUCH with their flag 1 use SmileBASIC 4's 1280x720 display
+//! in the Simple UI too, in runs with no window shown. The Simple UI's own
+//! display has the size of the output.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,8 +14,8 @@ const PROGRAM: &str = "MOUSE 640,360,1\nFOR I=0 TO 9:VSYNC:NEXT\n\
                        IF X==200 && Y==120 && A==640 && B==360 THEN C=RGB(0,255,0)\n\
                        GCLS C\nWHILE 1:VSYNC:WEND\n";
 
-/// A folder of the test's own, with the program in it and the Simple
-/// UI's welcome screen seen.
+/// A separate folder for the test, with the program in it and the Simple
+/// UI's welcome screen marked as seen.
 fn folder(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("sb-mouse-display").join(name);
     let data = dir.join("data").join("smilebasic-emulator");

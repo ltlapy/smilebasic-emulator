@@ -1,14 +1,15 @@
 //! Random programs from a fixed seed, run fused and one instruction at a
-//! time: what they print, their errors, and where each time slice ends must
-//! be the same. The statements are the kind the fuser's chains take, with
-//! values of every type in the variables, so that each step of a chain meets
-//! what it cannot do as well as what it can. DEFs of every form and a host's
-//! commands are called from them, in expressions and chains, so that each
-//! call's fast path meets errors in its callee and slices that end inside it.
-//! Each program first runs slot 1 with EXEC, whose COMMON DEFs it calls, so
-//! that the view of the running DEF's variables follows calls into another
-//! slot and back; DEFs whose variables have the globals' names, and deep
-//! recursion, move it too.
+//! time. Their output, their errors, and the point where each time slice
+//! ends must be the same. The statements are the kind that the fuser's
+//! chains take, with values of every type in the variables, so that each
+//! step of a chain meets what it cannot do as well as what it can. The
+//! statements call DEFs of every form and the commands of a host, in
+//! expressions and chains, so that the fast path of each call meets errors
+//! in its callee and slices that end inside it. Each program first runs
+//! slot 1 with EXEC and calls the COMMON DEFs of that slot, so that the view
+//! of the running DEF's variables follows calls into another slot and back.
+//! DEFs whose variables have the names of the globals, and deep recursion,
+//! also move that view.
 
 mod common;
 
@@ -75,11 +76,11 @@ fn element(r: &mut Rng, depth: u32) -> String {
     }
 }
 
-/// Function DEFs [`DEFS_SOURCE`] and [`SLOT1`] have, of one argument.
+/// The function DEFs of one argument in [`DEFS_SOURCE`] and [`SLOT1`].
 const DEFS: &[&str] = &["SQ", "LC", "TS", "OU", "GS", "GR", "GC", "SH", "CA"];
 
 /// Slot 1, which each program runs with EXEC first: COMMON DEFs whose
-/// variables have the names of slot 0's globals, and a global of its own.
+/// variables have the names of slot 0's globals, and its own global.
 const SLOT1: &str = "\
 VAR A=7,Q
 A=A+1
@@ -224,7 +225,7 @@ fn target(r: &mut Rng) -> String {
 fn statement(r: &mut Rng) -> String {
     match r.below(22) {
         // A variable takes another kind of value: a string, an array, a
-        // real or an integer, whatever its suffix.
+        // real or an integer, regardless of its suffix.
         19 => format!(
             "{}={}",
             r.pick(&["A", "B", "C", "X#", "K%"]),
@@ -303,11 +304,12 @@ fn program(r: &mut Rng) -> String {
 }
 
 thread_local! {
-    /// How many times native code ran, with the `jit` feature.
+    /// The number of times native code ran, with the `jit` feature.
     static NATIVE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// What can be seen of a run in slices of `budget` instructions.
+/// Returns the observable results of a run in slices of `budget`
+/// instructions.
 fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
     let host = CmdHost::default();
     let mut program = sb_core::compile(source, &host).ok()?;
@@ -318,7 +320,7 @@ fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
     host.slots = vec![String::new(), SLOT1.to_string()];
     let mut vm = Vm::new(program);
     // Slot 1's program is fused when EXEC compiles it: a run that reports
-    // its work goes one instruction at a time everywhere.
+    // its work runs one instruction at a time everywhere.
     vm.report_work(!fused);
     let mut seen = Vec::new();
     for _ in 0..100_000 {
@@ -353,9 +355,9 @@ fn random_programs_run_the_same_fused_or_not() {
     let mut call_chains = 0;
     // Programs that run to their end, past the EXEC and every call.
     let mut ended = 0;
-    // Miri runs a program thousands of times slower, so there it runs a few
-    // unless SB_RANDOM_PROGRAMS says how many. The counts below hold for
-    // all of them.
+    // Miri runs a program thousands of times slower, so under Miri the test
+    // runs a few unless SB_RANDOM_PROGRAMS gives the number. The counts
+    // below hold for all of them.
     const ALL: usize = 1500;
     let count = (std::env::var("SB_RANDOM_PROGRAMS").ok())
         .and_then(|n| n.parse().ok())

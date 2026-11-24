@@ -7,7 +7,7 @@ use ab_glyph::{Font, PxScale, point};
 /// One glyph of a BDF font.
 pub struct BdfGlyph {
     pub code: u32,
-    /// DWIDTH: how far the pen moves.
+    /// DWIDTH: the distance the pen moves.
     pub advance: i32,
     /// BBX: width, height, and the offset of its bottom left corner from
     /// the origin, y upward.
@@ -37,7 +37,7 @@ pub struct Bdf {
     pub descent: i32,
 }
 
-/// Reads a BDF font, skipping what it cannot read rather than failing:
+/// Reads a BDF font, skipping the parts it cannot read rather than failing:
 /// a glyph with a broken bitmap row is drawn without that row.
 pub fn parse_bdf(text: &str) -> Bdf {
     let mut bdf = Bdf {
@@ -92,8 +92,8 @@ pub fn parse_bdf(text: &str) -> Bdf {
     bdf
 }
 
-/// How a BDF font's glyphs are fitted to cells: the rows its letters
-/// take and how wide its widest characters are.
+/// The measures that fit a BDF font's glyphs to cells: the rows its
+/// letters take and the width of its widest characters.
 pub struct BdfLayout {
     /// Rows above the baseline that capitals and CJK reach.
     top: i32,
@@ -134,7 +134,7 @@ const SUBSAMPLES: i32 = 4;
 
 /// A BDF glyph in a `cell`-pixel cell, at the size it was drawn and
 /// centered. A glyph larger than the cell is made smaller to fit; none is
-/// made larger, as that blurs or blocks out pixels drawn for one size.
+/// made larger, because that blurs or blocks out pixels drawn for one size.
 pub fn bdf_cell(g: &BdfGlyph, layout: &BdfLayout, cell: u32) -> Vec<u8> {
     fit(g, layout, (cell, cell))
 }
@@ -202,14 +202,14 @@ fn sample(
 /// Share of the cell M PLUS 1p's em takes: SmileBASIC 4 draws its
 /// 16-pixel font, drawn from that face, with a 15-pixel em.
 pub const SMILEBASIC_EM: f32 = 15.0 / 16.0;
-/// Where the baseline sits in the em, from its top: about where CJK
+/// The position of the baseline in the em, from its top: about where CJK
 /// fonts put it.
 const EM_BASELINE: f32 = 0.88;
 
-/// How coverage becomes the alpha bytes of a glyph.
+/// The conversion of coverage to the alpha bytes of a glyph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ink {
-    /// Coverage as it is, as SmileBASIC 4's 16-pixel font page keeps it.
+    /// Coverage unchanged, the way SmileBASIC 4's 16-pixel font page keeps it.
     Gray,
     /// On where at least half the pixel is covered: SmileBASIC 4's
     /// 8-pixel font has no gray, and an outline drawn that small blurs.
@@ -232,7 +232,7 @@ impl Ink {
 }
 
 /// The glyph a font draws for `c` in a square cell: for ASCII, its
-/// full-width form (U+FF01 to U+FF5E) when it has one, as SmileBASIC
+/// full-width form (U+FF01 to U+FF5E) when it has one, because SmileBASIC
 /// draws ASCII as wide as kana and those forms are designed for that.
 /// `None` if the font has neither.
 fn cell_glyph_id(font: &impl Font, c: char) -> Option<ab_glyph::GlyphId> {
@@ -354,7 +354,7 @@ pub fn outline_half(font: &impl Font, c: char, cell: u32) -> Option<Vec<u8>> {
 /// wider than about half its em. The em and the baseline are those
 /// [`outline_cell`] gives `em_share`, so the glyph lines up with
 /// full-width ones drawn there. A glyph wider than the half cell is made
-/// smaller, the same both ways.
+/// smaller, by the same factor in both directions.
 pub fn outline_narrow(font: &impl Font, c: char, cell: u32, em_share: f32) -> Option<Vec<u8>> {
     let id = font.glyph_id(c);
     if id.0 == 0 {
@@ -395,7 +395,7 @@ pub fn outline_narrow(font: &impl Font, c: char, cell: u32, em_share: f32) -> Op
 
 /// A half-width BDF glyph, `cell / 2` pixels wide and `cell` high, `None`
 /// for a glyph wider than half the font's full-width characters. It is
-/// placed as [`bdf_cell`] places glyphs.
+/// placed the same way [`bdf_cell`] places glyphs.
 pub fn bdf_half(g: &BdfGlyph, layout: &BdfLayout, cell: u32) -> Option<Vec<u8>> {
     let width = g.advance.max(g.bbx[0] + g.bbx[2].max(0)).max(1);
     // Fonts whose full-width advance is odd, such as 15, round their

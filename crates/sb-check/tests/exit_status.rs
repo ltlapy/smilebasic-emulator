@@ -1,10 +1,10 @@
-//! The exit status and stderr line `smilebasic-check` gives for how a
-//! program ends, run on small projects in a temporary folder.
+//! The exit status and stderr line `smilebasic-check` gives for each way
+//! a program ends, run on small projects in a temporary folder.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// A project folder `P` holding `MAIN`, in a fresh folder of its own.
+/// A project folder `P` holding `MAIN`, in its own fresh folder.
 fn project(test: &str, files: &[(&str, &str)]) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "smilebasic-check-test-{}-{test}",
@@ -19,7 +19,8 @@ fn project(test: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 /// Runs the tool with `args` before the project, and `after` after it,
-/// keeping it from the user's data folder. Gives the status and stderr.
+/// keeping it out of the user's data folder. Returns the status and
+/// stderr.
 fn run(dir: &Path, args: &[&str], after: &[&str]) -> (i32, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_smilebasic-check"))
         .args(args)

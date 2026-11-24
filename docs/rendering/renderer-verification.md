@@ -4,16 +4,18 @@ The evidence for each rendering rule: its status, the TEST results behind it,
 how the emulator's two drawing paths compare, and how the results were measured.
 
 - [renderer.md](renderer.md) describes how rendering works.
-- [renderer-decisions.md](renderer-decisions.md) says why the GPU path takes its
-  form.
-- [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md) records confirmed SmileBASIC 4 behavior,
-  and [hardware-tests.md](../smilebasic4/hardware-tests.md) how the check programs run.
+- [renderer-decisions.md](renderer-decisions.md) says why the GPU path is built
+  the way it is.
+- [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md) records confirmed
+  SmileBASIC 4 behavior, and
+  [hardware-tests.md](../smilebasic4/hardware-tests.md) how the check programs
+  run.
 
 Contents:
 
 - [Status](#status)
 - [Rules](#rules)
-- [Ties: what TEST63 says](#ties-what-test63-says)
+- [Ties: TEST63 results](#ties-test63-results)
 - [Earlier tie evidence](#earlier-tie-evidence)
 - [Comparison tests](#comparison-tests)
 - [GPU path results](#gpu-path-results)
@@ -36,13 +38,8 @@ written ([Test batches A to G](#test-batches-a-to-g)).
 Still open:
 
 - An inverted cell on the console: the sum (`inverted_texel`, marked
-  UNVERIFIED in `raster/text.rs`). For
-  larger font types, the font page's corner it reads is marked UNVERIFIED there
-  too.
-- The line cursor's width on cells other than 8 pixels (marked UNVERIFIED in
-  `text.rs`).
-- How much of `#GSPRITE`'s settings XSCREEN resets (marked UNVERIFIED in
-  `runtime.rs`, `set_mode`).
+  UNVERIFIED in `raster/text.rs`). For larger font types, the corner of the font
+  page that it reads is marked UNVERIFIED there too.
 - Ties at angles other than multiples of 90 degrees (R5).
 - The look of DIRECT mode's selected text, and LINPUT's selection.
 - GSAVE and GLOAD: negative sizes, and the error past memory.
@@ -56,9 +53,9 @@ Still open:
 
 | Rule | Where | Status |
 |---|---|---|
-| One rounding per draw: products and blends are exact (each 8-bit value is k/255) and rounded to nearest once when stored: element to layer (or frame), layer to frame, frame to display | `compose::Paint` | C: TEST49 (every sample within 1, the rest the host GPU's rounding); see pitfalls, "Colors and blending" |
+| One rounding per draw: products and blends are exact (each 8-bit value is k/255) and rounded to nearest once when stored: element to layer (or frame), layer to frame, frame to display | `compose::Paint` | C: TEST49 (every sample within 1, the rest is rounding by the host GPU); see pitfalls, "Colors and blending" |
 | Normal blend of an element: `light + d*(1-a)`, one rounding | `compose::Over1`, `Over3`, `Over5` | C: TEST49; TTEST16 |
-| Frames and composed layers hold premultiplied color, alpha as coverage (SmileBASIC 4 keeps transmittance, 255 less it); a layer starts clear; an additive element in a composed layer adds light without coverage | `compose.rs` header | C: pitfalls "An additive sprite inside a composed layer..." |
+| Frames and composed layers hold premultiplied color, alpha as coverage (SmileBASIC 4 keeps transmittance, 255 minus it); a layer starts clear; an additive element in a composed layer adds light without coverage | `compose.rs` header | C: pitfalls "An additive sprite inside a composed layer..." |
 | Additive element: `d + light`, the light `t*c*a` exact and rounded once, with saturation, destination alpha kept | `compose::Lit` | C (R1): TEST49 |
 | Sprite color (SPCOLOR) multiplies each channel, alpha included, unrounded, inside the one rounding of the draw | `graphics::Tint`, `compose::Over3` | C (R2): TEST49. A child's link color `floor(a*b/255)`, alpha too, applied parent first (`multiply`): C, TEST56, no misses |
 | Text color (cell color, then TCOLOR) the same, unrounded | `compose::Mixed`, `Over5` | C (R2): TEST49. |
@@ -70,12 +67,13 @@ Still open:
 | Modes 1-4: the layer color scales light (`P = p*c*ca`) and coverage (`A = la*ca`), unrounded | `compose::compose_tinted` | C (R3): TEST49, colors `C0806040`, `7F40C0FF`, `FFC08040`, `80FFFFFF`, white |
 | The sum of each mode: see below | `compose::compose` | C (R3): TEST49. TEST56: modes 3 and 4 make the whole subprogram's screen opaque |
 | A sub interpreter's frame is premultiplied over the main one (dimmed to 224/255), cleared to BACKCOLOR's color unmultiplied with coverage `255 - alpha` (alpha 0: clear); an opaque BACKCOLOR replaces the main screen | `Scene::build`, `screen::cover` | C (R4): TEST49 for alphas 0, 1, &H7F, &H80, &HFE; TEST56 for &HFF, and over console text for &H40 and &HC0 |
-| Beside a subprogram, the side without the focus: times 224/255, rounded in the same step as FADE | `screen::cover`, `screen::darken` | C: TEST49 |
+| Next to a subprogram, the side without the focus: times 224/255, rounded in the same step as FADE | `screen::cover`, `screen::darken` | C: TEST49 |
 
 An inverted cell applies on the console only: no other screen's program has the
 flag, and TEST56 part 1 shows plain glyphs there. The texel is taken as
-`n,n,n,n` for `n = 1 - alpha` and goes through the same sum. This covers any character, an empty cell too. Larger font types read
-the font page's corner for what is inverted.
+`n,n,n,n` for `n = 1 - alpha` and goes through the same sum. This applies to any
+character, including an empty cell. Larger font types read the corner of the
+font page for what is inverted.
 
 Mode sums, one rounding each: mode 1 is `P + d*(1-A)`, mode 2 `d + P`, mode 3
 `d*(P + 1-A)`, mode 4 `d + P*(1-d)`. Mode 1 adds to the frame's coverage, mode 2
@@ -89,7 +87,7 @@ keeps it, and modes 3 and 4 make it opaque.
 | Flip first, then quarter turn | `Source::page_xy` | C: pitfalls |
 | Sampled without smoothing, at frame pixel centers; away from ties every rotation and scale fits with no misses | `draw_image`, `draw_upright` | C (R5): TEST50 generic angles |
 | With XSCREEN sample > 1, sprites are sampled at the finer pixels' centers; LCLIP grows to whole fine pixels | `Layer::fine` | C (R6): TEST50 part 2 (LCLIP exact; the fine grid misses only 56 tie pixels of 54298) |
-| Coverage: a pixel is drawn when its center, nudged right then up, lies on the image, at any rotation. An edge through the center takes it if it is the left or bottom edge on the frame | `Placement::sampling` | C (R5): TEST50, no coverage miss in any part, text included (consistent with a rasterizer's top-left rule on a target drawn flipped) |
+| Coverage: a pixel is drawn when its center, nudged right then up, is on the image, at any rotation. An edge through the center includes the pixel if it is the left or bottom edge on the frame | `Placement::sampling` | C (R5): TEST50, no coverage miss in any part, text included (consistent with a rasterizer's top-left rule on a target drawn flipped) |
 | A sample point exactly between texels, at a multiple of 90 degrees: see below | `Placement::texel_tie`, `page_signs`, `texel`, `Source::wrap` | C on a Switch 2, 3831 sprites (TEST63); the first case without a miss on the exact shots, the second about 9 in 10 of what it covers; see below |
 | The same at other angles (only 45-degree multiples can tie): image x higher, image y lower; kept on the image | `Placement::texel_tie` | U (R5): TEST50, no misses but 21 pixels reading the row above the image |
 | SPCHR W and H are the size as shown (turned size rule) | `sp.rs` | C: pitfalls; TEST45, TEST46 |
@@ -104,8 +102,8 @@ keeps it, and modes 3 and 4 make it opaque.
 Ties at a multiple of 90 degrees, for a sample point exactly between texels:
 
 - An image side that is a power of two with a scale that is a power of two reads
-  the page's higher texel.
-- Anything else reads the page's lower, at any turn or flip.
+  the higher texel of the page.
+- Anything else reads the lower texel of the page, at any turn or flip.
 - The point may land just off the image, and reads the page there. Before the
   page's first texel it reads that one; after the last, nothing.
 
@@ -114,15 +112,15 @@ Ties at a multiple of 90 degrees, for a sample point exactly between texels:
 | Rule | Where | Status |
 |---|---|---|
 | Flip then turn for ATTR | `raster::text::draw` | C: pitfalls |
-| Ties: as for sprites of the cell's size, per cell and by its ATTR. A cell reads the page past itself, what lies beside it on the font page or `TPAGE` | `draw_turned`, `draw_upright` | C on a Switch 2, 12 screens of 16 cells (TEST63) |
+| Ties: as for sprites of the cell's size, per cell and by its ATTR. A cell reads the page past itself, what is next to it on the font page or `TPAGE` | `draw_turned`, `draw_upright` | C on a Switch 2, 12 screens of 16 cells (TEST63) |
 | Font types 24-64 show only user-defined characters; GPUTCHR with them reads GRP5 in 24-pixel cells | `glyph_pixel_px` | C: pitfalls |
 | Tab stops every 4 columns | `TAB_WIDTH` | C: pitfalls |
 | `CHR$(10)` starts a new line | `TextScreen::print` | C: pitfalls |
 | TSCREEN clears the screen | `set_font` | C: pitfalls |
 | TSCREEN keeps TLAYER, TPAGE, TVAR and TFUNC, and sets TBLEND back to 0 | `restart_look` | C: pitfalls; TEST47, TEST48 |
-| INPUT cursor: a bar 2 by 8 at the cell's left, opaque white whatever the color; it alternates with nothing | `raster::text::draw` | C (R9): TEST50, parts 6 and 7 |
-| The cursor's blink: 20 frames on, 20 off, counted in frames played. It is on from the start of a line and from each key that moves or edits, the first period a frame short | `LINE_CURSOR_BLINK`, `LineEdit::key` | C: the count steps with `MAINCNT`'s; TEST56 part 1 fits 2 of 2 shots at offsets -3..-1 |
-| The cursor's width is the cell's shifted right by two, or the whole cell after Insert; its height the cell's. It follows TSCALE and LMATRIX, and draws right after its screen's cells, under what is in front | `LineCursor`, `raster::text::draw` | C: TEST56 part 1, 24 wide at scale 3, cut by a sprite in front. U on cells other than 8 pixels |
+| INPUT cursor: a bar 2 by 8 at the cell's left, opaque white regardless of the color; it alternates with nothing | `raster::text::draw` | C (R9): TEST50, parts 6 and 7 |
+| The cursor's blink: 20 frames on, 20 off, counted in frames played. It is on from the start of a line and from each key that moves or edits, the first period a frame short | `LINE_CURSOR_BLINK`, `LineEdit::key` | C: the count steps with `MAINCNT`; TEST56 part 1 fits 2 of 2 shots at offsets -3..-1 |
+| The cursor's width is the cell width shifted right by two, or the whole cell after Insert; its height is the cell height. It follows TSCALE and LMATRIX, and draws right after its screen's cells, under what is in front | `LineCursor`, `raster::text::draw` | C: TEST56 part 1, 24 wide at scale 3, cut by a sprite in front; TEST71P on 16- and 24-pixel cells |
 | On a composed layer the cursor has no coverage, so it adds | `LineCursor::composed` | C: TEST56 part 1, `E0F0FF` |
 | Only DIRECT mode's line selects (`LineEdit::selects`), drawn inverted in the console's color, staying after Enter | `LineEdit::draw`, `finish` | C that INPUT does not: TEST56. U: the look, and LINPUT's |
 | Text animations: as for sprites | `impl Animated for TextScreen` | C: pitfalls; TEST47 (R7) |
@@ -160,17 +158,17 @@ Ties at a multiple of 90 degrees, for a sample point exactly between texels:
 | Mosaic: the whole frame drawn into `ceil(width/n)*sample` x `ceil(height/n)*sample` half-buffer pixels with bilinear sampling, then back with nearest; blocks are n frame pixels at any sample | `filter::mosaic` | C (R14): pitfalls; TEST54 part 1, no pixel more than 1 off; TEST56 part 2, n=7 on 640x360, no pixel off |
 | Blur: bilinear to half size (2x2 mean, halves down), a row pass and a column pass each stored in 8 bits, nearest back; 0 sharp | `filter::blur` | C (R15): pitfalls; TEST54 parts 2, 3, TTEST24 |
 | Blur weights: a Gaussian of variance amount/10 at odd distances, normalized over 31 taps, used in the 3, 5, 7 or 9 taps that the 99% rule picks, not normalized again | `filter::blur_kernel` | C (R15): TEST54 parts 2, 3, no pixel more than 1 off |
-| Blur halving is in frame pixels whatever XSCREEN's sample | `filter::blur` | C (R15): TEST54 part 3 |
-| Mosaic and blur work on what shows through (255 less the emulator's coverage), so a wide blur darkens behind a clear layer | `filter::shrink`, `expand` | C: TEST54 part 2 |
+| Blur halving is in frame pixels regardless of XSCREEN's sample | `filter::blur` | C (R15): TEST54 part 3 |
+| Mosaic and blur work on what shows through (255 minus the emulator's coverage), so a wide blur darkens behind a clear layer | `filter::shrink`, `expand` | C: TEST54 part 2 |
 | Raster: `[n,4]` entries of X offset, X scale, Y offset, Y scale, OpenGL axes, center times scale plus offset, repeat flag required | `filter::raster` | C: pitfalls; TTEST25/26 |
 | Raster: scale, then offset; the Y offset's sign is + from the bottom | `filter::raster` | C (R16): pitfalls; TEST54 part 4 |
 | Raster `[n,2]` form acts along the deformation; a row takes entry `floor((i+.5)*n/size)` | `raster_rows`, `raster_into` | C (R17): pitfalls; TEST54 parts 5, 6 |
 | Raster on a direct layer: what falls off shows black | `Runtime::render` | C: pitfalls |
 | Raster after LMATRIX | `Runtime::render` | C: pitfalls; TTEST27 |
 | Color conversion: hue in degrees, S and V on 0-255 | `filter::shift_color` | C: pitfalls; TEST54 part 7 |
-| Color conversion arithmetic: SmileBASIC 4's formulas in f32 on the premultiplied texel; a grey keeps saturation 0 | `shift_color` | C (R18): TEST54 part 7, no pixel more than 1 off |
+| Color conversion arithmetic: SmileBASIC 4's formulas in f32 on the premultiplied texel; a gray keeps saturation 0 | `shift_color` | C (R18): TEST54 part 7, no pixel more than 1 off |
 | Filter before the layer color (modes 1-4) | `Runtime::render` | C (R19): TEST53 part 4. The emulator rounds to 8 bits between the two, SmileBASIC 4 does not: up to 1 off |
-| A clear pixel is left alone in mode 1 only; in modes 0, 2, 3, 4 a raised value lights it | `filter::color` | C (R19): TEST53 part 4, layer 5; TEST56 part 2 for modes 0, 2, 3 |
+| A clear pixel is left unchanged in mode 1 only; in modes 0, 2, 3, 4 a raised value lights it | `filter::color` | C (R19): TEST53 part 4, layer 5; TEST56 part 2 for modes 0, 2, 3 |
 | ACLS clears LFILTER | `Runtime::acls` | C: pitfalls; TEST47 (R20) |
 
 ### FADE
@@ -195,12 +193,12 @@ Ties at a multiple of 90 degrees, for a sample point exactly between texels:
 
 | Rule | Where | Status |
 |---|---|---|
-| GLINE pixels: same whichever end first, offset `(2t*minor + k) / (2*major)`, `k = (major + 2*minor) mod (2*major)` from an end on the page | `line_points` | C: pitfalls; TEST47, TEST48; `lines_match_hardware`, `shallow_lines_match_hardware`, `far_lines_match_hardware` tests |
+| GLINE pixels: same regardless of which end is first, offset `(2t*minor + k) / (2*major)`, `k = (major + 2*minor) mod (2*major)` from an end on the page | `line_points` | C: pitfalls; TEST47, TEST48; `lines_match_hardware`, `shallow_lines_match_hardware`, `far_lines_match_hardware` tests |
 | GLINE from an end outside GCLIP (the page if none): `k = major`, counted from that end (only the steps on the page are walked) | `line_points` | C: pitfalls; TEST47, TEST48, TEST56 (`lines_starting_outside_gclip_match_hardware`) |
 | GBOX outline: top and bottom rows, then the sides from the top row down, so the top corners are drawn twice | `Graphics::rect` | C: pitfalls; TEST47 (R24), TEST48 (any corner order) |
 | GFILL inclusive | `Graphics::fill` | C: manual |
 | GCIRCLE pixel set (midpoint circle) | `circle_points` | C: pitfalls; TEST47 (R25) |
-| GCIRCLE arc: between the pixels at `round(cos*r), round(sin*r)` of the two angles, both included | `Graphics::circle` | C: pitfalls; TEST47 (R25), TEST48 (an arc of more than half a turn whose two end pixels are one is the circle) |
+| GCIRCLE arc: between the pixels at `round(cos*r), round(sin*r)` of the two angles, both included | `Graphics::circle` | C: pitfalls; TEST47 (R25), TEST48 (an arc of more than half a turn whose two ends fall on the same pixel draws the whole circle) |
 | GCIRCLE: equal angles draw nothing; the sector flag draws only the outline | `Graphics::circle` | C: pitfalls |
 | Sector edges: GLINEs from the center to those pixels | `Graphics::circle` | C: pitfalls; TEST47 (R25) |
 | Equal angles with the sector flag draw nothing; radii of 1000 and 70000 draw | `Graphics::circle` | C: pitfalls; TEST47 (R25) |
@@ -213,14 +211,14 @@ Ties at a multiple of 90 degrees, for a sample point exactly between texels:
 | GCOPY color-code multiply (floor), then blend; overlapping copy within a page reads first | `Graphics::copy` | C: pitfalls; TEST47 (R29) |
 | GPUTCHR mode 0 clears under transparent glyph pixels | `put_chars` | C: pitfalls |
 | GPUTCHRP widths, function form scales spacing | `put_chars_proportional` | C: pitfalls; TTEST27 |
-| GPUTCHRP drawing scales the spacing as the width does | `put_chars_proportional` | C: pitfalls; TEST47 (R30) |
+| GPUTCHRP drawing scales the spacing the same as the width | `put_chars_proportional` | C: pitfalls; TEST47 (R30) |
 | GLOAD palette indexes past the palette leave the page's pixel | `load_rect` | C: pitfalls; TEST47 (R31) |
 | GSAVE/GLOAD rectangles off the page read as empty | `save_rect`, `load_rect` | C: pitfalls |
 | GSAVE/GLOAD width and height: any, 0 included, up to what memory holds | `grp.rs` (`MOST_PIXELS`) | C: pitfalls; TEST48. U: negative sizes (Out of range, from the code), and the error past memory (Out of range in the emulator, see differences.md) |
-| TSAVE and TLOAD width and height: 0 or more, as GSAVE | `txt.rs` (`MOST_CELLS`) | U (R31): from the code; the error past memory stands in as for GSAVE |
-| GARRAY/GUPDATE: GPGET sees array writes at once; the screen after GUPDATE | `Graphics::update` | C: pitfalls ([differences.md](../using/differences.md) for the omission) |
+| TSAVE and TLOAD width and height: 0 or more, like GSAVE | `txt.rs` (`MOST_CELLS`) | U (R31): from the code; the error past memory is a stand-in, as for GSAVE |
+| GARRAY/GUPDATE: GPGET sees array writes immediately; the screen after GUPDATE | `Graphics::update` | C: pitfalls ([differences.md](../using/differences.md) for the omission) |
 
-## Ties: what TEST63 says
+## Ties: TEST63 results
 
 TEST63 ran 3831 sprites and 12 text screens on a real Switch 2, at sizes 8 to
 64, scales 0.5 to 2, whole, half and quarter positions, every turn and flip. The
@@ -231,7 +229,7 @@ and per triangle, by summing a line's pixels.
 
 | Rule, tie pixels missed | Sprites, all shots | Sprites, exact | Text |
 |---|---|---|---|
-| The rule before (TEST62's) | 527889 | 92622 | 30896 |
+| The rule before (from TEST62) | 527889 | 92622 | 30896 |
 | All lower | 562972 | 101750 | 45360 |
 | All higher | 1026837 | 229466 | 26288 |
 | Power of two side and scale higher, else lower | **143769** | **15734** | **6448** |
@@ -249,11 +247,11 @@ By class, for the rule kept, exact shots first and then all shots:
 
 The first row is exact arithmetic: the side and the scale leave nothing to
 round, and floor reads the higher texel. It holds at every flip and turn, so the
-rule goes by the page, where the rules before went by the rectangle or the
-frame. Everything else has rounded and comes out just low, whichever way the
-image runs.
+rule is based on the page, while the rules before were based on the rectangle or
+the frame. Everything else has rounded and comes out just low, regardless of the
+direction of the image.
 
-What is left is GPU noise, with no simple rule:
+The rest is GPU noise, with no simple rule:
 
 - The same 16x16 at 1.5 reads its V high at Y 404 and low at Y 377.
 - A line along the image can change from high to low part of the way through.
@@ -279,8 +277,8 @@ does by `Placement::tie_sides`.
 
 ## Earlier tie evidence
 
-TEST50, TEST56 and TEST62 came before TEST63, which settled the rule. The rules
-they compare are not the code's any more.
+TEST50, TEST56 and TEST62 came before TEST63, which settled the rule. The code
+no longer uses any of the rules they compare.
 
 Every page pixel in TEST50 has its own color, so each screenshot pixel names the
 texel sampled. Away from ties all rules agree. At ties the screenshots show the
@@ -290,8 +288,8 @@ ways at different places.
 
 Simulating the quad in single precision (vertices through the matrix and
 viewport, attributes by plane equations and by barycentrics, snapped to 1/256 or
-not) did not reproduce which way each tie goes. So what remained seemed to be
-the host GPU's, and a real Switch might differ. The rule at the time took the
+not) did not reproduce which way each tie goes. So what remained seemed to come
+from the host GPU, and a real Switch might differ. The rule at the time took the
 usual outcome:
 
 | Part, group | Pixels | Misses before | After |
@@ -305,7 +303,7 @@ usual outcome:
 | 4, sprites at multiples of 90 | 6691 | 1489 | 352 |
 | 4, text at multiples of 90 | 6691 | 1472 | 274 |
 
-Generic angles have no misses before or after. What was left is mostly:
+Generic angles have no misses before or after. The remaining misses are mostly:
 
 - half of a quad at 90 and 270 degrees, where the two triangles differ;
 - sizes other than powers of two starting on a half pixel;
@@ -319,10 +317,10 @@ were measured against all of it, pixels more than 1 off:
 
 | Rule | TEST50 1 | 2 | 3 | 4 | TEST56 P1 ties | P2 ties | All |
 |---|---|---|---|---|---|---|---|
-| As it stands | 770 | 56 | 464 | 626 | 569 | 2566 | 5051 |
+| Unchanged | 770 | 56 | 464 | 626 | 569 | 2566 | 5051 |
 | Odd side at scale 1 goes high | 1533 | 56 | 464 | 626 | 135 | 2566 | 5380 |
 | Power of two at another scale goes low on the image | 770 | 56 | 2968 | 1394 | 935 | 1278 | 7401 |
-| The same, towards the page's lower coordinates | 770 | 56 | 2968 | 1394 | 935 | 1278 | 7401 |
+| The same, toward the page's lower coordinates | 770 | 56 | 2968 | 1394 | 935 | 1278 | 7401 |
 | Both of the first changes | 1533 | 56 | 2968 | 1394 | 501 | 1278 | 7730 |
 
 Each fixes one test at another's cost, which is what host GPU noise would look
@@ -337,18 +335,18 @@ so a sprite's ramp shows only one axis:
 - Sizes 8 and 16 at scale 1.5 go to the frame's left and bottom. In that run
   that is also the page's higher texel: nothing tells which of the two is the
   rule.
-- Size 15 at scale 1.5 goes towards the shown rectangle's lower coordinates on
+- Size 15 at scale 1.5 goes toward the shown rectangle's lower coordinates on
   both axes, where a Ryujinx run of the same sprite (TEST50, S1.5A90) was mixed.
   The page's lower coordinates, the rule before, misses one axis of the two.
 - Size 15 at scale 1, the quad's diagonal shows: the first triangle of its strip
   (top left, top right, bottom left of the rectangle) goes to the higher texel
-  and the second to the lower. No per-axis rule fits; the emulator's had the
-  second's.
+  and the second to the lower. No per-axis rule fits; the emulator's rule
+  followed the second triangle.
 - Single-precision plane equations from the vertices, or barycentrics, with any
-  anchor, get all of sizes 8 and 16 and miss size 15's as above.
+  anchor, get all of sizes 8 and 16 and miss size 15 as above.
 
-Pixels more than 1 off (TEST50 and TEST56 from Ryujinx, on a PC's GPU; TEST62's
-a shot of the 22 sprites, 9 of luma off):
+Pixels more than 1 off (TEST50 and TEST56 from Ryujinx, on a PC's GPU; for
+TEST62, a shot of the 22 sprites, 9 of luma off):
 
 | Rule | TEST50 1 | 2 | 3 | 4 | TEST56 P2 | TEST62 |
 |---|---|---|---|---|---|---|
@@ -356,19 +354,20 @@ a shot of the 22 sprites, 9 of luma off):
 | Reading past the image | 880 | 86 | 464 | 594 | 2128 | 266 |
 | Also other sizes along the shown rectangle | 1249 | 86 | 464 | 594 | 2128 | 105 |
 | Also power of two at other scales, the page's higher texel | 1249 | 86 | 2512 | 2720 | 2864 | 105 |
-| Other sizes towards the frame's top left, not along the rectangle | 3553 | 206 | 464 | 594 | 4037 | 120 |
+| Other sizes toward the frame's top left, not along the rectangle | 3553 | 206 | 464 | 594 | 4037 | 120 |
 
-The third row was the code's rule until TEST63. What a real Switch shows decides
-over what Ryujinx shows: TEST50's part 1 gets worse, on a host GPU's noise. Text
-kept to its own cell at that point, off which SmileBASIC 4 reads the font page's
-next character's pixels.
+The third row was the code's rule until TEST63. What a real Switch shows
+outranks what Ryujinx shows: TEST50's part 1 gets worse, on a host GPU's noise.
+At that point text kept to its own cell, while SmileBASIC 4 reads past the cell
+into the pixels of the next character on the font page.
 
 ## Comparison tests
 
 The CPU is the reference for the GPU path, and hardware for the CPU.
 
 **Golden scenes.** `crates/sb-sdl/src/gpu_golden.rs` holds small programs, each
-drawn by the GPU path and by the CPU at once, so no frames are kept. They cover:
+drawn by the GPU path and by the CPU in the same run and compared frame by
+frame, so no frames are kept. They cover:
 
 - each blend and compose mode, tint, flips and turns, whole and other scales;
 - XSCREEN sample 2, LCLIP, 4x4 layers with text, each filter, FADE, repeating
@@ -376,12 +375,12 @@ drawn by the GPU path and by the CPU at once, so no frames are kept. They cover:
 - DIRECT mode's hint, list, cursor and selection, and sub screens.
 
 Each has a limit on the pixels more than 2 off, and at most 0.1% may have an
-alpha more than 2 off. `SB_GPU_GOLDEN=1` prints a row for each and
-exits, 1 if one is over. `cargo test -p sb-sdl --test gpu_golden -- --ignored`
-does it with no window. It is ignored as CI has no GPU.
+alpha more than 2 off. `SB_GPU_GOLDEN=1` prints a row for each and exits, 1 if
+one is over. `cargo test -p sb-sdl --test gpu_golden -- --ignored` does it with
+no window. It is ignored because CI has no GPU.
 
 **Start-up.** The self-test ([renderer.md](renderer.md)) runs when the path
-starts. `SB_GPU_TEST=off` skips it and `fail` tries the way out. An earlier
+starts. `SB_GPU_TEST=off` skips it and `fail` acts as if it failed. An earlier
 version of the scene was 1 off at the most on opengl, opengles2 and vulkan, on 1
 to 1.7% of its pixels, and none more. It took 68 to 76 ms on opengl, 94 on
 opengles2 and 133 on vulkan, on one desktop, once in a run.
@@ -389,7 +388,8 @@ opengles2 and 133 on vulkan, on one desktop, once in a run.
 **Projects.** The `--bench` projects of
 [renderer-decisions.md](renderer-decisions.md) are rendered for N frames on both
 paths, and the frame diffs are summarized, in a manual or nightly job. They are
-not in the repository, since the projects are not the emulator's to commit.
+not in the repository, since the emulator project has no right to commit those
+projects.
 
 **Hardware stays the arbiter.** A GPU/CPU disagreement on an exact path is a bug
 in the GPU path. A disagreement on an inexact path is settled, if it matters, by
@@ -407,7 +407,7 @@ then.
 
 ## GPU path results
 
-**Exactness.** Everything larger than rounding that has been seen lies on
+**Exactness.** Everything larger than rounding that has been seen is on
 elements' edges and on lines where samples fall between texels, as the policy in
 [renderer.md](renderer.md) allows. Upright sprites and text at whole scales and
 places, and the GRP scenes, are identical.
@@ -426,7 +426,7 @@ the same frames, for each path:
 | TEST50 part 2 (ties) | 1209 | 1245 |
 | TEST50 part 4 (ties) | 3441 | 3441 |
 
-TEST49's differences are all by 1 or 2. On TEST49 the GPU is the closer, as it
+TEST49's differences are all by 1 or 2. On TEST49 the GPU path is closer, as it
 should be: SmileBASIC 4 rounds the same way.
 
 **Ties.** With the biases, the path follows the rule for edges and texels on
@@ -439,8 +439,8 @@ bias, that scene has 24704 of 384000 pixels off, so the bias stays.
 
 **Color filter.** The shader, on the `gpu` driver, matched the CPU on all 39.6
 million pixels compared of LCOLOR and on TEST54 part 7, and within 2 on TEST53
-part 4, where the layer's color follows. The GPU's wait was 1.3 ms a frame with
-four such layers.
+part 4, where the layer's color follows. The GPU's wait was 1.3 ms per frame
+with four such layers.
 
 **Mosaic and blur.** TEST54 parts 2 and 3, against the CPU: about 1% 1 off,
 under 0.5% 2 off, 3 at most. LBLUR, three blurred layers one over another: 6 at
@@ -449,7 +449,7 @@ most, 1.7% more than 2 off, since the differences add up over the layers.
 **With the path off.** On the same bench runs as the [scene
 split](#scene-split-results), TEST48 to 56's `--screen` and `--play` PNGs
 included, checksums and PNGs were identical. Instructions were within 0.02%
-except TMULTI, +0.84%, and TPERF, +0.17%, the text code having been split to
+except TMULTI, +0.84%, and TPERF, +0.17%, because the text code was split to
 give a backend its inverted glyphs.
 
 **Long runs.** 12000 frames each on opengl, opengles2 and llvmpipe:
@@ -459,21 +459,22 @@ give a backend its inverted glyphs.
 - resets, resizes, full screen and the setting off and on every 400 frames.
 
 No pixel was more than 2 off on the main screens in 228 frames compared, and at
-most 7 of 6.3 million in the subprogram's. Live GL textures came back to 0 at
-the end. With no events RSS holds at 397 MiB from the third sample to the last.
+most 7 of 6.3 million in the subprogram screens. Live GL textures came back to 0
+at the end. With no events RSS holds at 397 MiB from the third sample to the
+last.
 
 **In the frontend.** Pictures of the window with and without the path, no pixel
 differing:
 
 - modes 0, 1, 2 in a window of 1280x720, resized and in full screen;
-- menu, About, the colors window, a notice, help, debugger's panel, editor
-  inline and apart;
+- menu, About, the colors window, a notice, help, the debugger panel, editor
+  inline and detached;
 - a stopped program, DIRECT mode's hint, an error, an ended program with its
   targets spoiled by hand, device reset, the setting turned on and off.
 
 ## Scene split results
 
-The scene builder went in with these checks, against the commit before, on one
+The scene builder was added with these checks, against the commit before, on one
 x86-64 desktop, release build, `--bench --fixed`:
 
 - Checksums identical on TPERF whole (10500 frames), its scenes TMULTI, SPROT,
@@ -483,20 +484,21 @@ x86-64 desktop, release build, `--bench --fixed`:
   have run files, including sub screens.
 - Instructions, against 0.07% between two runs of one build: TPERF -2.1%, TMULTI
   -5.7%, SPROT -2.7%, SPANIM +0.4%, LCOMP -0.3%, GAME -1.6%, FINITI -2.7%,
-  ELE2020 -2.4%, NEON_DRIFTWAY 0.0%, DVD_BOUNCE +0.2%. Part of the falls may be
-  inlining rather than work saved, so do not count on them.
+  ELE2020 -2.4%, NEON_DRIFTWAY 0.0%, DVD_BOUNCE +0.2%. Part of the drops may
+  come from inlining rather than saved work, so do not count on them.
 - Peak memory was unchanged.
 
-These comparisons are not in the repository, as the projects are not the
-emulator's.
+These comparisons are not in the repository, because the emulator project has
+no right to commit the projects they ran.
 
 ## How results were measured
 
 **Only GRP drawing can be checked on hardware by automatic readback.**
 SmileBASIC 4 has no command that reads the composed screen. Everything composed
 (sprites, text screens, layers, filters, FADE) needs a lossless screenshot. The
-tests in [hardware-tests.md](../smilebasic4/hardware-tests.md) do this: Ryujinx screenshots at
-1:1 under `XSCREEN 1280,720`, compared with `smilebasic-check --screen`.
+tests in [hardware-tests.md](../smilebasic4/hardware-tests.md) do this: Ryujinx
+screenshots at 1:1 under `XSCREEN 1280,720`, compared with
+`smilebasic-check --screen`.
 
 **Sources:**
 
@@ -506,18 +508,20 @@ tests in [hardware-tests.md](../smilebasic4/hardware-tests.md) do this: Ryujinx 
   TEST53, TEST54, TEST55 and TEST56. That GPU stores results its own way.
 
 **How close the emulator-hosted screenshots come.** TEST49's stored results are
-within 1 of the rules (see [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md)). TEST54's and
-TEST55's are within 1 of the emulator in every channel, and TEST53's within 2
-but for four lone pixels.
+within 1 of the rules (see [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md)).
+TEST54's and TEST55's are within 1 of the emulator in every channel, and
+TEST53's within 2 except for four lone pixels.
 
-[renderer-decisions.md](renderer-decisions.md) has what the GPU path costs, and
-[benchmarking.md](../performance/benchmarking.md) how to repeat those measurements.
+[renderer-decisions.md](renderer-decisions.md) has the cost of the GPU path, and
+[benchmarking.md](../performance/benchmarking.md) how to repeat those
+measurements.
 
 ## Test batches A to G
 
 All seven batches ran. The sections below give each batch as written before it
 ran, so the programs that ran may differ: TEST47, for one, had 23 parts. The
-results are in [Rules](#rules) and [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md).
+results are in [Rules](#rules) and
+[sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md).
 
 | Batch | Subject | Items | Ran as | Read by |
 |---|---|---|---|---|
@@ -590,9 +594,9 @@ Parts (each `GCLS` first):
 
 ### Batch B: color arithmetic (screenshots)
 
-R4 is the last part, as it needs a subprogram. Sprites are 32x32 solid blocks
-drawn on GRP3 (`SPSET n,U,V,32,32` and `SPPAGE n,3`) on `BACKCOLOR &HFF3C3C3C`
-(60). Values that tell the roundings apart:
+R4 is the last part, because it needs a subprogram. Sprites are 32x32 solid
+blocks drawn on GRP3 (`SPSET n,U,V,32,32` and `SPPAGE n,3`) on
+`BACKCOLOR &HFF3C3C3C` (60). Values that tell the roundings apart:
 
 | Patch | Setup | Floor | Nearest |
 |---|---|---|---|
@@ -667,9 +671,9 @@ drawn on GRP3 (`SPSET n,U,V,32,32` and `SPPAGE n,3`) on `BACKCOLOR &HFF3C3C3C`
 
 `XSCREEN 400,240,1,M` for M = 0, 1, 2 with a 1-pixel checkerboard and a diagonal
 line. Then `XSCREEN 400,240,1,2,1.0`. Capture the 1280x720 output (Ryujinx's own
-scaling must be off, or the result says nothing), and compare with the emulator
-window's `SB_UI_BENCH shot=`. The batch asked whether mode 1 needed its own
-resampling code; it uses `SmartFrame` and `smart_scale`.
+scaling must be off, or the result is meaningless), and compare with the
+emulator window's `SB_UI_BENCH shot=`. The batch asked whether mode 1 needed its
+own resampling code; it uses `SmartFrame` and `smart_scale`.
 
 ## History
 

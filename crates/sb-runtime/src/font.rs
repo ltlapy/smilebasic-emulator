@@ -12,8 +12,9 @@
 //! Glyph `n` of the 8-pixel font is at `((n % 64) * 8, (n / 64) * 8)` on the
 //! page, and of the 16-pixel font at `((n % 64) * 16, 1024 + (n / 64) * 16)`.
 //! This matches FONTINFO on real hardware. The fallback font numbers its
-//! glyphs as SmileBASIC 4's font.map does ([`SB4_ORDER`]), so a font page
-//! that a program draws for SmileBASIC 4 shows the right characters.
+//! glyphs the same way as SmileBASIC 4's font.map ([`SB4_ORDER`]), so a
+//! font page that a program draws for SmileBASIC 4 shows the right
+//! characters.
 
 use std::cell::{Cell, OnceCell};
 use std::collections::HashMap;
@@ -44,11 +45,11 @@ pub enum FontSize {
 #[derive(Clone)]
 pub struct Font(Source, Pages);
 
-/// What is made from the font the first time it is wanted and kept: the
-/// font page on GRP5 of pages otherwise blank, for text drawn with the
-/// font alone, as the editor's (copying the page for every frame took
-/// longer than drawing), the half-width glyphs, and the [`Span`]s of
-/// fonts without font.map's metrics.
+/// Data built from the font the first time it is needed, and then kept:
+/// the font page on GRP5 of otherwise blank pages, for text drawn with
+/// the font alone, such as the editor text (copying the page for every
+/// frame took longer than drawing), the half-width glyphs, and the
+/// [`Span`]s of fonts without font.map's metrics.
 #[derive(Clone, Default)]
 struct Pages(
     OnceCell<Rc<Graphics>>,
@@ -57,7 +58,7 @@ struct Pages(
 );
 
 /// GPUTCHRP's view of a character: it draws the whole cell with column
-/// `first` on the pen, and then moves on `width` pixels before the
+/// `first` at the pen, and then advances `width` pixels before the
 /// spacing. Fixed for each code: it does not follow what a program
 /// draws on GRP5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,7 +82,7 @@ impl Span {
         }
     }
 
-    /// Packed for [`Pages`]; never 0, as a width is at least 1.
+    /// Packed for [`Pages`]; never 0, because a width is at least 1.
     fn pack(self) -> u16 {
         (self.first as u16) << 8 | self.width as u16
     }
@@ -106,7 +107,7 @@ enum Source {
         page: Vec<u32>,
     },
     /// 8x8 cells; the 16-pixel font is drawn from `set`'s bundled
-    /// glyphs, and what they lack is the 8x8 cell at twice its size.
+    /// glyphs, and a code they lack takes its 8x8 cell at twice its size.
     Cells {
         set: BundledSet,
         /// For each code, an index into `cells`, `SYMBOL | i` for
@@ -118,10 +119,10 @@ enum Source {
         symbols: Vec<[u8; 64]>,
         missing: u16,
         /// For each code, its glyph number on the font page: SmileBASIC
-        /// 4's for the codes its font.map maps, `MISSING_GLYPH` for codes
-        /// that neither it nor the bundled glyphs have, else a number
-        /// SmileBASIC 4 leaves free, or `NO_CELL` for codes drawn straight
-        /// from `cells` once none is left.
+        /// 4's number for the codes its font.map maps, `MISSING_GLYPH` for
+        /// codes that neither it nor the bundled glyphs have, else a number
+        /// SmileBASIC 4 leaves free, or `NO_CELL` for codes drawn directly
+        /// from `cells` once no free number is left.
         slots: Vec<u16>,
     },
 }
@@ -133,8 +134,8 @@ const PAGE_GLYPHS: usize = 4096;
 /// [`sb4_glyphs`]).
 static SB4_ORDER: &[u8] = include_bytes!("../fonts/sb4-order/order.bin");
 /// Codes that SmileBASIC 4's font lacks and the fallback font has take the
-/// glyph numbers it leaves free in this order: these ranges first, the
-/// rest in code order, while numbers are left.
+/// glyph numbers that SmileBASIC 4's font leaves free, in this order: these
+/// ranges first, then the rest in code order, while free numbers are left.
 const FIRST_ON_PAGE: &[std::ops::RangeInclusive<u16>] = &[
     0x20..=0x7E,
     0xE100..=0xE17F,
@@ -165,9 +166,9 @@ pub(crate) fn outlines() -> &'static FontRef<'static> {
     FONT.get_or_init(|| FontRef::try_from_slice(OUTLINES).expect("bundled font"))
 }
 
-/// The 16-pixel glyph of `c` from `set`'s bundled glyphs, the outline
-/// font's drawn here; `None` if none has it. Drawing is slow next to
-/// looking pixels up, so glyphs are kept once drawn.
+/// The 16-pixel glyph of `c` from `set`'s bundled glyphs, with the
+/// outline font's glyphs drawn here; `None` if none has it. Drawing is
+/// slow compared with looking up pixels, so glyphs are kept once drawn.
 fn large_glyph(c: char, set: BundledSet) -> Option<Bitmap> {
     type Drawn = HashMap<(char, BundledSet), Option<Bitmap>>;
     static DRAWN: OnceLock<Mutex<Drawn>> = OnceLock::new();
@@ -192,7 +193,7 @@ fn draw_outline(c: char) -> Option<Bitmap> {
     let em = font.units_per_em().unwrap_or(1000.0);
     // ab_glyph scales by ascent minus descent; one em should be EM_PIXELS.
     let scale = PxScale::from(EM_PIXELS * font.height_unscaled() / em);
-    // Narrow glyphs sit in the middle of the em.
+    // Narrow glyphs are centered in the em.
     let advance = font.h_advance_unscaled(id) * EM_PIXELS / em;
     let origin = point((EM_PIXELS - advance) / 2.0, EM_PIXELS * EM_TOP / em);
     let mut bitmap = [0; LARGE * LARGE];
@@ -282,7 +283,8 @@ pub fn parse_map(bytes: &[u8]) -> Result<(Vec<u16>, Option<Vec<u16>>), FontError
 /// Each code's glyph number in SmileBASIC 4's font, `MISSING_GLYPH` for
 /// codes it lacks. [`SB4_ORDER`] is u16 words, one per code in rising
 /// order: bits 0-11 the glyph number, bits 12-15 the gap g to the previous
-/// code (the code is that one plus g + 1, or for 15 the next word).
+/// code (the code is the previous one plus g + 1; for g = 15 it is the next
+/// word).
 fn sb4_glyphs() -> Vec<u16> {
     const FAR: u16 = 15;
     let mut glyphs = vec![MISSING_GLYPH; CODES];
@@ -305,7 +307,7 @@ fn sb4_glyphs() -> Vec<u16> {
 
 /// The code whose glyph the fallback font draws for `code`: SmileBASIC's
 /// font draws ASCII as wide as full-width characters, so GalmuriMono7's
-/// full-width forms stand in for it.
+/// full-width forms are drawn for it.
 fn drawn_as(code: u16) -> u16 {
     match code {
         0x21..=0x7E => code + 0xFEE0,
@@ -313,7 +315,7 @@ fn drawn_as(code: u16) -> u16 {
     }
 }
 
-/// Where glyph `n` sits on the font page.
+/// The top-left corner of glyph `n` on the font page.
 fn slot_origin(n: u32, size: FontSize) -> (u32, u32) {
     match size {
         FontSize::Small => ((n % 64) * 8, (n / 64) * 8),
@@ -366,9 +368,9 @@ impl Font {
         }
         let missing = index[0xFFFD];
         let has = |code: u16| index[usize::from(drawn_as(code))] != NO_CELL;
-        // SmileBASIC 4's places for all it has, whether the bundled glyphs
-        // have it or not: a program that draws its own font page puts its
-        // glyphs there.
+        // SmileBASIC 4's places for every code it has, whether the bundled
+        // glyphs have that code or not: a program that draws its own font
+        // page puts its glyphs there.
         let mut slots = sb4_glyphs();
         let mut taken = vec![false; PAGE_GLYPHS];
         for &n in &slots {
@@ -414,8 +416,8 @@ impl Font {
         })
     }
 
-    /// Half-width glyphs that go with this font, for text that is not the
-    /// programs'.
+    /// Half-width glyphs that go with this font, for text other than
+    /// program text.
     pub fn half_glyphs(&self) -> &HalfGlyphs {
         self.1.1.get_or_init(|| Rc::new(HalfGlyphs::new(self)))
     }
@@ -424,8 +426,8 @@ impl Font {
     pub fn page_image(&self) -> Vec<u32> {
         match &self.0 {
             Source::Page { page, .. } => page.clone(),
-            // Fallback fonts with the same set are the same, so its page
-            // is drawn once.
+            // Fallback fonts with the same set are the same, so the page of
+            // each set is drawn once.
             Source::Cells { set, .. } => {
                 static PAGES: [OnceLock<Vec<u32>>; 2] = [OnceLock::new(), OnceLock::new()];
                 PAGES[*set as usize]
@@ -439,8 +441,8 @@ impl Font {
         match &self.0 {
             Source::Page { page, .. } => page.clone(),
             Source::Cells { slots, .. } => {
-                // Codes that share a glyph number show the first one the
-                // bundled glyphs have, or else the first.
+                // Codes that share a glyph number show the first of them
+                // that the bundled glyphs have, or else the first of them.
                 let mut owners = vec![NO_CELL; PAGE_GLYPHS];
                 owners[usize::from(MISSING_GLYPH)] = 0xFFFD;
                 for (code, &slot) in (0..=u16::MAX).zip(slots) {
@@ -479,8 +481,8 @@ impl Font {
     }
 
     /// Whether the font draws `code` as itself rather than as the glyph
-    /// for missing characters. One table lookup, as the editor asks it of
-    /// every character it shows.
+    /// for missing characters. One table lookup, because the editor calls
+    /// it for every character it shows.
     pub fn has_glyph(&self, code: u16) -> bool {
         match &self.0 {
             Source::Page { glyphs, .. } => glyphs[usize::from(code)] != MISSING_GLYPH,
@@ -488,7 +490,7 @@ impl Font {
         }
     }
 
-    /// The glyph number of a code with a place of its own on the font
+    /// The glyph number of a code that has its own place on the font
     /// page; `None` for codes drawn as the box, or with no place there.
     pub fn own_glyph(&self, code: u16) -> Option<u32> {
         let n = match &self.0 {
@@ -549,7 +551,7 @@ impl Font {
                     };
                 }
                 // An 8x8 drawing, such as SmileBASIC's own symbols, fills
-                // a 16-pixel cell at twice its size, both ways.
+                // a 16-pixel cell at twice its size in both directions.
                 let (x, y) = match size {
                     FontSize::Small => (x, y),
                     FontSize::Large => (x / 2, y / 2),
@@ -565,7 +567,7 @@ impl Font {
     }
 
     /// GPUTCHRP's [`Span`] of `code`: from font.map's metrics, or else
-    /// worked out once from the font's own glyph.
+    /// computed once from the font's own glyph.
     pub fn span(&self, code: u16, size: FontSize) -> Span {
         if let Source::Page {
             metrics: Some(m), ..
@@ -697,7 +699,7 @@ mod tests {
         assert!(parse_map(&v1).unwrap().1.is_none());
 
         let mut v4 = vec![0u8; CODES * 4];
-        // Glyph 305, 7 of 8 pixels and 14 of 16 wide, as full-width kana.
+        // Glyph 305, 7 of 8 pixels and 14 of 16 wide, like full-width kana.
         let kana = entry(305, (0, 7), (0, 14));
         v4[0x3042 * 4..0x3042 * 4 + 4].copy_from_slice(&kana.to_le_bytes());
         let (glyphs, metrics) = parse_map(&v4).unwrap();
@@ -753,7 +755,7 @@ mod tests {
         let (small, large) = (FontSize::Small, FontSize::Large);
         assert_eq!(font.span(0x41, large), span(1, 9));
         assert_eq!(font.span(0x41, small), span(0, 5));
-        // Blanks, the ideographic space, and the glyph for missing ones.
+        // Blanks, the ideographic space, and the glyph for missing characters.
         assert_eq!(font.span(0x20, large), span(0, 4));
         assert_eq!(font.span(0x20, small), span(0, 2));
         assert_eq!(font.span(0x3000, large), span(0, 14));
@@ -819,8 +821,8 @@ mod tests {
             .map(|i| font.pixel('A' as u16, FontSize::Large, i % 16, i / 16) >> 24)
             .collect();
         assert!(alphas.contains(&255) && alphas.iter().any(|&a| a > 0 && a < 255));
-        // ...what the outlines lack from the dot glyphs, drawn for 16
-        // pixels...
+        // ...characters the outlines lack from the dot glyphs, drawn for
+        // 16 pixels...
         let dot = |code: u16| {
             let mut cell = Vec::new();
             assert!(crate::extra_glyphs::dot16_cell(u32::from(code), &mut cell));
@@ -862,8 +864,8 @@ mod tests {
         // The glyph for missing characters, as SmileBASIC 4 shows it.
         assert_eq!(sb4[0xFFFD], MISSING_GLYPH);
         assert_eq!(sb4[0xAC00], MISSING_GLYPH);
-        // ASCII is in its own places but the backslash, and its full-width
-        // forms share them.
+        // ASCII is in its own places, except the backslash, and its
+        // full-width forms share them.
         assert!((0x20..0x7F).all(|c| c == 0x5C || usize::from(sb4[c]) == c));
         assert_eq!(sb4[0xFF21], sb4[0x41]);
     }
@@ -900,13 +902,14 @@ mod tests {
                 assert_eq!(font.origin(code, size), Some(slot_origin(n.into(), size)));
             }
         }
-        // What neither has shows SmileBASIC 4's glyph for missing ones.
+        // A code that neither has shows SmileBASIC 4's glyph for missing
+        // characters.
         let neither = in_neither(&font);
         assert_eq!(font.glyph_index(neither), Some(u32::from(MISSING_GLYPH)));
         assert_eq!(font.glyph_index(0xFFFD), Some(u32::from(MISSING_GLYPH)));
         assert_eq!(font.own_glyph(neither), None);
-        // What only the bundled glyphs have takes numbers SmileBASIC 4
-        // leaves free while they last, and is drawn off the page after.
+        // Codes that only the bundled glyphs have take numbers SmileBASIC 4
+        // leaves free while they last, and are drawn off the page after.
         let mut used = vec![false; PAGE_GLYPHS];
         let mut extra = 0;
         for code in 0..=u16::MAX {
@@ -1019,8 +1022,8 @@ mod tests {
             glyph(&outline, '한', FontSize::Large),
             table(extra_glyphs::dot16_cell, '한')
         );
-        // Pixel: the dot glyphs for all they have, ASCII in its full-width
-        // form.
+        // Pixel: the dot glyphs for every character they have, ASCII in
+        // its full-width form.
         for c in ['A', '漢', '汉', '한'] {
             assert_eq!(
                 glyph(&dot, c, FontSize::Large),

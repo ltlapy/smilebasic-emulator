@@ -1,91 +1,101 @@
-//! A timing log of the frontend's drawing, for measuring it without
-//! anyone at the keys: `SB_UI_BENCH` sets the emulator up as it says,
-//! times the parts of each trip round the loop for a while, prints what
-//! they took and quits. It is meant for a scratch data directory (set
-//! `XDG_DATA_HOME` on Linux), as it runs the project named there, and
-//! with `SDL_VIDEO_DRIVER=offscreen` it needs no display.
+//! A timing log of the frontend's drawing, for measuring it with no one at
+//! the keys. `SB_UI_BENCH` sets up the emulator the way it says, times the
+//! parts of each iteration for a while, prints how long they took and
+//! quits. It is meant for a scratch data directory (set `XDG_DATA_HOME` on
+//! Linux), because it runs the project named there. With
+//! `SDL_VIDEO_DRIVER=offscreen` it needs no display.
 //!
-//! It counts trips round the frontend's loop. A trip runs one frame of the
-//! program as a rule, but none while it is paused and several to catch up,
-//! and it may leave the drawing out. The variable's parts and the report
-//! call a trip a frame, as they did when each trip ran and drew one.
+//! It counts iterations of the frontend's loop. An iteration usually runs
+//! one frame of the program, but it runs none while the program is paused
+//! and several to catch up. It may also skip drawing. The parts of the
+//! variable and the report call an iteration a frame, the same as they did
+//! when each iteration ran and drew one frame.
 //!
 //! The variable is a comma-separated list:
 //!
-//! - `frames=N`: trips timed (600 by default);
-//! - `settle=N`: trips before the timing begins (60 by default), to get
-//!   past what a program sets up;
+//! - `frames=N`: iterations timed (600 by default);
+//! - `settle=N`: iterations before the timing begins (60 by default), to
+//!   get past what a program sets up;
 //! - `run=PROJECT/PROGRAM`: runs a program of a project from the start;
 //! - `load=PROJECT/PROGRAM`: loads a program of a project into PRG0;
-//! - `end`: stops timing when the program ends, however many trips it was;
+//! - `end`: stops timing when the program ends, however many iterations
+//!   that took;
 //! - `novsync`: presents without waiting for vsync;
-//! - `stop`: stops it, as the Break key does, a second in;
+//! - `stop`: stops it a second in, the same as the Break key does;
 //! - `type=TEXT`: half a second after that, types TEXT, with no commas;
 //! - `editor`: opens the editor; `apart` in its own window;
 //! - `panel`: shows the debugger's panel with it;
-//! - `shot=PATH`: saves the frame of the last trip timed of each window shown, as
-//!   `PATH-main.pam` and `PATH-editor.pam`, to compare drawings;
+//! - `shot=PATH`: saves the frame of the last iteration timed of each window
+//!   shown, as `PATH-main.pam` and `PATH-editor.pam`, to compare drawings;
 //! - `luma=PATH`: reads each frame timed as it goes to the window, writes
-//!   its trip's number and mean brightness (0 to 255) to PATH, and reports
-//!   the frames darker than both of their neighbours, as a flicker is;
-//! - `log=PATH`: writes each trip timed to PATH, at the end of the run: its number,
-//!   the window's size in pixels, the drawing's stages in microseconds, the bytes
-//!   uploaded, the textures made, and in microseconds what the rest of the trip round
-//!   the loop took: events, running the program, waiting for the next frame; then the
-//!   frames the standby thread ran while the loop was held up, and its microseconds
-//!   running them; then MAINCNT, and the frames so far that the program
-//!   missed part of its trip in, by why, as the report's missed line says; then 1
-//!   if the trip drew the window and 0 if it left the drawing out; then the
-//!   samples of sound waiting in the device's buffer as the trip began, and
-//!   the times they have run out so far;
+//!   the number of its iteration and its mean brightness (0 to 255) to
+//!   PATH, and reports the frames darker than both of their neighbors, like
+//!   a flicker;
+//! - `log=PATH`: writes each iteration timed to PATH, at the end of the run:
+//!   its number, the window's size in pixels, the drawing's stages in
+//!   microseconds, the bytes uploaded, the textures made, and in
+//!   microseconds the time the rest of the iteration took: events, running
+//!   the program, waiting for the next frame; then the frames the standby
+//!   thread ran while the loop was held up, and its microseconds running
+//!   them; then MAINCNT, and the frames so far in which the program missed
+//!   part of an iteration of its main loop, by reason, the same as the
+//!   missed line of the report; then 1 if the iteration drew the window and
+//!   0 if it skipped the drawing; then the samples of sound waiting in the
+//!   device's buffer as the iteration began, and the number of times they
+//!   have run out so far;
 //! - `menu`, `file-menu`, `view-menu`, `size-menu`, `help`, `about`, `colors`,
-//!   `settings`, `toast`: shows the menu bar (as F8 does), the bar with its File menu
-//!   open or its View menu at Window size or at Size, the help beside the editor, the About dialog, the editor colors window,
+//!   `settings`, `toast`: shows the menu bar (the same as F8 does), the bar
+//!   with its File menu open or its View menu at Window size or at Size,
+//!   the help beside the editor, the About dialog, the editor colors window,
 //!   the settings window at its Editor page, or a notice, once the rest is
 //!   set up;
 //! - `cpu-smart`: scales XSCREEN's mode 1 on the CPU, the fallback for a
 //!   renderer that cannot make the texture the GPU route needs;
-//! - `scale=N`: lays the editor's own window out at the UI scale N instead
-//!   of the desktop's;
+//! - `scale=N`: lays out the editor's own window at the UI scale N instead
+//!   of the desktop scale;
 //! - `slow=MS`: from when the timing begins, makes each present of the
-//!   main window that waits for vsync take MS milliseconds more, as a
-//!   compositor that throttles a covered window does (SDL's Wayland
-//!   backend waits up to 50 ms);
+//!   main window that waits for vsync take MS milliseconds more, like a
+//!   compositor that throttles a covered window (SDL's Wayland backend
+//!   waits up to 50 ms);
 //! - `draw=US`: from then too, makes each drawing of the main window take US
-//!   microseconds more, of work rather than of waiting, as a slow GPU does;
+//!   microseconds more, of work rather than of waiting, like a slow GPU;
 //! - `vblank`: from then too, makes each present of the main window that
-//!   waits for vsync return at the next sixtieth of a second, as a display
-//!   at 60 Hz does, and has the display count as one: the offscreen driver's
-//!   presents do not wait;
-//! - `occluded`: from then too, has the main window count as covered, as
-//!   the system reports it when it can;
+//!   waits for vsync return at the next sixtieth of a second, the same as a
+//!   display at 60 Hz does, and has the display count as one: the presents
+//!   of the offscreen driver do not wait;
+//! - `occluded`: from then too, has the main window count as covered, the
+//!   same as the system reports it when it can;
 //! - `at=TRIP:WHAT`, any number of them: does something to the frontend in
-//!   that trip, counted from the start: `targets` or `device` as if the renderer reset them (the
-//!   first also spoils what the GPU path holds), `resize:W:H` (`editor-resize:W:H`
-//!   for the editor's own window), `fullscreen`,
-//!   `windowed`, `auto` and `cpu` for the renderer setting, `tool` to start
-//!   the F9 tool as a subprogram and `substop` to end it, `lost` as if the
-//!   device were gone, `fail` as if drawing failed, `refuse:N` to have the next N
-//!   tries at a renderer refused, `panic`, `unsaved` to give PRG0 unsaved edits,
-//!   `sleep:MS` to stop the loop for that long and count it as a suspend, `key:NAME`
-//!   to press the key SDL calls NAME, such as `Escape`, with `ctrl+`, `shift+` or
-//!   `alt+` before the name to hold those, `usb:USAGE` to have KEYBOARD read that
-//!   key as down for a frame, which `key` does not, and `pad:NAME` and `padup:NAME`
-//!   to press and let go the first controller's button SDL calls NAME, such as
-//!   `b` for the right face button (SDL goes by Xbox labels), as both the event
-//!   and what is held, the mouse's `click:X:Y` and the others [`pointer_events`]
-//!   lists, with `editor-` before them for the editor's own window, `editor-focus` to give the editor's own window the keys,
-//!   and the UI parts above, such as `settings`, to show that part then.
+//!   that iteration, counted from the start: `targets` or `device` as if the
+//!   renderer reset them (the first also spoils what the GPU path holds),
+//!   `resize:W:H` (`editor-resize:W:H` for the editor's own window),
+//!   `fullscreen`, `windowed`, `auto` and `cpu` for the renderer setting,
+//!   `tool` to start the F9 tool as a subprogram and `substop` to end it,
+//!   `lost` as if the device were gone, `fail` as if drawing failed,
+//!   `refuse:N` to have the next N tries at a renderer refused, `panic`,
+//!   `unsaved` to give PRG0 unsaved edits, `sleep:MS` to stop the loop for
+//!   that long and count it as a suspend, `key:NAME` to press the key SDL
+//!   calls NAME, such as `Escape`, with `ctrl+`, `shift+` or `alt+` before
+//!   the name to hold those, `usb:USAGE` to have KEYBOARD read that key as
+//!   pressed for a frame, which `key` does not, and `pad:NAME` and
+//!   `padup:NAME` to press and release the first controller's button SDL
+//!   calls NAME, such as `b` for the right face button (SDL uses Xbox
+//!   labels), both as the event and as the held state, the mouse's
+//!   `click:X:Y` and the others [`pointer_events`] lists, with `editor-`
+//!   before them for the editor's own window, `editor-focus` to give the
+//!   editor's own window the keys, and the UI parts above, such as
+//!   `settings`, to show that part then.
 //!
 //! Besides the stages, it reports the program frames run per second of
-//! the time timed, those of them the standby thread ran, how far MAINCNT
-//! went, the frames the program missed part of its trip in, the trips that
-//! left the drawing out, the trip the
-//! notice for a program slower than real time showed at, and what the
-//! sound device's buffer went through and how much sound waited in it, so
-//! that the frames keep time whatever happens to the drawing. For the
-//! sound, `SDL_AUDIO_DRIVER=dummy` with `SDL_AUDIO_DEVICE_SAMPLE_FRAMES`
-//! at 960 takes samples at very nearly the real rate without a device.
+//! the time timed, the frames of those that the standby thread ran, how far
+//! MAINCNT went, the frames in which the program missed part of an
+//! iteration of its main loop, the iterations that skipped the drawing, the
+//! iteration at which the notice for a program slower than real time
+//! showed, and what happened to the sound device's buffer and how much
+//! sound waited in it, so that the frames keep time regardless of what
+//! happens to the drawing. For the sound, `SDL_AUDIO_DRIVER=dummy` with
+//! `SDL_AUDIO_DEVICE_SAMPLE_FRAMES` at 960 takes samples at very nearly the
+//! real rate without a device.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -101,9 +111,9 @@ use sdl3::video::Window;
 
 use crate::standby::Kept;
 
-/// Bytes given to textures since the trip began.
+/// Bytes given to textures since the iteration began.
 static UPLOADED: AtomicU64 = AtomicU64::new(0);
-/// Textures made since the trip began.
+/// Textures made since the iteration began.
 static MADE: AtomicU64 = AtomicU64::new(0);
 
 /// The modifiers before a key's name in `key:`, as in `ctrl+shift+F12`,
@@ -124,7 +134,7 @@ pub fn key_mods(mut name: &str) -> (Mod, &str) {
 
 /// The mouse events an `at=` part stands for, in the window `window_id`,
 /// or `None` if `what` is none of these. X and Y are window coordinates,
-/// as SDL gives a pointer's:
+/// the same as SDL gives for a pointer:
 ///
 /// - `click:X:Y`, `rclick:X:Y`, `dclick:X:Y`: moves the pointer there,
 ///   then presses and releases the left button, the right one, or the
@@ -135,8 +145,9 @@ pub fn key_mods(mut name: &str) -> (Mod, &str) {
 /// - `move:X:Y`: moves there with no button held;
 /// - `wheel:X:Y:N`: turns the wheel N notches up there, down if negative.
 ///
-/// The events go the way the system's do. What reads the mouse's state
-/// and not its events, as the program's touch does, sees none of it.
+/// The events take the same path as the system's events. Anything that
+/// reads the mouse's state and not its events, for example the program's
+/// touch, sees none of them.
 pub fn pointer_events(what: &str, window_id: u32) -> Option<Vec<Event>> {
     let mut parts = what.split(':');
     let kind = parts.next()?;
@@ -217,12 +228,12 @@ pub fn made() {
     MADE.fetch_add(1, Ordering::Relaxed);
 }
 
-/// The parts of a trip round the loop that are timed.
+/// The parts of an iteration that are timed.
 #[derive(Clone, Copy)]
 pub enum Stage {
-    /// The screens' or the inline editor's frame, made and uploaded.
+    /// The frame of the screens or of the inline editor, made and uploaded.
     Screen,
-    /// The editor's own window's frame.
+    /// The frame of the editor's own window.
     Editor,
     /// The debugger's panel: gathering what it shows, and the screens it
     /// shows.
@@ -240,23 +251,24 @@ pub enum Stage {
 }
 
 const STAGES: usize = 8;
-/// Of the stages, those that draw.
+/// The number of stages that draw, which come first.
 const DRAWING: usize = Stage::Events as usize;
 const NAMES: [&str; STAGES] = [
     "screen", "editor", "gather", "overlays", "present", "events", "run", "wait",
 ];
-/// A trip round the loop this long is listed as a stall: sound starts to run out at
+/// An iteration this long is listed as a stall: sound starts to run out at
 /// about a tenth of a second.
 const STALL: Duration = Duration::from_millis(100);
-/// Trips from the start before the program is stopped, and before the
+/// Iterations from the start before the program is stopped, and before the
 /// timing begins after the last step of setting up.
 const SETTLE: u32 = 60;
 
-/// How much darker than both neighbours a frame is, out of 255, to count as a dip.
+/// How much darker than both neighbors a frame is, out of 255, to count as
+/// a dip.
 const LEAST_DIP: f32 = 0.5;
 
-/// The frames at least `least` darker than the frames either side of them, with
-/// how much.
+/// The frames at least `least` darker than the frames on either side of
+/// them, with the amount.
 fn single_frame_dips(lumas: &[f32], least: f32) -> Vec<(usize, f32)> {
     let around = lumas.windows(3).enumerate();
     around
@@ -265,16 +277,16 @@ fn single_frame_dips(lumas: &[f32], least: f32) -> Vec<(usize, f32)> {
         .collect()
 }
 
-/// The bench, there whether `SB_UI_BENCH` is set or not, so that the loop
-/// calls it without asking. Without the variable it is off: it sets
-/// nothing up, times nothing and stands for nothing, as its fields then
+/// The bench, present whether `SB_UI_BENCH` is set or not, so that the loop
+/// calls it without checking. Without the variable it is off: it sets
+/// nothing up, times nothing and stands in for nothing, as its fields then
 /// say, and [`Bench::step`] never ends the run.
 #[derive(Default)]
 pub struct Bench {
     /// `SB_UI_BENCH` is set.
     on: bool,
-    /// Trips timed, and trips before the timing begins, as `frames=` and
-    /// `settle=` say.
+    /// Iterations timed, and iterations before the timing begins, as
+    /// `frames=` and `settle=` say.
     trips: u32,
     settle: u32,
     run: Option<(String, String)>,
@@ -286,14 +298,14 @@ pub struct Bench {
     apart: bool,
     panel: bool,
     shot: Option<String>,
-    /// Where the frames' brightness goes, and what it was so far: the number
-    /// of the trip that drew the frame, and its mean brightness.
+    /// The file for the brightness of the frames, and the values so far: the
+    /// number of the iteration that drew the frame, and its mean brightness.
     luma: Option<String>,
     lumas: Vec<(u32, f32)>,
-    /// Where each trip's line goes, and the lines so far.
+    /// The file for the line of each iteration, and the lines so far.
     log: Option<String>,
     lines: Vec<String>,
-    /// The window's size in pixels this trip.
+    /// The window's size in pixels in this iteration.
     size: (u32, u32),
     /// Added to each present that waits for vsync.
     slow: Duration,
@@ -304,37 +316,40 @@ pub struct Bench {
     occluded: bool,
     /// Whether XSCREEN's mode 1 is scaled on the CPU.
     pub cpu_smart: bool,
-    /// The editor's window's UI scale, instead of the desktop's.
+    /// The UI scale of the editor window, instead of the desktop scale.
     pub ui_scale: Option<u32>,
     /// Parts of the UI the frontend shows, as [`Bench::opens`] tells.
     extras: Vec<String>,
-    /// What happens to the frontend at which trip.
+    /// The things that happen to the frontend, each with its iteration.
     at: Vec<(u32, String)>,
-    /// Trips since the start.
+    /// Iterations since the start.
     trip: u32,
-    /// Each timed trip's stages, and the bytes it uploaded.
+    /// The stages of each timed iteration, and the bytes it uploaded.
     timed: Vec<([Duration; STAGES], u64)>,
     current: [Duration; STAGES],
-    /// What the standby thread ran this trip, and in the trips timed.
+    /// The frames the standby thread ran, and their time, in this iteration
+    /// and in the iterations timed.
     kept_now: Kept,
     kept: Kept,
-    /// Trips timed in which the standby thread ran frames.
+    /// Iterations timed in which the standby thread ran frames.
     kept_trips: u32,
     /// MAINCNT when the timing began, and now.
     maincnt: (u32, u32),
-    /// The frames the program missed part of its trip in, when the timing
-    /// began and now.
+    /// The frames in which the program missed part of an iteration of its
+    /// main loop, when the timing began and now.
     missed: (Missed, Missed),
-    /// The machine's count of deferred VSYNCs after the last trip, whether
-    /// it rose in that trip, and the stretches of trips in a row in which
-    /// it rose, of the trips timed. Once one VSYNC that was behind has
-    /// waited for the next frame, the machine counts every VSYNC after it
-    /// until two trips of the program fit one frame, though none of those
-    /// loses a frame. Each stretch starts with a VSYNC that did wait.
+    /// The machine's count of deferred VSYNCs after the last iteration,
+    /// whether it rose in that iteration, and the number of stretches of
+    /// iterations in a row in which it rose, of the iterations timed. Once
+    /// one VSYNC that was behind has waited for the next frame, the machine
+    /// counts every VSYNC after it until two iterations of the program's
+    /// main loop fit one frame, though none of those loses a frame. Each
+    /// stretch starts with a VSYNC that did wait.
     deferred_seen: u64,
     deferring: bool,
     deferrals: u32,
-    /// Whether this trip left the drawing out, and the trips timed that did.
+    /// Whether this iteration skipped the drawing, and the number of
+    /// iterations timed that did.
     undrawn_now: bool,
     undrawn: u32,
     last: Option<Instant>,
@@ -342,14 +357,15 @@ pub struct Bench {
     began: Option<Instant>,
     /// Program frames run since then.
     ran: u32,
-    /// The sound device's buffer's stats when the timing began, and now.
+    /// The stats of the sound device's buffer when the timing began, and
+    /// now.
     sound: Option<(Stats, Stats)>,
-    /// The samples waiting in that buffer as this trip began, and as each
-    /// trip timed did.
+    /// The samples waiting in that buffer as this iteration began, and as
+    /// each iteration timed began.
     queued_now: usize,
     queued: Vec<usize>,
-    /// The trip the notice for a program slower than real time first
-    /// showed at.
+    /// The iteration at which the notice for a program slower than real
+    /// time first showed.
     slow_hint: Option<u32>,
 }
 
@@ -419,8 +435,9 @@ impl Bench {
         self.on
     }
 
-    /// Sets the emulator up a step at a time, at the start of each trip
-    /// round the loop, and starts timing it. True once the trips are timed.
+    /// Sets up the emulator one step at a time, at the start of each
+    /// iteration, and starts timing it. Returns true once the iterations
+    /// are timed, or with `end` once the program has stopped running.
     pub fn step(&mut self, machine: &mut Machine) -> bool {
         if !self.on {
             return false;
@@ -529,8 +546,8 @@ impl Bench {
         self.kept_now.add(kept);
     }
 
-    /// Notes the sound device's buffer's stats and the samples waiting in
-    /// it, if there is a device.
+    /// Notes the stats of the sound device's buffer and the samples waiting
+    /// in it, if there is a device.
     pub fn sound(&mut self, stats: Option<(Stats, usize)>) {
         let Some((stats, queued)) = stats else {
             return;
@@ -542,7 +559,7 @@ impl Bench {
         }
     }
 
-    /// Notes the window's size in pixels this trip.
+    /// Notes the window's size in pixels in this iteration.
     pub fn window_size(&mut self, size: (u32, u32)) {
         self.size = size;
     }
@@ -585,18 +602,18 @@ impl Bench {
         }
     }
 
-    /// Counts this trip as one that left the drawing out.
+    /// Counts this iteration as one that skipped the drawing.
     pub fn undrawn(&mut self) {
         self.undrawn_now = true;
     }
 
-    /// Whether this trip is the last one timed, whose frame
+    /// Whether this iteration is the last one timed, whose frame
     /// [`Bench::shoot`] saves and which must then draw.
     pub fn shoots(&self) -> bool {
         self.shot.is_some() && self.last.is_some() && self.timed.len() + 1 == self.trips as usize
     }
 
-    /// Saves what `canvas` shows as `PATH-name.pam`, in the last trip
+    /// Saves what `canvas` shows as `PATH-name.pam`, in the last iteration
     /// timed, before it is presented.
     pub fn shoot(&self, canvas: &Canvas<Window>, name: &str) {
         let (Some(path), Some(_)) = (&self.shot, self.last) else {
@@ -652,7 +669,7 @@ impl Bench {
         self.lumas.push((self.trip, luma as f32));
     }
 
-    /// What is to happen to the frontend in this trip.
+    /// The `at=` actions due in this iteration.
     pub fn due(&self) -> Vec<&str> {
         let due = self.at.iter().filter(|(trip, _)| *trip == self.trip);
         due.map(|(_, what)| what.as_str()).collect()
@@ -665,7 +682,7 @@ impl Bench {
             || self.due().contains(&part)
     }
 
-    /// Ends a stage of the trip, which began where the last one ended.
+    /// Ends a stage of the iteration, which began when the last one ended.
     pub fn lap(&mut self, stage: Stage) {
         if let Some(last) = &mut self.last {
             let now = Instant::now();
@@ -681,7 +698,7 @@ impl Bench {
         }
     }
 
-    /// Writes the brightness of the frames and tells of their dips.
+    /// Writes the brightness of the frames and reports their dips.
     fn report_luma(&self) {
         let Some(path) = &self.luma else {
             return;
@@ -744,8 +761,8 @@ impl Bench {
         for (i, name) in NAMES.iter().enumerate() {
             line(name, self.timed.iter().map(|(t, _)| t[i]).collect());
         }
-        // Trips the screens were drawn again in, as a heavy scene's are not
-        // all of them.
+        // The iterations in which the screens were drawn again. In a heavy
+        // scene that is not all of them.
         let screen = Stage::Screen as usize;
         let mut drawn: Vec<&[Duration; STAGES]> = self.timed.iter().map(|(t, _)| t).collect();
         let longest = drawn.iter().map(|t| t[screen]).max().unwrap_or_default();
@@ -891,7 +908,7 @@ mod tests {
                 ..
             }
         ));
-        // Other parts, and ones short of a number, are not the mouse's.
+        // Other parts, and ones missing a number, are not mouse events.
         for what in [
             "key:Escape",
             "click:1",
@@ -906,7 +923,7 @@ mod tests {
     #[test]
     fn a_dip_is_one_frame_darker_than_both_sides() {
         let lumas = [10.0, 10.0, 8.0, 10.0, 9.0, 8.0, 7.0, 7.0, 10.0, 9.8, 10.0];
-        // Not a slide down, a step, or what is too slight to see.
+        // Not a slide down, a step, or a dip too slight to see.
         assert_eq!(single_frame_dips(&lumas, 0.5), [(2, 2.0)]);
         assert_eq!(single_frame_dips(&lumas, 0.1).len(), 2);
     }

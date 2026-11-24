@@ -1,7 +1,7 @@
 //! Copying SmileBASIC 4's own projects (`#SYS`, `#TOOL`, `#EXAMPLE`,
 //! `#GUIDE`) out of the RomFS into the emulator's projects folder, each
-//! file turned into the form the emulator saves (as importing a project
-//! does), never replacing a file that is already there.
+//! file turned into the form the emulator saves (the same as importing a
+//! project does), never replacing a file that is already there.
 
 use std::fs;
 use std::io::{self, Write};
@@ -15,28 +15,30 @@ use crate::import::ImportError;
 /// The projects SmileBASIC 4 keeps in its RomFS, under `basic/LANG/`.
 const PROJECTS: [&str; 4] = ["#SYS", "#TOOL", "#EXAMPLE", "#GUIDE"];
 
-/// The languages to look in, most preferred first, as for `#SYS`'s font.
+/// The languages to look in, most preferred first, the same as for the
+/// font of `#SYS`.
 const LANGUAGES: [&str; 2] = ["en", "jp"];
 
-/// What [`import_projects`] did.
+/// The result of [`import_projects`].
 #[derive(Debug, Default)]
 pub struct Projects {
     /// Each project found, with the folder it was copied from and how
     /// many files were written.
     pub copied: Vec<(&'static str, PathBuf, usize)>,
-    /// Files already there and the same, so left as they were.
+    /// Files already there and the same, so left unchanged.
     pub unchanged: usize,
-    /// Files already there but different, so kept; as `#TOOL/TSBLIB.PRG`.
+    /// Files already there but different, so kept, for example
+    /// `#TOOL/TSBLIB.PRG`.
     pub kept: Vec<String>,
-    /// Files that could not be turned into the emulator's, or that have a
-    /// link in their place, with why.
+    /// Files that could not be converted to the emulator's form, or that
+    /// have a link in their place, with the reason.
     pub skipped: Vec<(String, String)>,
     /// Projects no directory has.
     pub missing: Vec<&'static str>,
 }
 
-/// A project's folder: from the last directory that has it, so that an
-/// update's wins as a whole, in English if there.
+/// A project's folder: from the last directory that has it, so that the
+/// folder of an update wins as a whole, in English if there is one.
 fn locate(project: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     dirs.iter().rev().find_map(|root| {
         LANGUAGES
@@ -66,7 +68,7 @@ fn files(dir: &Path) -> Result<Vec<(String, PathBuf)>, ImportError> {
 /// Writes a file that must not exist yet. `create_new` fails if anything,
 /// a link included, took the name since it was checked, so nothing there
 /// is overwritten. A file left half written is removed, or the next
-/// import would keep it as the user's.
+/// import would keep it as the user's file.
 fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -108,7 +110,7 @@ pub fn import_projects(dirs: &[PathBuf], projects: &Path) -> Result<Projects, Im
             };
             let dest = target.join(&name);
             // Not `exists()`: that follows links, so a dangling one would
-            // read as missing and the write would land where it points.
+            // read as missing and the write would go to its target.
             match fs::symlink_metadata(&dest) {
                 Ok(meta) if meta.file_type().is_symlink() => {
                     done.skipped
@@ -174,7 +176,7 @@ mod tests {
         let done = import_projects(&[romfs], &out).unwrap();
 
         assert_eq!(fs::read(out.join("#TOOL/TA.PRG")).unwrap(), b"?1");
-        // A file that is not in a container goes as it is.
+        // A file that is not in a container is copied unchanged.
         assert_eq!(
             fs::read(out.join("#TOOL/GB.PNG")).unwrap(),
             b"\x89PNG\r\n\x1a\n"
@@ -201,7 +203,8 @@ mod tests {
         let out = tmp.0.join("projects");
         import_projects(&[base, update], &out).unwrap();
         assert_eq!(fs::read(out.join("#TOOL/TA.PRG")).unwrap(), b"en");
-        // The update's folder is taken whole, not merged with the base's.
+        // The update's folder is taken whole, not merged with the base
+        // folder.
         assert!(!out.join("#TOOL/TOLD.PRG").exists());
     }
 

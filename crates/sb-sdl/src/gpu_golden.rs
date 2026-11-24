@@ -1,8 +1,8 @@
 //! Small scenes drawn by the GPU path and the CPU, and compared: one at start-up to
 //! decide whether the path can be trusted on this driver, and all of them when
 //! `SB_GPU_GOLDEN` is set, printing a row for each. `cargo test -p sb-sdl --test
-//! gpu_golden -- --ignored` runs that with no window; CI has no GPU, so it stays
-//! ignored there. The CPU is the reference, so no frames are kept anywhere.
+//! gpu_golden -- --ignored` runs that with no window. CI has no GPU, so the test
+//! stays ignored there. The CPU is the reference, so no frames are kept anywhere.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -21,24 +21,26 @@ use crate::gpu::{Compared, Gpu};
 pub struct Golden {
     pub name: &'static str,
     pub source: &'static str,
-    /// A subprogram, started from direct mode once the program ends.
+    /// A subprogram, started from DIRECT mode after the program ends.
     pub sub: Option<&'static str>,
-    /// Typed in direct mode once the program ends.
+    /// Typed in DIRECT mode after the program ends.
     pub typed: Option<&'static str>,
-    /// The part of the pixels that may be more than 2 off, in any channel: an
+    /// The share of pixels that may be off by more than 2 in any channel: an
     /// element's edges and samples between texels, a blur's rounding.
     pub share: f64,
     /// A vertex is out of reach, so the path must leave the frame to the CPU.
     pub to_cpu: bool,
 }
 
-/// How much of the frame the start-up scene may have more than 2 off, among the golden
-/// scenes, and more than rounding can explain, at start-up. Its elements sit on whole
-/// pixels at whole scales but for one turned, whose edges may differ.
+/// The share of the frame that the start-up scene may have off: by more than 2 when
+/// it runs among the golden scenes, and by more than rounding can explain at
+/// start-up. Its elements are on whole pixels at whole scales, except one turned
+/// element, whose edges may differ.
 const SELF_TEST_SHARE: f64 = 0.005;
 
-/// What goes on the sprites' page first: colors, a part half clear, a line to see
-/// which way up it is, and a pixel of each kind for the filters.
+/// The drawing on the sprites' page at the start of each scene: colors, a
+/// half-transparent part, a line that shows which way up the page is, and a pixel
+/// of each kind for the filters.
 macro_rules! page {
     ($rest:literal) => {
         concat!(
@@ -55,11 +57,12 @@ macro_rules! page {
 }
 
 /// The scene the path has to pass at start-up: the blends, tints, compose modes,
-/// FADE, text on a fallback glyph, a turned element, and each filter that can do
-/// without a shader. It has no blur, whose differences are accepted. The checkers at
-/// the page's far corner are for a GPU whose fragment shaders hold texture coordinates
-/// in 16 bits, as GLES2's mediump may: a texel apart is all such a number can tell
-/// there, and sampling goes wrong, where near the page's start it looks right.
+/// FADE, text on a fallback glyph, a turned element, and each filter that works
+/// without a shader. It has no blur, because blur differences are accepted. The
+/// checkers at the far corner of the page are for a GPU whose fragment shaders hold
+/// texture coordinates in 16 bits, as GLES2's mediump may. There such a number can
+/// only tell one texel from the next, and sampling goes wrong, while near the start
+/// of the page it looks right.
 pub const SELF_TEST: Golden = Golden {
     name: "self-test",
     source: page!(
@@ -123,7 +126,8 @@ const fn out_of_reach(name: &'static str, source: &'static str) -> Golden {
     }
 }
 
-/// Every rule the path has to keep, one scene a rule or two.
+/// Every rule the path has to keep, with one scene for each rule or pair of
+/// rules.
 pub const SCENES: &[Golden] = &[
     SELF_TEST,
     // All four corners NaN: the path drops the quad, and stays on.
@@ -182,8 +186,8 @@ pub const SCENES: &[Golden] = &[
         ),
         0.01,
     ),
-    // Where a pixel's center falls exactly between two texels, on half pixels and
-    // at 1.5, flipped and turned, sprites and a cell of each size.
+    // Pixel centers that fall exactly between two texels: on half pixels and at 1.5,
+    // flipped and turned, with sprites and a cell of each size.
     scene(
         "ties",
         "ACLS:GCLS 0:GTARGET 3:FOR Y=0 TO 99:FOR X=0 TO 99\n\
@@ -371,7 +375,7 @@ pub const SCENES: &[Golden] = &[
     },
 ];
 
-/// What a scene came to.
+/// The result of a scene.
 pub struct Outcome {
     pub main: Compared,
     pub sub: Compared,
@@ -387,16 +391,16 @@ impl Outcome {
     }
 }
 
-/// Frames a scene is drawn, once its program is done.
+/// The number of frames a scene is drawn for after its program is done.
 const FRAMES: u32 = 4;
 
-/// Types a line and enters it, for the machine's next frames to see to.
+/// Types a line and enters it, for the machine's next frames to handle.
 fn enter(m: &mut Machine, line: &str) {
     m.type_text(line);
     m.rt.key_press(keys::ENTER);
 }
 
-/// What the console says, if it says the program stopped on an error.
+/// The console line that says the program stopped on an error, if there is one.
 fn error_on_console(m: &Machine) -> Option<String> {
     let console = &m.rt.text[4];
     let (w, _) = console.size();
@@ -408,8 +412,8 @@ fn error_on_console(m: &Machine) -> Option<String> {
         .find(|row| row.contains(" in 0:") || row.contains(" in 1:"))
 }
 
-/// Runs a scene on a path of its own on `renderer`. `storage` is where a subprogram
-/// is saved to start it, which the start-up scene has none of and wants none.
+/// Runs a scene on a separate path on `renderer`. `storage` is where a subprogram is
+/// saved before it starts. The start-up scene has no subprogram and needs no storage.
 pub fn run(renderer: *mut SDL_Renderer, scene: &Golden, storage: Option<PathBuf>) -> Outcome {
     let start = Instant::now();
     let Some(mut gpu) = Gpu::comparing(renderer) else {
@@ -489,8 +493,8 @@ pub fn run(renderer: *mut SDL_Renderer, scene: &Golden, storage: Option<PathBuf>
     }
 }
 
-/// The start-up scene, on a path of its own on `renderer`: whether the path can be
-/// trusted, and what is printed if not.
+/// Runs the start-up scene on a separate path on `renderer`. Returns whether the
+/// path can be trusted, and the message to print if not.
 pub fn self_test(renderer: *mut SDL_Renderer) -> Result<Duration, String> {
     let outcome = run(renderer, &SELF_TEST, None);
     match outcome.trouble.is_none() && outcome.main.near(SELF_TEST.share) {
@@ -503,7 +507,7 @@ pub fn self_test(renderer: *mut SDL_Renderer) -> Result<Duration, String> {
     }
 }
 
-/// Runs every scene and prints a row for each. Whether all passed.
+/// Runs every scene and prints a row for each. Returns whether all passed.
 pub fn report(renderer: *mut SDL_Renderer) -> bool {
     let dir = std::env::temp_dir().join(format!("sb-gpu-golden-{}", std::process::id()));
     let mut all = true;

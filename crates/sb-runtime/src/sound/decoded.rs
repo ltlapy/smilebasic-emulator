@@ -6,15 +6,15 @@
 //! play the same few waveforms over and over, so the samples a note
 //! decodes are kept, a chunk at a time as notes reach them, and the notes
 //! after it read them from here. The chunks hold exactly what decoding
-//! gives on a waveform's first pass. A later pass round the loop starts
-//! from the loop's own history, which the bank's waveforms give as the
-//! first pass's; a waveform whose history differs decodes its later passes
-//! as before.
+//! gives on a waveform's first pass. A later pass around the loop starts
+//! from the loop's own history, which for the bank's waveforms is the same
+//! as the first pass's history. A waveform whose history differs decodes
+//! its later passes as before.
 //!
 //! A sound system keeps at most [`BUDGET`] bytes of them. When a chunk
-//! would go beyond it, the waveform no note plays that was played longest
-//! ago makes way; when every waveform kept is playing, the note decodes on
-//! by itself, as notes did before.
+//! would go beyond it, the one played longest ago among the waveforms no
+//! note plays is removed. When every kept waveform is playing, the note
+//! continues decoding by itself, the same as notes did before.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -34,9 +34,10 @@ pub(crate) type Shared = Rc<RefCell<Decoded>>;
 
 #[derive(Default)]
 pub(crate) struct Decoded {
-    /// The bank the waveforms are of: another bank starts afresh.
+    /// The bank of the waveforms. A different bank starts again with
+    /// nothing kept.
     bank: Weak<Bank>,
-    /// By the waveform's number in the bank.
+    /// Indexed by the waveform's number in the bank.
     entries: Vec<Option<Rc<RefCell<Entry>>>>,
     /// The numbers of the waveforms with an entry.
     kept: Vec<usize>,
@@ -58,11 +59,11 @@ impl fmt::Debug for Decoded {
 /// One waveform's samples decoded so far.
 pub(super) struct Entry {
     chunks: Vec<Rc<[i16]>>,
-    /// What decodes the next chunk: a reader at the end of the last one.
+    /// The decoder of the next chunk: a reader at the end of the last one.
     decoder: Reader,
-    /// Decoding gave out before the end, as for missing bytes.
+    /// Decoding stopped before the end, as happens with missing bytes.
     short: bool,
-    /// Whether later passes round the loop give the first pass's samples.
+    /// Whether later passes around the loop give the first pass's samples.
     loops_same: Option<bool>,
     bytes: usize,
     used: u64,
@@ -73,7 +74,8 @@ pub(super) struct Entry {
 pub(super) struct Cached {
     shared: Shared,
     entry: Rc<RefCell<Entry>>,
-    /// The chunk the reader is in, and where in it the next sample is.
+    /// The chunk the reader is in, and the position of the next sample in
+    /// it.
     pub(super) chunk: Rc<[i16]>,
     pub(super) at: usize,
 }
@@ -109,7 +111,7 @@ impl Decoded {
 
     /// A reader for waveform `index` of `bank` that takes what is decoded
     /// from here. A 16-bit waveform, which costs nothing to decode, gets a
-    /// reader of its own.
+    /// reader that decodes alone.
     pub(crate) fn reader(shared: &Shared, bank: &Arc<Bank>, index: usize) -> Reader {
         let Some(wave) = bank.waves.get(index) else {
             return Reader::default();
@@ -155,7 +157,7 @@ impl Decoded {
     }
 
     /// Frees entries no reader holds, the one played longest ago first,
-    /// until `bytes` more fit; false when they cannot.
+    /// until `bytes` more fit. Returns false when they cannot.
     fn make_room(&mut self, bytes: usize, keep: &Rc<RefCell<Entry>>) -> bool {
         while self.bytes + bytes > self.budget {
             let oldest = (self.kept.iter().enumerate())
@@ -177,7 +179,8 @@ impl Decoded {
 
 impl Cached {
     /// The chunk that holds sample `pos`, decoding it if it is the next,
-    /// and where in it `pos` is; `None` when it is not kept and cannot be.
+    /// and the position of `pos` in it. `None` when the chunk is not kept
+    /// and cannot be.
     pub(super) fn chunk_at(
         &self,
         pos: usize,
@@ -213,8 +216,8 @@ impl Cached {
         Some((c, at)).filter(|(c, _)| at < c.len())
     }
 
-    /// The two samples before `pos` on the first pass, as decoding a sample
-    /// at a time has them there.
+    /// The two samples before `pos` on the first pass, the same as decoding
+    /// one sample at a time has them there.
     pub(super) fn history_at(&self, pos: usize) -> Option<[i16; 2]> {
         let e = self.entry.borrow();
         let sample = |p: Option<usize>| match p {
@@ -224,9 +227,9 @@ impl Cached {
         Some([sample(pos.checked_sub(1))?, sample(pos.checked_sub(2))?])
     }
 
-    /// Whether a pass round the loop from `start` gives the first pass's
-    /// samples: whether the loop's history is what the first pass has
-    /// there.
+    /// Whether a pass around the loop from `start` gives the first pass's
+    /// samples, that is, whether the loop's history equals the two samples
+    /// the first pass has there.
     pub(super) fn loops_same(&self, start: usize, loop_history: [i16; 2]) -> bool {
         if let Some(same) = self.entry.borrow().loops_same {
             return same;
@@ -251,8 +254,8 @@ mod tests {
     }
 
     /// A bank of `n` random DSP-ADPCM waveforms of up to five chunks, some
-    /// looping from where the first pass's history is the loop's, some
-    /// from where it is not.
+    /// looping from a point where the loop's history equals the first
+    /// pass's history, some from a point where it does not.
     fn bank(next: &mut impl FnMut(u32) -> u32, n: usize) -> Bank {
         let mut b = Bank::default();
         for i in 0..n {
@@ -300,10 +303,10 @@ mod tests {
     }
 
     /// Notes that read kept waveforms, starting at different times, get
-    /// what decoding alone gives, whatever the budget: through chunks,
-    /// round loops with and without the first pass's history, at the end,
-    /// and where the budget leaves a note to decode on alone. The budget
-    /// holds.
+    /// what decoding alone gives, regardless of the budget: across chunks,
+    /// around loops with and without the first pass's history, at the end,
+    /// and where the budget leaves a note to continue decoding alone. The
+    /// kept bytes stay within the budget.
     #[test]
     fn kept_waveforms_read_as_decoding_does() {
         let mut next = xorshift(0x9E37_79B9);
@@ -311,8 +314,8 @@ mod tests {
             let bank = Arc::new(bank(&mut next, 6));
             let shared = Decoded::new();
             shared.borrow_mut().set_budget(budget);
-            // Notes, each with a reader that decodes alone, and how many
-            // samples it has left to take.
+            // Notes, each with a reader that decodes alone, and the number
+            // of samples it has left to take.
             let mut notes: Vec<(usize, Reader, Reader, u32)> = Vec::new();
             for step in 0..3000 {
                 if notes.len() < 8 && next(30) == 0 {
@@ -345,9 +348,9 @@ mod tests {
         }
     }
 
-    /// Waveforms no note plays make way for new ones, the one played
-    /// longest ago first; a waveform a note plays stays. Another bank
-    /// starts afresh.
+    /// Waveforms no note plays are removed to make room for new ones, the
+    /// one played longest ago first. A waveform a note plays stays. A
+    /// different bank starts again with nothing kept.
     #[test]
     fn the_waveform_played_longest_ago_makes_way() {
         let mut next = xorshift(7);
@@ -367,8 +370,8 @@ mod tests {
         drop(read(2));
         drop(read(1));
         assert_eq!(shared.borrow().bytes(), chunk(0) + chunk(1) + chunk(2));
-        // Wave 2, played longer ago than 1, makes way for wave 3; wave 0
-        // plays on.
+        // Wave 2, played longer ago than 1, is removed to make room for
+        // wave 3. Wave 0 is still playing.
         drop(read(3));
         let kept: Vec<bool> = (0..4)
             .map(|w| shared.borrow().entries[w].is_some())

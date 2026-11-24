@@ -1,9 +1,10 @@
-# Notes for whoever works on this code next
+# Notes for anyone working on this code next
 
-For an AI agent or a person about to change this repository: what each
-crate is for, what to watch in it, and how to check a change. It adds to
-[CONTRIBUTING.md](../../CONTRIBUTING.md), which has the rules for code,
-tests and commits; read that first.
+This document is for an AI agent or a person about to change this
+repository. It covers what each crate is for, what to watch in it, and how
+to check a change. It adds to [CONTRIBUTING.md](../../CONTRIBUTING.md),
+which has the rules for code, tests and commits. Read CONTRIBUTING.md
+first.
 
 The notes come from work on the code, mostly a long refactoring of the
 window's loop. The parts about `sb-sdl` are first-hand. The parts about
@@ -15,17 +16,18 @@ before a change there.
 | Crate | What it is | Read before changing it |
 |---|---|---|
 | `sb-core` | The language: lexer, parser, compiler, bytecode VM. It reaches screens, sound and files only through `host::Host` | [security.md](security.md), [jit-design.md](../performance/jit-design.md) |
-| `sb-jit` | Native code for the VM's hot loops, behind the `jit` feature. It knows nothing of SmileBASIC | [jit-design.md](../performance/jit-design.md) |
+| `sb-jit` | Native code for the VM's hot loops, behind the `jit` feature. It has no knowledge of SmileBASIC | [jit-design.md](../performance/jit-design.md) |
 | `sb-runtime` | The machine without a window: commands, screens, sprites, sound, files, the editor, the CPU renderer | [renderer.md](../rendering/renderer.md), [sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md), [differences.md](../using/differences.md) |
 | `sb-profiles` | The other SmileBASIC versions, as profiles of this one. Small so far | |
 | `sb-import` | `smilebasic-import`: copies the user's own SmileBASIC 4 resources into the data directory | [importing.md](../using/importing.md), [file-formats.md](../smilebasic4/file-formats.md) |
 | `sb-check` | `smilebasic-check`: runs programs with no window, to compare with SmileBASIC 4 and to measure | [hardware-tests.md](../smilebasic4/hardware-tests.md), [benchmarking.md](../performance/benchmarking.md) |
 | `sb-sdl` | `smilebasic`: the window, input, sound device, the GPU path, the emulator's own screens | [frontend-guide.md](frontend-guide.md), [frame-thread.md](frame-thread.md) |
 
-A crate depends only on what CONTRIBUTING.md's table allows it. SDL and
-anything of the operating system stay in `sb-sdl`.
+A crate depends only on what the table in CONTRIBUTING.md allows it. SDL
+and other operating-system code stay in `sb-sdl`, except the executable
+memory of `sb-jit`.
 
-## What holds everywhere
+## Rules that apply everywhere
 
 **SmileBASIC 4 is the reference, and each claim about it has one home.**
 
@@ -36,9 +38,9 @@ anything of the operating system stay in `sb-sdl`.
   keep them out of code comments, which then only say why the code does
   what it does.
 - Nobody has checked: mark the code `// UNVERIFIED: <what is assumed>`.
-  Take the mark away when the check is done.
+  Remove the mark when the check is done.
 - The emulator departs from SmileBASIC 4 on purpose: say so in
-  [differences.md](../using/differences.md), and leave the faithful code beside the
+  [differences.md](../using/differences.md), and leave the faithful code next to the
   departure, commented out, so that the difference can be read and undone.
 
 **A program is untrusted.** It may fail with a SmileBASIC error. It must
@@ -54,7 +56,7 @@ the checksums first: different checksums mean different work, and then the
 counts say nothing. [benchmarking.md](../performance/benchmarking.md) has the method.
 
 **The repository will be published.** No path, address or name from
-anyone's machine. Nothing of SmileBoom's: no fonts, sprites, sounds or text
+anyone's machine. Nothing from SmileBoom: no fonts, sprites, sounds or text
 taken from the console versions, and no data derived from them. Nothing
 copied from other people's programs into code, tests or docs.
 
@@ -62,17 +64,18 @@ copied from other people's programs into code, tests or docs.
 `SDL_AUDIO_DRIVER=dummy`, or `smilebasic-check`, which has neither.
 
 **Words.** Docs and UI text use SmileBASIC 4's own terms (DIRECT mode, not
-"the prompt"), plain sentences, American spelling.
+"the prompt"), plain sentences, American spelling. [writing-style.md](writing-style.md)
+has the rules and examples.
 
 ## Changing code
 
-- **One concern to a commit.** A move and a change of logic in one commit
+- **One concern per commit.** A move and a change of logic in one commit
   cannot be checked: the comparison that proves the move hides the change,
   or fails because of it. When a refactoring turns up a bug, report it and
-  fix it in a commit of its own.
-- **Rename first, then move.** To take code out of a large function, first
-  group the state it uses into a struct, by a rename alone. The compiler
-  finds each use. Then move the code as it was.
+  fix it in a separate commit.
+- **Rename first, then move.** To move code out of a large function, first
+  group the state it uses into a struct, with renames only. The compiler
+  finds each use. Then move the code unchanged.
 - **Read both before merging two paths.** Code that looks duplicated often
   differs in one guard. Compare the conditions and the bodies line by line,
   and keep the difference as an argument when there is one.
@@ -94,16 +97,17 @@ The tests do not cover everything. The other tools:
 
 | To check | Use |
 |---|---|
-| That a program behaves as on SmileBASIC 4 | `smilebasic-check PROJECT PROGRAM`, which compares the `RES` files the program saves with those SmileBASIC 4 saved |
+| That a program behaves the same as on SmileBASIC 4 | `smilebasic-check PROJECT PROGRAM`, which compares the `RES` files the program saves with those SmileBASIC 4 saved |
 | That two builds do the same work, and what it costs | `smilebasic-check --bench --fixed FRAMES PROJECT PROGRAM`: equal checksums, then instruction counts |
 | That the GPU path draws what the CPU draws | `SB_GPU=check`, see [renderer.md](../rendering/renderer.md) |
 | What the window shows, and what the loop's timing does | `SB_UI_BENCH`, see [benchmarking.md](../performance/benchmarking.md) and [frontend-guide.md](frontend-guide.md) |
 
-"It ran" is not "it matched". Compare the output with what it should be,
-and read one run's output yourself before trusting a batch of them.
+That a program ran does not mean that it matched. Compare the output with
+what it should be, and read one run's output yourself before trusting a
+batch of them.
 
-Comparing a build before a change with one after it goes wrong in ways
-that leave no trace. Each of these happened:
+Comparisons of a build before a change with a build after it go wrong in
+ways that leave no trace. Each of these happened:
 
 - **The baseline was the new build.** Switching to another commit carries
   uncommitted changes along. Commit first, build the baseline from a clean
@@ -121,7 +125,7 @@ that leave no trace. Each of these happened:
   fails on a busy one. Run a differing case again by itself, and compare
   the baseline with itself once to learn the noise.
 
-A desktop cannot stand for a slow handheld. A change to the VM's hot
+A desktop cannot substitute for a slow handheld. A change to the VM's hot
 paths, the loop's timing or the GPU path needs a run on the slowest
 target before it counts as settled.
 
@@ -136,10 +140,10 @@ In the commit or the hand-over, say what you checked and what you did not.
 - A user's program must never panic the VM. Every error is a SmileBASIC
   error with its line.
 - The VM runs "fused" entries (`fuse.rs`) on its hot paths, and two
-  features change how: `unchecked-vars` leaves out bounds checks on
-  variables, `jit` runs hot loops as native code. `sb-runtime`, `sb-check`
-  and `sb-sdl` forward both. A change to `vm.rs` or `fuse.rs` passes
-  clippy and the tests in all three builds.
+  features change how those paths run: `unchecked-vars` skips bounds
+  checks on variables, `jit` runs hot loops as native code. `sb-runtime`,
+  `sb-check` and `sb-sdl` forward both. A change to `vm.rs` or `fuse.rs`
+  passes clippy and the tests in all three builds.
 - Code that makes a string or an array asks `sb_core::memory` first
   (`request`, `grow`), before it changes anything: the VM may run the
   instruction again.
@@ -186,7 +190,7 @@ In the commit or the hand-over, say what you checked and what you did not.
 - It reads files the user extracted from their own copy. Nothing it reads,
   and nothing made from it, goes into the repository or a release.
 - It parses formats it does not control: check each size against what is
-  left of the file, limit what unpacks, return an error and never panic.
+  left of the file, limit the unpacked size, return an error and never panic.
 
 ### sb-check
 
@@ -195,7 +199,7 @@ In the commit or the hand-over, say what you checked and what you did not.
   what is there without changing the readers.
 - `--fixed` is what makes two runs comparable. A new source of difference
   between runs (time, random numbers, a hash order that reaches the
-  output) has to be fixed there too, or said in
+  output) has to be fixed there too, or documented in
   [benchmarking.md](../performance/benchmarking.md).
 
 ### sb-sdl

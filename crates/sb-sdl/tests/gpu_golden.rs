@@ -1,6 +1,6 @@
-//! The GPU path against the CPU, on whatever GPU this machine has, with no window
-//! shown. Ignored, as CI has no GPU: `cargo test -p sb-sdl --test gpu_golden --
-//! --ignored --nocapture`. The scenes are in `src/gpu_golden.rs`.
+//! The GPU path against the CPU, on any GPU this machine has, with no window
+//! shown. Ignored because CI has no GPU: `cargo test -p sb-sdl --test
+//! gpu_golden -- --ignored --nocapture`. The scenes are in `src/gpu_golden.rs`.
 
 use std::process::Command;
 
@@ -24,7 +24,8 @@ fn the_gpu_path_keeps_to_the_golden_scenes() {
     assert!(out.status.success(), "a scene differs too much");
 }
 
-/// The last line of a short run with no window, and whether it ended well.
+/// The rest of the first "drawn by" line of a short run with no window,
+/// and whether the run ended well.
 fn drawn_by(envs: &[(&str, &str)]) -> (bool, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_smilebasic"));
     command

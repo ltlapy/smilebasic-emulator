@@ -1,10 +1,10 @@
 //! A [`Region`] in Cranelift's IR, compiled.
 //!
 //! Each value a step works on is an integer, a real, or one whose kind is
-//! known only when the code runs ([`Val::Dyn`]): its tag, and both an `i32`
-//! and an `f64` reading of its payload, of which the tag says which counts.
-//! An operator on values of unknown kind tests the tags and takes an integer
-//! or a real path, which meet again after it.
+//! known only when the code runs ([`Val::Dyn`]). Such a value has its tag
+//! and both an `i32` and an `f64` reading of its payload, and the tag says
+//! which reading counts. An operator on values of unknown kind tests the
+//! tags and takes an integer or a real path, which meet again after it.
 
 use std::collections::HashMap;
 
@@ -42,7 +42,7 @@ fn make_isa() -> Result<OwnedTargetIsa, String> {
     };
     set(&mut flags, "enable_verifier", verify)?;
     // The host's baseline: the same instructions on every machine of the
-    // architecture, whatever extensions it has.
+    // architecture, regardless of the extensions it has.
     let builder = cranelift_codegen::isa::lookup(target_lexicon::Triple::host())
         .map_err(|e| format!("no Cranelift backend for this machine: {e}"))?;
     builder
@@ -51,7 +51,7 @@ fn make_isa() -> Result<OwnedTargetIsa, String> {
 }
 
 /// Makes this thread's description of the machine, which the first
-/// [`compile`] would make otherwise, so that it can be timed apart.
+/// [`compile`] would make otherwise, so that it can be timed separately.
 pub fn prepare() -> Result<(), String> {
     if !SUPPORTED {
         return Err("no native code on this platform".into());
@@ -101,8 +101,8 @@ fn check_layout(l: &Layout) -> Result<(), String> {
 enum Val {
     Int(Value),
     Real(Value),
-    /// Known only at run time. `numeric` once the tag is checked to be an
-    /// integer's or a real's.
+    /// Known only at run time. `numeric` once the tag is checked to be that
+    /// of an integer or a real.
     Dyn {
         tag: Value,
         int: Value,
@@ -129,9 +129,10 @@ struct Gen<'f, 'c> {
     fail: Block,
     need: [usize; 2],
     temps: HashMap<u8, Val>,
-    /// The budget before the running entry, and where a failure goes on
-    /// from with how much of the entry charged.
+    /// The budget before the running entry.
     left_before: Value,
+    /// Where the interpreter continues after a failure, with how much of the
+    /// entry is charged.
     restart: (u32, u32),
 }
 
@@ -240,8 +241,8 @@ impl Gen<'_, '_> {
     fn entry(&mut self, e: &Entry) -> Result<(), String> {
         let block = self.blocks[&e.pc];
         self.b.switch_to_block(block);
-        // As the interpreter: an entry that costs more than is left is not
-        // started.
+        // The same as in the interpreter: an entry that costs more than is
+        // left is not started.
         let left = self.b.use_var(self.left);
         let len = self.b.ins().iconst(types::I64, i64::from(e.len));
         let over = self.b.ins().icmp(IntCC::UnsignedGreaterThan, len, left);
@@ -280,7 +281,7 @@ impl Gen<'_, '_> {
         Ok(())
     }
 
-    /// Where a jump to `pc` goes: its entry's block, or out.
+    /// Returns the destination of a jump to `pc`: its entry's block, or out.
     fn target(&mut self, pc: u32) -> (Block, Vec<BlockArg>) {
         if let Some(&block) = self.blocks.get(&pc) {
             return (block, Vec::new());
@@ -295,7 +296,7 @@ impl Gen<'_, '_> {
         self.b.ins().jump(block, &args);
     }
 
-    /// Fails when `cond` is true, and goes on in a new block when not.
+    /// Fails when `cond` is true, and continues in a new block when not.
     fn fail_if(&mut self, cond: Value) {
         let (pc, charged) = self.restart;
         let pc = self.b.ins().iconst(types::I64, i64::from(pc));
@@ -405,8 +406,8 @@ impl Gen<'_, '_> {
         }
     }
 
-    /// A number as a real, as `f64::from` takes an integer. Only for a
-    /// value checked by [`Gen::number`].
+    /// A number as a real, the same as `f64::from` converts an integer. Only
+    /// for a value checked by [`Gen::number`].
     fn real(&mut self, v: Val) -> Value {
         match v {
             Val::Int(x) => self.b.ins().fcvt_from_sint(types::F64, x),
@@ -452,8 +453,8 @@ impl Gen<'_, '_> {
         }
     }
 
-    /// `+`, `-` and `*`: integers while the result fits, else reals, as
-    /// `ops::binary_numbers` gives them.
+    /// `+`, `-` and `*`: integers while the result fits, else reals, the same
+    /// as `ops::binary_numbers` gives them.
     fn arith(&mut self, op: BinOp, a: Val, b: Val) -> Val {
         let (ka, kb) = (self.known_int(a), self.known_int(b));
         if matches!(ka, Known::No) || matches!(kb, Known::No) {
@@ -595,8 +596,8 @@ impl Gen<'_, '_> {
             }
             B::IntDiv | B::Mod => {
                 let (x, y) = (self.int(a), self.int(b));
-                // By zero is an error, and by -1 wraps where Cranelift's
-                // division traps: both for the interpreter.
+                // Division by zero is an error, and division by -1 wraps, but
+                // Cranelift's division traps: both are left to the interpreter.
                 let zero = self.b.ins().icmp_imm(IntCC::Equal, y, 0);
                 self.fail_if(zero);
                 let minus = self.b.ins().icmp_imm(IntCC::Equal, y, i64::from(u32::MAX));
@@ -620,8 +621,8 @@ impl Gen<'_, '_> {
                     B::And => self.b.ins().band(x, y),
                     B::Or => self.b.ins().bor(x, y),
                     B::Xor => self.b.ins().bxor(x, y),
-                    // Cranelift's shifts take the count modulo 32, as the
-                    // interpreter's do.
+                    // Cranelift's shifts take the count modulo 32, the same as
+                    // the interpreter's shifts do.
                     B::Shl => self.b.ins().ishl(x, y),
                     B::Shr => self.b.ins().sshr(x, y),
                     _ => self.b.ins().ushr(x, y),

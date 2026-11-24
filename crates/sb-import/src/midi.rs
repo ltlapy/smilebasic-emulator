@@ -1,17 +1,17 @@
 //! Writes the preset songs as Standard MIDI Files, for keeping. A song
-//! that loops is written up to where every track has gone round once.
+//! that loops is written up to the point where every track has looped once.
 //!
-//! Instruments are chosen as in the SoundFont that `--sf2` writes: bank
-//! select (MSB then LSB, together the bank) and program, so the files
-//! play with SmileBASIC 4's instruments in a player that takes both bytes.
-//! The pitch bend reaches 24 semitones either way.
+//! Instruments are chosen the same way as in the SoundFont that `--sf2`
+//! writes: bank select (MSB then LSB, together the bank) and program, so
+//! the files play with SmileBASIC 4's instruments in a player that takes
+//! both bytes. The pitch bend reaches 24 semitones either way.
 //!
 //! With [`Layout::Gm`] the file is General MIDI and Roland GS: every drum
-//! set on channel 10 (a channel that is not a drum set never lands there),
+//! set on channel 10 (a channel that is not a drum set is never put there),
 //! and GM System On and GS Reset at the start. Instruments from @149 have
 //! no GM sound, so they are chosen by bank select (the MSB alone, as the
 //! SoundFont's bank number), and only then; a player without SmileBASIC
-//! 4's SoundFont plays them as whatever GM has at that program.
+//! 4's SoundFont plays them with the GM sound at that program.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -33,8 +33,8 @@ fn varlen(out: &mut Vec<u8>, mut v: u32) {
     out.extend(bytes.iter().rev());
 }
 
-/// Where each of the sequence's channels plays under General MIDI: drum
-/// sets on channel 10, the rest in the others.
+/// The channel each of the sequence's channels plays on under General
+/// MIDI: drum sets on channel 10, the rest on the other channels.
 #[derive(Default)]
 struct Channels {
     /// Whether each channel's instrument is a drum set now.
@@ -42,7 +42,8 @@ struct Channels {
     melodic: HashMap<usize, u8>,
     /// The bank last selected on each channel.
     banks: [u16; 16],
-    /// Channel and key of each sounding note, to the channel it started on.
+    /// The MIDI channel each sounding note started on, by the note's
+    /// sequence channel and key.
     sounding: HashMap<(usize, i32), u8>,
 }
 
@@ -54,7 +55,7 @@ impl Channels {
             return DRUM_CHANNEL;
         }
         let next = self.melodic.len() as u8;
-        // The fifteen that are not channel 10; a sixteenth shares the last.
+        // The fifteen channels other than 10; a sixteenth shares the last.
         *self
             .melodic
             .entry(channel)
@@ -122,7 +123,7 @@ pub fn write(seq: Arc<Sequence>, layout: Layout) -> Vec<u8> {
         match e.event {
             Event::Program(p) => {
                 let (bank, program) = layout.preset(usize::try_from(p).unwrap_or(0));
-                // GM and GS leave the bank alone, except when it changes.
+                // For GM and GS the bank is selected only when it changes.
                 let drums = c == DRUM_CHANNEL && layout == Layout::Gm;
                 let select = layout == Layout::Own || channels.banks[usize::from(c)] != bank;
                 if !drums && select {
@@ -169,7 +170,7 @@ pub fn write(seq: Arc<Sequence>, layout: Layout) -> Vec<u8> {
 
     let mut out = b"MThd".to_vec();
     out.extend_from_slice(&6u32.to_be_bytes());
-    // Format 0: one track; ticks a quarter note.
+    // Format 0: one track; ticks per quarter note.
     out.extend_from_slice(&[0, 0, 0, 1]);
     out.extend_from_slice(&(timebase.min(0x7FFF) as u16).to_be_bytes());
     out.extend_from_slice(b"MTrk");
@@ -236,7 +237,7 @@ mod tests {
         let mut channels = Channels::default();
         channels.drums[0] = true;
         assert_eq!(channels.target(0), DRUM_CHANNEL);
-        // Channel 9 is not a drum set here, so it gives way.
+        // Channel 9 is not a drum set here, so it moves to another channel.
         assert_eq!(channels.target(9), 0);
         assert_eq!(channels.target(3), 1);
         for c in 10..16 {

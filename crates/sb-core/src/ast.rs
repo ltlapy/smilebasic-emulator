@@ -10,7 +10,7 @@ pub struct Program {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stmt {
     pub kind: StmtKind,
-    /// Where the statement starts, for error messages and for the editor
+    /// The start of the statement, for error messages and for the editor
     /// to show: the 1-based line, and column in characters.
     pub line: u32,
     pub col: u32,
@@ -20,8 +20,8 @@ pub struct Stmt {
 pub struct Var {
     pub name: String,
     pub suffix: Option<Suffix>,
-    /// Where the name stands, for the errors placed at it (Undefined
-    /// variable, Duplicate variable). Not part of what the name is.
+    /// The position of the name, for the errors placed at it (Undefined
+    /// variable, Duplicate variable). Not part of the name itself.
     pub at: Span,
 }
 
@@ -42,7 +42,8 @@ pub enum LValue {
     Dynamic(Box<Expr>),
 }
 
-/// Where GOTO, GOSUB and RESTORE go: a label, or a string computed at run time.
+/// The target of GOTO, GOSUB and RESTORE: a label, or a string computed
+/// at run time.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
     Label(String),
@@ -100,8 +101,8 @@ pub struct Def {
     pub body: Vec<Stmt>,
 }
 
-/// An ENUM value with where its first operand stands, where a wrong value
-/// is placed.
+/// An ENUM value with the position of its first operand, where the error
+/// of a wrong value is placed.
 pub type EnumValue = (Expr, Span);
 
 #[derive(Clone, Debug, PartialEq)]
@@ -114,7 +115,7 @@ pub enum StmtKind {
         eq_col: u32,
     },
     Var(Vec<VarDecl>),
-    /// Each name with where it stands, where a `Duplicate constant` is
+    /// Each name with its position, where a `Duplicate constant` is
     /// placed.
     Const(Vec<(String, Span, Expr)>),
     Enum(Vec<(String, Span, Option<EnumValue>)>),
@@ -237,7 +238,7 @@ pub enum Expr {
     Str(Vec<u16>),
     /// A label in an expression is the string `"@NAME"`.
     Label(String),
-    /// A `#` constant and where it is, for an Undefined constant error.
+    /// A `#` constant and its position, for an Undefined constant error.
     Constant(String, Span),
     Var(Var),
     Index {
@@ -297,8 +298,8 @@ impl Expr {
     }
 }
 
-/// Drops a chain one link at a time, where the derived drop would
-/// recurse down all of it.
+/// Drops a chain one link at a time. The derived drop would recurse
+/// down all of it.
 impl Drop for Expr {
     fn drop(&mut self) {
         let mut next = self.take_chain();

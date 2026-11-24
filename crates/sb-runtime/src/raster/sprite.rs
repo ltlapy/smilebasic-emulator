@@ -8,8 +8,8 @@ use crate::scene::SpriteItem;
 use crate::sprites::attr;
 
 /// Draws a sprite over the frame, clipped to its layer's LCLIP, and
-/// through LMATRIX's 4x4 matrix with the frame's pixels to a layer pixel
-/// when the layer has one.
+/// through LMATRIX's 4x4 matrix and the number of frame pixels per layer
+/// pixel, when the layer has one.
 pub fn draw(
     s: &SpriteItem,
     grp: &Graphics,
@@ -20,8 +20,8 @@ pub fn draw(
     draw_in(s, grp, fb, clip, projection, &mut Room::default());
 }
 
-/// What drawing an upright sprite works out, its room kept from one sprite to
-/// the next rather than allocated for each.
+/// Buffers for the values that drawing an upright sprite computes, kept from
+/// one sprite to the next rather than allocated for each.
 #[derive(Default)]
 pub struct Room {
     grid: compose::Grid,
@@ -68,7 +68,7 @@ pub fn draw_in(
             fn run<P: Paint>(self, paint: impl Fn(u32) -> P + Copy) {
                 let (bw, bh) = self.size;
                 let source = self.source;
-                // The usual image: every point is on the page as it is.
+                // The usual image, not turned or flipped, wholly on its page.
                 if let Some((page, u, v)) = source.plain() {
                     let (fb, m, sample, place) = (self.fb, self.m, self.sample, self.place);
                     return compose::project_image(fb, m, sample, place, bw, bh, |x, y| {
@@ -127,9 +127,9 @@ pub fn draw_in(
                 let white = paint(0xFFFF_FFFF);
                 return draw_image(self.fb, self.place, bw, bh, |_, _| Some(white));
             }
-            // The usual image, wholly on its page: a point on the image is a
-            // place on the page by a sum, with no ifs. Scaled up, neighbors show
-            // the same page pixel, whose paint is worked out once.
+            // The usual image, wholly on its page: a point on the image maps to
+            // a place on the page by a sum, with no branches. Scaled up,
+            // neighbors show the same page pixel, whose paint is computed once.
             if let Some((base, kx, ky)) = source.linear() {
                 let page = source.page;
                 let (mut held, mut held_paint) = (0, paint(0));
@@ -143,7 +143,7 @@ pub fn draw_in(
                     }
                     Some(held_paint)
                 };
-                // At most angles nothing ties, and this is for each pixel.
+                // At most angles nothing ties, and this runs for each pixel.
                 if (tx, ty) == (0.0, 0.0) {
                     return draw_texels(self.fb, self.place, bw, bh, self.tie, |x, y| {
                         painted(page[(base + x * kx + y * ky) as usize])
@@ -183,18 +183,18 @@ pub fn draw_in(
     );
 }
 
-/// The texel a point lies in. A point moved to settle a tie can land just off
-/// the image, on either side, and reads the page there.
+/// The texel that contains a point. A point moved to settle a tie can land
+/// just off the image, on either side, and reads the page there.
 #[inline]
 fn texel(v: f64) -> i32 {
     v as i32 - i32::from(v < 0.0)
 }
 
-/// Where a sprite's pixels come from.
+/// The source of a sprite's pixels.
 struct Source<'a> {
-    /// The page's pixels as they lie, see [`crate::page`].
+    /// The page's raw pixels, see [`crate::page`].
     page: &'a [u32],
-    /// Which page it is; `None` for GRP-1.
+    /// The page number; `None` for GRP-1.
     page_no: Option<usize>,
     /// GSAMPLE 1: the page repeats in every direction.
     repeat: bool,
@@ -228,7 +228,7 @@ impl Source<'_> {
     }
 
     /// The page and where the image starts on it, for an image neither
-    /// turned nor flipped that lies wholly on a page.
+    /// turned nor flipped that is wholly on a page.
     fn plain(&self) -> Option<(&[u32], usize, usize)> {
         let on_page = |at: i32, size: i32| at >= 0 && at + size <= GRP_SIZE;
         let plain = !self.white
@@ -329,12 +329,12 @@ impl Source<'_> {
 
 /// Off the page, as an offset into it.
 const NONE: usize = usize::MAX;
-/// Frame pixels from which a sprite is drawn piece by piece.
+/// The number of frame pixels from which a sprite is drawn piece by piece.
 const LARGE: usize = 4096;
 
 /// [`draw`] for a sprite neither turned nor sheared on the frame,
-/// the usual case: which page column and row each frame column and row
-/// shows is worked out once, so each pixel is a lookup and a blend.
+/// the usual case: the page column and row that each frame column and row
+/// shows are computed once, so each pixel is a lookup and a blend.
 #[allow(clippy::too_many_arguments)]
 fn draw_upright(
     source: &Source,
@@ -379,8 +379,8 @@ fn draw_upright(
     });
     // Without a flip or a turn, the frame columns show page columns
     // from left to right, so the pieces of each row with nothing in them
-    // (see Graphics::pieces) can be passed over.
-    // Small sprites, the many, are not worth the setting up.
+    // (see Graphics::pieces) can be skipped.
+    // Most sprites are small, and small sprites are not worth the setup.
     let large = cols.len() * grid.ys.len() >= LARGE;
     let run = match (turned, source.white, source.page_no) {
         (false, false, Some(page)) if large => steady(cols).map(|run| (run, page)),
@@ -394,7 +394,7 @@ fn draw_upright(
         source: &'a Source<'a>,
         run: Option<(Run, usize)>,
         grp: &'a Graphics,
-        /// Neither tinted nor added: what is opaque is put as it is.
+        /// Neither tinted nor added: opaque pixels are put unchanged.
         plain: bool,
     }
     impl<R: Iterator<Item = usize>> TintJob for Rows<'_, R> {
@@ -403,8 +403,8 @@ fn draw_upright(
             let width = self.fb.width() as usize;
             let pixels = self.fb.pixels_mut();
             let page = self.source.page;
-            // GRP-1 is one color all over, as large boxes and fades use:
-            // its blend is worked out once.
+            // GRP-1 is one color all over, as used by large boxes and
+            // fades: its blend is computed once.
             if self.source.white {
                 let white = paint(0xFFFF_FFFF);
                 for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
@@ -425,16 +425,16 @@ fn draw_upright(
                 let shown = &self.cols[run.at..][..run.len];
                 let (first, last) = (shown[0], shown[run.len - 1]);
                 let (p0, p1) = (first / PIECE, last / PIECE);
-                // Where among the shown columns each piece's start.
+                // The index among the shown columns where each piece starts.
                 let mut starts = [0; GRP_SIZE as usize / PIECE + 1];
                 for (b, start) in starts.iter_mut().enumerate().take(p1 + 2).skip(p0) {
                     *start = shown.partition_point(|&c| c < b * PIECE);
                 }
-                // At a scale of 1, the usual way to put a large image up,
+                // At a scale of 1, the usual way to show a large image,
                 // a row of the frame is a run of a row of the page.
                 let side_by_side = last - first + 1 == run.len;
-                // The page pixel `paint` blends, which a clear one never
-                // is.
+                // The page pixel that `paint` blends. It is never a clear
+                // one.
                 let (mut held, mut held_paint) = (0, paint(0));
                 for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
                     if row == NONE {
@@ -461,8 +461,8 @@ fn draw_upright(
                                 if from.iter().fold(0, |a, &p| a | p) >> 24 == 0 {
                                     continue;
                                 }
-                                // Opaque pixels as they are cover what
-                                // is under them.
+                                // Opaque pixels, unchanged, cover the
+                                // pixels under them.
                                 if self.plain && from.iter().fold(!0, |a, &p| a & p) >> 24 == 0xFF {
                                     dst.copy_from_slice(from);
                                     continue;
@@ -473,7 +473,7 @@ fn draw_upright(
                             }
                         } else {
                             // Scaled up, neighbors show the same page
-                            // pixel, whose blend is worked out once.
+                            // pixel, whose blend is computed once.
                             for (dst, &col) in line.iter_mut().zip(&shown[start..end]) {
                                 let p = page[row + col];
                                 match p >> 24 {
@@ -502,7 +502,7 @@ fn draw_upright(
                 let at = fy * width + self.grid.x0 as usize;
                 let line = &mut pixels[at..at + self.cols.len()];
                 // Scaled up, neighbors show the same page pixel, whose
-                // paint is worked out once.
+                // paint is computed once.
                 let (mut held, mut held_paint) = (0, paint(0));
                 for (dst, &col) in line.iter_mut().zip(self.cols) {
                     if col == NONE {
@@ -545,8 +545,8 @@ struct Run {
     len: usize,
 }
 
-/// The [`Run`] that `cols` (as [`draw_upright`] works them out) are, if
-/// they are one.
+/// The [`Run`] that `cols` (as [`draw_upright`] computes them) form, if
+/// they form one.
 fn steady(cols: &[usize]) -> Option<Run> {
     let at = cols.iter().position(|&c| c != NONE)?;
     let len = cols[at..].iter().take_while(|&&c| c != NONE).count();

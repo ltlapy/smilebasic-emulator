@@ -99,7 +99,7 @@ fn random_numbers() {
     assert_eq!(run("?RND(-1)").unwrap_err().kind, ErrorKind::OutOfRange);
     assert_eq!(run("?RND(8,5)").unwrap_err().kind, ErrorKind::OutOfRange);
     // SmileBASIC 4's own numbers (TEST12 and TEST13 on hardware). PRINT
-    // works its items out last first, so these take them one by one.
+    // evaluates its items last first, so these take them one by one.
     let seq = "RANDOMIZE 0,1:A=RND(&H7FFFFFFF):B=RND(65536):C=RND(100):?A;\" \";B;\" \";C";
     assert_eq!(run(seq).unwrap(), "397858342 58081 33");
     assert_eq!(
@@ -166,7 +166,7 @@ fn system_settings() {
     ] {
         assert_eq!(run(source).unwrap_err().kind, error, "{source}");
     }
-    // An unknown name is named, whatever the counts.
+    // An unknown name is named, regardless of the counts.
     for source in [
         "S$=\"NOPE\":SYSPARAM S$ OUT Q0,Q1,Q2",
         "S$=\"NOPE\":Q=SYSPARAM(S$,0)",
@@ -214,8 +214,8 @@ fn what_only_subprograms_use() {
     assert_eq!(run("PUSHKEY 65622:PUSHKEY 65:?INKEY$()").unwrap(), "A");
 }
 
-/// TEST60: keys go to where INKEY$ reads them 32 a frame, and PUSHKEY waits a
-/// frame. Both buffers keep the newest 128.
+/// TEST60: keys go to where INKEY$ reads them 32 per frame, and PUSHKEY
+/// waits a frame. Both buffers keep the newest 128.
 #[test]
 fn the_key_buffers() {
     let keys = "VAR I,J,N,F,L,K$,S$\n\
@@ -227,7 +227,8 @@ fn the_key_buffers() {
          UNTIL K$==\"\"\n\
          ?N;\" \";F;\" \";L";
     assert_eq!(run(keys).unwrap(), "128 32 218");
-    // INKEY$ skips a code it has no value for, and gives Home's and Tab's.
+    // INKEY$ skips a code it has no value for, and gives the codes of Home
+    // and Tab.
     assert_eq!(
         run("PUSHKEY &H10013:PUSHKEY &H10009:PUSHKEY &H10008:VSYNC 0:A$=INKEY$():B$=INKEY$():?LEN(A$);LEN(B$);LEN(INKEY$());\" \";ASC(A$);ASC(B$)")
             .unwrap(),

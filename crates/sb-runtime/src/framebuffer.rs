@@ -34,16 +34,16 @@ impl Framebuffer {
         &mut self.pixels
     }
 
-    /// Makes the frame `width` x `height`, keeping its memory where it
-    /// can; what it holds afterwards is left to the caller to clear.
+    /// Resizes the frame to `width` x `height`, keeping its memory where
+    /// it can. Clearing its contents afterwards is left to the caller.
     pub fn resize(&mut self, width: u32, height: u32) {
         (self.width, self.height) = (width, height);
         self.pixels.resize((width * height) as usize, 0);
     }
 
-    /// Trades pixels with `other`, which must hold as many: a pass that
-    /// reads the frame while it writes a new one can then write into a
-    /// buffer it keeps instead of copying the frame first.
+    /// Swaps pixels with `other`, which must hold the same number. A pass
+    /// that reads the frame while it writes a new one can then write into
+    /// a buffer it keeps, instead of copying the frame first.
     pub fn swap_pixels(&mut self, other: &mut Vec<u32>) {
         assert_eq!(other.len(), self.pixels.len());
         std::mem::swap(&mut self.pixels, other);
@@ -53,7 +53,7 @@ impl Framebuffer {
         self.pixels.fill(color);
     }
 
-    /// Makes a part of the frame clear.
+    /// Clears a part of the frame.
     pub fn clear_area(&mut self, area: &crate::compose::Area) {
         let width = self.width as usize;
         if width == 0 {

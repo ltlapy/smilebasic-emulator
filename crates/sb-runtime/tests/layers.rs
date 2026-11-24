@@ -27,7 +27,7 @@ fn run(source: &str) -> Machine {
 }
 
 /// A program writes only the character codes through TARRAY, on a new screen
-/// or a cleared one: the colours are there already, so the characters show.
+/// or a cleared one: the colors are there already, so the characters show.
 #[test]
 fn codes_alone_written_through_tarray_show() {
     for clear in ["", "CLS 1:"] {
@@ -86,7 +86,7 @@ fn tload_and_tarray_keep_the_whole_attribute_and_bit_7_inverts() {
         .expect("something filled");
     assert_eq!(at(hole.0, hole.1), RED);
     assert_eq!(at(16 + hole.0, hole.1), RED);
-    // TARRAY's, with TUPDATE.
+    // The cell written through TARRAY, with TUPDATE.
     assert_eq!(at(32 + x, y), BLACK);
     assert_eq!(at(32 + hole.0, hole.1), 0xFF00_FF00);
 }
@@ -295,7 +295,8 @@ fn xscreen_sets_the_resolution() {
     assert!(first_row("CLS:XSCREEN 400,240,1,0,20").starts_with("Out of range"));
 }
 
-/// Errors name the argument that was wrong, as SmileBASIC 4's do.
+/// Errors name the argument that was wrong, the same as SmileBASIC 4's
+/// errors do.
 #[test]
 fn screen_errors_name_the_argument() {
     for (source, named) in [
@@ -406,7 +407,7 @@ fn fade_steps_as_on_hardware() {
 
 #[test]
 fn fade_covers_everything_and_moves_in_steps() {
-    // FADE at once: half-covered red over the black back.
+    // An immediate FADE: half-covered red over the black back.
     let mut m = run("FADE &H80FF0000");
     let p = m.render().get(10, 10).unwrap();
     assert_eq!(p, 0xFF80_0000);
@@ -579,8 +580,9 @@ impl SceneBackend for Backend {
     }
 }
 
-/// A program still running with a red BACKCOLOR: in direct mode, the emulator's
-/// own hints go over the frame on the CPU, so it is not offered to a backend.
+/// A program still running with a red BACKCOLOR. In DIRECT mode the frame is
+/// offered to a backend too, and the emulator's own hints go to it through
+/// `SceneBackend::overlay`.
 fn running_red() -> Machine {
     let mut m = Machine::new(Runtime::for_tests(Font::fallback()));
     m.boot();
@@ -605,7 +607,7 @@ fn a_backend_that_takes_a_scene_leaves_the_cpu_frame_alone() {
     assert_eq!(backend.drawn, 1);
     assert!(m.rt.frame_on_backend());
     assert_ne!(m.rt.screen_frame().get(4, 4), Some(RED));
-    // Nothing changed: not drawn again, and still the backend's.
+    // Nothing changed: not drawn again, and the frame is still on the backend.
     let revision = m.rt.revision();
     m.rt.render_with(Some(&mut backend));
     assert_eq!((backend.drawn, m.rt.revision()), (1, revision));

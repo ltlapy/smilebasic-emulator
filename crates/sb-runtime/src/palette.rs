@@ -1,6 +1,6 @@
 //! The editor's colors: one for each part of the language and for the
 //! backgrounds behind lines. Palettes are kept and shared as text, one
-//! `part=#RRGGBB` per line, `#` lines being comments.
+//! `part=#RRGGBB` per line. Lines starting with `#` are comments.
 
 use crate::syntax::{LineKind, Role};
 
@@ -120,8 +120,8 @@ pub const SMILEBASIC: Palette = rgb([
     0x402000, 0x606000, 0x807020, 0x000000, 0x305090,
 ]);
 
-/// Palettes to start from: SmileBASIC 4's and those of well-known editor
-/// themes, mapped onto its parts.
+/// Palettes to start from: the SmileBASIC 4 palette and those of
+/// well-known editor themes, mapped onto its parts.
 pub const PRESETS: &[(&str, Palette)] = &[
     ("SmileBASIC 4", SMILEBASIC),
     (
@@ -251,7 +251,7 @@ impl Palette {
         format!("# SmileBASIC emulator editor colors\n{}", self.lines(""))
     }
 
-    /// The background behind a line, other than the cursor's.
+    /// The background behind a line other than the cursor line.
     pub fn line_background(&self, kind: LineKind) -> u32 {
         match kind {
             LineKind::Plain => self[Part::Background],

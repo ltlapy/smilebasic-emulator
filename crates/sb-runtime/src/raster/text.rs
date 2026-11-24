@@ -14,8 +14,8 @@ use crate::text::{Cell, FONT_PAGE, USER_CHARS, UserPage, attr, glyph_pixel};
 /// A cell that shows nothing, where a cell's place in [`Glyphs`] is kept.
 const NO_GLYPH: u32 = u32::MAX;
 
-/// A hash for [`Glyphs`], looked up about once a cell: it need not resist
-/// anything, as a program can at worst slow its own text.
+/// A hash for [`Glyphs`], looked up about once per cell. It does not need to
+/// resist anything, because a program can at worst slow its own text.
 #[derive(Clone, Copy, Default)]
 struct KeyHasher(u64);
 
@@ -36,7 +36,7 @@ impl Hasher for KeyHasher {
     }
 }
 
-/// Each character in each color worked out once, however many cells of a
+/// Each character in each color, computed once however many cells of a
 /// screen show it.
 #[derive(Default)]
 struct Glyphs {
@@ -44,12 +44,13 @@ struct Glyphs {
     data: Vec<u32>,
     paints: Vec<Mixed>,
     made: HashMap<u64, usize, BuildHasherDefault<KeyHasher>>,
-    /// The last one looked up: cells in a row are often alike.
+    /// The last one looked up: cells in a row are often the same.
     last: Option<(u64, usize)>,
 }
 
-/// What a screen's characters look like besides each cell's code, color and
-/// inversion: as long as this stands, those worked out stay right.
+/// The settings that decide how a screen's characters look, besides each
+/// cell's code, color and inversion: while they stay the same, the
+/// computed characters stay correct.
 #[derive(Clone, Copy, PartialEq)]
 struct GlyphsAre {
     font_type: u32,
@@ -61,19 +62,20 @@ struct GlyphsAre {
     page: i32,
     page_origin: (i32, i32),
     page_sample: i32,
-    /// A count no other [`Graphics`] has, so that this also tells another
-    /// program's pages, and with them another font, from these.
+    /// A count that no other [`Graphics`] has, so that this also tells
+    /// another program's pages, and with them another font, apart from these.
     page_changes: u64,
     font_changes: u64,
 }
 
-/// Words of glyph data above which a screen's are made afresh, between frames:
-/// 4 MiB, 16000 of the 8-pixel characters, so that a full screen of them in
-/// a color for each row stays, as a scrolling one is.
+/// The number of words of glyph data above which a screen's glyphs are made
+/// again, between frames: 4 MiB, 16000 of the 8-pixel characters, so that
+/// the glyphs of a full screen of them in a color for each row, such as a
+/// scrolling screen, are kept.
 const MOST_KEPT: usize = 1 << 20;
 
-/// A screen's characters, kept from frame to frame: only what the program has
-/// not shown yet costs anything to make.
+/// A screen's characters, kept from frame to frame: only the characters the
+/// program has not shown yet cost anything to make.
 #[derive(Default)]
 pub struct KeptGlyphs {
     are: Option<GlyphsAre>,
@@ -82,7 +84,7 @@ pub struct KeptGlyphs {
 
 impl KeptGlyphs {
     /// The characters for `item` with `margin`, emptied of those made under
-    /// anything else.
+    /// any other settings.
     fn ready(&mut self, item: &TextItem, grp: &Graphics, margin: i32) -> &mut Glyphs {
         let page = usize::try_from(item.page).ok().filter(|&p| p < PAGES);
         let are = GlyphsAre {
@@ -109,7 +111,7 @@ impl KeptGlyphs {
 }
 
 impl Glyphs {
-    /// Where the cell's character is in `data`.
+    /// The offset of the cell's character in `data`.
     fn at(
         &mut self,
         item: &TextItem,
@@ -190,7 +192,7 @@ pub fn draw_keeping(
 
 impl TextItem {
     /// The pixel at `(x, y)` of a character's `font_type`-sized image, or just
-    /// off it, which a tie may read: the page goes on there.
+    /// off it, which a tie may read: the page continues there.
     fn glyph_pixel(&self, font: &Font, grp: &Graphics, code: u16, x: i32, y: i32) -> u32 {
         let ft = self.font_type;
         if USER_CHARS.contains(&code) {
@@ -222,9 +224,9 @@ impl TextItem {
     }
 
     /// [`draw`] for a screen turned or sheared on the frame. Each frame pixel
-    /// lies in one cell, so the order of the cells does not matter: a screen
-    /// that is mostly full is gone over once, and otherwise each cell that
-    /// shows anything for itself.
+    /// is in one cell, so the order of the cells does not matter: a screen
+    /// that is mostly full is drawn in one pass, and otherwise each cell that
+    /// shows anything is drawn separately.
     fn draw_turned(
         &self,
         cells: &[Cell],
@@ -242,7 +244,7 @@ impl TextItem {
             place.texel_tie(side, (1.0, 1.0)),
             place.texel_tie(side, (-1.0, -1.0)),
         );
-        // What a tie moves a point by, for each turn and flip.
+        // The distance a tie moves a point, for each turn and flip.
         let ties: [(f64, f64); 16] = std::array::from_fn(|a| {
             let a = a as u16;
             let page = page_signs(
@@ -255,20 +257,20 @@ impl TextItem {
                 if page.1 > 0.0 { up.1 } else { down.1 },
             )
         });
-        // At a quarter turn a tie can read just off the cell, so what the
-        // character's image holds goes one texel further each way.
+        // At a quarter turn a tie can read just off the cell, so the
+        // character's image extends one texel further each way.
         let margin = i32::from(place.is_right_angle());
         let stride = ft as i32 + 2 * margin;
         let glyph_len = (stride * stride) as usize;
         let glyphs = kept.ready(self, grp, margin);
-        // Per cell, where its character is in `glyphs`, each character in
-        // each color being looked up once however many cells show it, times 16,
-        // and its turn and flips.
+        // Per cell, the offset of its character in `glyphs` times 16, and its
+        // turn and flips. Each character in each color is looked up once,
+        // however many cells show it.
         let count = (self.width * self.height) as usize;
         let mut shown = Vec::with_capacity(count);
         let (mut filled, mut turning) = (0, false);
         for cell in &cells[..count] {
-            // Empty cells show nothing, so need no drawing.
+            // Empty cells show nothing, so they do not need drawing.
             if cell.code == 0 && (!self.may_invert || cell.attr & attr::INVERT == 0) {
                 shown.push(NO_GLYPH);
                 continue;
@@ -321,7 +323,7 @@ impl TextItem {
     }
 
     /// A cell's character in its colors, `ft` x `ft` and `margin` further each
-    /// way, as [`draw`] works it out: what each pixel puts on the frame, as
+    /// way, as [`draw`] computes it: what each pixel puts on the frame, as
     /// [`glyph_paint`] gives it, with the paints that are not opaque pushed onto
     /// `paints`.
     fn glyph(
@@ -335,8 +337,8 @@ impl TextItem {
     ) {
         let inverted = self.inverts && cell.attr & attr::INVERT != 0;
         let count = out.len();
-        // Most characters have two colors, clear and the one, so the last
-        // texel's paint usually does for this one.
+        // Most characters have two colors, clear and one other, so the last
+        // texel's paint can usually be used for this one.
         let mut last = None;
         self.each_texel(font, grp, cell.code, inverted, margin, count, |i, p| {
             out[i] = match last {
@@ -352,8 +354,8 @@ impl TextItem {
         });
     }
 
-    /// What an inverted cell's character is, `font_type` square, before its
-    /// colors: for a backend, which multiplies those itself.
+    /// Writes an inverted cell's character to `out`, `font_type` square,
+    /// before its colors: for a backend, which multiplies the colors itself.
     pub fn inverted_glyph(&self, font: &Font, grp: &Graphics, code: u16, out: &mut [u32]) {
         let count = out.len();
         self.each_texel(font, grp, code, true, 0, count, |i, p| {
@@ -361,8 +363,8 @@ impl TextItem {
         });
     }
 
-    /// Each of the `count` pixels of a character's image and `margin` around
-    /// it, row by row, as what it is before its colors.
+    /// Passes each of the `count` pixels of a character's image and `margin`
+    /// around it to `each`, row by row, with its value before its colors.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     fn each_texel(
@@ -376,8 +378,8 @@ impl TextItem {
         mut each: impl FnMut(usize, u32),
     ) {
         let ft = self.font_type;
-        // Where the character comes from is looked up once, not for
-        // every pixel; the pixels are those glyph_pixel gives.
+        // The source of the character is looked up once, not for every
+        // pixel; the pixels are those that glyph_pixel gives.
         let stride = ft as i32 + 2 * margin;
         let mut fill = |pixel: &dyn Fn(i32, i32) -> u32| {
             for i in 0..count as i32 {
@@ -406,8 +408,8 @@ impl TextItem {
                     }
                 }),
             },
-            // Larger font types show only user-defined characters, and
-            // the font page's corner to what is inverted.
+            // Larger font types show only user-defined characters, and an
+            // inverted cell shows the corner of the font page.
             // UNVERIFIED: that corner.
             (_, None) if inverted => fill(&|x, y| grp.pixel(FONT_PAGE, x, y)),
             (_, None) => fill(&|_, _| 0),
@@ -415,8 +417,8 @@ impl TextItem {
     }
 
     /// [`draw`] for a screen neither turned nor sheared on the frame:
-    /// which cell and which point of it each frame column and row shows
-    /// is worked out once, and each row of cells' characters once.
+    /// the cell and the point in it that each frame column and row shows
+    /// are computed once, and the characters of each row of cells once.
     fn draw_upright(
         &self,
         cells: &[Cell],
@@ -452,8 +454,8 @@ impl TextItem {
         };
         let mut cols: Vec<(u32, [i32; 3])> =
             grid.xs.iter().map(|&x| axis(x, up.0, down.0)).collect();
-        // A tie just off a cell reads what lies beside it on the page: only
-        // then does a character's image need more than itself.
+        // A tie just off a cell reads the pixels beside it on the page: only
+        // then does a character's image need a margin.
         let off = |t: &[i32; 3]| t.iter().any(|&v| !(0..ft as i32).contains(&v));
         let margin = i32::from(
             cols.iter().any(|(_, t)| off(t))
@@ -485,12 +487,12 @@ impl TextItem {
         let glyph_len = (stride * stride) as usize;
         let glyphs = kept.ready(self, grp, margin);
         let may_invert = self.may_invert;
-        // Per cell of the row, if it shows anything: its picks and where
-        // its character is in `glyphs`.
+        // Per cell of the row, if it shows anything: its picks and the
+        // offset of its character in `glyphs`.
         let mut shown = vec![None; self.width as usize];
         let (mut row_of, mut row_shows) = (None, false);
-        // The cell each run of frame columns lies in, and where the run starts
-        // and ends among them: a cell with nothing takes one test.
+        // The cell that each run of frame columns is in, and where the run
+        // starts and ends among them: a cell with nothing costs one test.
         let mut spans: Vec<(u32, u32, u32)> = Vec::new();
         for (i, &(cx, _)) in cols.iter().enumerate() {
             match spans.last_mut() {
@@ -556,17 +558,18 @@ impl TextItem {
 }
 
 /// The texel an inverted cell draws with for a glyph's `p`, multiplied by
-/// the cell's color and TCOLOR as any other: SmileBASIC 4 takes the
-/// colors times `1 - alpha` in place of the glyph's, and then multiplies
-/// the colour by alpha as always, which is why the light is left squared.
+/// the cell's color and TCOLOR like any other texel: SmileBASIC 4 takes
+/// the colors times `1 - alpha` in place of the glyph colors, and then
+/// multiplies the color by alpha as always, which is why the light is left
+/// squared.
 // UNVERIFIED: the sum is read from the console's program, not yet seen.
 fn inverted_texel(p: u32) -> u32 {
     (255 - (p >> 24)) * 0x0101_0101
 }
 
-/// What a glyph pixel puts on the frame, as one `u32`: 0 for nothing, an
-/// opaque color for itself, or else the place of its paint in `paints`
-/// plus one, which is never opaque.
+/// Encodes what a glyph pixel puts on the frame as one `u32`: 0 for
+/// nothing, an opaque color for itself, or else the place of its paint in
+/// `paints` plus one, which is never opaque.
 fn glyph_paint(paint: Option<Mixed>, paints: &mut Vec<Mixed>) -> u32 {
     match paint {
         None => 0,
@@ -579,7 +582,7 @@ fn glyph_paint(paint: Option<Mixed>, paints: &mut Vec<Mixed>) -> u32 {
     }
 }
 
-/// What [`glyph_paint`] gave, as a paint.
+/// A value that [`glyph_paint`] returned, as a paint.
 #[derive(Clone, Copy)]
 enum Texel<'a> {
     Solid(u32),
@@ -596,7 +599,7 @@ impl Paint for Texel<'_> {
     }
 }
 
-/// Back from [`glyph_paint`].
+/// Decodes a value from [`glyph_paint`].
 #[inline]
 fn paint_at(v: u32, paints: &[Mixed]) -> Option<Texel<'_>> {
     match v {
@@ -606,14 +609,14 @@ fn paint_at(v: u32, paints: &[Mixed]) -> Option<Texel<'_>> {
     }
 }
 
-/// What [`TextItem::draw_turned`] works each pixel from.
+/// The data that [`TextItem::draw_turned`] computes each pixel from.
 struct Turned<'a> {
-    /// Per cell, where its character is in `data`, times 16, and its turn and
-    /// flips; or [`NO_GLYPH`].
+    /// Per cell, the offset of its character in `data` times 16, and its turn
+    /// and flips; or [`NO_GLYPH`].
     shown: &'a [u32],
     data: &'a [u32],
     paints: &'a [Mixed],
-    /// What a tie moves a point by, for each turn and flip.
+    /// The distance a tie moves a point, for each turn and flip.
     ties: [(f64, f64); 16],
     /// In cells.
     width: u32,
@@ -623,7 +626,7 @@ struct Turned<'a> {
     /// Nothing can tie and the sizes are powers of two, so that sums on a point
     /// are exact.
     simple: bool,
-    /// Character pixels to a screen pixel.
+    /// Character pixels per screen pixel.
     glyph_scale: f64,
     /// The base 2 logarithm of `ft`, when `simple`.
     ft_shift: u32,
@@ -632,23 +635,24 @@ struct Turned<'a> {
 }
 
 impl Turned<'_> {
-    /// The pixel at a point of the screen, on it, if it lies in the cell
-    /// `only`, when one is given.
+    /// The pixel at a point of the screen, on it, if the point is in the
+    /// cell `only`, when one is given.
     #[inline(always)]
     fn pixel(&self, x: f64, y: f64, only: Option<(u32, u32)>) -> Option<Texel<'_>> {
         if !self.simple {
             return self.pixel_at(x, y, only);
         }
-        // With nothing to settle, a point's character pixel counted from the
-        // screen's corner says it all. A branch between the two axes keeps the
-        // compiler from working them side by side, at twice the cost.
+        // With no tie to settle, the character pixel of a point, counted from
+        // the screen's corner, is all that is needed. A branch between the two
+        // axes keeps the compiler from computing them side by side, at twice
+        // the cost.
         let gx = (x * self.glyph_scale) as u32;
         if gx >> self.ft_shift >= self.width {
             return None;
         }
         let gy = (y * self.glyph_scale) as u32;
         let (cx, cy) = (gx >> self.ft_shift, gy >> self.ft_shift);
-        // Pixels of the cells around are theirs to draw.
+        // The cells around draw their own pixels.
         if only.is_some_and(|c| c != (cx, cy)) {
             return None;
         }
@@ -674,7 +678,7 @@ impl Turned<'_> {
         self.texel(glyph, gx, gy)
     }
 
-    /// The pixel `(gx, gy)` of what `shown` holds for its cell.
+    /// The pixel `(gx, gy)` of the character `shown` holds for its cell.
     #[inline(always)]
     fn texel(&self, glyph: u32, gx: u32, gy: u32) -> Option<Texel<'_>> {
         let mask = self.ft as u32 - 1;
@@ -682,12 +686,12 @@ impl Turned<'_> {
         paint_at(self.data[(glyph >> 4) as usize + texel], self.paints)
     }
 
-    /// [`Turned::pixel`] whatever the character's turn and flips, the sizes
-    /// and the ties.
+    /// [`Turned::pixel`] for any turn and flips of the character, any sizes
+    /// and any ties.
     #[inline(never)]
     fn pixel_at(&self, x: f64, y: f64, only: Option<(u32, u32)>) -> Option<Texel<'_>> {
         let (cx, cy) = ((x / self.size) as u32, (y / self.size) as u32);
-        // Pixels of the cells around are theirs to draw.
+        // The cells around draw their own pixels.
         if only.is_some_and(|c| c != (cx, cy)) || cx >= self.width {
             return None;
         }
@@ -698,7 +702,7 @@ impl Turned<'_> {
         let a = (glyph & 15) as u16;
         let (tx, ty) = self.ties[usize::from(a)];
         let (cs, size) = (self.cs, self.size);
-        // Where in the cell, which a fine frame splits further.
+        // The point in the cell, which a fine frame splits further.
         // As for sprites, the character is flipped, then turned
         // (checked on hardware): undo the turn, then the flips.
         let (px, py) = (x + tx - f64::from(cx * cs), y + ty - f64::from(cy * cs));
@@ -731,7 +735,8 @@ mod tests {
     use crate::graphics::Blend;
     use crate::text::TextScreen;
 
-    /// Draws the screen with what was kept and afresh, which must agree.
+    /// Draws the screen with the kept glyphs and from scratch, which must
+    /// agree.
     fn agree(
         s: &TextScreen,
         item: &TextItem,
@@ -771,7 +776,7 @@ mod tests {
         (item.page, item.page_origin) = (1, (0, 0));
         let mut kept = KeptGlyphs::default();
         let first = agree(&s, &item, &font, &grp, &mut kept);
-        // Nothing changed: kept, as the same data shows.
+        // Nothing changed: the glyphs are kept, as the data length shows.
         let held = kept.glyphs.data.len();
         assert!(held > 0);
         assert_eq!(agree(&s, &item, &font, &grp, &mut kept), first);
@@ -807,7 +812,7 @@ mod tests {
         changed("font type", &item, &grp, &mut kept);
         item.font_type = 8;
         changed("font type back", &item, &grp, &mut kept);
-        // Another program's pages, which count their changes apart.
+        // Another program's pages, which count their changes separately.
         let mut other = Graphics::default();
         fill(&mut other, FONT_PAGE, gx as i32, gy as i32, 0xFF00_FFFF);
         changed("another program", &item, &other, &mut kept);
@@ -817,7 +822,7 @@ mod tests {
     fn kept_glyphs_follow_gsample() {
         let font = Font::blank();
         let mut grp = Graphics::default();
-        // What reads across the page's edge wraps only under GSAMPLE 1.
+        // A read across the page's edge wraps only under GSAMPLE 1.
         fill(&mut grp, 1, 0, 0, 0xFF00_FF00);
         let mut s = TextScreen::new(64, 32);
         s.print(&[*USER_CHARS.start()]);

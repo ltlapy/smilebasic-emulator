@@ -27,9 +27,9 @@ pub mod wtf8;
 use error::{Error, ErrorKind};
 use parser::ParseErrorKind;
 
-/// The build's options that change how the VM runs, for version lines so
+/// The build options that change how the VM runs, for version lines, so
 /// that a report shows which build it came from: empty, or the names of
-/// the features on, `unchecked-vars` and `jit`.
+/// the enabled features, `unchecked-vars` and `jit`.
 pub const BUILD_OPTIONS: &str = match (cfg!(feature = "unchecked-vars"), cfg!(feature = "jit")) {
     (false, false) => "",
     (true, false) => "unchecked-vars",
@@ -51,9 +51,9 @@ pub fn compile_in(
     compile_as(source, host, false, slot as i32)
 }
 
-/// Compiles a line typed in direct mode, whose DIM and VAR declare as
+/// Compiles a line typed in DIRECT mode, whose DIM and VAR declare as
 /// they run (see [`bytecode::Op::Declare`]).
-/// A direct-mode line, where `#_SLOT` is `slot`: the one run last.
+/// In the line, `#_SLOT` is `slot`: the slot that ran last.
 pub fn compile_direct(
     source: &str,
     host: &dyn host::Host,
@@ -84,8 +84,8 @@ fn parse_error(e: parser::ParseError) -> Error {
         ParseErrorKind::Compile(kind) => kind,
         _ => ErrorKind::SyntaxError,
     };
-    // The editor shows the statement, as SmileBASIC 4 does (checked on
-    // hardware), unless the error is on a later line of it.
+    // The editor shows the statement, the same as SmileBASIC 4 does
+    // (checked on hardware), unless the error is on a later line of it.
     let at = e.stmt.filter(|s| s.line == e.span.line).unwrap_or(e.span);
     let error = match e.detail() {
         Some(detail) => Error::with_detail(kind, detail),

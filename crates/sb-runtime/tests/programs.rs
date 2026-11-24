@@ -168,7 +168,7 @@ fn surroundings_of_the_main_interpreter() {
         tail(&m, 5),
         ["0 0 0 3 1", "3 0 0", "RUN A=1 []", "COPIED", "OK"]
     );
-    // Typed in direct mode, it is running too.
+    // Typed in DIRECT mode, it is running too.
     enter(&mut m, "?envstat()");
     assert_eq!(tail(&m, 2), ["3", "OK"]);
     // Only subprograms copy; here it does nothing.
@@ -218,7 +218,7 @@ fn dialogs_wait_for_an_answer() {
     settle(&mut m);
     assert_eq!(tail(&m, 2), ["0", "OK"]);
 
-    // A chooses when let go, and only after being pressed with the dialog
+    // A chooses when released, and only after being pressed with the dialog
     // open (checked on hardware).
     let a = 1 << sb_runtime::input::A;
     m.rt.input.live.pads[0].buttons = a;
@@ -257,7 +257,7 @@ fn dialogs_wait_for_an_answer() {
     assert_eq!(tail(&m, 2), ["GAME 1", "OK"]);
 
     // The initial name follows the file commands' rules, once cut to the
-    // most the dialog takes.
+    // maximum length the dialog takes.
     for (source, initial, max) in [
         ("N$=DIALOG(\"A@B\",\"X\")", "A@B", 32),
         ("N$=DIALOG(\"TXT:@.X\",\"X\")", "TXT:@.X", 32),
@@ -304,7 +304,7 @@ fn the_key_that_closes_a_dialog_is_not_pressed_after_it() {
         VSYNC:NEXT:?\"DONE\"";
     until_dialog(&mut m, program);
     m.frame();
-    // Enter goes down, and the frontend's dialog takes it as its answer.
+    // Enter is pressed, and the frontend's dialog takes it as its answer.
     m.rt.input.live.set_key(40, true);
     m.rt.answer_dialog(DialogAnswer::Choice(0));
     for _ in 0..10 {
@@ -316,7 +316,7 @@ fn the_key_that_closes_a_dialog_is_not_pressed_after_it() {
     assert_eq!(rows[1..], ["DONE", "OK"]);
     assert_ne!(rows[0], "PRESSED");
 
-    // A press after the dialog is one.
+    // A press after the dialog is a fresh press.
     until_dialog(&mut m, program);
     m.rt.answer_dialog(DialogAnswer::Choice(0));
     m.frame();
@@ -412,7 +412,7 @@ fn exec_runs_other_slots() {
     run(&mut m, &["?ADD(1,2)"]);
     assert!(tail(&m, 3).concat().contains("Syntax error in 0:1"));
     // The running slot starts again; one a DEF returns to cannot be
-    // EXEC'd, nor can EXEC be used in direct mode (checked on hardware).
+    // EXEC'd, nor can EXEC be used in DIRECT mode (checked on hardware).
     run(&mut m, &["?\"R\";:LOCATE OUT X,Y:IF X<3 THEN EXEC 0"]);
     assert_eq!(tail(&m, 2), ["RRR", "OK"]);
     m.set_slot(3, "COMMON DEF BACK\nEXEC 0\nEND".to_string());
@@ -470,7 +470,7 @@ fn slot_constant_follows_the_slot() {
     m.rt.slot_names[3] = "LIB".to_string();
     run(&mut m, &["EXEC 3", "?#_SLOT;#_FILENAME"]);
     assert_eq!(tail(&m, 3), ["S31", "0", "OK"]);
-    // In direct mode it is the slot run last (checked on hardware).
+    // In DIRECT mode it is the slot run last (checked on hardware).
     m.set_slot(2, "?\"R\"".to_string());
     enter(&mut m, "run 2");
     enter(&mut m, "?#_SLOT");

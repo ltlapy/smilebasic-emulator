@@ -51,7 +51,7 @@ pub enum ErrorKind {
     /// A call with more than 254 arguments or OUT variables, or a DEF
     /// with more than 254 of either.
     TooManyArguments,
-    /// CONST or ENUM of a value that is not worked out as the program
+    /// CONST or ENUM of a value that is not computed as the program
     /// compiles.
     IllegalConstantExpression,
     /// DEFOUT, DEFARG and the others of a DEF used outside one.
@@ -63,7 +63,7 @@ pub enum ErrorKind {
     CantAccessOtherProject,
     /// SAVE, SAVEV or SAVEG into one of SmileBASIC 4's own `#` projects.
     CantSaveToSystemProject,
-    /// LOAD or SAVE of a type of file other than a program's, as `DAT:`.
+    /// LOAD or SAVE of a file type other than a program, such as `DAT:`.
     FileTypeMismatch,
     IllegalAnimationData,
     SpriteNotSet,
@@ -77,7 +77,7 @@ pub enum ErrorKind {
     /// instruction again. See [`crate::memory`].
     MemoryCheck,
     IllegalMml,
-    // What SmileBASIC 4's MML parser found wrong, each 81 plus the
+    // The errors of SmileBASIC 4's MML parser, each numbered 81 plus the
     // parser's own number.
     MmlTooLong,
     MmlTrackAlreadyDefined,
@@ -113,15 +113,15 @@ pub enum ErrorKind {
     UsePrgedit,
     /// EXEC of a file that cannot be loaded.
     LoadFailed,
-    /// A command for programs only, such as EXEC, in direct mode. SmileBASIC
+    /// A command for programs only, such as EXEC, in DIRECT mode. SmileBASIC
     /// 4 shows it without a place.
     CantUseFromDirectMode,
-    /// A command for direct mode only, such as PROJECT, run in a program.
+    /// A command for DIRECT mode only, such as PROJECT, run in a program.
     CantUseInProgram,
     /// SYSPARAM of a name it does not know.
     IllegalSystemArgumentName,
-    /// SYSPARAM asked for another number of values than its item has, or
-    /// setting one that can only be read.
+    /// SYSPARAM asked for a number of values other than the number its
+    /// item has, or setting one that can only be read.
     WrongNumberOfOutArguments,
     /// FORMAT$ with a conversion it does not know, or a file name that
     /// breaks SmileBASIC 4's rules.
@@ -130,7 +130,7 @@ pub enum ErrorKind {
     FileNameTooLong,
     /// EXEC of a slot with code that may still run.
     CantUseSpecifiedSlot,
-    /// CONT with nothing to go on with.
+    /// CONT with nothing to continue.
     CantContinue,
     /// TRACE where it cannot run a statement.
     CantTrace,
@@ -152,13 +152,13 @@ pub enum ErrorKind {
     /// An array with fewer elements than a command needs, such as an empty
     /// parameter array of ARYOP.
     ArrayTooSmall,
-    /// XSCREEN with a width or height that 4 does not divide.
+    /// XSCREEN with a width or height that is not a multiple of 4.
     UseMultiplesOf4,
     /// XCTRLSTYLE asking for the IR Motion Camera with a style other than 1.
     IllegalControlStyleForIrCamera,
     /// XCTRLSTYLE with a pair of Toy-Con types that do not go together.
     IllegalToyConType,
-    /// SPDEF from an array whose length 7 does not divide.
+    /// SPDEF from an array whose length is not a multiple of 7.
     IllegalArraySize,
     /// SPLINK of a sprite to one linked below it.
     CantLinkToDescendant,
@@ -179,14 +179,14 @@ pub enum ErrorKind {
     AnimationTypeMismatch,
     /// IRSTART with a count of arguments that its mode does not take.
     WrongArgumentsForIrMode,
-    /// SPFUNC or TFUNC of a name that is not a DEF, such as a built-in
-    /// command's.
+    /// SPFUNC or TFUNC of a name that is not a DEF, such as the name of a
+    /// built-in command.
     FunctionMustBeUserDefined,
 }
 
 impl ErrorKind {
-    /// SmileBASIC's number for the error, as ENVSTAT gives it; the same
-    /// as SmileBASIC 3's.
+    /// Returns SmileBASIC's number for the error, as ENVSTAT gives it.
+    /// The numbers are the same as in SmileBASIC 3.
     pub fn code(self) -> i32 {
         match self {
             ErrorKind::SyntaxError => 3,
@@ -300,8 +300,8 @@ impl ErrorKind {
             ErrorKind::UseRestorePush => 119,
             ErrorKind::UseRestorePop => 118,
             ErrorKind::CantUseSpecifiedSlot => 120,
-            // The emulator's own: a statement out of its place, which
-            // SmileBASIC reports with a more particular error.
+            // An error of the emulator only: a statement out of its
+            // place, which SmileBASIC reports with a more specific error.
             ErrorKind::IllegalStatement => 3,
         }
     }
@@ -437,16 +437,17 @@ pub struct Error {
     /// Column of the statement (or for syntax errors, the token) where it
     /// happened, in characters; 0 if unknown.
     pub col: u32,
-    /// Extra context for developers, e.g. which name was undefined. One in
-    /// brackets is SmileBASIC 4's own, the command and argument as in
-    /// `Overflow in 1:3(FILL:2)`, and shows right after the place.
+    /// Extra context for developers, e.g. which name was undefined. A
+    /// detail in brackets is SmileBASIC 4's own, the command and argument
+    /// as in `Overflow in 1:3(FILL:2)`, and is shown right after the place.
     pub detail: Option<String>,
-    /// The program slot it happened in; `None` in direct mode.
+    /// The program slot it happened in; `None` in DIRECT mode.
     pub slot: Option<u32>,
-    /// Which of a command's arguments was wrong, from 0, for ENVSTAT.
+    /// The index of the command argument that was wrong, counted from 0,
+    /// for ENVSTAT.
     pub arg: Option<u8>,
-    /// Where the value that was wrong is, until the call it was an
-    /// argument of turns it into `arg`.
+    /// The address of the value that was wrong, until the call that it
+    /// was an argument of turns it into `arg`.
     value_at: usize,
 }
 
@@ -523,10 +524,11 @@ impl Error {
         self
     }
 
-    /// Names `command` in the message as SmileBASIC 4 does, `(FILL:2)`
-    /// with the argument from 1 when it is known, `(PUSH)` when not. A
-    /// detail of our own stays after it, as `(LOADV) (TXT into an array)`;
-    /// one in SmileBASIC 4's brackets already is kept as it is.
+    /// Names `command` in the message the same way SmileBASIC 4 does:
+    /// `(FILL:2)` with the argument from 1 when it is known, `(PUSH)` when
+    /// not. A detail of the emulator stays after it, as in
+    /// `(LOADV) (TXT into an array)`. A detail already in SmileBASIC 4's
+    /// brackets is kept unchanged.
     pub fn of_command(mut self, command: &str) -> Self {
         let named = match self.arg {
             Some(arg) => format!("({command}:{})", u32::from(arg) + 1),
@@ -569,8 +571,8 @@ impl From<ErrorKind> for Error {
 }
 
 impl Error {
-    /// The message as SmileBASIC 4 prints it for a line typed in direct
-    /// mode: with no place, and a space before the command it names, as
+    /// The message as SmileBASIC 4 prints it for a line typed in DIRECT
+    /// mode: with no place, and a space before the command it names, as in
     /// `Out of range (LOCATE:2)`.
     pub fn without_place(&self) -> String {
         Placed(self, false).to_string()
@@ -584,7 +586,7 @@ impl fmt::Display for Placed<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Placed(e, place) = *self;
         write!(f, "{}", e.kind.message())?;
-        // These say no place on hardware.
+        // These show no place on hardware.
         let placeless = matches!(
             e.kind,
             ErrorKind::CantUseFromDirectMode | ErrorKind::CantContinue | ErrorKind::CantTrace
@@ -633,7 +635,7 @@ mod tests {
         );
     }
 
-    /// A line typed in direct mode names no place (TEST70).
+    /// A line typed in DIRECT mode names no place (TEST70).
     #[test]
     fn without_place() {
         let e = Error::new(ErrorKind::OutOfRange)

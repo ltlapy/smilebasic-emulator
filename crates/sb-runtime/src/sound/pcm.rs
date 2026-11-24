@@ -1,5 +1,5 @@
 //! PCMSTREAM: arrays of samples played as ring buffers, which the program
-//! may write ahead of where they play.
+//! may write ahead of the play position.
 
 use sb_core::value::{Array, ArrayData, ArrayRef};
 
@@ -15,8 +15,8 @@ const GAIN: f64 = 0.35;
 /// A sample times its side's PCMVOL, to the mix's scale.
 const SCALE: f64 = GAIN / (FULL * FULL);
 
-/// Where the samples are: one array (a 2D one has the left channel in its
-/// first row and the right in its second), or one for each side.
+/// The source of the samples: one array (a 2D one has the left channel in
+/// its first row and the right in its second), or one for each side.
 pub enum Source {
     Mono(ArrayRef),
     Rows(ArrayRef),
@@ -71,36 +71,38 @@ const HIGH: f32 = 3072.0;
 /// 5 ms.
 const BLOCK: usize = (RATE / 200) as usize;
 
-/// PCMSTREAM's player. The arrays are not played where they are: a feed
-/// copies their samples into a ring, at the start of each 5 ms block of
-/// output, whenever the ring holds fewer than 1024 samples, until it holds
-/// more than 3072; the output plays the ring at the stream's rate. So
-/// PCMPOS, where the next sample will be fed from, runs up to 3073 samples
-/// ahead of what plays and moves in jumps of a little over 2048, and a
-/// sample the program writes after it has been fed does not play until the
-/// next time round.
+/// PCMSTREAM's player. The arrays are not played in place. At the start of
+/// each 5 ms block of output, whenever the ring holds fewer than 1024
+/// samples, a feed copies samples of the arrays into the ring until it
+/// holds more than 3072. The output plays the ring at the stream's rate. So
+/// PCMPOS, the index the next sample will be fed from, runs up to 3073
+/// samples ahead of the sample playing and moves in jumps of a little over
+/// 2048. A sample the program writes after it has been fed does not play
+/// until the next time around.
 pub struct Pcm {
     source: Option<Source>,
-    /// Samples in each side's array. PCMSTREAM takes it from the arrays and
-    /// it stays, whatever RESIZE, PUSH and the like do to them afterwards.
+    /// Samples in each side's array. PCMSTREAM takes it from the arrays, and
+    /// it stays regardless of what RESIZE, PUSH and the like do to them
+    /// afterwards.
     len: usize,
-    /// What the ring holds, left and right.
+    /// The samples in the ring, left and right.
     ring: Vec<[i16; 2]>,
-    /// Where the next fed sample goes.
+    /// The ring index of the next fed sample.
     write: usize,
-    /// Samples the ring holds, and where in it the output plays, in single
-    /// precision as SmileBASIC 4 counts them.
+    /// Samples the ring holds, and the position in it that the output
+    /// plays, in single precision, the same as SmileBASIC 4 counts them.
     held: f32,
     read: f32,
-    /// What a sample of output takes from the ring: the rate over 48000.
+    /// The step through the ring for each output sample: the rate over 48000.
     step: f32,
-    /// For a rate that divides 48000, how many output samples each sample
-    /// plays for instead, and how many it has left.
+    /// For a rate that divides 48000, the number of output samples each
+    /// sample plays for instead, and the number it has left.
     repeat: u32,
     repeats_left: u32,
     /// The ring is being topped up.
     filling: bool,
-    /// The array index the next fed sample comes from: what PCMPOS reads.
+    /// The array index the next fed sample comes from: the value PCMPOS
+    /// reads.
     fed: usize,
     /// Output samples until the next block starts.
     to_block: usize,
@@ -125,7 +127,7 @@ impl Default for Pcm {
             to_block: 0,
             playing: false,
             // PCMVOL reads 0 0 until the first PCMSTREAM sets both sides
-            // to full volume; RUN leaves it as it is. PCMVOL without a
+            // to full volume; RUN leaves it unchanged. PCMVOL without a
             // stream is kept and read back.
             // UNVERIFIED: the 0 0 at start-up.
             volume: [Level::at(0.0); 2],
@@ -147,8 +149,9 @@ fn sample(a: &Array, at: usize) -> i16 {
 }
 
 impl Pcm {
-    /// PCMSTREAM: plays `source` from its start at `rate` samples a
-    /// second, at full volume on both sides whatever PCMVOL set before.
+    /// PCMSTREAM: plays `source` from its start at `rate` samples per
+    /// second, at full volume on both sides regardless of what PCMVOL set
+    /// before.
     pub fn start(&mut self, source: Source, rate: f64) {
         self.len = match &source {
             Source::Mono(a) | Source::Pair(a, _) => a.borrow().len(),
@@ -163,8 +166,8 @@ impl Pcm {
         self.volume = [Level::at(FULL); 2];
     }
 
-    /// `PCMSTREAM rate` alone: the stream goes on from where it is at the
-    /// new rate.
+    /// `PCMSTREAM rate` alone: the stream continues from its position at
+    /// the new rate.
     pub fn set_rate(&mut self, rate: f64) {
         self.step = (rate / f64::from(RATE)) as f32;
         let rate = rate as u32;
@@ -177,13 +180,13 @@ impl Pcm {
         self.repeats_left = self.repeat;
     }
 
-    /// PCMCONT: goes on with the stream PCMSTOP stopped, if there is one.
+    /// PCMCONT: continues the stream PCMSTOP stopped, if there is one.
     pub fn resume(&mut self) {
         self.playing = self.source.is_some();
     }
 
-    /// PCMPOS: where the next sample will be fed from, an index in the
-    /// arrays.
+    /// PCMPOS: the index in the arrays that the next sample will be fed
+    /// from.
     pub fn index(&self) -> usize {
         self.fed
     }
@@ -207,9 +210,9 @@ impl Pcm {
             self.filling = false;
             return;
         };
-        // The right side's array, when it is not the left's, and where its
-        // samples start. A 2D array's second row starts where the array
-        // says now, as its first does.
+        // The right side's array, when it is not the left side's array,
+        // and the index where its samples start. A 2D array's second row
+        // starts where the array says now, the same as its first row does.
         let (a, b, base) = match source {
             Source::Mono(a) => (a.borrow(), None, 0),
             Source::Rows(a) => {
@@ -233,10 +236,10 @@ impl Pcm {
 
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         // PCMSTOP holds the stream where it is, silent.
-        // UNVERIFIED: SmileBASIC 4 may go on sending the sample it stopped
-        // at, a level that does not move.
+        // UNVERIFIED: SmileBASIC 4 may continue sending the sample it
+        // stopped at, a level that does not move.
         if !self.playing || self.len == 0 || self.source.is_none() {
-            // The blocks go on whether a stream plays or not.
+            // The blocks continue whether a stream plays or not.
             self.to_block = (self.to_block + BLOCK - left.len() % BLOCK) % BLOCK;
             return;
         }
@@ -296,7 +299,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    /// PCMPOS read once a frame: the feed's jumps, round the array.
+    /// PCMPOS read once per frame: the feed's jumps, around the array.
     fn jumps(rate: f64, len: usize, frames: usize) -> Vec<usize> {
         let a: ArrayRef = Rc::new(RefCell::new(Array::new(ElemType::Int, vec![len])));
         a.borrow_mut().set(0, Value::Int(1000)).unwrap();
@@ -316,10 +319,10 @@ mod tests {
         out
     }
 
-    /// The feed takes 3073 samples at once, then tops the ring up to more
-    /// than 3072 whenever fewer than 1024 are left at a block's start: 2160
-    /// at a time at 48 kHz. At 32 kHz single precision makes one top-up in
-    /// 16 a sample longer.
+    /// The feed first takes 3073 samples in one step, then tops the ring up
+    /// to more than 3072 whenever fewer than 1024 are left at a block's
+    /// start: 2160 at a time at 48 kHz. At 32 kHz, single precision makes
+    /// one top-up in 16 a sample longer.
     #[test]
     fn the_feed_moves_in_jumps() {
         let j = jumps(48000.0, 48000, 120);

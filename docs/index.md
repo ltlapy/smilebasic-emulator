@@ -36,6 +36,7 @@ subject and gets a line here.
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md): code and commit rules
 - [working-notes.md](development/working-notes.md): what each crate is for, what to watch in it, and how to check a change
+- [writing-style.md](development/writing-style.md): how comments, documents and UI text are worded
 - [frontend-guide.md](development/frontend-guide.md): where the window's code and state live, and how to check a change to it
-- [frame-thread.md](development/frame-thread.md): how frames and sound go on while the main thread is held up
+- [frame-thread.md](development/frame-thread.md): how frames and sound continue while the main thread is blocked
 - [security.md](development/security.md): how the emulator treats untrusted programs and files

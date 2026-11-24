@@ -14,7 +14,7 @@ const PROGRAM: &str = "SYSPARAM \"MOUSECURSOR\",1\nGCLS RGB(0,0,128)\nMOUSE 200,
 /// pointer is.
 const AROUND: (std::ops::Range<usize>, std::ops::Range<usize>) = (630..680, 350..400);
 
-/// A folder of the test's own, with the program in it.
+/// A separate folder for the test, with the program in it.
 fn folder(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("sb-drawn-cursor").join(name);
     std::fs::create_dir_all(dir.join("data")).expect("a scratch folder");
@@ -22,7 +22,7 @@ fn folder(name: &str) -> PathBuf {
     dir
 }
 
-/// The main window's frame `settle` trips round the loop in, as RGBA rows.
+/// The main window's frame after `settle` iterations, as RGBA rows.
 fn frame_after(name: &str, settle: u32) -> (usize, Vec<u8>) {
     let dir = folder(name);
     let shot = dir.join("shot");
@@ -60,7 +60,7 @@ fn read_pam(path: &Path) -> (usize, Vec<u8>) {
     (field("WIDTH"), data[end..].to_vec())
 }
 
-/// How many pixels around the pointer are white and how many black.
+/// The numbers of white and black pixels around the pointer.
 fn arrow_pixels((width, pixels): &(usize, Vec<u8>)) -> (usize, usize) {
     let (xs, ys) = AROUND;
     let colors = ys.flat_map(|y| xs.clone().map(move |x| (y * width + x) * 4));

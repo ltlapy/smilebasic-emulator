@@ -14,27 +14,27 @@ use super::sampler;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Wave {
     /// The instrument's wave memory: this definition's samples, up to the
-    /// end of its loop, then what earlier ones left past that, each in
-    /// `unit`s. 8-bit waveforms are kept as 16-bit ones, exactly, so a
+    /// end of its loop, then the samples earlier ones left past that, each
+    /// in `unit`s. 8-bit waveforms are kept as 16-bit ones, exactly, so a
     /// sample takes two bytes: WAVSETA can make one as long as an array.
     pub samples: Vec<i16>,
-    /// What a sample of 1 plays as: [`SIXTEEN_BIT`] for all waveforms
+    /// The value a sample of 1 plays as: [`SIXTEEN_BIT`] for all waveforms
     /// but the noise, so that one written over another's memory keeps the
-    /// rest of it as it sounded.
+    /// rest of that memory sounding the same.
     pub unit: f32,
-    /// The note the waveform plays at as it is.
+    /// The note at which the waveform plays unchanged.
     pub base_note: i32,
-    /// Samples a second for a sample; `None` for a repeating wave, which
+    /// Samples per second for a sample; `None` for a repeating wave, which
     /// steps through `cycle` samples in one cycle of its base note.
     pub rate: Option<f64>,
     pub cycle: f64,
-    /// Where the loop starts and ends (exclusive); the end is also where
-    /// the definition ends.
+    /// The start and end (exclusive) of the loop; the end is also the end
+    /// of the definition.
     pub looped: (usize, usize),
     /// Whether BEEP's note loops it.
     pub beep_loop: bool,
-    /// How long BEEP holds its note, in [`BEEP_TICKS_A_SECOND`]; `None` for
-    /// as long as it is let. 0 plays nothing.
+    /// The length of BEEP's note, in [`BEEP_TICKS_A_SECOND`]; `None` for
+    /// as long as nothing stops it. 0 plays nothing.
     pub beep_ticks: Option<u32>,
     /// Whether BEEP plays one such note after another until stopped.
     pub beep_repeats: bool,
@@ -60,7 +60,7 @@ impl Envelope {
     };
 }
 
-/// The values as SmileBASIC's own instruments take them: waveforms move
+/// The values in the form SmileBASIC's own instruments use: waveforms move
 /// their level in the same steps, with no hold.
 impl From<Envelope> for Adshr {
     fn from(e: Envelope) -> Adshr {
@@ -79,16 +79,17 @@ impl From<Envelope> for Adshr {
 /// is exact.
 pub const SIXTEEN_BIT: f32 = 1.0 / 32768.0;
 
-/// An 8-bit sample `b`, offset by 128, as a 16-bit sample: full scale as
-/// a 16-bit sample's.
+/// An 8-bit sample `b`, offset by 128, as a 16-bit sample, with the same
+/// full scale as a 16-bit sample.
 fn from_eight_bit(b: u8) -> i16 {
     (i16::from(b) - 128) << 8
 }
 
-/// Samples a second 8-bit waveforms play at their reference pitch.
+/// The samples per second of 8-bit waveforms at their reference pitch.
 pub const EIGHT_BIT_RATE: f64 = 28160.0;
 
-/// What BEEP's notes of a user waveform are counted in.
+/// BEEP counts its notes of a user waveform in ticks; this many make a
+/// second.
 pub const BEEP_TICKS_A_SECOND: u32 = 192;
 
 /// BEEP's note for a waveform of `samples` at `rate`: as long as a pass of
@@ -104,8 +105,8 @@ pub fn beep_ticks(samples: usize, rate: u32) -> u32 {
 /// stretches to 512 samples, so a pass of any length is 55 Hz; WAVSETA
 /// to the next power of two.
 ///
-/// The stretch steps in 8.8 fixed point, as SmileBASIC 4 does, so a
-/// length just under a power of two leaves its last few samples out.
+/// The stretch steps in 8.8 fixed point, the same as on SmileBASIC 4, so
+/// a length just under a power of two drops its last few samples.
 pub fn eight_bit(bytes: &[u8], pass: usize, base_note: i32, envelope: Envelope) -> Wave {
     // SmileBASIC 4 counts in 32 bits, which overflow past 8M samples; 64
     // bits keep those in the array.
@@ -132,8 +133,9 @@ pub fn eight_bit(bytes: &[u8], pass: usize, base_note: i32, envelope: Envelope) 
 const PULSES: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
 
 /// @216 to @222 as one cycle of a pulse wave, as loud as a full-scale
-/// 8-bit waveform, which SmileBASIC 4's own are near (TEST41). They play
-/// when the instruments do not come from SmileBASIC 4's sound archive.
+/// 8-bit waveform, which SmileBASIC 4's own pulse waves are near
+/// (TEST41). They play when the instruments do not come from SmileBASIC
+/// 4's sound archive.
 pub fn pulse(program: i32) -> Wave {
     let high = PULSES[(program - 216) as usize];
     Wave {
@@ -181,11 +183,12 @@ pub fn noise() -> Wave {
     }
 }
 
-/// What @224 to @255 play until WAVSET or WAVSETA sets them: the sound
-/// archive holds a sine for @224, and SmileBASIC 4 starts all of them on that
-/// one, with a second's note for BEEP at the sine's own pitch. `None` without
-/// the sound archive's bank. The archive also keeps a shorter copy of the sine
-/// for notes from key 96 up, which sounds the same at the same pitch.
+/// The waveform @224 to @255 play until WAVSET or WAVSETA sets them: the
+/// sound archive holds a sine for @224, and SmileBASIC 4 starts all of them
+/// on that one, with a one-second note for BEEP at the sine's own pitch.
+/// `None` without the sound archive's bank. The archive also keeps a
+/// shorter copy of the sine for notes from key 96 up, which sounds the same
+/// at the same pitch.
 pub fn unset(bank: &Bank) -> Option<Wave> {
     let region = bank.region(224, 57)?;
     let info = bank.waves.get(usize::from(region.wave))?;
@@ -221,9 +224,9 @@ pub struct Waves {
     noise: Rc<Wave>,
     /// WAVSET's @224 to @255.
     pub user: Vec<Option<Rc<Wave>>>,
-    /// The sound archive's bank, for what they play until set.
+    /// The sound archive's bank, for the waveform they play until set.
     bank: Option<Arc<Bank>>,
-    /// What they play until set, decoded once it is needed.
+    /// The waveform they play until set, decoded when it is first needed.
     unset: OnceCell<Option<Rc<Wave>>>,
 }
 
@@ -240,7 +243,8 @@ impl Default for Waves {
 }
 
 impl Waves {
-    /// Where @224 to @255 find the sine they play until set, if anywhere.
+    /// Sets the bank where @224 to @255 find the sine they play until set,
+    /// or none.
     pub(crate) fn set_bank(&mut self, bank: Option<Arc<Bank>>) {
         self.bank = bank;
         self.unset = OnceCell::new();
@@ -254,10 +258,10 @@ impl Waves {
 
     /// Sets WAVSET's instrument `n` (0 for @224) to `wave`. Its samples
     /// overwrite the instrument's memory from the start, and notes that
-    /// sound go on reading it with the length, loop and rate they started
-    /// with: a 32-sample sine written while a 512-sample square sounds
-    /// plays as the sine's cycle and then the rest of the square (TEST40,
-    /// TEST41).
+    /// are sounding continue to read it with the length, loop and rate
+    /// they started with: a 32-sample sine written while a 512-sample
+    /// square sounds plays as the sine's cycle and then the rest of the
+    /// square (TEST40, TEST41).
     pub fn define(&mut self, n: usize, mut wave: Wave) {
         if let Some(old) = &self.user[n]
             && old.samples.len() > wave.samples.len()
@@ -281,9 +285,9 @@ impl Waves {
         }
     }
 
-    /// Keeps a note of `program` reading what WAVSET last wrote there; see
-    /// [`Waves::define`]. The sine an unset waveform plays is not that
-    /// memory, so a note of it goes on with the sine.
+    /// Keeps a note of `program` reading the samples WAVSET last wrote
+    /// there; see [`Waves::define`]. The sine an unset waveform plays is
+    /// not that memory, so a note of it continues with the sine.
     pub(crate) fn follow(&self, program: i32, voice: &mut Voice) {
         if self
             .unset
@@ -310,13 +314,15 @@ pub struct Voice {
     step: f64,
     /// The step before vibrato.
     base_step: f64,
-    /// The step at the base note, and that note, as the note started.
+    /// The step at the base note, and that note, taken when the note
+    /// started.
     rate: f64,
     base_note: i32,
-    /// The loop, and whether it plays for ever, as the note started.
+    /// The loop, and whether it plays forever, taken when the note
+    /// started.
     looped: (usize, usize),
     loops: bool,
-    /// The channel's @MP, @MA and @ML, and how far round they have gone.
+    /// The channel's @MP, @MA and @ML, and how far around they have gone.
     pub(crate) lfo: [sampler::Lfo; 3],
     lfos: sampler::Lfos,
     /// A portamento's glide, in cents.
@@ -324,15 +330,15 @@ pub struct Voice {
     /// The gain from volume and velocity, and the pan's position.
     gain: f32,
     pan: f32,
-    /// Left and right gains, envelope and all, moving in a straight line
-    /// to the next step's.
+    /// Left and right gains, envelope included, moving in a straight line
+    /// to the gains of the next step.
     levels: [f32; 2],
     steps: [f32; 2],
     targets: [f32; 2],
     /// Samples into the envelope's step.
     in_tick: usize,
-    /// The position has gone round the loop: the sample before its start
-    /// is the loop's last.
+    /// The position has gone around the loop: the sample before its start
+    /// is the last sample of the loop.
     wrapped: bool,
     done: bool,
 }
@@ -391,9 +397,9 @@ impl Voice {
         self.step = self.base_step;
     }
 
-    /// Goes on reading `wave`'s memory in place of the one the note
-    /// started with, as when WAVSET sets the instrument again while the
-    /// note sounds; see [`Waves::define`].
+    /// Reads `wave`'s memory from now on in place of the one the note
+    /// started with, as happens when WAVSET sets the instrument again
+    /// while the note sounds; see [`Waves::define`].
     pub fn follow(&mut self, wave: &Rc<Wave>) {
         if !Rc::ptr_eq(&self.wave, wave) {
             self.wave = wave.clone();
@@ -404,7 +410,7 @@ impl Voice {
         Rc::ptr_eq(&self.wave, wave)
     }
 
-    /// A portamento's end: the note goes on as `key`.
+    /// A portamento's end: the note continues as `key`.
     pub fn retune(&mut self, key: i32) {
         self.key = key;
         self.porta = 0.0;
@@ -416,14 +422,14 @@ impl Voice {
     }
 
     /// Sets the volume, velocity and pan, each 0 to 127. Volume and
-    /// velocity are squared, as the instruments' are.
+    /// velocity are squared, the same as for the instruments.
     pub fn set_mix(&mut self, volume: i32, velocity: i32, pan: i32) {
         self.gain = WAVE_GAIN * sampler::square(volume) * sampler::square(velocity);
         self.pan = sampler::pan_position(pan);
     }
 
-    /// Multiplies what [`Voice::set_mix`] set by `by`, also where the level
-    /// has got to.
+    /// Multiplies the gain [`Voice::set_mix`] set by `by`, and also the
+    /// levels reached so far.
     pub(crate) fn scale(&mut self, by: f32) {
         self.gain *= by;
         for x in [&mut self.levels, &mut self.steps, &mut self.targets] {
@@ -435,8 +441,8 @@ impl Voice {
         self.done
     }
 
-    /// Whether the note can still reach a 16-bit sample, as a note let go
-    /// takes much longer than that to end.
+    /// Whether the note can still reach a 16-bit sample, because a
+    /// released note takes much longer than that to end.
     pub(crate) fn audible(&self) -> bool {
         const HALF_A_STEP: f32 = 1.0 / 65536.0;
         self.levels[0].abs().max(self.levels[1].abs()) >= HALF_A_STEP
@@ -461,7 +467,7 @@ impl Voice {
     }
 
     /// Steps the envelope and the LFOs, and aims the levels and pitch at
-    /// where they should be by the end of the next step.
+    /// their values for the end of the next step.
     fn tick(&mut self) {
         self.envelope.step();
         let (cents, tremolo, pan) = self.lfos.step(&self.lfo);
@@ -486,9 +492,9 @@ impl Voice {
         };
     }
 
-    /// Adds the voice into the buffers. A step of the envelope goes as a
-    /// run, in which only the position moves and the levels slide, kept in
-    /// locals; each sample's sums are those of
+    /// Adds the voice into the buffers. A step of the envelope is rendered
+    /// as a run, in which only the position moves and the levels slide,
+    /// kept in locals; each sample's sums are the same as in
     /// [`Voice::render_by_sample`], in the same order.
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         let wave = self.wave.clone();
@@ -541,8 +547,8 @@ impl Voice {
         }
     }
 
-    /// [`Voice::render`] a sample at a time, as it was first written, to
-    /// compare with.
+    /// [`Voice::render`] one sample at a time, the way it was first
+    /// written, for comparison.
     #[cfg(test)]
     fn render_by_sample(&mut self, left: &mut [f32], right: &mut [f32]) {
         let wave = self.wave.clone();
@@ -585,9 +591,9 @@ impl Voice {
 }
 
 /// The waveform at `pos`, read through the instruments' filter
-/// ([`sampler::interpolate`]): the sample before and the two after, round
-/// the loop when it `loops`, which after `wrapped` also gives the sample
-/// before its start. Each sample times `unit` is exact.
+/// ([`sampler::interpolate`]): the sample before and the two after,
+/// around the loop when it `loops`; after `wrapped`, the loop also gives
+/// the sample before its start. Each sample times `unit` is exact.
 #[inline(always)]
 fn sample(
     samples: &[i16],
@@ -631,9 +637,10 @@ const WAVE_GAIN: f32 = 0.125 * std::f32::consts::SQRT_2;
 pub(crate) mod tests {
     use super::*;
 
-    /// Runs of a step give what each sample gave, to the bit: over loops
-    /// that start anywhere, waveforms that end, samples and cycles at any
-    /// pitch, LFOs, portamento and release, in blocks of any length.
+    /// Runs of a step give the same result as one sample at a time, to the
+    /// bit: over loops that start anywhere, waveforms that end, samples and
+    /// cycles at any pitch, LFOs, portamento and release, in blocks of any
+    /// length.
     #[test]
     fn runs_of_samples_give_what_each_sample_gave() {
         let mut seed = 0x2545_F491u32;
@@ -718,9 +725,9 @@ pub(crate) mod tests {
 
     #[test]
     fn releases_take_as_long_as_the_instruments_do() {
-        // @E127,116,111,32 rings on long after its note ends; a release
-        // of 122, as songs give notes cut short with Q0, still leaves a
-        // tail of a few dozen milliseconds.
+        // @E127,116,111,32 keeps ringing long after its note ends; a
+        // release of 122, the release that songs give to notes cut short
+        // with Q0, still leaves a tail of a few dozen milliseconds.
         for (release, ms, sounding) in [(32, 500, true), (122, 30, true), (122, 400, false)] {
             let e = Envelope {
                 attack: 127,
@@ -773,7 +780,7 @@ pub(crate) mod tests {
         // new notes play 32 of it.
         assert_eq!((w.samples.len(), w.looped), (512, (0, 32)));
         assert_eq!((w.samples[31], w.samples[300]), (-8192, -16384));
-        // The note that sounded goes on over all 512 at its old rate.
+        // The note that was sounding continues over all 512 at its old rate.
         let steady = v.step;
         v.follow(&w);
         assert_eq!((v.looped, v.step), ((0, 512), steady));
@@ -783,7 +790,7 @@ pub(crate) mod tests {
     fn vibrato_moves_the_pitch_and_stops() {
         let mut v = Voice::new(Rc::new(pulse(219)), None, 69, 0, false);
         let steady = v.step;
-        // @MP32,1,20,0: ±25 cents, 7.8 times a second.
+        // @MP32,1,20,0: ±25 cents, 7.8 times per second.
         v.lfo[0] = sampler::Lfo {
             depth: 32,
             range: 1,
@@ -932,7 +939,7 @@ pub(crate) mod tests {
         };
         assert_eq!(unset(&none), None);
 
-        // All 32 play it until set, each number on its own, and nothing
+        // All 32 play it until set, each number separately, and nothing
         // plays without the bank.
         let mut waves = Waves::default();
         assert_eq!(waves.get(224), None);
@@ -982,8 +989,8 @@ pub(crate) mod tests {
     }
 
     /// A 1 kHz sine at 8000 Hz: the images at 7 and 9 kHz are about 38 and
-    /// 62 dB below the tone, where holding each sample left them at 17 and
-    /// 19.
+    /// 62 dB below the tone, whereas holding each sample left them at 17
+    /// and 19.
     #[test]
     fn waveforms_are_read_through_a_filter() {
         let samples: Vec<i16> = (0..8000)
@@ -1015,7 +1022,8 @@ pub(crate) mod tests {
 
     #[test]
     fn a_cycle_plays_at_the_note() {
-        // 8 samples a cycle at 440 Hz: a step of 8 * 440 / 48000.
+        // 8 samples per cycle at key 81, an octave above 440 Hz: a step of
+        // 2 * 8 * 440 / 48000.
         let v = Voice::new(Rc::new(pulse(219)), None, 81, 0, false);
         assert!((v.step - 2.0 * 8.0 * 440.0 / 48000.0).abs() < 1e-9);
     }

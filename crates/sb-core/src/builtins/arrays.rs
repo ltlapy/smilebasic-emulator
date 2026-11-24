@@ -30,11 +30,12 @@ fn count(v: &Value) -> Result<usize> {
 }
 
 /// COPY's source `offset` and `count` within `len`. Past the end is
-/// Subscript out of range; the function form names the argument, the
+/// Subscript out of range. The function form names the argument and the
 /// command form does not. An offset at the end of a source that is not
-/// empty is past it too, in the function form even with a count of 0
-/// (`COPY(B,5,0)` of five elements), while the command form copies
-/// nothing for that count. Offset 0 of an empty source copies nothing.
+/// empty is past it too. In the function form that holds even with a
+/// count of 0 (`COPY(B,5,0)` of five elements), but the command form
+/// copies nothing for that count. Offset 0 of an empty source copies
+/// nothing.
 fn copy_span(
     len: usize,
     offset: Option<&Value>,
@@ -59,7 +60,7 @@ fn copy_span(
     Ok((at, size))
 }
 
-/// What growing an array to `len` elements needs of memory.
+/// Asks for the memory that growing an array to `len` elements needs.
 fn make_room(a: &Array, len: usize) -> Result<()> {
     let elem = a.elem_type();
     memory::grow(
@@ -86,7 +87,7 @@ fn grow(a: &mut Array, len: usize) -> Result<()> {
     Ok(())
 }
 
-/// Copies an element, so that a string array's copy has strings of its own.
+/// Copies an element, so that the copy of a string array has its own strings.
 fn element(a: &Array, i: usize) -> Value {
     match a.get(i) {
         Value::Str(s) => string(s.borrow().clone()),
@@ -191,10 +192,10 @@ pub(super) fn copy(args: &[Value], _outs: usize, data: &mut Data) -> Result<Vec<
                 let elem = dest.elem_type();
                 elem == source.borrow().elem_type() && elem != ElemType::Str
             };
-            // Numbers into an array of their type go across as they are,
-            // rather than as a value each: what the elements are set to
-            // is the same, and an array copied into itself is read before
-            // it is written, as `copy_within` does.
+            // Numbers into an array of their type are copied unchanged,
+            // not as one value each: the elements get the same values,
+            // and an array copied into itself is read before it is
+            // written, which `copy_within` does.
             if same {
                 let to = dest_offset..dest_offset + n;
                 if std::rc::Rc::ptr_eq(dest, source) {
@@ -247,13 +248,13 @@ fn compare(a: &Value, b: &Value) -> Ordering {
 }
 
 /// SORT and RSORT: `[start, count,] key [, arrays...]`. The other arrays
-/// are put in the key's new order. SORT keeps equal keys in order; RSORT
-/// is SORT turned round, so it reverses them (checked on hardware).
-// SmileBASIC 4 takes the form from the first
-// argument: a number needs a count and an array after it, else Wrong
-// number of arguments, as do more than eight arrays. Each array in turn
-// must be one-dimensional (else Type mismatch) and hold the start and the
-// count (else Out of range), both naming it; the start must be inside the
+/// are put in the key's new order. SORT keeps equal keys in order. RSORT
+/// is SORT reversed, so it reverses them (checked on hardware).
+// SmileBASIC 4 takes the form from the first argument. A number needs a
+// count and an array after it, or the call is a Wrong number of arguments,
+// and so are more than eight arrays. Each array in turn must be
+// one-dimensional (or Type mismatch) and hold the start and the count (or
+// Out of range), and both errors name it. The start must be inside the
 // array, so an empty one is Out of range even with a count of 0.
 fn sort(args: &[Value], descending: bool) -> Result<Vec<Value>> {
     let (start, mut n, values) = if args[0].is_number() {
@@ -370,10 +371,10 @@ pub(super) fn remove(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
         memory::array_bytes(elem, len - n),
     )? {
         // The elements have moved down before the block is asked for, and
-        // the length stays. What is left at the end is what follows the
-        // array in SmileBASIC 4's memory.
-        // UNVERIFIED: that it reads as the type's zero value whatever the
-        // array and however many were removed.
+        // the length stays. In SmileBASIC 4 the elements left at the end
+        // read the memory that follows the array.
+        // UNVERIFIED: that it reads as the type's zero value for any array
+        // and any number of elements removed.
         let tail = len - n;
         match &mut a.data {
             ArrayData::Int(v) => {
@@ -401,7 +402,7 @@ pub(super) fn remove(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     Ok(vec![])
 }
 
-/// Where `value` first is in the array, by element order.
+/// Finds the first place of `value` in the array, by element order.
 fn find_in(args: &[Value]) -> Result<(Vec<usize>, Option<usize>)> {
     let a = array(&args[0])?;
     let a = a.borrow();
@@ -418,9 +419,9 @@ pub(super) fn find_fn(args: &[Value]) -> Result<Value> {
     Ok(Value::Int(find_in(args)?.1.map_or(-1, |i| i as i32)))
 }
 
-/// `FIND array, value OUT I` gives the place by element order, as the
-/// function does; more OUT variables need one for each of the array's
-/// sizes. The count is looked at after the search.
+/// `FIND array, value OUT I` gives the place by element order, the same
+/// as the function does. More OUT variables need one for each size of the
+/// array. The count is looked at after the search.
 pub(super) fn find(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     let (dims, found) = find_in(args)?;
     if outs == 1 {
@@ -440,8 +441,8 @@ pub(super) fn find(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     Ok(indices.into_iter().map(Value::Int).collect())
 }
 
-/// Gives memory back to the system after shrinking a lot, as that counts as
-/// free from now on.
+/// Gives memory back to the system after shrinking a lot, because that
+/// memory counts as free from now on.
 fn hand_back<T>(v: &mut Vec<T>) {
     if v.len() < v.capacity() / 4 {
         v.shrink_to_fit();
@@ -452,13 +453,14 @@ fn hand_back<T>(v: &mut Vec<T>) {
 const RESIZE_MOST: u64 = 1 << 30;
 
 /// `RESIZE array, n1 [, n2...]`: only the first size can change, and the
-/// others are given as they are (checked on hardware).
-// SmileBASIC 4 refuses an array of the system's, naming it,
-// before it looks at the number of sizes, then at each size in turn: its
-// type, the elements so far, past 2^30 Array is too large naming it, and a
-// later size other than the array's an Illegal function call naming it. The elements are multiplied as 64-bit unsigned
-// numbers, so a negative size is too large unless a 0 came before it.
-// Exactly 2^30 is too large too, naming nothing.
+/// others are given unchanged (checked on hardware).
+// SmileBASIC 4 refuses an array of the system, naming it, before it looks
+// at the number of sizes. Then it looks at each size in turn: its type;
+// the elements so far, which past 2^30 give Array is too large naming the
+// size; and a later size that differs from the current size of the array
+// there, which is an Illegal function call naming it. The elements are
+// multiplied as 64-bit unsigned numbers, so a negative size is too large
+// unless a 0 came before it. Exactly 2^30 is too large too, naming nothing.
 pub(super) fn resize(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let a = array(&args[0])?;
     let mut a = a.borrow_mut();
@@ -510,9 +512,10 @@ pub(super) fn resize(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     Ok(vec![])
 }
 
-/// An ARYOP parameter as checked: a number, a real array other than the
-/// result read where it lies, or the values of any other array, taken
-/// before the result is written, as the result may be one of them.
+/// An ARYOP parameter after its check: a number, a real array other than
+/// the result, read in place, or the values of any other array. Those
+/// values are copied before the result is written, because the result may
+/// be one of those arrays.
 enum Given<'a> {
     Number(f64),
     Reals(std::cell::Ref<'a, Array>),
@@ -579,7 +582,7 @@ impl Param<'_> {
     fn at(&self, i: usize) -> f64 {
         match self {
             Param::Number(x) => *x,
-            // Going round is rare, and a division for each element is not cheap.
+            // Wrapping around is rare, and a division per element is not cheap.
             Param::Array(v) => match v.get(i) {
                 Some(x) => *x,
                 None => v[i % v.len()],
@@ -610,8 +613,8 @@ pub(super) fn aryop(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
         .collect::<Result<Vec<_>>>()?;
     let params: Vec<Param> = given.iter().map(Given::param).collect();
     let mut result = result.borrow_mut();
-    // The operation and the parameters are chosen once, for a loop of
-    // their own.
+    // The operation and the parameters are chosen once, so that each
+    // choice gets a separate loop.
     let (p0, p1) = (&params[0], &params[1]);
     let p2 = params.get(2).unwrap_or(&Param::Number(0.0));
     match op {
@@ -650,15 +653,15 @@ fn channels(a: &Array) -> Result<(usize, usize)> {
     }
 }
 
-/// An integer argument of RINGCOPY's, by its number.
+/// An integer argument of RINGCOPY, by its number.
 fn ring_int(args: &[Value], i: usize) -> Result<i64> {
     args[i].to_int().map(i64::from).map_err(|e| e.of_arg(i))
 }
 
 /// `RINGCOPY dest, offset, source [[,offset], count] [OUT end]`: copies
-/// into `dest` going round to its start, and gives where to copy next. Only
-/// numbers can be copied, but string arrays are refused only when there is
-/// something to copy.
+/// into `dest`, wrapping around to its start, and gives the offset to copy
+/// to next. Only numbers can be copied, but string arrays are refused only
+/// when there is something to copy.
 pub(super) fn ringcopy(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     let mismatch = |i| Error::from(ErrorKind::TypeMismatch).of_arg(i);
     let Value::Array(dest) = &args[0] else {

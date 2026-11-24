@@ -1,43 +1,43 @@
-//! How the editor is laid out, in its own window and in the main one.
-//! The editor's frame fills the window from its top left corner, each of
-//! its pixels a whole number of the window's, so the dot fonts stay
+//! The layout of the editor, in its own window and in the main one.
+//! The editor frame fills the window from its top left corner. Each of
+//! its pixels is a whole number of window pixels, so the dot fonts stay
 //! sharp, and a larger window shows more rows and columns instead of
 //! larger pixels. Both windows take the zoom from [`zoom`] and the frame
 //! from [`area`].
 //!
 //! In its own window, the emulator's UI over the editor (the menu bar,
-//! the debugger's panel, the help and the index) has pixels that are a
-//! whole number of the window's too. The UI's scale follows the
-//! desktop's scaling setting, rounded to a whole number. In the main
-//! window the UI is scaled with SmileBASIC 4's display, which fills the
-//! window's width or height.
+//! the debugger's panel, the help and the index) also has pixels that
+//! are a whole number of window pixels. The UI scale follows the scaling
+//! setting of the desktop, rounded to a whole number. In the main window
+//! the UI is scaled with SmileBASIC 4's display, which fills the width or
+//! height of the window.
 
 use sb_runtime::editor::{Area, EditorSize, frame_size};
 use sb_runtime::font::FontSize;
 
-/// The smallest the UI gets, in its own pixels: room for the debugger's
-/// tabs, at SmileBASIC 4's shape. The window cannot be made smaller than
-/// this at its scale.
+/// The smallest size of the UI, in UI pixels: room for the debugger's
+/// tabs, at the shape of SmileBASIC 4's display. The window cannot be
+/// made smaller than this at its scale.
 pub const MIN_UI: (u32, u32) = (800, 450);
 
 /// The largest UI scale taken from the desktop.
 const MAX_SCALE: u32 = 8;
 
-/// The fewest columns the editor is laid out with while a larger zoom
-/// would leave fewer: about what SmileBASIC 4's Large size shows across
-/// its screen.
+/// The fewest columns that the editor is laid out with when a larger zoom
+/// would leave fewer: about the number that SmileBASIC 4's Large size
+/// shows across its screen.
 pub const MIN_COLUMNS: u32 = 40;
 
-/// The zoom of the editor's frame, window pixels to a pixel of it, in a
-/// window `width` pixels across in which SmileBASIC 4's display is
+/// Returns the zoom of the editor frame (window pixels per frame pixel)
+/// in a window `width` pixels wide in which SmileBASIC 4's display is
 /// `display_h` pixels high, for the editor's `font` at F2's `size`.
 ///
-/// It is the whole number nearest to the one at which F2's size shows
-/// SmileBASIC 4's rows in the display's height, at least 1. Where that
+/// It is the whole number nearest to the zoom at which F2's size shows
+/// SmileBASIC 4's rows in the height of the display, at least 1. When that
 /// leaves fewer than [`MIN_COLUMNS`] columns, it is the largest smaller
 /// zoom that does not, or 1.
 pub fn zoom(width: u32, display_h: f32, (font, size): (FontSize, EditorSize)) -> u32 {
-    // SmileBASIC 4's frame is as high at any shape.
+    // SmileBASIC 4's frame has the same height at any shape.
     let rows = frame_size((16, 9), font, size).1.max(1);
     let nearest = (display_h / rows as f32).round().max(1.0) as u32;
     let cell = font as u32;
@@ -56,11 +56,11 @@ pub const SIZES: [EditorSize; 4] = [
     EditorSize::Tiny,
 ];
 
-/// Which of [`SIZES`] show the editor differently in a window `width`
-/// pixels across in which SmileBASIC 4's display is `display_h` pixels
-/// high, with the editor's `font` and `current` the size chosen. Sizes
-/// at the same [`zoom`] show the same; of each such group one counts:
-/// `current` if it is in the group, or else the first listed.
+/// Returns which of [`SIZES`] show the editor differently in a window
+/// `width` pixels wide in which SmileBASIC 4's display is `display_h`
+/// pixels high, with the editor's `font` and `current` as the chosen size.
+/// Sizes at the same [`zoom`] look the same. One size of each such group
+/// counts: `current` if it is in the group, or else the first listed.
 pub fn distinct_sizes(
     width: u32,
     display_h: f32,
@@ -75,10 +75,10 @@ pub fn distinct_sizes(
     })
 }
 
-/// The size F2 goes to from `current` in the window [`distinct_sizes`]
-/// takes: the next in its order that shows the editor at another zoom,
-/// so that each press changes what is seen, or `current` if every size
-/// shows it at the same zoom.
+/// Returns the size that F2 changes to from `current`, in a window given
+/// as for [`distinct_sizes`]: the next size in its order that shows the
+/// editor at a different zoom, so that each press changes the view, or
+/// `current` if every size shows it at the same zoom.
 pub fn next_size(width: u32, display_h: f32, font: FontSize, current: EditorSize) -> EditorSize {
     let zoom_of = |size| zoom(width, display_h, (font, size));
     let now = zoom_of(current);
@@ -89,10 +89,10 @@ pub fn next_size(width: u32, display_h: f32, font: FontSize, current: EditorSize
     size
 }
 
-/// The editor's frame at `zoom` in a window of `pixels`, under a menu
-/// bar `bar` window pixels high: as many pixels as cover the window,
-/// past its right and bottom edges by less than one, and the ones the
-/// bar covers.
+/// Returns the editor frame at `zoom` in a window of `pixels`, under a
+/// menu bar `bar` window pixels high: enough pixels to cover the window,
+/// past its right and bottom edges by less than one, and the pixels that
+/// the bar covers.
 pub fn area(pixels: (u32, u32), zoom: u32, bar: u32) -> Area {
     let (w, h) = (pixels.0.max(1), pixels.1.max(1));
     let zoom = zoom.max(1);
@@ -102,9 +102,9 @@ pub fn area(pixels: (u32, u32), zoom: u32, bar: u32) -> Area {
     }
 }
 
-/// The UI scale for a window with SDL's display scale: the desktop's
-/// scaling setting times the window's pixel density, rounded to the
-/// nearest whole number, 150% to 2.
+/// Returns the UI scale for a window with SDL's display scale: the
+/// scaling setting of the desktop times the window's pixel density,
+/// rounded to the nearest whole number, so 150% becomes 2.
 pub fn ui_scale(display_scale: f32) -> u32 {
     if !display_scale.is_finite() {
         return 1;
@@ -112,8 +112,8 @@ pub fn ui_scale(display_scale: f32) -> u32 {
     (display_scale.round().max(1.0) as u32).min(MAX_SCALE)
 }
 
-/// The window's smallest size, in its own coordinates, that leaves the
-/// UI [`MIN_UI`] at `scale`. Windows and X11 give the size in pixels,
+/// Returns the smallest window size, in window coordinates, that leaves
+/// the UI [`MIN_UI`] at `scale`. Windows and X11 give the size in pixels,
 /// macOS and Wayland in points of `density` pixels each.
 pub fn min_window(scale: u32, density: f32) -> (u32, u32) {
     let density = if density.is_finite() && density > 0.0 {
@@ -127,11 +127,11 @@ pub fn min_window(scale: u32, density: f32) -> (u32, u32) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
-    /// Window pixels to a pixel of the UI.
+    /// Window pixels per UI pixel.
     pub ui: u32,
-    /// The UI's size in its pixels.
+    /// The UI size in UI pixels.
     pub ui_size: (u32, u32),
-    /// Window pixels to a pixel of the editor's frame.
+    /// Window pixels per pixel of the editor frame.
     pub zoom: u32,
     /// The editor's frame, which fills the window from its top left
     /// corner, and the part of it under the menu bar.
@@ -139,9 +139,10 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// The layout for a window of `pixels` at the UI scale `scale`, with
-    /// the editor's `font` at `size`. `display` is SmileBASIC 4's display
-    /// in UI pixels, and `bar` the menu bar's height in them.
+    /// Returns the layout for a window of `pixels` at the UI scale `scale`,
+    /// with `look`, the editor's font and size. `display` is SmileBASIC 4's
+    /// display in UI pixels, and `bar` the height of the menu bar in UI
+    /// pixels.
     pub fn new(
         pixels: (u32, u32),
         scale: u32,
@@ -150,13 +151,13 @@ impl Layout {
         bar: u32,
     ) -> Layout {
         let (w, h) = (pixels.0.max(1), pixels.1.max(1));
-        // A window the system made smaller than its minimum, as some
-        // tiling window managers do, takes a smaller scale.
+        // A window that the system made smaller than its minimum, which
+        // some tiling window managers do, takes a smaller scale.
         let fits = |v: u32, least: u32| (v / least).max(1);
         let ui = scale.clamp(1, MAX_SCALE);
         let ui = ui.min(fits(w, MIN_UI.0)).min(fits(h, MIN_UI.1));
         let ui_size = ((w / ui).max(1), (h / ui).max(1));
-        // SmileBASIC 4's display at the UI's scale.
+        // SmileBASIC 4's display at the UI scale.
         let zoom = zoom(w, (display.1 * ui) as f32, look);
         let area = area((w, h), zoom, bar * ui);
         Layout {
@@ -253,8 +254,8 @@ mod tests {
         assert_eq!(zooms(FontSize::Large), [2, 1, 1, 1]);
     }
 
-    /// The main window's sizes the steps are checked at, with SmileBASIC
-    /// 4's display fitted into each, and a tall one.
+    /// The main window sizes at which the steps are checked, with
+    /// SmileBASIC 4's display fitted into each, and a tall one.
     const WINDOWS: [(u32, u32); 5] = [
         (1280, 720),
         (640, 480),
@@ -280,8 +281,8 @@ mod tests {
     fn sizes_at_the_same_zoom_count_once() {
         use EditorSize::{Large, Medium, Small, Tiny};
         let (y, n) = (true, false);
-        // The window, the font, each size's zoom, and which sizes count
-        // with Medium, the default, chosen.
+        // The window, the font, the zoom of each size, and which sizes
+        // count when Medium, the default, is chosen.
         let table = [
             ((1280, 720), FontSize::Large, [2, 1, 1, 1], [y, y, n, n]),
             ((1280, 720), FontSize::Small, [4, 3, 2, 1], [y, y, y, y]),
@@ -299,7 +300,7 @@ mod tests {
             assert_eq!(zooms(window, font), want_zooms, "{window:?} {font:?}");
             assert_eq!(got, want, "{window:?} {font:?}");
         }
-        // The size chosen stands for its group; another group keeps its
+        // The chosen size represents its group. Another group keeps its
         // first listed size.
         let at = |current| distinct_sizes(1280, 720.0, FontSize::Large, current);
         assert_eq!(at(Tiny), [y, n, n, y]);
@@ -336,10 +337,10 @@ mod tests {
         assert_eq!(next((1280, 720), big, Tiny), Large);
         assert_eq!(next((1920, 1080), big, Small), Large);
         assert_eq!(next((720, 1280), FontSize::Small, Large), Small);
-        // Where every size looks the same, F2 changes nothing.
+        // When every size looks the same, F2 changes nothing.
         assert_eq!(next((640, 360), big, Medium), Medium);
         // Each press changes the zoom and lands on a size that counts in
-        // View > Size, and the presses go round every zoom there is.
+        // View > Size, and the presses cycle through every zoom there is.
         for window in WINDOWS {
             for font in FONTS {
                 let zooms = zooms(window, font);
@@ -392,7 +393,7 @@ mod tests {
         // Points on a 2x display, pixels on Windows at 200%.
         assert_eq!(min_window(2, 2.0), MIN_UI);
         assert_eq!(min_window(2, 1.0), (1600, 900));
-        // Wayland at 150% has 1.5 pixels to a point and a UI scale of 2.
+        // Wayland at 150% has 1.5 pixels per point and a UI scale of 2.
         assert_eq!(min_window(2, 1.5), (1067, 600));
         assert_eq!(min_window(1, 0.0), MIN_UI);
     }

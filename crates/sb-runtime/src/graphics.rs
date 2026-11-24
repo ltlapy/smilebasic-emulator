@@ -50,7 +50,7 @@ impl Blend {
         }
     }
 
-    /// The modes that weigh the two colours.
+    /// The modes that weigh the two colors.
     fn mix(self, dst: u32, src: u32) -> u32 {
         let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
         let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
@@ -65,9 +65,9 @@ impl Blend {
                 let mix = |s: u32, d: u32| (s * sa + d * (255 - sa)) / 255;
                 pack(da, mix(sr, dr), mix(sg, dg), mix(sb, db))
             }
-            // The weights of the two colours are worked out on 0-255 and
+            // The weights of the two colors are computed on 0-255 and
             // rounded down before they are used. A clear pixel over a clear
-            // pixel leaves it as it was, color included.
+            // pixel leaves it unchanged, color included.
             Blend::Alpha2 => {
                 let a = sa + da - sa * da / 255;
                 if a == 0 {
@@ -96,9 +96,9 @@ pub fn multiply(a: u32, b: u32) -> u32 {
     }))
 }
 
-/// GCOPY's rows: each source row onto its target row, the two of a
-/// length, multiplied by `tint` and blended. The mode is chosen once for
-/// all the rows, so that each row runs a loop of its own mode.
+/// GCOPY's rows: each source row onto its target row of the same length,
+/// multiplied by `tint` and blended. The mode is chosen once for all the
+/// rows, so that each row runs the loop for that mode.
 fn copy_rows<'a>(
     rows: impl Iterator<Item = (&'a mut [u32], &'a [u32])>,
     tint: Option<u32>,
@@ -122,8 +122,8 @@ fn copy_rows<'a>(
     ) {
         match blend {
             Blend::Normal => each(rows, |_, p| times(p)),
-            // A clear pixel is clear tinted too, and leaves the page as it
-            // is: most of a glyph or a sprite's cell.
+            // A clear pixel is still clear when tinted, and leaves the page
+            // unchanged. Most pixels of a glyph or a sprite's cell are clear.
             Blend::Normal2 => each(rows, |d, p| match p >> 24 {
                 0 => d,
                 _ => Blend::Normal2.apply(d, times(p)),
@@ -136,7 +136,7 @@ fn copy_rows<'a>(
             rows.for_each(|(to, from)| to.copy_from_slice(from))
         }
         (None | Some(0xFFFF_FFFF), blend) => each(rows, |d, p| blend.apply(d, p)),
-        // Four lookups a pixel instead of four products and divisions, for
+        // Four lookups per pixel instead of four products and divisions, for
         // a table that takes about as long to make as 100 pixels take.
         (Some(t), blend) if pixels >= TINT_TABLE_PIXELS => {
             let table = tint_table(t);
@@ -149,12 +149,12 @@ fn copy_rows<'a>(
     }
 }
 
-/// How many pixels a tinted GCOPY copies at least for [`tint_table`] to
-/// pay.
+/// The fewest pixels that a tinted GCOPY must copy for [`tint_table`] to
+/// pay off.
 const TINT_TABLE_PIXELS: usize = 256;
 
-/// Of each channel of `tint`, from blue (bits 0 to 7) to alpha, what
-/// [`multiply`] makes of each value of that channel.
+/// For each channel of `tint`, from blue (bits 0 to 7) to alpha, the result
+/// of [`multiply`] for each value of that channel.
 fn tint_table(tint: u32) -> [[u8; 256]; 4] {
     std::array::from_fn(|i| {
         let t = tint >> (8 * i) & 0xFF;
@@ -245,17 +245,17 @@ impl Clip {
     }
 }
 
-/// How many pixels a side of a tile of [`Dirty`] has, as a power of two.
+/// The number of pixels on a side of a [`Dirty`] tile, as a power of two.
 const TILE_BITS: u32 = 6;
-/// How many pixels a side of a tile of [`Dirty`] has.
+/// The number of pixels on a side of a [`Dirty`] tile.
 pub const TILE: i32 = 1 << TILE_BITS;
-/// How many tiles a side of a page has.
+/// The number of tiles on a side of a page.
 const TILES: usize = (GRP_SIZE >> TILE_BITS) as usize;
 
-/// Which tiles of a page have changed, a tile being [`TILE`] pixels square.
+/// The tiles of a page that have changed, each [`TILE`] pixels square.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Dirty {
-    /// Of each row of tiles, a bit for each tile.
+    /// For each row of tiles, a bit for each tile.
     rows: [u32; TILES],
 }
 
@@ -265,7 +265,7 @@ impl Dirty {
         rows: [u32::MAX; TILES],
     };
 
-    /// The pixel lies on the page.
+    /// The pixel is on the page.
     #[inline]
     fn mark_pixel(&mut self, x: i32, y: i32) {
         self.rows[(y >> TILE_BITS) as usize] |= 1 << (x >> TILE_BITS);
@@ -277,7 +277,7 @@ impl Dirty {
         (u32::MAX >> (31 - (right >> TILE_BITS))) & (u32::MAX << (left >> TILE_BITS))
     }
 
-    /// `area` lies on the page.
+    /// `area` is on the page.
     #[inline]
     fn mark_area(&mut self, area: Clip) {
         let mask = Dirty::columns(area.x0, area.x1);
@@ -296,8 +296,8 @@ impl Dirty {
         }
     }
 
-    /// Takes off and returns what is marked of the tiles `area` touches, which
-    /// lies on the page.
+    /// Removes and returns the marks of the tiles that `area` touches. `area`
+    /// is on the page.
     pub fn take_area(&mut self, area: Clip) -> Dirty {
         let mut taken = Dirty::default();
         let mask = Dirty::columns(area.x0, area.x1);
@@ -314,7 +314,7 @@ impl Dirty {
     }
 
     /// Calls `f` with rectangles of pixels that together make up the tiles
-    /// marked, each tile in one, and neighbours together where they can be.
+    /// marked, each tile in one, and neighbors together where they can be.
     pub fn for_each_area(&self, mut f: impl FnMut(Clip)) {
         let mut rows = self.rows;
         for y in 0..TILES {
@@ -349,55 +349,59 @@ pub struct Graphics {
     /// GSAMPLE of each page: 0 for border, 1 for repeat. Kept for sprites
     /// and text screens, which read pages.
     pub sample: [i32; PAGES],
-    /// GARRAY's array of each page, `[y, x]`, which stands for the page's
-    /// memory: every pixel drawn is written to it as well, and commands
-    /// that read the page read it. The page itself is what the screen
-    /// shows, which takes the array's writes on GUPDATE (checked on
+    /// The GARRAY array of each page, `[y, x]`, which stands for the page's
+    /// memory: every pixel drawn is also written to it, and commands that
+    /// read the page read the array. The page itself is what the screen
+    /// shows, and it takes the array's writes on GUPDATE (checked on
     /// hardware: GPGET sees them before).
     arrays: [Option<ArrayRef>; PAGES],
-    /// Of each page, a count that moves on whenever its pixels may have
-    /// changed, for the debugger's viewer to copy a page only then.
+    /// For each page, a count that increases whenever its pixels may have
+    /// changed, so that the debugger's viewer copies a page only then.
     changes: [u64; PAGES],
-    /// Which tiles of each page have changed since the last
+    /// The tiles of each page that have changed since the last
     /// [`Graphics::take_dirty`]. Everything that hands out a page's pixels
-    /// to write marks what it will write: [`Graphics::page_pixels`] asks.
+    /// to write marks what it will write: [`Graphics::page_pixels`] asks
+    /// for the area.
     dirty: [Cell<Dirty>; PAGES],
-    /// Of each page, a color that every pixel outside the tiles of
+    /// For each page, a color that every pixel outside the tiles of
     /// [`Graphics::ink`] holds, if one is known: the color of the last
     /// fill of the whole page, or 0 for a blank one. A fill in that color
-    /// then writes the tiles of `ink` alone, so that GCLS on a page drawn
+    /// then writes only the tiles of `ink`, so that GCLS on a page drawn
     /// on in one corner does not write all of its 4 million pixels.
     ground: [Option<u32>; PAGES],
-    /// Of each page, the tiles drawn on since its `ground` was set, which
+    /// For each page, the tiles drawn on since its `ground` was set, which
     /// may hold other colors. Everything that marks `dirty` marks this
-    /// too, but taking `dirty` leaves it.
+    /// too, but taking `dirty` leaves it unchanged.
     ink: [Dirty; PAGES],
-    /// Which parts of each page's rows hold something, for sprites to
-    /// pass over the clear rest; see [`Graphics::pieces`].
+    /// The parts of each page's rows that hold something, so that sprites
+    /// can skip the clear rest; see [`Graphics::pieces`].
     coverage: RefCell<[Coverage; PAGES]>,
 }
 
-/// How many pixels along a row one bit of [`Graphics::pieces`] stands for.
+/// The number of pixels along a row that one bit of [`Graphics::pieces`]
+/// stands for.
 pub const PIECE: usize = 32;
 
-/// Of a page's rows, which [`PIECE`]-pixel pieces have a pixel that is not
-/// clear, worked out a piece at a time as asked for, until the page
-/// changes.
+/// For each row of a page, the [`PIECE`]-pixel pieces that have a pixel that
+/// is not clear, computed a piece at a time when asked for and kept until
+/// the page changes.
 #[derive(Default)]
 struct Coverage {
-    /// The page's [`Graphics::changes`] these hold for.
+    /// The page's [`Graphics::changes`] that these are valid for.
     changes: u64,
-    /// Of each row, the pieces worked out.
+    /// For each row, the pieces computed.
     known: Vec<u64>,
-    /// Of each row, the pieces worked out that hold something.
+    /// For each row, the computed pieces that hold something.
     filled: Vec<u64>,
 }
 
-/// A [`Graphics::changes`] above these bits says which [`Graphics`] it is of.
+/// The bits of a [`Graphics::changes`] count above these say which
+/// [`Graphics`] it belongs to.
 pub const COUNT_BITS: u32 = 40;
 
-/// Where the next [`Graphics`] starts counting its pages' changes, so
-/// that a count is never one that another seen before had.
+/// The number of the next [`Graphics`], which its pages' change counts
+/// carry above [`COUNT_BITS`], so that a count never equals one that an
+/// earlier [`Graphics`] had.
 static CHANGES_FROM: AtomicU64 = AtomicU64::new(0);
 
 impl Default for Graphics {
@@ -419,9 +423,9 @@ impl Default for Graphics {
     }
 }
 
-/// Where a pixel lies in an image of [`GRP_SIZE`] rows of [`GRP_SIZE`]
-/// pixels one after another, as GARRAY arrays and files hold a page. The
-/// page itself lies otherwise; see [`crate::page`].
+/// The offset of a pixel in an image of [`GRP_SIZE`] rows of [`GRP_SIZE`]
+/// pixels one after another, the way GARRAY arrays and files hold a page.
+/// The page itself has another layout; see [`crate::page`].
 fn row_major(x: i32, y: i32) -> usize {
     (y * GRP_SIZE + x) as usize
 }
@@ -474,8 +478,8 @@ impl Graphics {
     /// Of the pieces `from..=to` of row `y` of a page that is not blank,
     /// each [`PIECE`] pixels wide from the page's left edge, those with a
     /// pixel that is not clear (alpha 0), as the bits of their numbers.
-    /// Where a sprite's image has nothing, it draws nothing, so it need
-    /// only look at these.
+    /// Where a sprite's image has nothing, it draws nothing, so it only
+    /// needs to look at these.
     pub fn pieces(&self, page: usize, y: usize, from: usize, to: usize) -> u64 {
         let want = (u64::MAX >> (63 - to)) & (u64::MAX << from);
         let mut all = self.coverage.borrow_mut();
@@ -505,7 +509,7 @@ impl Graphics {
     }
 
     /// Replaces a whole page, such as GRP4 with the default sprite image;
-    /// a blank one empties it, as [`Graphics::clear_page`] does.
+    /// a blank one empties it, the same as [`Graphics::clear_page`] does.
     pub fn set_page(&mut self, page: usize, pixels: Page) {
         self.ground[page] = pixels.is_blank().then_some(0);
         self.ink[page] = Dirty::default();
@@ -515,7 +519,7 @@ impl Graphics {
         self.mirror_page(page);
     }
 
-    /// Empties a page, as GCLS does with 0.
+    /// Empties a page, the same as GCLS does with 0.
     pub fn clear_page(&mut self, page: usize) {
         self.ground[page] = Some(0);
         self.ink[page] = Dirty::default();
@@ -525,7 +529,7 @@ impl Graphics {
         self.mirror_page(page);
     }
 
-    /// GTARGET, GCOLOR, GCLIP and GSAMPLE as at start-up.
+    /// Resets GTARGET, GCOLOR, GCLIP and GSAMPLE to start-up values.
     pub fn reset_state(&mut self) {
         let pages = std::mem::take(&mut self.pages);
         let arrays = std::mem::take(&mut self.arrays);
@@ -547,7 +551,7 @@ impl Graphics {
         }
         let size = GRP_SIZE as usize;
         let mut array = Array::new(ElemType::Int, vec![size, size]);
-        // Only read: a blank page takes memory, but its pixels stay as they were.
+        // Only read: a blank page takes memory, but its pixels stay unchanged.
         let pixels = self.pixels_to_change(page);
         let mut ints = Vec::with_capacity(size * size);
         for row in pixels.rows(0..size) {
@@ -615,8 +619,8 @@ impl Graphics {
         }
     }
 
-    /// Marks what falls inside the clipping rectangle of a rectangle of the
-    /// target.
+    /// Marks the part of a rectangle of the target that falls inside the
+    /// clipping rectangle.
     #[inline]
     fn mark_inside(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
         let c = self.clip;
@@ -633,21 +637,21 @@ impl Graphics {
         }
     }
 
-    /// Marks `area`, which lies on the page, as changed and drawn on.
+    /// Marks `area`, which is on the page, as changed and drawn on.
     #[inline]
     fn mark(&mut self, page: usize, area: Clip) {
         self.dirty[page].get_mut().mark_area(area);
         self.ink[page].mark_area(area);
     }
 
-    /// A page's pixels to change, in `area` alone.
+    /// A page's pixels to change, only in `area`.
     #[inline]
     fn page_pixels(&mut self, page: usize, area: Clip) -> &mut Page {
         self.mark(page, area);
         self.pixels_to_change(page)
     }
 
-    /// A page's pixels, with what will change on them marked by the caller.
+    /// A page's pixels, on which the caller has marked what will change.
     #[inline]
     fn pixels_to_change(&mut self, page: usize) -> &mut Page {
         self.changes[page] += 1;
@@ -688,7 +692,7 @@ impl Graphics {
         }
     }
 
-    /// [`Graphics::plot`] for a list of pixels, with less to work out for
+    /// [`Graphics::plot`] for a list of pixels, with less to compute for
     /// each when the page has no GARRAY array.
     fn plot_all(&mut self, points: &[(i32, i32)], color: u32, blend: Blend) {
         let (clip, page) = (self.clip, self.target);
@@ -698,7 +702,7 @@ impl Graphics {
             }
             return;
         }
-        // A page nothing lands on stays as it is.
+        // A page that nothing lands on stays unchanged.
         let inside = |&(x, y): &(i32, i32)| clip.contains(x, y);
         let Some(first) = points.iter().position(inside) else {
             return;
@@ -733,7 +737,7 @@ impl Graphics {
             self.plot_all(&line_points(x0, y0, x1, y1, clip), color, blend);
             return;
         }
-        // As `plot_all` does without a GARRAY array, as the points come.
+        // The same as `plot_all` without a GARRAY array, as the points come.
         let Graphics {
             pages,
             changes,
@@ -745,7 +749,7 @@ impl Graphics {
         let mut landed = false;
         line_each(x0, y0, x1, y1, clip, |x, y| {
             if clip.contains(x, y) {
-                // A page nothing lands on stays as it is.
+                // A page that nothing lands on stays unchanged.
                 if !landed {
                     landed = true;
                     changes[page] += 1;
@@ -762,7 +766,7 @@ impl Graphics {
     /// GBOX: the outline as four lines: the top and bottom rows, then the
     /// sides from the top row down to the row above the bottom one, so
     /// that the two top corners are drawn twice (which shows with
-    /// `#G_ALPHA`), whichever corners are given. A box one pixel wide or
+    /// `#G_ALPHA`), for any corners given. A box one pixel wide or
     /// high has no second side.
     pub fn rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
         let (l, r) = (x0.min(x1), x0.max(x1));
@@ -879,8 +883,8 @@ impl Graphics {
         }
         let page = self.target;
         self.pixels_to_change(page);
-        // A row at a time, as plot would draw each pixel: reading the
-        // GARRAY array where there is one, and writing both.
+        // A row at a time, drawing each pixel the same way plot would:
+        // reading the GARRAY array where there is one, and writing both.
         let array = self.arrays[page].clone();
         let mut array = array.as_ref().and_then(|a| a.try_borrow_mut().ok());
         let mut mirror = match array.as_deref_mut() {
@@ -975,7 +979,7 @@ impl Graphics {
     /// GTRI: a filled triangle, drawn a row at a time from the leftmost
     /// to the rightmost pixel any of its edges reaches in the row, so that
     /// each pixel is drawn once. See [`edge_span`] for an edge's pixels; a
-    /// level edge has none of its own, its ends being on the other edges.
+    /// level edge adds no pixels, because its ends are on the other edges.
     pub fn triangle(&mut self, p: [(i32, i32); 3], color: u32, blend: Blend) {
         let mut sorted = p;
         sorted.sort_by_key(|p| p.1);
@@ -1005,8 +1009,8 @@ impl Graphics {
     }
 
     /// GPAINT: fills the area around a point that has the point's color,
-    /// or, with `border`, everything up to that color. Gives the number of
-    /// pixels filled.
+    /// or, with `border`, everything up to that color. Returns the number
+    /// of pixels filled.
     pub fn paint(&mut self, x: i32, y: i32, color: u32, border: Option<u32>) -> u64 {
         let c = self.clip;
         if !c.contains(x, y) {
@@ -1068,7 +1072,7 @@ impl Graphics {
             (xs.end() - xs.start() + 1) as usize,
             (ys.end() - ys.start() + 1) as usize,
         );
-        // Without a GARRAY array to keep the same, rows go straight into
+        // Without a GARRAY array to keep in step, rows go straight into
         // the target page, inside the clipping rectangle.
         let area = Clip {
             x0: dx + xs.start(),
@@ -1077,8 +1081,8 @@ impl Graphics {
             y1: dy + ys.end(),
         };
         let (tx, ty) = (area.x0 as usize, area.y0 as usize);
-        // Rows of another page that is not blank are read where they are,
-        // as nothing written can be read again.
+        // Rows of another page that is not blank are read in place,
+        // because nothing written can be read again.
         if src != target
             && self.arrays[src].is_none()
             && self.arrays[target].is_none()
@@ -1099,7 +1103,7 @@ impl Graphics {
         // Read first, so that a copy within one page may overlap.
         let mut pixels = Vec::with_capacity((w * h) as usize);
         if self.arrays[src].is_none() {
-            // The source lies within the page; read it a row at a time.
+            // The source is within the page; read it a row at a time.
             let page = &self.pages[src];
             if page.is_blank() {
                 pixels.resize((w * h) as usize, 0);
@@ -1166,9 +1170,9 @@ impl Graphics {
         }
     }
 
-    /// Draws one character's `px`-pixel cell, as [`Graphics::put_glyph`]
-    /// does. Where its pixels come from is worked out once for the
-    /// character, not for each pixel.
+    /// Draws one character's `px`-pixel cell the way [`Graphics::put_glyph`]
+    /// does. The source of its pixels is decided once for the character,
+    /// not for each pixel.
     #[allow(clippy::too_many_arguments)]
     fn put_char(
         &mut self,
@@ -1183,9 +1187,9 @@ impl Graphics {
     ) {
         let n = px as i32;
         if USER_CHARS.contains(&code) {
-            // GSAMPLE 1 wraps round the page as it does for text screens,
+            // GSAMPLE 1 wraps around the page, the same as for text screens,
             // GSAMPLE 0 draws nothing past the page's edge, and the page's
-            // colors are multiplied by the color as the font's are.
+            // colors are multiplied by the color, the same as font colors.
             let (cx, cy) = user.cell(code, n);
             let on = |gx: u32, gy: u32| (cx + gx as i32, cy + gy as i32);
             match usize::try_from(user.page) {
@@ -1227,9 +1231,9 @@ impl Graphics {
 
     /// Draws an `n` by `n` glyph, scaled, with its top left at `(left,
     /// top)`. A scale can make a glyph far larger than a page, so this
-    /// goes only through what lands in the clipping rectangle, in the
-    /// order the whole glyph would be. A glyph pixel of `None` draws
-    /// nothing in any mode.
+    /// goes only through the pixels that land in the clipping rectangle,
+    /// in the same order as for the whole glyph. A glyph pixel of `None`
+    /// draws nothing in any mode.
     #[allow(clippy::too_many_arguments)]
     fn put_glyph(
         &mut self,
@@ -1242,7 +1246,7 @@ impl Graphics {
     ) {
         let clip = self.clip;
         let (sx, sy) = (i64::from(sx), i64::from(sy));
-        // The glyph pixels in reach, and of each, the page pixels in reach.
+        // The glyph pixels in reach, and for each, the page pixels in reach.
         let steps = |start: i64, scale: i64, count: i32, low: i32, high: i32| {
             let step = |at: i32| (i64::from(at) - start).div_euclid(scale);
             let count = i64::from(count);
@@ -1260,9 +1264,9 @@ impl Graphics {
             near(top + i64::from(n) * sy - 1),
         );
         // Only mode 0 changes the page with a clear pixel; glyphs are
-        // mostly clear, so the others pass them by. Mode 1 looks at
-        // the glyph pixel's own alpha, not at the alpha the color makes
-        // of it: with a color of alpha 1 the glyph's soft edges are
+        // mostly clear, so the other modes skip them. Mode 1 looks at
+        // the glyph pixel's own alpha, not at its alpha after the color
+        // is applied: with a color of alpha 1 the glyph's soft edges are
         // written with alpha 0.
         let skip_clear = blend != Blend::Normal;
         let blend = match blend {
@@ -1294,8 +1298,8 @@ impl Graphics {
         }
     }
 
-    /// GPUTCHRP's function form: how wide `text` is drawn, the spacing
-    /// coming between characters and scaled with them.
+    /// GPUTCHRP's function form: the width that `text` is drawn at, with
+    /// the spacing between characters scaled with them.
     pub fn proportional_width(
         &self,
         font: &Font,
@@ -1308,12 +1312,12 @@ impl Graphics {
             .map(|&c| i64::from(span(font, c, size).width))
             .sum();
         let gaps = i64::from(spacing) * (text.len() as i64 - 1).max(0);
-        // Too wide for an integer wraps round.
+        // A width too large for an integer wraps around.
         ((widths + gaps) * i64::from(sx)) as i32
     }
 
-    /// GPUTCHRP: characters as wide as each is, `spacing` pixels apart.
-    /// User-defined characters come from `user`, as for GPUTCHR.
+    /// GPUTCHRP: characters, each at its own width, `spacing` pixels apart.
+    /// User-defined characters come from `user`, the same as for GPUTCHR.
     #[allow(clippy::too_many_arguments)]
     pub fn put_chars_proportional(
         &mut self,
@@ -1348,7 +1352,7 @@ impl Graphics {
                 let at = (left, top);
                 self.put_char(font, user, code, n as u32, at, (sx, sy), color, blend);
             }
-            // Drawing scales the spacing as the width does.
+            // Drawing scales the spacing the same as the width.
             pen += i64::from(width + spacing) * sx64;
         }
     }
@@ -1363,8 +1367,8 @@ impl Graphics {
         pixels
     }
 
-    /// LOADG: copies an image onto a page at `(x, y)` as it is, without
-    /// clipping or blending; what falls off the page is dropped.
+    /// LOADG: copies an image unchanged onto a page at `(x, y)`, without
+    /// clipping or blending; the pixels that fall off the page are dropped.
     pub fn put_image(&mut self, page: usize, (x, y): (i32, i32), image: &crate::image::Image) {
         let width = image.width.max(1);
         let height = image.pixels.len().div_ceil(width);
@@ -1385,8 +1389,8 @@ impl Graphics {
     }
 
     /// GLOAD: draws row-by-row pixels into a rectangle of the target page.
-    /// With a palette, the pixels are its indexes; one past its end leaves
-    /// the page as it is.
+    /// With a palette, the pixels are its indexes; an index past its end
+    /// leaves the page unchanged.
     pub fn load_rect(
         &mut self,
         (x, y, w, h): (i32, i32, i32, i32),
@@ -1418,7 +1422,8 @@ impl Graphics {
     }
 
     /// GLOAD straight from an integer array, when [`Graphics::load_direct`]
-    /// says that can be done, so that the array need not be copied first.
+    /// says that can be done, so that the array does not need to be copied
+    /// first.
     pub fn load_ints(
         &mut self,
         rect: (i32, i32, i32, i32),
@@ -1438,7 +1443,7 @@ impl Graphics {
 
     /// GLOAD without a palette, on a page with no GARRAY array, a row at a
     /// time: the part of the rectangle inside the clipping rectangle, for
-    /// as far as `pixels` goes. A page nothing lands on stays as it is.
+    /// as far as `pixels` goes. A page that nothing lands on stays unchanged.
     fn load_rows<T: Copy>(
         &mut self,
         (x, y, w, h): (i32, i32, i32, i32),
@@ -1483,7 +1488,7 @@ impl Graphics {
     }
 }
 
-/// The pixels of an X,Y,width,height rectangle that lie on the page, row
+/// The pixels of an X,Y,width,height rectangle that are on the page, row
 /// by row, as the column and row within the rectangle and the place on
 /// the page; the rest of a rectangle far larger than the page costs
 /// nothing.
@@ -1506,11 +1511,11 @@ fn on_page((x, y, w, h): (i32, i32, i32, i32)) -> impl Iterator<Item = (usize, u
     })
 }
 
-/// The pixels of the circle of radius `r` around `(cx, cy)` that lie on
-/// the page, without repeats and in no set order: the midpoint circle, whose pixel in each
-/// row of the first octant is the largest `x` with `x² - x + y² < r²`.
-/// Only the rows and columns that reach the page are worked out, so that
-/// huge circles take no longer than small ones.
+/// The pixels of the circle of radius `r` around `(cx, cy)` that are on
+/// the page, without repeats and in no set order: the midpoint circle,
+/// whose pixel in each row of the first octant is the largest `x` with
+/// `x² - x + y² < r²`. Only the rows and columns that reach the page are
+/// computed, so that huge circles take no longer than small ones.
 fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
     let on_page = |x: i64, y: i64| {
         (0..i64::from(GRP_SIZE)).contains(&x) && (0..i64::from(GRP_SIZE)).contains(&y)
@@ -1554,9 +1559,9 @@ fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
         let (mut x, at) = (r, |x: i64, y: i64| ((cx + x) as i32, (cy + y) as i32));
         points.reserve(8 * (last as usize + 1));
         // A row's eight points can only repeat each other on the axes
-        // (y 0) and on the diagonal (x = y), and never another row's, so
-        // those rows give four and nothing needs sorting out: sorting took
-        // 40% of TPERF's GCIRCLE scene.
+        // (y 0) and on the diagonal (x = y), and never repeat the points of
+        // another row, so those rows give four and nothing needs sorting:
+        // sorting took 40% of TPERF's GCIRCLE scene.
         for y in 0..=last {
             while x * (x - 1) >= rr - y * y {
                 x -= 1;
@@ -1580,9 +1585,10 @@ fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
         }
         return points;
     }
-    // Rows of the octant whose points land on the page: those whose
-    // offset from the center (as a row, or as a column) is on it. Each
-    // group of rows is walked once, its pixel worked out from the last.
+    // Rows of the octant whose points land on the page. These are the
+    // rows whose offset from the center (as a row, or as a column) is on
+    // it. Each group of rows is walked once, each pixel computed from the
+    // last.
     let groups = [
         (cy, 1, false),
         (cy, -1, false),
@@ -1640,8 +1646,8 @@ fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
     points
 }
 
-/// The pixels of a GLINE from `(x0, y0)` to `(x1, y1)` that lie on the
-/// page: the same whichever end comes first, walked along the longer axis
+/// The pixels of a GLINE from `(x0, y0)` to `(x1, y1)` that are on the
+/// page: the same with either end first, walked along the longer axis
 /// from the end with the smaller coordinate on it, `major` steps long
 /// and `minor` across (taken as positive). The offset across at step `t`
 /// is `(2·t·minor + k) / (2·major)` rounded down, where `k` is
@@ -1650,7 +1656,7 @@ fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
 /// at its first end (`round((t+1)·minor/major) - round(minor/major)`,
 /// halves up). A walk that starts outside takes `k = major`, the
 /// line itself rounded (halves up), counted from its real start; only
-/// the steps on the page are worked out.
+/// the steps on the page are computed.
 fn line_points(x0: i32, y0: i32, x1: i32, y1: i32, clip: Clip) -> Vec<(i32, i32)> {
     let mut points = Vec::new();
     line_each(x0, y0, x1, y1, clip, |x, y| points.push((x, y)));
@@ -1689,9 +1695,9 @@ fn line_each(x0: i32, y0: i32, x1: i32, y1: i32, clip: Clip, mut f: impl FnMut(i
     if from > to {
         return;
     }
-    // The offset and what is left over, stepped along without dividing.
+    // The offset and the remainder, stepped along without dividing.
     let step = 2 * major.max(1);
-    // In i128 only where i64 would overflow, as dividing i128s is slow.
+    // In i128 only where i64 would overflow, because dividing i128s is slow.
     let (mut offset, mut left) = match (2 * from).checked_mul(across).map(|v| v.checked_add(k)) {
         Some(Some(start)) => (start / step, start % step),
         _ => {
@@ -1820,7 +1826,8 @@ fn nothing_drawn(color: u32, blend: Blend) -> bool {
 }
 
 /// GPUTCHRP's [`Span`] of a character. A user-defined one takes its
-/// whole cell, whatever the cell holds; others are the font's.
+/// whole cell, regardless of what the cell holds; the font gives the
+/// others.
 fn span(font: &Font, code: u16, size: FontSize) -> Span {
     match USER_CHARS.contains(&code) {
         true => Span {
@@ -1876,8 +1883,8 @@ mod tests {
         assert_eq!(g.pixel(1, 5, 5), 0);
     }
 
-    /// Drawing up to and past the right and bottom edges never writes what
-    /// lies between a page's rows, with or without a GARRAY array.
+    /// Drawing up to and past the right and bottom edges never writes the
+    /// pixels between a page's rows, with or without a GARRAY array.
     #[test]
     fn drawing_stays_within_rows() {
         let mut g = Graphics::default();
@@ -1959,7 +1966,7 @@ mod tests {
     }
 
     /// Every pixel of a page that has a ground color and is not that color
-    /// lies in a tile marked as drawn on.
+    /// is in a tile marked as drawn on.
     fn check_ground(g: &Graphics, name: &str) {
         for p in 0..PAGES {
             let Some(ground) = g.ground[p] else {
@@ -1980,7 +1987,7 @@ mod tests {
     }
 
     /// Fills in a page's ground color, which write only what was drawn on
-    /// since, leave the page as filling every pixel does.
+    /// since, leave the page the same as filling every pixel does.
     #[test]
     fn fills_in_the_ground_color_match_plain_fills() {
         let n = Blend::Normal;
@@ -2172,7 +2179,8 @@ mod tests {
                     g.update(0, Clip::new(0, 0, 2047, 2047));
                 });
             }
-            // What is written while drawing elsewhere is that page's.
+            // Pixels written while drawing on another page belong to that
+            // page.
             check("another target", &|g| {
                 g.target = 3;
                 g.line(110, 120, 150, 180, RED, n);
@@ -2251,7 +2259,7 @@ mod tests {
         assert_eq!(g.changes(0), drawn);
         g.clear_page(0);
         assert_ne!(g.changes(0), drawn);
-        // Another set of pages never counts as this one did.
+        // Another set of pages never uses a count this one used.
         assert_ne!(Graphics::default().changes(1), before.1);
     }
 
@@ -2353,7 +2361,7 @@ mod tests {
                     .map(|(t, c)| {
                         let (t, u) = (t as i32, i32::from(c - b'0'));
                         // Along the major axis away from the start, across
-                        // towards the end.
+                        // toward the end.
                         let (along, across) = if swap { (sy, sx) } else { (sx, sy) };
                         let (a, b) = (50 + t * along, 50 + u * across);
                         if swap { (b, a) } else { (a, b) }
@@ -2453,8 +2461,8 @@ mod tests {
         );
     }
 
-    /// TEST56: what counts is GCLIP's rectangle: a start outside it takes
-    /// `k = major`, one inside the usual rule.
+    /// TEST56: the start is checked against GCLIP's rectangle: a start
+    /// outside it takes `k = major`, one inside the usual rule.
     #[test]
     fn lines_starting_outside_gclip_match_hardware() {
         let steps = |x0, y0, x1, y1| {
@@ -2573,8 +2581,8 @@ mod tests {
         assert_eq!(g.pixel(0, 0, 1), 0xFF00_0000);
     }
 
-    /// Plain fills give what pages with GARRAY arrays give, clipped and at
-    /// the page's edges.
+    /// Plain fills give the same result as pages with GARRAY arrays,
+    /// clipped and at the page's edges.
     #[test]
     fn plain_fills_match_fills_with_arrays() {
         let draw = |arrays: bool| {
@@ -2597,8 +2605,8 @@ mod tests {
         assert_eq!(draw(false), draw(true));
     }
 
-    /// Tinted rows, by tables or not, give what multiplying and blending
-    /// each pixel gives.
+    /// Tinted rows, by tables or not, give the same result as multiplying
+    /// and blending each pixel.
     #[test]
     fn tinted_rows_match_multiplying_each_pixel() {
         let mut seed = 0x1234_5678_9ABC_DEF0_u64;
@@ -2643,8 +2651,8 @@ mod tests {
         }
     }
 
-    /// Rows copied straight into a page give what drawing pixel by pixel
-    /// gives, which pages with GARRAY arrays still do.
+    /// Rows copied straight into a page give the same result as drawing
+    /// pixel by pixel, which pages with GARRAY arrays still use.
     #[test]
     fn copy_by_rows_matches_pixels() {
         let draw = |arrays: bool| {
@@ -2693,7 +2701,7 @@ mod tests {
         assert_eq!(draw(false), draw(true));
     }
 
-    /// The rows `y0..y0+h` of columns `0..w`, as on hardware's readback:
+    /// The rows `y0..y0+h` of columns `0..w`, as in readback on hardware:
     /// a pixel's red nibble, or `.` where it is 0.
     fn nibbles(g: &Graphics, y0: i32, w: i32, h: i32) -> Vec<String> {
         (y0..y0 + h)
@@ -2708,7 +2716,7 @@ mod tests {
             .collect()
     }
 
-    /// The circle walked row by row, as the midpoint algorithm does.
+    /// The circle walked row by row by the midpoint algorithm.
     fn midpoint(r: i32) -> Vec<(i32, i32)> {
         let mut points = Vec::new();
         let (mut x, mut y, mut err) = (r, 0, 1 - r);
@@ -2756,7 +2764,7 @@ mod tests {
             expected.sort_unstable();
             assert_eq!(sorted_circle_points(1000, 900, r), expected, "radius {r}");
         }
-        // Off the edges, only what lands on the page.
+        // Off the edges, only the points that land on the page.
         let mut expected: Vec<(i32, i32)> = midpoint(300)
             .into_iter()
             .map(|(x, y)| (x + 100, y - 50))
@@ -2936,8 +2944,8 @@ mod tests {
         );
     }
 
-    /// TEST48 part 4: each row's run from left to right, the same
-    /// whichever order the corners come in.
+    /// TEST48 part 4: each row's run from left to right, the same for
+    /// any order of the corners.
     #[test]
     fn triangle_rows_match_hardware() {
         let read: [([(i32, i32); 3], &str); 4] = [
@@ -3103,7 +3111,8 @@ mod tests {
         assert_ne!(g.changes(0), changes);
     }
 
-    /// TEST47 part 15: palette indexes past the palette leave the page.
+    /// TEST47 part 15: palette indexes past the palette leave the page
+    /// unchanged.
     #[test]
     fn load_skips_indexes_past_the_palette() {
         let mut g = Graphics::default();
@@ -3127,7 +3136,7 @@ mod tests {
         assert_eq!(Blend::Normal.apply(blue, 0), 0);
         assert_eq!(Blend::Normal2.apply(blue, 0), blue);
         assert_eq!(Blend::Alpha.apply(blue, half_red), 0xFF80_007F);
-        // Over a transparent pixel, mode 3 keeps the color as it is.
+        // Over a transparent pixel, mode 3 keeps the color unchanged.
         assert_eq!(Blend::Alpha2.apply(0, half_red), half_red);
         // A clear pixel over a clear one changes nothing, not even its color.
         assert_eq!(Blend::Alpha2.apply(0x00FF_4020, 0), 0x00FF_4020);
@@ -3155,7 +3164,7 @@ mod tests {
     }
 
     /// GPUTCHR as it was before it took the clipping rectangle into
-    /// account, adding as a release build did.
+    /// account, adding the same way as a release build.
     #[allow(clippy::too_many_arguments)]
     fn put_chars_unclipped(
         g: &mut Graphics,
@@ -3236,7 +3245,7 @@ mod tests {
     }
 
     /// A pixel of a character's glyph, one at a time: user-defined ones
-    /// from the TPAGE page as text screens read it, but none past the
+    /// from the TPAGE page the way text screens read it, but none past the
     /// page's edge under GSAMPLE 0.
     fn char_pixel(
         font: &Font,
@@ -3260,9 +3269,9 @@ mod tests {
         }
     }
 
-    /// What a glyph pixel plots, and how: mode 1 skips only the glyph's
-    /// own clear pixels, and writes the rest whatever alpha the color
-    /// gives them.
+    /// The color and mode that a glyph pixel plots with: mode 1 skips
+    /// only the glyph's own clear pixels, and writes the rest regardless of
+    /// the alpha the color gives them.
     #[allow(clippy::too_many_arguments)]
     fn char_plot(
         font: &Font,
@@ -3346,9 +3355,9 @@ mod tests {
         let (mut fast, _) = chars_pages(&font);
         let mut next = chars_rng();
         const SCALES: [i32; 8] = [1, 1, 2, 3, 5, 8, 17, 40];
-        // Each draw goes over the last, as copying the pages takes longer
-        // than any of them.
-        // User-defined characters come from a page of their own, as
+        // Each draw goes over the last, because copying the pages takes
+        // longer than any of the draws.
+        // User-defined characters come from a separate page, because
         // drawing them on the page they come from is no different from
         // drawing glyphs on the font page.
         for g in [&mut slow, &mut fast] {
@@ -3425,7 +3434,7 @@ mod tests {
                 slow.page(target) == fast.page(target),
                 "GPUTCHRP {what} {spacing}"
             );
-            // Glyphs drawn over would go on to change the rest.
+            // Glyphs drawn over would change the draws that follow.
             if target == FONT_PAGE {
                 for g in [&mut slow, &mut fast] {
                     g.set_page(FONT_PAGE, Page::from_rows(font.page_image()));
@@ -3494,8 +3503,8 @@ mod tests {
         }
     }
 
-    /// GPUTCHRP's widths are the font's: drawing over GRP5 changes what
-    /// it draws, not how wide.
+    /// GPUTCHRP's widths come from the font: drawing over GRP5 changes
+    /// what it draws, not the width.
     #[test]
     fn proportional_widths_ignore_the_font_page() {
         for font in [
@@ -3514,7 +3523,7 @@ mod tests {
                 .map(|size| g.proportional_width(&font, &text, size, 1, 1))
                 .into();
             assert_eq!(before, after);
-            // What is drawn comes from the page as it is now.
+            // The pixels drawn come from the page in its current state.
             g.put_chars_proportional(
                 &font,
                 UserPage::DEFAULT,
@@ -3557,8 +3566,8 @@ mod tests {
         assert_eq!(g.proportional_width(&font, &[code], large, 1, 1), 16);
     }
 
-    /// What `draw` leaves on row `y` of a page filled with red, from x 0
-    /// to 39.
+    /// The pixels that `draw` leaves on row `y` of a page filled with red,
+    /// from x 0 to 39.
     fn row_after(g: &mut Graphics, y: i32, draw: impl FnOnce(&mut Graphics)) -> Vec<u32> {
         g.target = 0;
         g.cls(RED);
@@ -3604,7 +3613,7 @@ mod tests {
         // After A, I's pen is at 13 + 1 and its cell clears A's column 12.
         let ai = row_after(&mut g, 0, draw(&[0x41, 0x49], large, 0, Blend::Normal));
         assert!(at(&ai, 14) && ai[12] == 0 && ai[27] == RED);
-        // Mode 1 passes the clear pixels by.
+        // Mode 1 skips the clear pixels.
         let ai = row_after(&mut g, 0, draw(&[0x41, 0x49], large, 0, Blend::Normal2));
         assert!(at(&ai, 12) && at(&ai, 14) && ai[13] == RED);
         // At 8 pixels: pen at 6 + 1, I's cell from 6 to 13.
@@ -3811,7 +3820,7 @@ mod tests {
             g.proportional_width(&font, &blanks, large, 1, 0),
             40_000_000
         );
-        // Too wide for an integer wraps round, as it always has.
+        // A width too large for an integer wraps around, as it always has.
         assert_eq!(
             g.proportional_width(&font, &vec![32; 1 << 20], large, 32767, 64),
             ((68i64 * (1 << 20) - 64) * 32767) as i32

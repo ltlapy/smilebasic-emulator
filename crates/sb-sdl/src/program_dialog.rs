@@ -1,7 +1,7 @@
 //! The window of a program's DIALOG, drawn over the screen. Clicks, Enter
-//! and typing answer it here; controller buttons and the timeout are the
-//! runtime's, and so is the focus of a choice, which the keys here move
-//! too.
+//! and typing answer it here. The runtime handles the controller buttons
+//! and the timeout, and it holds the focus of a choice, which the keys here
+//! also move.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::dialog::{DialogAnswer, DialogKind, ProgramDialog, name_char};
@@ -25,9 +25,10 @@ pub struct ProgramView {
     /// Display size the window is centered in.
     size: (u32, u32),
     /// Index of the chosen button: the right one at first, as A chooses.
-    /// For a choice, the runtime's, which [`ProgramView::follow`] brings.
+    /// For a choice, it follows the runtime's focus through
+    /// [`ProgramView::follow`].
     focus: usize,
-    /// What has been typed, for a file name.
+    /// The typed text, for a file name.
     name: String,
     /// The button under the mouse, which a click chooses.
     hover: Option<usize>,
@@ -52,9 +53,9 @@ impl ProgramView {
         view
     }
 
-    /// Centers the window on a display of another size, as the desktop's
-    /// UI is when the window's height changes, keeping what was chosen and
-    /// typed.
+    /// Centers the window on a display of another size, for example the
+    /// desktop UI when the window height changes. It keeps the choice and
+    /// the typed text.
     pub fn set_size(&mut self, size: (u32, u32)) {
         if size == self.size {
             return;
@@ -111,9 +112,9 @@ impl ProgramView {
         (n * self.button_width() + n.saturating_sub(1) * PAD).max(1)
     }
 
-    /// The width of a name's field: the most it takes, or the window's
-    /// inside on a small display, where a name of full length still fits
-    /// since names are half-width.
+    /// The width of a name's field: the most it needs, or the inside of the
+    /// window on a small display, where a name of full length still fits
+    /// because names are half-width.
     fn field_width(&self) -> u32 {
         match self.dialog.kind {
             DialogKind::Name { max, .. } => {
@@ -158,8 +159,8 @@ impl ProgramView {
         self.frame().contains(at)
     }
 
-    /// The mouse shows which button a click chooses; it leaves the focus,
-    /// which A and Enter choose, where it is.
+    /// The mouse shows which button a click chooses. It does not move the
+    /// focus, which A and Enter choose.
     pub fn mouse_move(&mut self, at: (i32, i32)) {
         self.hover = (0..self.labels().len()).find(|&i| self.button(i).contains(at));
     }
@@ -170,11 +171,11 @@ impl ProgramView {
             .map(|i| self.choose(i))
     }
 
-    /// Left, Right and Tab move between the buttons, Tab going round from
-    /// the last to the first, Enter chooses, Esc
-    /// chooses the left of two as B does, and Backspace deletes from a
-    /// name. Returns `None` for keys it leaves
-    /// alone, and `Some(None)` for keys it took without an answer.
+    /// Left, Right and Tab move between the buttons, and Tab wraps from the
+    /// last to the first. Enter chooses, Esc chooses the left of two buttons
+    /// the same as B does, and Backspace deletes from a name. Returns `None`
+    /// for keys it ignores, and `Some(None)` for keys it took without an
+    /// answer.
     pub fn key(&mut self, key: Keycode) -> Option<Option<DialogAnswer>> {
         let n = self.labels().len();
         if let Some(focus) = moved_focus(self.focus, n, key) {
@@ -192,7 +193,7 @@ impl ProgramView {
         }
     }
 
-    /// Typed text, for a name; whether it was taken.
+    /// Takes typed text for a name. Returns whether it was taken.
     pub fn text(&mut self, text: &str) -> bool {
         let DialogKind::Name { max, .. } = self.dialog.kind else {
             return false;
@@ -238,8 +239,10 @@ impl ProgramView {
     }
 }
 
-/// What the emulator's dialogs and a program's DIALOG lay out and draw
-/// alike. A window of `w` by `h` in the middle of a display of `size`.
+// The parts that the emulator's dialogs and a program's DIALOG lay out and
+// draw the same way.
+
+/// A window of `w` by `h` in the middle of a display of `size`.
 pub(crate) fn centered(size: (u32, u32), w: u32, h: u32) -> Rect {
     Rect {
         x: size.0.saturating_sub(w) / 2,
@@ -262,9 +265,10 @@ pub(crate) fn button_rect(f: Rect, w: u32, n: usize, i: usize) -> Rect {
     }
 }
 
-/// Where `key` moves the focus from button `focus` of `n`, if it moves
-/// it: Left and Right stop at the ends, as SmileBASIC 4's D-pad does in a
-/// DIALOG, and Tab goes round from the last to the first.
+/// Returns the button that `key` moves the focus to from button `focus` of
+/// `n`, if it moves it. Left and Right stop at the ends, the same as the
+/// D-pad does in a DIALOG of SmileBASIC 4, and Tab wraps from the last to
+/// the first.
 pub(crate) fn moved_focus(focus: usize, n: usize, key: Keycode) -> Option<usize> {
     match key {
         Keycode::Left if n > 1 => Some(focus.saturating_sub(1)),
@@ -318,8 +322,8 @@ pub(crate) fn draw_buttons<'a>(
     }
 }
 
-/// `text` cut to `width` with a `~`, or as it is if it fits, which
-/// takes nothing new.
+/// `text` cut to `width` with a `~`, or unchanged if it fits, which
+/// allocates nothing.
 pub(crate) fn fitted(text: &str, width: u32) -> std::borrow::Cow<'_, str> {
     match text_width(text) <= width {
         true => text.into(),
@@ -342,13 +346,13 @@ pub(crate) fn wrap_lines(lines: &[String], width: u32, max: usize) -> Vec<String
 }
 
 /// Splits a line into pieces at most `max` pixels wide as [`draw_text`]
-/// draws them, after a space where there is one, as Japanese text has
-/// none.
+/// draws them. It splits after a space where there is one; Japanese text
+/// has none.
 pub(crate) fn wrap(line: &str, max: u32) -> Vec<String> {
     let mut pieces = Vec::new();
     let mut rest: Vec<char> = line.chars().collect();
     loop {
-        // How many characters fit, at least one.
+        // The number of characters that fit, at least one.
         let mut used = 0;
         let fit = rest.iter().take_while(|&&c| {
             used += char_width(c);
@@ -464,7 +468,7 @@ mod tests {
         assert!(v.labels().is_empty());
     }
 
-    /// On the desktop in a window narrower than 16:9 the UI goes below
+    /// On the desktop, in a window narrower than 16:9, the UI extends below
     /// the 1280x720 display, and the window centers on all of it.
     #[test]
     fn a_new_size_centers_the_window_and_keeps_the_choice() {
@@ -479,7 +483,8 @@ mod tests {
         assert_eq!(v.focus, focus);
     }
 
-    /// Left and Right stop at the ends, as the D-pad does; Tab goes round.
+    /// Left and Right stop at the ends, the same as the D-pad does. Tab
+    /// wraps around.
     #[test]
     fn keys_move_the_focus() {
         let kind = DialogKind::Choice(vec!["No", "Yes"]);

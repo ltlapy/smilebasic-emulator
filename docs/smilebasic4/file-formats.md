@@ -1,6 +1,6 @@
 # SmileBASIC 4 files
 
-How SmileBASIC 4.4.9 stores projects and files, worked out from files it
+How SmileBASIC 4.4.9 stores projects and files, determined from files it
 saved and from its own projects. The emulator reads all of these, and
 writes them when exporting; its everyday files are simpler (see the end).
 
@@ -22,8 +22,8 @@ A new project starts with `META` and a `MAIN.PRG`.
 
 ## The container
 
-Every file but a few PNG images in SmileBASIC 4's own projects starts
-with this header. Numbers are little-endian.
+Every file starts with this header, except a few PNG images in
+SmileBASIC 4's own projects. Numbers are little-endian.
 
 | Offset | Size | Field |
 |---|---|---|
@@ -35,7 +35,7 @@ with this header. Numbers are little-endian.
 | 0x0C | 2 | year saved, in UTC |
 | 0x0E | 5 | month, day, hour, minute, second, in UTC |
 | 0x13 | 1 | 0xFF |
-| 0x14 | 0x5C | zero in files saved by programs; author names in SmileBASIC 4's own |
+| 0x14 | 0x5C | zero in files saved by programs; author names in SmileBASIC 4's own projects |
 | 0x70 | size | body |
 | end | 20 | signature, except in META |
 
@@ -46,7 +46,7 @@ SmileBASIC 3 used too (`SIGNING_KEY` in `crates/sb-runtime/src/sbfile.rs`).
 SmileBASIC 4 loads files signed this way; whether it refuses unsigned
 ones has not been tried.
 
-What SmileBASIC 4.4.9 writes:
+SmileBASIC 4.4.9 writes each file with these values:
 
 | File | Kind | Compressed | 0x06 | Body |
 |---|---|---|---|---|
@@ -74,8 +74,8 @@ DAT files and GRP images hold one array:
 | 0x1C | | the elements |
 
 - Some uncompressed DAT files, with `PCBN0001`, have a size at 0x08 that
-  leaves out these 28 bytes. The emulator reads the array by its own sizes,
-  up to the signature, as SmileBASIC 4 appears to (not tried on
+  does not count these 28 bytes. The emulator reads the array by its own
+  sizes, up to the signature, as SmileBASIC 4 appears to do (not tried on
   hardware).
 - Integers are i32 and reals f64. Pixels are integers in `&HAARRGGBB`.
 - Each string is its length in UTF-8 bytes, then its UTF-8 text. A
@@ -87,10 +87,11 @@ DAT files and GRP images hold one array:
 - A GRP image stores its width first, then its height. Its pixels go row
   by row from the top left. `LOADV "GRP:..."` turns it into an array of
   `[height, width]`.
-- GRP files SmileBASIC 4 converted from SmileBASIC 3 say `PCBN0001` and
+- GRP files SmileBASIC 4 converted from SmileBASIC 3 have `PCBN0001` and
   use element type 3: 16-bit pixels with 5 bits each of red, green and
-  blue from the top and the lowest bit set when opaque. Each 5 bits become
-  the top of 8, the low 3 bits 0 (`&H01` is `&H08`, `&H1F` is `&HF8`).
+  blue from the top and the lowest bit set when opaque. Each 5-bit value
+  becomes the top 5 of 8 bits, with the low 3 bits 0 (`&H01` is `&H08`,
+  `&H1F` is `&HF8`).
 
 ## META
 
@@ -108,8 +109,8 @@ The body is 0x2B20 bytes:
 
 The bytes between the description and 0x1218 were all zero in the files
 seen. A description saved on SmileBASIC 4 had LF added to make ten
-lines. A new project's title is its folder's name; the workspace's is
-`[WORKSPACE]` (in the Japanese version, `[ワークスペース]`).
+lines. A new project's title is its folder's name; the workspace's title
+is `[WORKSPACE]` (in the Japanese version, `[ワークスペース]`).
 
 ## The emulator's own files
 
@@ -121,18 +122,19 @@ For files that can be opened on a computer, the emulator saves:
 - metadata in `@META.TXT` (the title, a line break, then the
   description) and `@ICON.PNG`.
 
-It reads both these and SmileBASIC 4's files. `METASAVE` deletes a project's
-`META` once it has written `@META.TXT` and `@ICON.PNG`, and Export makes it again.
+It reads both these and SmileBASIC 4's files. `METASAVE` deletes a
+project's `META` once it has written `@META.TXT` and `@ICON.PNG`, and
+Export makes it again.
 
 ## Exporting and importing
 
 The project manager's Export writes a project into a folder named after
-it (`###` for the workspace), as SmileBASIC 4.4.9 writes each type, with
-the files' own dates. Text files all go as programs: SAVEV's compressed
-form is not used, since the emulator cannot tell the two apart. Files
-already in SmileBASIC 4's container are copied as they are. `META` is
-made from the project's metadata, or from its name if it has none, with
-a blank icon.
+it (`###` for the workspace), in the form SmileBASIC 4.4.9 writes for
+each type, with the files' own dates. All text files are written as
+programs: SAVEV's compressed form is not used, since the emulator cannot
+tell the two apart. Files already in SmileBASIC 4's container are copied
+unchanged. `META` is made from the project's metadata, or from its name
+if it has none, with a blank icon.
 
 SmileBASIC 4.4.9 lists a project exported this way when its folder is
 copied into its save data, shows its title, description and icon, and
@@ -141,4 +143,4 @@ loads all of its files.
 Import does the reverse into a new project: programs and text become
 plain UTF-8, GRP files PNG, JPG files plain JPEG, DAT files the bare
 array, and `META` becomes `@META.TXT` and `@ICON.PNG`. Files that are
-not in a container are copied as they are.
+not in a container are copied unchanged.

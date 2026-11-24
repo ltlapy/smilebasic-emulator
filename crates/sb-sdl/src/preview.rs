@@ -1,7 +1,7 @@
-//! What the projects window shows of a file before it is opened: a
-//! scaled picture of a GRP or JPG file, the first lines of a TXT file,
-//! and the shape and first values of a DAT file. Each is read once, when
-//! the file is chosen, not as it is drawn.
+//! The preview of a file that the projects window shows before the file
+//! is opened: a scaled picture of a GRP or JPG file, the first lines of a
+//! TXT file, and the shape and first values of a DAT file. Each is read
+//! once, when the file is chosen, not each time it is drawn.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -54,7 +54,7 @@ impl Picture {
     }
 }
 
-/// The size `(w, h)` is shown at in `room`, as [`Picture::fitted`] does.
+/// Returns the size that [`Picture::fitted`] shows `(w, h)` at in `room`.
 pub fn fit((w, h): (u32, u32), (room_w, room_h): (u32, u32)) -> (u32, u32) {
     let (w, h) = (w.max(1), h.max(1));
     let times = (room_w / w).min(room_h / h);
@@ -83,9 +83,9 @@ pub fn size_text(bytes: u64) -> String {
     }
 }
 
-/// What a file holds, as read for showing it.
+/// The contents of a file, as read for showing it.
 pub enum Content {
-    /// The text's lines, tabs made spaces, and how many there are.
+    /// The text's lines, with tabs replaced by spaces, and the line count.
     Text {
         lines: Vec<String>,
         count: usize,
@@ -146,7 +146,7 @@ pub fn element_type(data: &Data) -> &'static str {
     }
 }
 
-/// `10x20`, outermost first, as DIM takes them.
+/// `10x20`, outermost first, in the order DIM takes them.
 pub fn dims_text(data: &Data) -> String {
     let dims: Vec<String> = data.dims.iter().map(usize::to_string).collect();
     dims.join("x")
@@ -160,7 +160,7 @@ pub fn value_count(data: &Data) -> usize {
     }
 }
 
-/// Value `i`, as PRINT shows numbers; strings are quoted.
+/// Value `i`, with numbers in the format of PRINT; strings are quoted.
 pub fn value_text(data: &Data, i: usize) -> String {
     match &data.values {
         DataValues::Int(v) => v.get(i).map_or(String::new(), |n| n.to_string()),
@@ -174,8 +174,8 @@ pub fn value_text(data: &Data, i: usize) -> String {
 }
 
 /// The first values of `data` as lines of up to `cols` characters, at
-/// most `rows` of them: a row of the array to a line when it has two
-/// dimensions or more, or else as many as fit.
+/// most `rows` of them: one row of the array per line when it has two
+/// dimensions or more, or else as many values as fit.
 pub fn data_lines(data: &Data, cols: usize, rows: usize) -> Vec<String> {
     let count = value_count(data);
     let row_len = match data.dims.len() {
@@ -191,7 +191,7 @@ pub fn data_lines(data: &Data, cols: usize, rows: usize) -> Vec<String> {
         let fits = line.is_empty() || line.chars().count() + 1 + text.chars().count() <= cols;
         if !fits {
             if data.dims.len() > 1 {
-                // The rest of the row does not fit: on to the next.
+                // The rest of the row does not fit: go to the next row.
                 lines.push(std::mem::take(&mut line));
                 i = (i / row_len + 1) * row_len;
                 continue;
@@ -241,7 +241,7 @@ mod tests {
         file.set_len(MAX_FILE + 1).unwrap();
         let content = read(&storage, "GAME", FileKind::Grp, "HUGE");
         assert!(matches!(content, Content::Failed(e) if e.is_empty()));
-        // A smaller file that is no image still says so.
+        // A smaller file that is not an image still says so.
         file.set_len(16).unwrap();
         let content = read(&storage, "GAME", FileKind::Grp, "HUGE");
         assert!(matches!(content, Content::Failed(e) if !e.is_empty()));

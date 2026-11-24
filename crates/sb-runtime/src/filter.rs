@@ -13,8 +13,8 @@ pub enum Filter {
     Blur(u32),
     /// Types 3 (each line moves sideways) and 4 (each column up and
     /// down), from rows of offset and scale, or of X offset, X scale, Y
-    /// offset and Y scale. The rows are the program's array as it was at
-    /// LFILTER: later writes to the array do nothing.
+    /// offset and Y scale. The rows are a copy of the program's array at
+    /// LFILTER: later writes to the array have no effect.
     Raster {
         vertical: bool,
         rows: Vec<[f64; 4]>,
@@ -38,8 +38,8 @@ impl Filter {
         }
     }
 
-    /// Applies the filter to a layer's premultiplied frame; `sample` is
-    /// how many frame pixels make one screen pixel, and `mode` how the
+    /// Applies the filter to a layer's premultiplied frame. `sample` is
+    /// the number of frame pixels per screen pixel, and `mode` is how the
     /// layer is composed afterwards.
     #[cfg(test)]
     pub fn apply(&self, fb: &mut Framebuffer, sample: u32, mode: Compose) {
@@ -47,8 +47,8 @@ impl Filter {
         self.op(&mut rows).apply(fb, sample, mode, &rows);
     }
 
-    /// The filter as a frame uses it, with a raster filter's rows put on
-    /// the end of `scene_rows`.
+    /// The filter in the form a frame uses, with the rows of a raster
+    /// filter appended to `scene_rows`.
     pub fn op(&self, scene_rows: &mut Vec<[f64; 4]>) -> FilterOp {
         match self {
             Filter::None => FilterOp::None,
@@ -91,7 +91,7 @@ pub enum FilterOp {
     Raster {
         vertical: bool,
         repeat: bool,
-        /// Which of the scene's raster rows are this filter's.
+        /// The range of the scene's raster rows that belong to this filter.
         rows: std::ops::Range<usize>,
     },
     Color {
@@ -102,12 +102,12 @@ pub enum FilterOp {
 }
 
 impl FilterOp {
-    /// Applies the filter to a layer's premultiplied frame; `sample` is
-    /// how many frame pixels make one screen pixel, and `mode` how the
+    /// Applies the filter to a layer's premultiplied frame. `sample` is
+    /// the number of frame pixels per screen pixel, and `mode` is how the
     /// layer is composed afterwards.
     pub fn apply(&self, fb: &mut Framebuffer, sample: u32, mode: Compose, rows: &[[f64; 4]]) {
         match self {
-            // Amount 0 leaves the layer as it is, not halved.
+            // Amount 0 leaves the layer unchanged, not halved.
             FilterOp::None | FilterOp::Blur(0) => {}
             FilterOp::Mosaic(n) => mosaic(fb, *n, sample),
             FilterOp::Blur(n) => blur(fb, *n),
@@ -126,7 +126,7 @@ impl FilterOp {
 }
 
 /// A raster array's entries as X offset, X scale, Y offset and Y scale.
-/// With two to an entry they are the offset and scale along the
+/// With two values per entry, they are the offset and scale along the
 /// deformation: X for type 3, Y for type 4.
 pub(crate) fn raster_rows(info: &sb_core::value::Array, vertical: bool, rows: &mut Vec<[f64; 4]>) {
     let width = match info.dims[..] {
@@ -142,17 +142,18 @@ pub(crate) fn raster_rows(info: &sb_core::value::Array, vertical: bool, rows: &m
 }
 
 /// Raster deformation. Each row of the frame (type 3) or column (type 4)
-/// takes the entry its center falls in, and each pixel shows the source
-/// pixel at its center scaled and then moved by that entry, in OpenGL's
-/// way: from the left for X and from the bottom for Y, offsets in widths
-/// and heights. Without `repeat`, points off the frame show nothing.
+/// takes the entry that its center falls in. Each pixel shows the source
+/// pixel at its center, scaled and then moved by that entry, the way
+/// OpenGL does it: from the left for X and from the bottom for Y, with
+/// offsets in widths and heights. Without `repeat`, points off the frame
+/// show nothing.
 fn raster(fb: &mut Framebuffer, rows: &[[f64; 4]], vertical: bool, repeat: bool) {
     if rows.is_empty() {
         return;
     }
     thread_local! {
-        /// The frame being made, kept between frames so as not to
-        /// allocate a frame's worth for every layer every frame.
+        /// The output frame, kept between frames to avoid allocating a
+        /// frame's worth of pixels for every layer every frame.
         static OUT: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
     }
     OUT.with_borrow_mut(|out| {
@@ -163,10 +164,10 @@ fn raster(fb: &mut Framebuffer, rows: &[[f64; 4]], vertical: bool, repeat: bool)
     });
 }
 
-/// Raster deformation of `fb`, written into `out`, which is as large.
-/// A line of a raster filter's source points, in fixed point: a point `step`
-/// on from the last. Rounding it down gives what the exact sum does, unless
-/// it is within `near` of a whole number.
+/// A line of a raster filter's source points, in fixed point: each point is
+/// `step` past the last. Rounding a point down gives the same result as
+/// rounding the exact sum down, unless the point is within `near` of a
+/// whole number.
 #[derive(Clone, Copy)]
 struct Stepper {
     at: i64,
@@ -182,8 +183,8 @@ impl Stepper {
     /// For `n` points from `first`; None if they are too far out to step.
     #[inline]
     fn new(first: f64, step: f64, n: usize) -> Option<Stepper> {
-        /// Above this too few bits are left for the fraction, or the exact
-        /// sum's rounding is not small enough to bound simply.
+        /// Above this, too few bits are left for the fraction, or the
+        /// rounding of the exact sum is too large for a simple bound.
         const LIMIT: f64 = (1u64 << 24) as f64;
         let one = (1u64 << Self::SHIFT) as f64;
         let last = first + step * n as f64;
@@ -192,8 +193,8 @@ impl Stepper {
         if !fits {
             return None;
         }
-        // Half a unit off in the step for each point, and the exact sums'
-        // own rounding, far less than a unit at this size.
+        // An error of half a unit in the step for each point, plus the
+        // rounding of the exact sums, far less than a unit at this size.
         Some(Stepper {
             at: (first * one) as i64,
             step: (step * one) as i64,
@@ -201,7 +202,7 @@ impl Stepper {
         })
     }
 
-    /// The point rounded down, if it is sure, and on to the next.
+    /// Returns the point rounded down, if certain, and steps to the next.
     #[inline(always)]
     fn next(&mut self) -> Option<i64> {
         let at = self.at;
@@ -211,17 +212,18 @@ impl Stepper {
     }
 }
 
+/// Raster deformation of `fb`, written into `out`, which has the same size.
 fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: bool, repeat: bool) {
     let source = fb.pixels();
     let (w, h) = (fb.width() as usize, fb.height() as usize);
     let (fw, fh) = (w as f64, h as f64);
     // The source point's index along a line of n, or None off it.
     let wrap = |v: f64, n: usize| -> Option<usize> {
-        // NaN and the far off show nothing.
+        // NaN and points very far off show nothing.
         if v.is_nan() || v.abs() >= 1e15 {
             return None;
         }
-        // Rounded down without the library call f64::floor makes on
+        // Rounded down without the library call that f64::floor makes on
         // processors before SSE4.1.
         let t = v as i64;
         let t = t - i64::from(t as f64 > v);
@@ -232,15 +234,15 @@ fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: b
         }
     };
     let entry = |i: usize, n: usize| rows[(2 * i + 1) * rows.len() / (2 * n)];
-    // Where a pixel's center lands in the source, across and down, each
-    // from the entry's scale and its offset in pixels.
+    // The source position of a pixel's center, across and down, each
+    // computed from the entry's scale and its offset in pixels.
     let across_at = |x: usize, sx: f64, off: f64| sx * (x as f64 + 0.5) + off;
     let down_at = |y: usize, sy: f64, off: f64| fh - (sy * (fh - (y as f64 + 0.5)) + off);
     let across = |x: usize, [ox, sx, _, _]: [f64; 4]| wrap(across_at(x, sx, ox * fw), w);
     let down = |y: usize, [_, _, oy, sy]: [f64; 4]| wrap(down_at(y, sy, oy * fh), h);
-    // Each line of points moves steadily one way, so when both its ends
-    // land on the frame, all of it does, and each point rounds down by a
-    // plain cast: the fast way, with the same points.
+    // The points of a line move steadily in one direction. So when both
+    // ends of a line land on the frame, all its points do, and each point
+    // rounds down with a plain cast: the fast path, with the same points.
     let inside = |a: f64, b: f64, n: usize| {
         let n = n as f64;
         (0.0..n).contains(&a) && (0.0..n).contains(&b)
@@ -285,8 +287,8 @@ fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: b
         }
         return;
     }
-    // Each row takes its own entry, so it reads one row of the source;
-    // a layer of its own is mostly rows with nothing in them.
+    // Each row takes its own entry, so it reads one row of the source.
+    // A layer on its own frame is mostly rows with nothing in them.
     let blank: Vec<bool> = source
         .chunks_exact(w)
         .map(|r| r.iter().all(|&p| p == 0))
@@ -325,7 +327,7 @@ struct Tap {
 }
 
 /// The half-size frames that mosaic and blur work in and the lookups in
-/// and out of them, kept between frames so as not to allocate them for
+/// and out of them, kept between frames to avoid allocating them for
 /// every filtered layer every frame.
 #[derive(Default)]
 struct Half {
@@ -347,9 +349,9 @@ thread_local! {
 /// filters average and scale.
 const THROUGH: u32 = 0xFF00_0000;
 
-/// Where the centers of `count` half-size pixels, stretched over `q` of
-/// them so that they span a line of `size`, fall on that line, from the
-/// line's end if `flip`.
+/// Fills `out` with the points where the centers of `count` half-size
+/// pixels fall on a line of `size`, when `q` of the pixels span the
+/// line. With `flip`, the points count from the end of the line.
 fn taps(out: &mut Vec<Tap>, size: u32, q: f64, count: usize, flip: bool) {
     let last = i64::from(size) - 1;
     let n = f64::from(size);
@@ -360,7 +362,7 @@ fn taps(out: &mut Vec<Tap>, size: u32, q: f64, count: usize, flip: bool) {
         let i = if flip { count - 1 - i } else { i };
         let along = (i as f64 + 0.5) / q * n;
         let at = if flip { n - along } else { along } - 0.5;
-        // Rounded down without the library call f64::floor makes on
+        // Rounded down without the library call that f64::floor makes on
         // processors before SSE4.1.
         let t = at as i64;
         let t = t - i64::from((t as f64) > at);
@@ -381,7 +383,7 @@ fn shrink(half: &mut Half, source: &[u32], w: usize, hw: usize) {
     const LO: u32 = 0x00FF_00FF;
     let at = |x: u32, row: &[u32]| row[x as usize] ^ THROUGH;
     // Exactly between four texels, as with blocks of an even size: the
-    // sum of four over four, two channels of a word at once.
+    // sum of four divided by four, for two channels of a word together.
     let mean = |sum: u32| (2 * sum + 3 * 0x0001_0001) >> 3 & LO;
     let ties = half.across.iter().all(|t| t.part == 128);
     let on_texels = half.across.iter().all(|t| t.part == 0);
@@ -433,8 +435,8 @@ fn shrink(half: &mut Half, source: &[u32], w: usize, hw: usize) {
 /// Draws `half.pixels`, `hw` wide, back over the whole `w` x `h` frame
 /// without smoothing, `q` of its pixels by `qy` of its rows spanning the
 /// frame. Where a pixel's center is exactly on the line between two rows,
-/// it takes the one nearer the frame's bottom, as rows count from there
-/// on the GPU.
+/// it takes the row nearer the bottom of the frame, because rows count
+/// from the bottom on the GPU.
 fn expand(half: &mut Half, pixels: &mut [u32], (w, h): (u32, u32), (q, qy): (f64, f64), hw: usize) {
     let (uw, count) = (w as usize, half.down.len());
     half.out_across.clear();
@@ -461,21 +463,22 @@ fn expand(half: &mut Half, pixels: &mut [u32], (w, h): (u32, u32), (q, qy): (f64
     }
 }
 
-/// How a mosaic's blocks lie on the half-size frame.
+/// The layout of a mosaic's blocks on the half-size frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MosaicGrid {
-    /// How many half-size pixels the whole frame is drawn into, across and
-    /// down, which need not be whole numbers.
+    /// The number of half-size pixels the whole frame is drawn into, across
+    /// and down. They do not need to be whole numbers.
     pub q: f64,
     pub qy: f64,
-    /// How many half-size pixels that touches, across and down.
+    /// The number of half-size pixels that this drawing touches, across and
+    /// down.
     pub across: usize,
     pub down: usize,
 }
 
 /// The grid of a mosaic of blocks of `size` on a frame of `w` by `h`, or None
-/// if it changes nothing. The number of blocks is reckoned in screen pixels, a
-/// block's size in frame pixels.
+/// if it changes nothing. The number of blocks is counted in screen pixels,
+/// and the size of a block in frame pixels.
 pub fn mosaic_grid(w: u32, h: u32, size: u32, sample: u32) -> Option<MosaicGrid> {
     let (sw, sh) = (w / sample.max(1), h / sample.max(1));
     let (hw, hh) = (w / 2, h / 2);
@@ -494,10 +497,10 @@ pub fn mosaic_grid(w: u32, h: u32, size: u32, sample: u32) -> Option<MosaicGrid>
     })
 }
 
-/// LFILTER's mosaic: a whole frame drawn small, into as many pixels of the
-/// half-size frame as blocks fit, and back at full size without smoothing.
-/// Drawing small samples with smoothing, so that a block of an even size is
-/// the mean of the four pixels around its middle.
+/// LFILTER's mosaic: the whole frame is drawn small, into as many pixels of
+/// the half-size frame as blocks fit, and then back at full size without
+/// smoothing. The small copy is drawn with smoothing, so a block of an even
+/// size is the mean of the four pixels around its middle.
 fn mosaic(fb: &mut Framebuffer, size: u32, sample: u32) {
     let (w, h) = (fb.width(), fb.height());
     let Some(MosaicGrid {
@@ -519,24 +522,24 @@ fn mosaic(fb: &mut Framebuffer, size: u32, sample: u32) {
     });
 }
 
-/// The weights of LFILTER's blur and how many taps it takes each way.
+/// The weights of LFILTER's blur and the number of taps it takes each way.
 pub struct BlurKernel {
-    /// In 16.16: the middle's, then each further pair's.
+    /// In 16.16: the weight of the middle tap, then of each further pair.
     pub weights: [u32; 5],
     /// Pixels each way, 1 to 4.
     pub reach: usize,
-    /// All the taps' weights added up.
+    /// The sum of the weights of all taps.
     pub total: u32,
 }
 
 /// The kernel for a blur `amount`. The weights are a Gaussian of variance
-/// `amount / 10` at the odd distances 1, 3, 5... out to 31 from a middle
-/// that counts as distance 1, normalised over all sixteen of them, and
-/// taken in turn up to the point where they make up 99%. SmileBASIC 4 has
-/// 3, 5, 7 or 9 taps and reads those weights as they are, on neighbouring
-/// half-size pixels, so a kernel that wants more than 9 is cut off without
-/// normalising again: its plateau falls. One that needs no more than the
-/// middle leaves the next weight not normalised at all.
+/// `amount / 10` at the odd distances 1, 3, 5... up to 31, where the middle
+/// counts as distance 1. They are normalized over all sixteen distances
+/// and taken in order until they make up 99%. SmileBASIC 4 has 3, 5, 7 or
+/// 9 taps and reads those weights unchanged, on neighboring half-size
+/// pixels. So a kernel that needs more than 9 taps is cut off without
+/// normalizing again, and its plateau falls. A kernel that needs only the
+/// middle leaves the next weight not normalized at all.
 pub fn blur_kernel(amount: u32) -> BlurKernel {
     let v = amount as f32 / 10.0;
     let mut raw = [0f32; 16];
@@ -576,7 +579,7 @@ pub fn blur_kernel(amount: u32) -> BlurKernel {
     }
 }
 
-/// The channels of a pixel, two to a word, each with 32 bits to grow in.
+/// The channels of a pixel, two per word, each with 32 bits to grow in.
 #[inline]
 fn lanes(p: u32) -> (u64, u64) {
     let p = u64::from(p);
@@ -596,7 +599,7 @@ fn from_lanes((lo, hi): (u64, u64)) -> u32 {
     ch(lo) | ch(hi) << 8 | ch(lo >> 32) << 16 | ch(hi >> 32) << 24
 }
 
-/// A color all through the taps, spread to the kernel's total.
+/// The result for one color across all taps, scaled by the kernel's total.
 #[inline]
 fn plateau(p: u32, total: u32) -> u32 {
     let (lo, hi) = lanes(p);
@@ -604,8 +607,8 @@ fn plateau(p: u32, total: u32) -> u32 {
 }
 
 /// A line of pixels split into [`lanes`], so that a tap takes two loads
-/// and not the splitting of a pixel. It has `reach` copies of the first
-/// pixel before the line and of the last after it.
+/// instead of splitting a pixel. It has `reach` copies of the first pixel
+/// before the line and `reach` copies of the last pixel after it.
 #[derive(Default)]
 struct LaneLine {
     lo: Vec<u64>,
@@ -633,25 +636,25 @@ impl LaneLine {
 /// The working lines of a blur, kept between frames.
 #[derive(Default)]
 struct BlurLines {
-    /// The line being worked along the rows.
+    /// The line being processed along the rows.
     row: LaneLine,
-    /// The rows around the one being worked down the columns, by row
-    /// number modulo their count.
+    /// The rows around the one being processed down the columns,
+    /// indexed by row number modulo their count.
     rows: Vec<LaneLine>,
-    /// Pixels of one color up to the window's end, by column.
+    /// Pixels of one color up to the end of the window, by column.
     runs: Vec<u32>,
 }
 
-/// One pass of [`blur`] along each row. The taps past an edge read the
-/// edge pixel. Where all of them hold one color, as across most of a
-/// frame, the answer needs only the kernel's total.
+/// One pass of [`blur`] along each row. The taps past an edge read
+/// the edge pixel. Where all taps hold one color, as across most of a
+/// frame, the result needs only the kernel's total.
 fn blur_rows(from: &[u32], to: &mut [u32], w: usize, lines: &mut BlurLines, kernel: &BlurKernel) {
     let r = kernel.reach;
     let weights = kernel.weights.map(u64::from);
     let (mut flat, mut flat_out) = (!from[0], 0);
     let line = &mut lines.row;
     for (row, out) in from.chunks_exact(w).zip(to.chunks_exact_mut(w)) {
-        // Whole rows of one color, as a layer of its own mostly has.
+        // Whole rows of one color, which a layer on its own frame mostly has.
         if row.iter().all(|&p| p == row[0]) {
             if row[0] != flat {
                 flat = row[0];
@@ -662,8 +665,8 @@ fn blur_rows(from: &[u32], to: &mut [u32], w: usize, lines: &mut BlurLines, kern
         }
         line.fill(row, r);
         let (lo, hi) = (&line.lo[..w + 2 * r], &line.hi[..w + 2 * r]);
-        // Pixels of one color up to the window's right end, the copies
-        // before the row counted.
+        // The number of pixels of one color up to the right end of the
+        // window, counting the copies before the row.
         let mut run = r + 1;
         for k in 1..=r.min(w - 1) {
             run = if row[k] == row[k - 1] { run + 1 } else { 1 };
@@ -771,10 +774,10 @@ fn blur_columns(
 
 /// LFILTER's blur: the layer is drawn at half size with smoothing, blurred
 /// along the rows and then down the columns, each pass stored in 8 bits,
-/// and drawn back at full size without smoothing. As the kernel is cut off
-/// at 9 taps, what shows through falls along with the light where the
-/// amount is large, so that even a clear part of the layer darkens what
-/// is behind it. It is done in integers, as it runs every frame.
+/// and drawn back at full size without smoothing. Because the kernel is
+/// cut off at 9 taps, what shows through falls together with the light
+/// where the amount is large, so even a clear part of the layer darkens
+/// what is behind it. It is done in integers because it runs every frame.
 fn blur(fb: &mut Framebuffer, amount: u32) {
     let (w, h) = (fb.width(), fb.height());
     let (hw, hh) = (w as usize / 2, h as usize / 2);
@@ -809,12 +812,13 @@ fn blur(fb: &mut Framebuffer, amount: u32) {
 }
 
 /// Color conversion over the frame. A screen has few colors, so each is
-/// worked out once and kept in a small table by its bits. A clear pixel
-/// stays clear only on a layer composed in mode 1; otherwise a raised
-/// value lights it, so that the filter shows all over the layer.
+/// computed once and kept in a small table indexed by its bits. A clear
+/// pixel stays clear only on a layer composed in mode 1. On other
+/// layers a raised value lights it, so the filter shows over the whole
+/// layer.
 fn color(fb: &mut Framebuffer, hue: f64, saturation: f64, value: f64, mode: Compose) {
-    // Left at zero, as programs leave it when an effect ends, it changes
-    // nothing: each pixel comes back as it was.
+    // Left at zero, as programs leave it when an effect ends, the filter
+    // changes nothing: each pixel comes back unchanged.
     if hue.rem_euclid(360.0) == 0.0 && saturation == 0.0 && value == 0.0 {
         return;
     }
@@ -828,8 +832,8 @@ fn color(fb: &mut Framebuffer, hue: f64, saturation: f64, value: f64, mode: Comp
     let mut table = [(0u32, clear); SLOTS];
     for p in fb.pixels_mut() {
         let key = *p;
-        // Fibonacci hashing: the top bits of the product mix all of the
-        // key's.
+        // Fibonacci hashing: the top bits of the product mix all bits of
+        // the key.
         let slot = (key.wrapping_mul(0x9E37_79B9) >> (32 - SLOTS.trailing_zeros())) as usize;
         let (from, to) = &mut table[slot];
         if *from != key {
@@ -844,10 +848,10 @@ fn color(fb: &mut Framebuffer, hue: f64, saturation: f64, value: f64, mode: Comp
 }
 
 /// A premultiplied pixel with HSV's hue, saturation and value moved by
-/// `[h, s, v]`, each as a part of its whole range. The conversion works on
-/// the premultiplied color as it is and in single precision, with the
-/// usual GPU formulas; a grey has no saturation to raise. The coverage
-/// stays.
+/// `[dh, ds, dv]`, each as a fraction of its whole range. The conversion works
+/// directly on the premultiplied color, in single precision, with the usual
+/// GPU formulas. A gray has no saturation to raise. The coverage stays the
+/// same.
 fn shift_color(p: u32, [dh, ds, dv]: [f32; 3]) -> u32 {
     const EPSILON: f32 = 1e-10;
     let fract = |v: f32| v - v.floor();
@@ -870,7 +874,7 @@ fn shift_color(p: u32, [dh, ds, dv]: [f32; 3]) -> u32 {
     let v = (qx + dv).clamp(0.0, 1.0);
     let channel = |k: f32| {
         let t = ((fract(h + k) * 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0);
-        // To the nearest, with halves down, as seen under the GPU tested.
+        // To the nearest, with halves down, as seen on the GPU tested.
         (v * (1.0 + s * (t - 1.0)) * 255.0 + 0.499) as u8
     };
     u32::from_be_bytes([a, channel(1.0), channel(2.0 / 3.0), channel(1.0 / 3.0)])
@@ -880,7 +884,7 @@ fn shift_color(p: u32, [dh, ds, dv]: [f32; 3]) -> u32 {
 mod tests {
     use super::*;
 
-    /// [`raster_into`] with every point worked out by its sum.
+    /// [`raster_into`] with every point computed by its sum.
     fn raster_by_the_sum(
         fb: &Framebuffer,
         rows: &[[f64; 4]],
@@ -1037,13 +1041,13 @@ mod tests {
             assert_eq!(plateau(plateau(0xFF, total), total), peak);
         }
         // Few taps: 3 taps at amount 8, and at 7 the next weight is not
-        // normalised, as the sum passes 99% with the middle alone.
+        // normalized, because the sum passes 99% with the middle alone.
         assert_eq!(blur_kernel(8).reach, 1);
         assert_eq!(blur_kernel(7).reach, 1);
         assert!(blur_kernel(7).weights[1] < blur_kernel(8).weights[1] / 2);
     }
 
-    /// The row and column passes the long way round, tap by tap.
+    /// The row and column passes done the slow way, tap by tap.
     fn slow_pass(from: &[u32], w: usize, h: usize, k: &BlurKernel, rows: bool) -> Vec<u32> {
         (0..w * h)
             .map(|i| {
@@ -1205,7 +1209,7 @@ mod tests {
         }
         .apply(&mut fb, 1, Compose::Normal);
         assert_eq!(fb.pixels(), &pixels);
-        // As working each one out would.
+        // The same result as computing each pixel with `shift_color`.
         for p in pixels {
             assert_eq!(shift_color(p, [0.0; 3]), p);
         }
@@ -1213,17 +1217,17 @@ mod tests {
 
     #[test]
     fn color_works_on_the_premultiplied_texel() {
-        // Half-covered white: 80 of light with 80 of coverage is a grey,
+        // Half-covered white: 80 of light with 80 of coverage is a gray,
         // not white, so raising the value starts from 80.
         assert_eq!(
             shift_color(0x8080_8080, [0.0, 0.0, 16.0 / 255.0]),
             0x8090_9090
         );
-        // A grey has no saturation to raise, and no hue to turn.
+        // A gray has no saturation to raise, and no hue to turn.
         assert_eq!(shift_color(0xFFD7_D7D7, [0.25, 0.5, 0.0]), 0xFFD7_D7D7);
-        // An orange turned a third of the way round.
+        // An orange turned a third of the way around.
         assert_eq!(shift_color(0xFFFF_8040, [1.0 / 3.0, 0.0, 0.0]), 0xFF40_FF80);
-        // A negative turn goes round the other way.
+        // A negative turn goes around the other way.
         assert_eq!(
             shift_color(0xFF00_FF00, [-1.0 / 3.0, 0.0, 0.0]),
             0xFFFF_0000

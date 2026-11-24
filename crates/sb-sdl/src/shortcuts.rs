@@ -1,4 +1,5 @@
-//! Help > Keyboard shortcuts: docs/using/shortcuts.md's tables of keys, in a window.
+//! Help > Keyboard shortcuts: the tables of keys in docs/using/shortcuts.md,
+//! in a window.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
@@ -11,7 +12,7 @@ use crate::ui::{
 const SHORTCUTS: &str = include_str!("../../../docs/using/shortcuts.md");
 const WIDTH: u32 = 1160;
 const HEIGHT: u32 = 640;
-/// The width of the keys' column.
+/// The width of the keys column.
 const KEYS_WIDTH: u32 = 22 * CHAR;
 const HINT: &str = "Up/Down, wheel: scroll  Esc: close";
 /// A group's heading: HIGHLIGHT, light enough to read on the window.
@@ -40,7 +41,7 @@ fn entries() -> Vec<Entry> {
         } else if let Some(row) = line.strip_prefix('|') {
             let mut cells = row.split('|').map(|c| c.trim().replace('`', ""));
             if let (Some(keys), Some(what)) = (cells.next(), cells.next()) {
-                // Each table's head and the line under it.
+                // Skips each table's head and the line under it.
                 if keys != "Key" && keys != "---" {
                     entries.push(Entry::Keys(keys, what));
                 }
@@ -50,8 +51,8 @@ fn entries() -> Vec<Entry> {
     entries
 }
 
-/// `text` broken at spaces into lines at most `width` pixels wide as
-/// [`draw_text`] draws them.
+/// `text` broken at spaces into lines at most `width` pixels wide, measured
+/// the way [`draw_text`] draws them.
 pub fn wrap(text: &str, width: u32) -> Vec<String> {
     let mut lines = vec![String::new()];
     for word in text.split(' ') {
@@ -225,7 +226,7 @@ mod tests {
 
     #[test]
     fn wraps_and_scrolls() {
-        // Six ASCII characters to a line.
+        // Six ASCII characters per line.
         assert_eq!(wrap("a bb ccc dd", 3 * CHAR), ["a bb", "ccc dd"]);
         let mut w = ShortcutsWindow::new((1280, 720));
         assert!(w.lines.len() > entries().len(), "long rows wrap");

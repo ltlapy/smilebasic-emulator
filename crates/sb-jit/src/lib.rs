@@ -1,11 +1,12 @@
 //! Native code for regions of the interpreter's fused entries.
 //!
-//! This crate knows nothing of SmileBASIC. It takes a [`Region`]: entries,
-//! each standing for some instructions of the program, made of three-address
-//! [`Step`]s on numbered places in two tables of values, and compiles it with
-//! Cranelift into one function. The caller (sb-core's `jit` module) says how
-//! a value is laid out ([`Layout`]) and what each entry does; it alone holds
-//! the language's rules, and checks the native code against them in tests.
+//! This crate has no knowledge of SmileBASIC. It takes a [`Region`] and
+//! compiles it with Cranelift into one function. A region holds entries, each
+//! standing for some instructions of the program and made of three-address
+//! [`Step`]s on numbered places in two tables of values. The caller (sb-core's
+//! `jit` module) says how a value is laid out ([`Layout`]) and what each entry
+//! does. Only the caller holds the language's rules, and it checks the native
+//! code against them in tests.
 //!
 //! The function runs entries until one of these, and then returns:
 //!
@@ -14,12 +15,12 @@
 //! - a step cannot do its work (a value that is not a number, an integer
 //!   that overflows into a real where the step leaves that to the
 //!   interpreter, a string in the place a number is written to): [`FAIL`],
-//!   with `pc` and `left` where the interpreter goes on from, as the
-//!   interpreter's own fused code would give them.
+//!   with `pc` and `left` set to the values the interpreter continues
+//!   from, the same values the interpreter's own fused code would give.
 //!
 //! Native code reads and writes only places below [`Code::need`] of each
 //! table, and calls nothing. The caller must hand it tables at least that
-//! long, which it alone may use while the code runs.
+//! long, and nothing else may use them while the code runs.
 //!
 //! PROTOTYPE LIMITS, each needed by the full version:
 //! - executable memory on Linux only ([`exec`]); macOS needs `MAP_JIT` and
@@ -34,7 +35,7 @@ mod exec;
 
 pub use codegen::{compile, prepare};
 
-/// What a value looks like in memory: a tag byte at offset 0, an `i32` at
+/// The memory layout of a value: a tag byte at offset 0, an `i32` at
 /// `int_offset` for an integer, an `f64` at `real_offset` for a real.
 /// Tags from `first_heap_tag` on own memory that native code cannot drop,
 /// so a write over one of them fails instead.
@@ -151,8 +152,9 @@ pub enum Step {
         target: u32,
         when: bool,
     },
-    /// The statements so far are done: a later failure goes on from `to`,
-    /// with `charged` of the entry's cost spent.
+    /// The statements so far are done: after a later failure, the
+    /// interpreter continues from `to`, with `charged` of the entry's cost
+    /// spent.
     Commit {
         to: u32,
         charged: u32,
@@ -192,7 +194,7 @@ pub struct Region {
     pub entries: Vec<Entry>,
 }
 
-/// What native code gets and gives back. `tables` point to the two tables,
+/// The input and output of native code. `tables` point to the two tables,
 /// `pc` is where it stopped, `left` the budget left.
 #[repr(C)]
 #[derive(Debug)]
@@ -214,8 +216,8 @@ pub struct Code {
 }
 
 impl Code {
-    /// How many places of each table the code reads or writes: one more
-    /// than the highest index it names.
+    /// Returns the number of places of each table that the code reads or
+    /// writes: one more than the highest index it names.
     pub fn need(&self) -> [usize; 2] {
         self.need
     }
@@ -235,8 +237,8 @@ impl Code {
     pub unsafe fn run(&self, ctx: &mut Ctx) -> u32 {
         // SAFETY: the memory holds a function compiled for this machine's
         // C calling convention with this signature (`codegen::compile`), and
-        // it stays mapped while `self` lives. What it touches is the
-        // caller's to vouch for, as above.
+        // it stays mapped while `self` lives. The caller must vouch for the
+        // memory the function touches, as above.
         unsafe { (self.mem.entry())(ctx) }
     }
 }

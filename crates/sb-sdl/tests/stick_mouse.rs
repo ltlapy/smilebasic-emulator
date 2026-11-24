@@ -6,18 +6,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 /// Puts the pointer over File > Quit, with the mouse cursor hidden, and
-/// waits: the screen's 400x240 pixels are the display's 1200x720 from 40
-/// across, and Quit's row on the display goes from 162 to 186.
+/// waits. The 400x240 pixels of the screen cover 1200x720 pixels of the
+/// display from x = 40, and the row of Quit on the display goes from 162
+/// to 186.
 const PROGRAM: &str = "MOUSE 7,58\nWHILE 1:VSYNC:WEND\n";
 
 /// Leaves the pointer in the middle of the screen and ends.
 const MIDDLE: &str = "MOUSE 200,120\nEND\n";
 
-/// What the bench prints when it ends by itself, and not by Quit.
+/// The text the bench prints when it ends by itself, and not by Quit.
 const REPORT: &str = "drawn by";
 
-/// A folder of the test's own, with the program in it and the Simple
-/// UI's welcome screen seen.
+/// A separate folder for the test, with the program in it and the Simple
+/// UI's welcome screen marked as seen.
 fn folder(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("sb-stick-mouse").join(name);
     let data = dir.join("data").join("smilebasic-emulator");
@@ -64,7 +65,7 @@ fn ran_to_the_end(name: &str, r3: &str) -> bool {
 
 #[test]
 fn r3_clicks_the_menu_item_under_the_pointer() {
-    // Without R3, the run goes on to its end...
+    // Without R3, the run continues to its end...
     assert!(ran_to_the_end("no-click", ""));
     // ...and with it, Quit ends it, though the program hides the cursor.
     assert!(!ran_to_the_end(
@@ -81,7 +82,7 @@ fn read_pam(path: &Path) -> Vec<u8> {
 }
 
 /// The main window's frame once `MIDDLE` has ended, with the cursor
-/// drawn by the emulator and by the system (which a shot leaves out),
+/// drawn by the emulator and by the system (which a shot does not show),
 /// with `args` before the program.
 fn shots(name: &str, args: &[&str]) -> (Vec<u8>, Vec<u8>) {
     let dir = folder(name);

@@ -5,9 +5,9 @@
 //! cell with gray edges. Full-width characters take the editor's bundled
 //! 16-pixel glyphs, from the set the settings pick
 //! ([`UiGlyphs::set_bundled`]). Half-width ones take M PLUS Code Latin 50
-//! Bold, drawn half an em wide, then M PLUS 1p Bold's own half-width forms. Both are
-//! drawn with the em and baseline of the bundled 16-pixel font, so they
-//! line up.
+//! Bold, drawn half an em wide, then M PLUS 1p Bold's own half-width
+//! forms. Both are drawn with the em and baseline of the bundled 16-pixel
+//! font, so they line up.
 //!
 //! With SmileBASIC's own font (`ui_font=16`, imported), the characters it
 //! lacks take the editor's bundled glyphs of the size drawn
@@ -42,7 +42,7 @@ fn code_latin() -> &'static FontRef<'static> {
 /// A glyph's alpha bytes, shared with the cache.
 type Alpha = Rc<[u8]>;
 
-/// What a glyph was looked up as.
+/// The kind of glyph looked up.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
     /// A smooth half-width glyph.
@@ -51,10 +51,10 @@ enum Kind {
     Full(FontSize, BundledSet),
 }
 
-/// Glyphs from the bundled fonts, each made once when first wanted.
+/// Glyphs from the bundled fonts, each made once when first needed.
 #[derive(Default)]
 pub struct UiGlyphs {
-    /// What each code was found as.
+    /// The lookup result for each code.
     found: RefCell<HashMap<(u32, Kind), Option<Alpha>>>,
     bundled: ExtraGlyphs,
     set: Cell<BundledSet>,
@@ -62,7 +62,7 @@ pub struct UiGlyphs {
 
 impl UiGlyphs {
     /// Picks the set of bundled 16-pixel glyphs. The glyphs of the other
-    /// set stay kept, for when it comes back.
+    /// set are kept, for when it is picked again.
     pub fn set_bundled(&self, set: BundledSet) {
         self.set.set(set);
         self.bundled.set_bundled(set);

@@ -122,7 +122,7 @@ pub fn sweep(a: &Body, b: &Body) -> Option<f64> {
 }
 
 /// A search for the sprites a body hits, which SPHITSP() and SPHITRC()
-/// without arguments go on with.
+/// without arguments continue.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Search {
     pub source: Body,
@@ -133,15 +133,15 @@ pub struct Search {
 }
 
 impl Search {
-    /// Tests sprites `first` to `last`, upwards from the lower one either
-    /// way (checked on hardware for SPHITSP).
+    /// Tests sprites `first` to `last`, upward from the lower one in either
+    /// order (checked on hardware for SPHITSP).
     pub fn new(source: Body, first: usize, last: usize, skip: Option<usize>) -> Search {
         let rest = first.min(last)..first.max(last) + 1;
         Search { source, rest, skip }
     }
 }
 
-/// What SPHITINFO reports about the last collision found.
+/// The details SPHITINFO reports about the last collision found.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HitInfo {
     pub time: f64,
@@ -211,7 +211,7 @@ mod tests {
         // Empty rectangles never collide.
         assert_eq!(sweep(&at(5.0, 5.0, 0.0, 10.0, (0.0, 0.0)), &a), None);
         assert_eq!(sweep(&a, &at(5.0, 5.0, 10.0, -1.0, (0.0, 0.0))), None);
-        // Moving the same way is resting.
+        // Bodies moving the same way count as resting.
         let b = at(5.0, 5.0, 10.0, 10.0, (3.0, 4.0));
         assert_eq!(sweep(&at(0.0, 0.0, 10.0, 10.0, (3.0, 4.0)), &b), Some(0.0));
     }

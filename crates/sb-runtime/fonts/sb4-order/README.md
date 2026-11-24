@@ -12,8 +12,8 @@ an imported font.
   (imported by `smilebasic-import`).
 - Contents: the order only, 4217 codes. No glyph pictures (those are in
   `GDEFFONT`, which stays with the user), and none of font.map's metrics or
-  attribute bits. Codes that font.map sends to the missing glyph, number
-  703, are left out; U+FFFD is one of them.
+  attribute bits. Codes that font.map maps to the missing glyph, number
+  703, are excluded; U+FFFD is one of them.
 - Made by `tools/font_order.py`, which also prints the table as text
   (`--dump`) and describes the format: u16 words, one per code, holding the
   glyph number and the gap to the previous code.

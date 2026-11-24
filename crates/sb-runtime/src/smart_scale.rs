@@ -1,11 +1,12 @@
-//! XSCREEN's composite mode 1 in integers: the reference for what the
-//! frontend's GPU route shows, and what it falls back on.
+//! XSCREEN's composite mode 1 in integers. It is the reference for the
+//! output of the frontend's GPU route, and the fallback of that route.
 //!
-//! Between the two texels around a point at `s` texels along an axis, the
-//! mode mixes by `t = clamp(2 * fract(s - .5) - .5, 0, 1)`: plain nearest
-//! except for the middle half of the way between two centers. That is the
-//! same as sampling bilinearly a copy of the frame made twice as large with
-//! nearest, which is how the frontend gets it from a GPU with no shader.
+//! For a point `s` texels along an axis, the mode mixes the two texels
+//! around it by `t = clamp(2 * fract(s - .5) - .5, 0, 1)`. That is plain
+//! nearest, except in the middle half of the distance between two centers.
+//! It is the same as bilinear sampling of a copy of the frame made twice
+//! as large with nearest, which is how the frontend gets it from a GPU with
+//! no shader.
 
 /// The two texels and the mix, in 256ths, for one output pixel of an axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,7 +34,7 @@ fn steps(size: u32, shown: u32) -> Vec<Step> {
         .collect()
 }
 
-/// Scales frames of one size to one size, with its lookups and lines kept
+/// Scales frames of one size to one size, and keeps its lookups and lines
 /// from frame to frame.
 #[derive(Default)]
 pub struct SmartScale {
@@ -41,11 +42,11 @@ pub struct SmartScale {
     to: (u32, u32),
     across: Vec<Step>,
     down: Vec<Step>,
-    /// A source row mixed across, and the number of the row it is.
+    /// A source row mixed across, and its row number.
     lines: [(u32, Vec<u32>); 2],
 }
 
-/// `a` and `b` mixed with `part` 256ths of `b`, the alpha opaque.
+/// `a` and `b` mixed with `part` 256ths of `b`, with opaque alpha.
 #[inline]
 fn mix(a: u32, b: u32, part: u32) -> u32 {
     const LO: u32 = 0x00FF_00FF;
@@ -74,8 +75,8 @@ impl SmartScale {
             line.0 = u32::MAX;
         }
         let across = &self.across;
-        // Each row wanted is either held already or replaces the line not
-        // wanted along with it.
+        // Each needed row is either held already or replaces the line that
+        // does not hold the other row needed with it.
         let hold = |lines: &mut [(u32, Vec<u32>); 2], row: u32, keep: u32| {
             if lines[0].0 == row || lines[1].0 == row {
                 return;
@@ -152,8 +153,8 @@ mod tests {
 
     #[test]
     fn three_times_shows_the_measured_checker_row() {
-        // A one-pixel checkerboard, red channel, at 3x, on a row where the
-        // mix down is nothing: 0 42 212 255 212 42 0 on SB4's screenshot.
+        // A one-pixel checkerboard, red channel, at 3x, on a row with no
+        // vertical mix: 0 42 212 255 212 42 0 on SB4's screenshot.
         let (w, h) = (6, 3);
         let from: Vec<u32> = (0..w * h)
             .map(|i| match (i % w + i / w) % 2 {
@@ -171,8 +172,8 @@ mod tests {
 
     #[test]
     fn every_scale_mixes_each_axis_alone() {
-        // The result is the same worked one pixel at a time, at scales up
-        // and down, with rows skipped and repeated.
+        // The result is the same when computed one pixel at a time, at
+        // scales up and down, with rows skipped and repeated.
         let (w, h) = (7u32, 5u32);
         let from: Vec<u32> = (0..w * h)
             .map(|i| 0xFF00_0000 | (i * 37 % 256) << 16 | (i * 91 % 256) << 8 | (i * 13 % 256))
@@ -194,7 +195,7 @@ mod tests {
         }
     }
 
-    /// What a frame costs: `cargo test --release -p sb-runtime
+    /// The cost of a frame: `cargo test --release -p sb-runtime
     /// smart_scale_cost -- --ignored --nocapture`.
     #[test]
     #[ignore]

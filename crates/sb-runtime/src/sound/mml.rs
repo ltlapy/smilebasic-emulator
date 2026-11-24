@@ -10,9 +10,9 @@ use sb_core::error::ErrorKind;
 pub const CHANNELS: usize = 16;
 /// Ticks in a whole note: every length divides it.
 pub const WHOLE: u32 = 192;
-/// How deep macros may use other macros.
+/// The deepest nesting of macros that use other macros.
 const MACRO_DEPTH: usize = 16;
-/// How SmileBASIC 4's MML parser keeps `V$0`: as this, above any
+/// The value SmileBASIC 4's MML parser stores for `V$0`, above any
 /// volume.
 const VARIABLE_VOLUME: i32 = 0x6000_0000;
 /// The longest name a macro may have.
@@ -20,11 +20,11 @@ const MACRO_NAME_CHARS: usize = 256;
 /// Characters macros may copy for one song, counting a macro's whole body
 /// each time it is defined or used. Macros using macros multiply, so a few
 /// hundred bytes could otherwise ask for gigabytes. MML with no macros
-/// costs nothing against this.
+/// uses none of this limit.
 // Ours, far above what any song seen needs (see docs/using/differences.md).
 const MACRO_CHARS: usize = 1 << 22;
 
-/// A number in MML: written out, or one of the variables $0 to $7.
+/// A number in MML: a literal, or one of the variables $0 to $7.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Num {
     Lit(i32),
@@ -32,14 +32,14 @@ pub enum Num {
 }
 
 /// A length: a divisor of a whole note (4 for a quarter) and dots, or the
-/// L command's when there is no divisor.
+/// length of the L command when there is no divisor.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Len {
     pub div: Option<Num>,
     pub dots: u8,
 }
 
-/// What joins a note to the next: a tie or slur (`&`) or a portamento
+/// The link from a note to the next: a tie or slur (`&`) or a portamento
 /// (`_`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Link {
@@ -113,7 +113,7 @@ pub enum Cmd {
     /// no longer know the settings before it.
     ForgetLfos,
     RepeatStart,
-    /// Back to the matching RepeatStart; 0 repeats for ever.
+    /// Back to the matching RepeatStart; 0 repeats forever.
     RepeatEnd(Num),
     SetVar(u8, i32),
     /// `*WA,`: the next note sings these phoneme letters.
@@ -140,7 +140,7 @@ impl Song {
 }
 
 /// Why the MML could not be read, and where, as a character index in the
-/// text as given, comments and macro definitions counted.
+/// text as given, counting comments and macro definitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Error {
     pub at: usize,
@@ -154,16 +154,17 @@ fn fail(at: usize, kind: ErrorKind) -> Error {
     Error { at, kind }
 }
 
-/// Why macros could not be put in, with where.
+/// Why macros could not be expanded, and where.
 enum Stop {
     Bad(Error),
     OverLimit(usize),
 }
 
-/// MML with comments taken out and macros put in, and where each of its
-/// characters stands in the text as given. A macro's characters all stand
-/// just past where it was used: `{X=@MP128,1,1,1}C{X}` fails at 20.
-// UNVERIFIED: a macro used inside another stands past the outer use.
+/// MML with comments removed and macros expanded, and the position of each
+/// of its characters in the text as given. All of a macro's characters are
+/// at the position just past its use: `{X=@MP128,1,1,1}C{X}` fails at 20.
+// UNVERIFIED: a macro used inside another is at the position past the
+// outer use.
 struct Plain {
     text: Vec<char>,
     /// Indexes into the text as given, or, marked [`USED`], the index just
@@ -172,11 +173,11 @@ struct Plain {
 }
 
 /// Marks a place in [`Plain::at`] as just past a macro's use: an error
-/// there stands at that index itself, not one after it.
+/// there is at that index itself, not one after it.
 const USED: u32 = 1 << 31;
 
-/// Takes out `/comments/`, and puts macros in where they are used. With
-/// `seen`, a macro goes in only where it is first used, which is enough to
+/// Removes `/comments/` and expands macros where they are used. With
+/// `seen`, a macro is expanded only at its first use, which is enough to
 /// read every body and cannot multiply.
 fn expand(text: &[char], mut seen: Option<HashSet<String>>) -> Result<Plain, Stop> {
     let mut plain = Vec::with_capacity(text.len());
@@ -202,8 +203,8 @@ fn expand(text: &[char], mut seen: Option<HashSet<String>>) -> Result<Plain, Sto
     Ok(out)
 }
 
-/// Puts `text` in `out`. `used` is where the outermost macro being put in
-/// was used: [`USED`] and the index just past its `}`.
+/// Expands `text` into `out`. `used` is where the outermost macro being
+/// expanded was used: [`USED`] and the index just past its `}`.
 #[allow(clippy::too_many_arguments)]
 fn expand_into(
     text: &[(char, u32)],
@@ -254,7 +255,7 @@ fn expand_into(
                     return Err(Stop::Bad(fail(at, ErrorKind::MmlMacroAlreadyDefined)));
                 }
                 check_body(body, macros).map_err(|kind| Stop::Bad(fail(at, kind)))?;
-                // Counted too: a macro that only defines others puts out
+                // Counted too: a macro that only defines others outputs
                 // nothing, however many times it runs.
                 *left = (left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
                 macros.insert(name, body.to_vec());
@@ -265,7 +266,7 @@ fn expand_into(
                 if depth == MACRO_DEPTH {
                     return Err(Stop::Bad(fail(at, ErrorKind::IllegalMml)));
                 }
-                // The 1 is for empty macros, which cost time all the same.
+                // The 1 is for empty macros, which still cost time.
                 *left = (left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
                 let body = body.clone();
                 let used = used.or(Some(USED | (text[close].1 + 1)));
@@ -283,10 +284,11 @@ fn is_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-/// What SmileBASIC 4 refuses in a macro's body as it is defined, before
-/// it is ever used: a definition inside it, and the use of a macro not
-/// defined yet, which also keeps a macro from using itself.
-// UNVERIFIED: these stand at the definition's `{`, as ours puts them.
+/// Checks a macro's body for what SmileBASIC 4 refuses when the macro is
+/// defined, before it is ever used: a definition inside it, and the use
+/// of a macro not defined yet, which also keeps a macro from using itself.
+// UNVERIFIED: these errors are at the definition's `{`, where our parser
+// puts them.
 fn check_body(
     body: &[(char, u32)],
     macros: &HashMap<String, Vec<(char, u32)>>,
@@ -319,7 +321,8 @@ fn check_body(
 
 struct Parser {
     text: Vec<char>,
-    /// [`Plain::at`]: where each character of `text` was written.
+    /// [`Plain::at`]: the position where each character of `text` was
+    /// written.
     source: Vec<u32>,
     at: usize,
     song: Song,
@@ -343,11 +346,11 @@ struct Parser {
     lfo_given: bool,
 }
 
-/// Values a literal may take, checked as it is read.
+/// Values a literal may take, checked when it is read.
 type Range = std::ops::RangeInclusive<i32>;
 
 impl Parser {
-    /// Where the character at `p` was written.
+    /// Returns the position where the character at `p` was written.
     fn start(&self, p: usize) -> usize {
         match self.source.get(p) {
             Some(&i) => (i & !USED) as usize,
@@ -355,8 +358,8 @@ impl Parser {
         }
     }
 
-    /// Just after what comes before `p`, where that was written:
-    /// SmileBASIC 4 gives the end of what it stopped on.
+    /// Returns the position just after the character before `p`, where
+    /// that was written: SmileBASIC 4 gives the end of what it stopped on.
     fn end_of(&self, p: usize) -> usize {
         match p.checked_sub(1).and_then(|i| self.source.get(i)) {
             Some(&i) if i & USED != 0 => (i & !USED) as usize,
@@ -409,7 +412,7 @@ impl Parser {
     }
 
     /// A number or a variable, if there is one. A number out of `range`
-    /// is `kind`.
+    /// fails with `kind`.
     fn opt_num(&mut self, range: Range, kind: ErrorKind) -> Result<Option<Num>, Error> {
         self.skip_space();
         let start = self.at;
@@ -444,7 +447,8 @@ impl Parser {
     }
 
     /// Refuses a variable as the value of the command just read, which
-    /// ends at `after`, at its end, as `O` does.
+    /// ends at `after`. The error is at the command's end, the same as for
+    /// `O`.
     fn no_variable(&mut self, after: usize) -> Result<(), Error> {
         self.skip_space();
         match self.peek() {
@@ -453,10 +457,10 @@ impl Parser {
         }
     }
 
-    /// `(` (`up`) or `)`, by a number or 1. SmileBASIC 4 checks the volume
-    /// it comes to, not the step: `V100(50` is out of range. After `V`
-    /// with a variable it checks nothing, as the variable's encoding,
-    /// `$n` as `&H60000000` plus n * `&H1000000`, is no volume.
+    /// `(` (`up`) or `)`, by a number or 1. SmileBASIC 4 checks the
+    /// resulting volume, not the step: `V100(50` is out of range. After `V`
+    /// with a variable it checks nothing, because the variable's encoding,
+    /// `$n` as `&H60000000` plus n * `&H1000000`, is not a volume.
     fn step_volume(&mut self, up: bool) -> Result<Num, Error> {
         let after = self.at;
         self.no_variable(after)?;
@@ -491,9 +495,9 @@ impl Parser {
         Ok(n)
     }
 
-    /// `<` (up) or `>` (down), which fail past the octaves `O` takes,
-    /// where the text stands after them. `>` from octave 0 reaches -1
-    /// (`O0>C` passes) as `O-1` does, and a second `>` fails.
+    /// `<` (up) or `>` (down), which fail past the octaves `O` takes, at
+    /// the text position after them. `>` from octave 0 reaches -1 (`O0>C`
+    /// passes), the same as `O-1` does, and a second `>` fails.
     fn shift_octave(&mut self, up: bool) -> Result<(), Error> {
         let by = if up != self.song.reversed { 1 } else { -1 };
         let octave = &mut self.octaves[self.channel];
@@ -506,9 +510,9 @@ impl Parser {
     }
 
     /// The four values of `@E`, `@MP`, `@MA` and `@ML`, 0 to 127, each
-    /// refused where the text stands after it. A negative one too: `-1` is
+    /// refused at the text position after it. A negative one too: `-1` is
     /// read as one number, and refused after its 1. A value out of range
-    /// is `kind`.
+    /// fails with `kind`.
     fn four(&mut self, kind: ErrorKind) -> Result<[Num; 4], Error> {
         let mut v = [Num::Lit(0); 4];
         for (i, n) in v.iter_mut().enumerate() {
@@ -553,7 +557,7 @@ impl Parser {
         Ok(Len { div, dots })
     }
 
-    /// What `len` gives in ticks, if the text says without variables.
+    /// Returns `len` in ticks, if the text gives it without variables.
     fn len_ticks(&self, len: Len) -> Option<u32> {
         match len.div {
             Some(Num::Var(_)) => None,
@@ -600,7 +604,7 @@ impl Parser {
         }
     }
 
-    /// `&` or `_` written apart from the note before it.
+    /// `&` or `_` written separately from the note before it.
     fn link_last(&mut self, link: Link, at: usize) -> Result<(), Error> {
         match self.song.channels[self.channel].last_mut() {
             Some(Cmd::Note { link: l, .. } | Cmd::Chord { link: l, .. }) => {
@@ -613,10 +617,10 @@ impl Parser {
 
     /// `|...|`, two to six notes. A chord that cannot be read fails just
     /// after its first `|`, before any octave in it is checked: one note is
-    /// no chord, so `O8|<C|<C` gives 3. An octave set inside a chord lasts
-    /// to its end only: the note after `|A<CE|` is in the octave before the
-    /// chord. Something else between the bars fails at the end of what
-    /// comes before it: `|CR|` gives 2.
+    /// not a chord, so `O8|<C|<C` gives 3. An octave set inside a chord
+    /// lasts only to its end: the note after `|A<CE|` is in the octave
+    /// before the chord. Anything else between the bars fails at the end of
+    /// what comes before it: `|CR|` gives 2.
     // UNVERIFIED: that more than six notes, an octave change after the
     // last note, or no closing bar fail just after the first bar too, and
     // that anything other than R fails where R does.
@@ -626,7 +630,7 @@ impl Parser {
         let bar = fail(self.end(), ErrorKind::IllegalMml);
         let mut parts = Vec::new();
         let mut notes = 0;
-        // Where a `<` or `>` first left the octaves, if one did.
+        // The error of the first `<` or `>` that left the octaves, if any.
         let mut past = None;
         // The end of the last part read.
         let mut last = bar;
@@ -673,7 +677,7 @@ impl Parser {
         Ok(Cmd::Chord { parts, len, link })
     }
 
-    /// An `@` command. Its word runs on through `@` and letters, and stops
+    /// An `@` command. Its word continues through `@` and letters, and stops
     /// once it is three to five characters long and only one word of
     /// [`AT_WORDS`] starts with it, or at six: `@MPONC` is `@MPON` and C,
     /// and `@MPOXC` is all one word. A word that is not a command fails
@@ -731,15 +735,15 @@ impl Parser {
         };
         self.at += 1;
         let cmd = match c {
-            // A channel's MML stands in one piece: going back to a channel
-            // used earlier fails at the channel's number, as `:0C:1D:0E`
-            // does at 7 and `:1C:2D:1E` at 7. Channel 0 counts as used from
-            // the start, so `:1C:0D` fails at 4 and `C:1D:0E` at 5.
-            // `:0C:0D` goes on in channel 0, and `:2C:1D` passes. Leaving a
+            // A channel's MML must be in one piece: going back to a channel
+            // used earlier fails at the channel's number. `:0C:1D:0E` fails
+            // at 7 and `:1C:2D:1E` at 7. Channel 0 counts as used from the
+            // start, so `:1C:0D` fails at 4 and `C:1D:0E` at 5. `:0C:0D`
+            // continues in channel 0, and `:2C:1D` passes. Leaving a
             // channel with a `[` still open fails there too: `[:1C]2` at 2,
             // `[C:1D]` at 3. A number past 15 fails at its start: `:16C`
-            // at 1. A `:` naming the channel it is in is no switch, so it
-            // passes inside an open `[` too (`[:0C]`).
+            // at 1. A `:` naming the channel it is in is not a switch, so
+            // it passes inside an open `[` too (`[:0C]`).
             ':' => {
                 self.skip_space();
                 let number = self.start(self.at);
@@ -892,8 +896,8 @@ impl Parser {
                 Cmd::Sing(letters.into())
             }
             '&' => return self.link_last(Link::Tie, at),
-            // `C4&2`: a length after a tie goes on with the same note, and
-            // `|CEG|4&2` with the same chord.
+            // `C4&2`: a length after a tie continues the same note, and
+            // `|CEG|4&2` the same chord.
             // UNVERIFIED: the bare length holds the whole chord.
             c if c.is_ascii_digit() => {
                 let Some(mut cmd) = self.tied() else {
@@ -952,7 +956,7 @@ fn unique_at_word(head: &[char]) -> bool {
     AT_WORDS.iter().filter(starts).count() == 1
 }
 
-/// Reads MML, or gives where it could not be read.
+/// Reads MML, or returns where it could not be read.
 pub fn parse(text: &str) -> Result<Song, Error> {
     let chars: Vec<char> = text.chars().collect();
     match expand(&chars, None) {
@@ -963,8 +967,8 @@ pub fn parse(text: &str) -> Result<Song, Error> {
 }
 
 /// CHKMML: whether the MML can be read. Macros beyond what BGMPLAY takes
-/// are read one body each rather than refused, so where it gives for an
-/// error in such MML counts from that shorter text.
+/// are read once per body instead of refused, so the error position it
+/// returns for such MML counts from that shorter text.
 pub fn check(text: &str) -> Result<(), Error> {
     let chars: Vec<char> = text.chars().collect();
     let plain = match expand(&chars, None) {
@@ -1009,8 +1013,8 @@ fn parse_plain(plain: Plain, text: &str) -> Result<Song, Error> {
     Ok(p.song)
 }
 
-/// Ticks for a length, with `default` for L's; `None` if a variable gives
-/// a length that is not one.
+/// Ticks for a length, with `default` as the L length; `None` if a
+/// variable gives a value that is not a valid length.
 pub fn ticks(len: Len, default: u32, var: impl Fn(u8) -> i32) -> Option<u32> {
     let mut t = match len.div {
         None => default,
@@ -1037,12 +1041,12 @@ pub fn ticks(len: Len, default: u32, var: impl Fn(u8) -> i32) -> Option<u32> {
 mod tests {
     use super::*;
 
-    /// [`super::parse`], with where it failed.
+    /// [`super::parse`], with the position where it failed.
     fn parse(text: &str) -> Result<Song, usize> {
         super::parse(text).map_err(|e| e.at)
     }
 
-    /// [`super::check`], with where it failed.
+    /// [`super::check`], with the position where it failed.
     fn check(text: &str) -> Result<(), usize> {
         super::check(text).map_err(|e| e.at)
     }
@@ -1086,7 +1090,7 @@ mod tests {
             }
         ));
         assert!(matches!(&c[2], Cmd::Chord { parts, .. } if parts.len() == 4));
-        // A bare length after a tied chord goes on with the chord.
+        // A bare length after a tied chord continues the chord.
         let song = parse("|CEG|4&2&8.C").unwrap();
         let chord = |div, dots, link| Cmd::Chord {
             parts: vec![ChordPart::Note(0), ChordPart::Note(4), ChordPart::Note(7)],
@@ -1204,7 +1208,7 @@ mod tests {
         assert!(parse("@MOFC@MONF@ERC@V100@D-5@E1,2,3,4").is_ok());
     }
 
-    /// `first`, then macros each using the last ten times.
+    /// `first`, then macros that each use the previous one ten times.
     fn macro_bomb(first: &str, levels: usize) -> String {
         let mut s = format!("{{M0={first}}}");
         for i in 1..=levels {
@@ -1220,7 +1224,7 @@ mod tests {
         let bomb = macro_bomb("CCCCCCCCCC", 9);
         assert!(bomb.len() < 500);
         assert!(parse(&bomb).is_err());
-        // Macros that put out nothing would take as long, and so would
+        // Macros that output nothing would take as long, and so would
         // macros that only define others.
         assert!(parse(&macro_bomb("", 15)).is_err());
         assert!(parse(&macro_bomb("{X=C}", 15)).is_err());
@@ -1238,7 +1242,7 @@ mod tests {
         // Each body is still read.
         assert!(check(&macro_bomb("Q", 15)).is_err());
         assert!(check(&(macro_bomb("CCCCCCCCCC", 9) + "Q")).is_err());
-        // Going on being refused: too deep, and not defined.
+        // Still refused: too deep, and not defined.
         assert!(check(&macro_bomb("CCCCCCCCCC", 17)).is_err());
         assert!(check("{X}").is_err());
     }
@@ -1265,7 +1269,7 @@ mod tests {
             ("O8[<C]3", None),
             ("O9!>C", Some(4)),
             ("O9|<CE|", Some(4)),
-            // One note is no chord: it fails after the first bar, before
+            // One note is not a chord: it fails after the first bar, before
             // its octave is checked.
             ("O8|<C|<C", Some(3)),
             ("O9|<C|", Some(3)),
@@ -1313,7 +1317,7 @@ mod tests {
             ("C192.", Some(5)),
             ("N60,192.", Some(8)),
             ("|CE|192.", Some(8)),
-            // Without a length the dots count from L's.
+            // Without a length the dots count from the L length.
             ("L192C.", Some(6)),
             ("L192:1C.", None),
             ("L96.C.", Some(6)),
@@ -1324,8 +1328,8 @@ mod tests {
         }
     }
 
-    /// Positions count comments, and an error inside a macro stands just
-    /// past where the macro was used.
+    /// Positions count comments, and an error inside a macro is at the
+    /// position just past the macro's use.
     #[test]
     fn errors_stand_in_the_text_as_given() {
         assert_eq!(check("{X=5}O{X}C"), Ok(()));
@@ -1337,7 +1341,7 @@ mod tests {
         assert_eq!(check("{X=C5}CDE{X}"), Err(12));
         assert_eq!(check("{X=C5}CDE{X}D"), Err(12));
         assert_eq!(check("{X=@MP129,1,1,1}C{X}"), Err(20));
-        // A macro used in another stands past the outer use.
+        // A macro used in another is at the position past the outer use.
         assert_eq!(check("{X=C}{Y=D{X}Q}{Y}"), Err(17));
         assert_eq!(check("{X=C5}{Y=D{X}}{Y}E"), Err(17));
         assert_eq!(check("{X=C}{X}Z"), Err(8));
@@ -1414,9 +1418,9 @@ mod tests {
         for mml in ["V100(27C", "V100)100C", ")127(127C", "V0:1)C", "V10(-10C"] {
             assert_eq!(check(mml), Ok(()), "{mml}");
         }
-        // After V with a variable, no step is checked but one that comes
-        // back below SmileBASIC 4's encoding of it, which counts the
-        // variable's number.
+        // After V with a variable, no step is checked except one that
+        // comes back below SmileBASIC 4's encoding of it, which includes
+        // the variable's number.
         assert_eq!(check("$0=1V$0(1000C"), Ok(()));
         assert_eq!(check("V$1)C"), Ok(()));
         assert_eq!(check("$0=1V$0)C"), Err(8));
@@ -1506,7 +1510,7 @@ mod tests {
 
     #[test]
     fn forms_bundled_and_shared_songs_use() {
-        // A tie followed by a bare length goes on with the same note.
+        // A tie followed by a bare length continues the same note.
         let c = &parse("C4&2").unwrap().channels[0];
         assert!(matches!(
             c[1],

@@ -1,8 +1,8 @@
-//! The debugger panel's GRP tab, an emulator extra after otya's SBDBG:
-//! one graphic page at a time, zoomed and dragged about, with the pixel
-//! under the pointer. The panel leaves the page's place clear and
-//! [`PageTexture`] draws the page there, copying it to a texture again
-//! only once it has changed.
+//! The GRP tab of the debugger panel, an emulator extra modeled on otya's
+//! SBDBG: one graphic page at a time, zoomed and dragged around, with the
+//! pixel under the pointer. The panel leaves the page's place clear and
+//! [`PageTexture`] draws the page there. It copies the page to a texture
+//! again only after the page has changed.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
@@ -21,15 +21,15 @@ const SIZE: i64 = GRP_SIZE as i64;
 
 /// Page pixels from `(x0, y0)` to before `(x1, y1)`.
 type Area = (i64, i64, i64, i64);
-/// Lines of the grid: where each goes, and whether it starts a cell.
+/// Lines of the grid: the position of each, and whether it starts a cell.
 type Lines = Vec<(f64, bool)>;
-/// What the view shows around the page.
+/// The color that the view shows around the page.
 const BACKDROP: u32 = 0xFF10_1010;
 /// The squares behind transparent pixels, this many panel pixels wide.
 const CHECKER: u32 = 8;
 const LIGHT: u32 = 0xFF9C_9C9C;
 const DARK: u32 = 0xFF6C_6C6C;
-/// From this zoom on, lines part the page's pixels, brighter every
+/// From this zoom on, lines separate the page's pixels, brighter every
 /// [`CELL`] pixels to mark the 8x8 cells.
 const GRID_FROM: u32 = 4;
 const CELL: i64 = 8;
@@ -43,7 +43,7 @@ const MOST_HALVED: u32 = 3;
 pub enum Zoom {
     /// The whole page in the view.
     Fit,
-    /// Panel pixels to a page pixel.
+    /// Panel pixels per page pixel.
     Times(u32),
 }
 
@@ -57,8 +57,8 @@ pub const ZOOMS: [Zoom; 5] = [
 ];
 
 impl Zoom {
-    /// Panel pixels to a page pixel, as a numerator and a denominator, in
-    /// a view of `(w, h)`.
+    /// Returns panel pixels per page pixel, as a numerator and a
+    /// denominator, in a view of `(w, h)`.
     fn scale(self, (w, h): (u32, u32)) -> (i64, i64) {
         match self {
             Zoom::Fit => (i64::from(w.min(h).max(1)), SIZE),
@@ -84,12 +84,13 @@ impl Zoom {
 pub struct GrpView {
     pub page: usize,
     pub zoom: Zoom,
-    /// Where the page's top left corner is from the view's, in panel
-    /// pixels.
+    /// The offset of the page's top left corner from the top left corner
+    /// of the view, in panel pixels.
     offset: (i64, i64),
-    /// Where the view was last drawn; `None` while the tab is not shown.
+    /// The place where the view was last drawn; `None` while the tab is
+    /// not shown.
     place: Option<Rect>,
-    /// Where the pointer was while the left button drags the page.
+    /// The last pointer position while the left button drags the page.
     drag: Option<(i32, i32)>,
     /// The glyph of the font page last looked up, and the first character
     /// code that has it.
@@ -118,8 +119,8 @@ pub struct Shown {
     pub place: Rect,
     /// The page's pixels in it.
     pub pixels: Area,
-    /// Where they go in the panel, `(x, y, w, h)`, which may pass the
-    /// view's edges by part of a pixel.
+    /// Their position in the panel, `(x, y, w, h)`, which may extend past
+    /// the edges of the view by part of a pixel.
     pub at: (f64, f64, f64, f64),
 }
 
@@ -162,12 +163,13 @@ impl Shown {
     }
 }
 
-/// What the tab shows of the page, gathered from the machine each frame.
+/// The details of the page that the tab shows, gathered from the machine
+/// each frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Probe {
     /// Nothing has been drawn on the page.
     pub blank: bool,
-    /// The pixel under the pointer, and its colour.
+    /// The pixel under the pointer, and its color.
     pub pixel: Option<((i32, i32), u32)>,
 }
 
@@ -194,14 +196,15 @@ impl GrpView {
         self.offset = (fit(self.offset.0, p.w), fit(self.offset.1, p.h));
     }
 
-    /// Moves where the view was drawn by `(dx, dy)`.
+    /// Moves the place where the view was drawn by `(dx, dy)`.
     pub fn shift(&mut self, dx: u32, dy: u32) {
         if let Some(p) = &mut self.place {
             (p.x, p.y) = (p.x + dx, p.y + dy);
         }
     }
 
-    /// Where the view is drawn, or `None` while the tab is not shown.
+    /// Sets the place where the view is drawn, or `None` while the tab is
+    /// not shown.
     pub fn set_place(&mut self, place: Option<Rect>) {
         self.place = place;
         self.clamp();
@@ -240,8 +243,8 @@ impl GrpView {
         self.clamp();
     }
 
-    /// The wheel over the view zooms in or out at the pointer; whether
-    /// it was over the view.
+    /// The wheel over the view zooms in or out at the pointer. Returns
+    /// whether the pointer was over the view.
     pub fn wheel(&mut self, rows: i32, at: Option<(i32, i32)>) -> bool {
         let Some(at) = at.filter(|&a| self.place.is_some_and(|p| p.contains(a))) else {
             return false;
@@ -252,7 +255,7 @@ impl GrpView {
         true
     }
 
-    /// The left button went down at `at` on the view.
+    /// The left button was pressed at `at` on the view.
     pub fn press(&mut self, at: (i32, i32)) {
         self.drag = Some(at);
     }
@@ -308,8 +311,8 @@ impl GrpView {
     }
 
     /// Draws the tab from `(x, y)` to `(right, bottom)`: buttons for the
-    /// pages, the view, whose page [`PageTexture`] draws, and what the
-    /// pixel under the pointer is.
+    /// pages, the view (its page is drawn by [`PageTexture`]), and the
+    /// details of the pixel under the pointer.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
@@ -405,7 +408,7 @@ impl GrpView {
             w: m.char,
             h: m.line - 2 * m.text,
         };
-        // Opaque, so that a transparent pixel's colour still shows.
+        // Opaque, so that a transparent pixel's color still shows.
         fill(fb, swatch, color | 0xFF00_0000);
         let mut text = pixel_text((px, py), color);
         let cell = match self.page {
@@ -428,8 +431,8 @@ impl GrpView {
         }
     }
 
-    /// The first character code whose glyph is the font page's glyph
-    /// `n`, looked up again only for another glyph.
+    /// Returns the first character code whose glyph is the font page's
+    /// glyph `n`. It is looked up again only for a different glyph.
     fn glyph_code(&mut self, font: &Font, n: u32) -> Option<u16> {
         match self.glyph {
             Some((g, code)) if g == n => code,
@@ -442,14 +445,15 @@ impl GrpView {
     }
 }
 
-/// A pixel's place and colour, as `&HAARRGGBB` and its channels.
+/// A pixel's place and color, as `&HAARRGGBB` and its channels.
 pub fn pixel_text((x, y): (i32, i32), color: u32) -> String {
     let [a, r, g, b] = color.to_be_bytes();
     format!("X,Y {x},{y}  &H{color:08X}  R,G,B,A {r},{g},{b},{a}")
 }
 
 /// The glyph of the font page at a pixel, and its size: 8x8 glyphs fill
-/// the top half's left quarter, 16x16 ones the bottom half's left half.
+/// the left quarter of the top half, 16x16 ones the left half of the
+/// bottom half.
 pub fn font_cell(x: i32, y: i32) -> Option<(u32, u32)> {
     let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
     match (x, y) {
@@ -460,7 +464,7 @@ pub fn font_cell(x: i32, y: i32) -> Option<(u32, u32)> {
 }
 
 /// The 16x16 cell of a pixel, numbered as SPDEF's templates and BG's
-/// characters lay them out, 128 to a row.
+/// characters lay them out, 128 per row.
 pub fn grid_cell(x: i32, y: i32) -> i32 {
     y / 16 * 128 + x / 16
 }
@@ -469,7 +473,8 @@ pub fn grid_cell(x: i32, y: i32) -> i32 {
 #[derive(Default)]
 pub struct PageTexture<'a> {
     page: Option<Texture<'a>>,
-    /// How many times the texture's size halves the page's.
+    /// The number of times the page size is halved to give the texture
+    /// size.
     halved: u32,
     /// The page copied, its count of changes then, and the part of it
     /// copied.
@@ -480,16 +485,16 @@ pub struct PageTexture<'a> {
 }
 
 impl<'a> PageTexture<'a> {
-    /// Lets go of the textures while the tab is not shown.
+    /// Frees the textures while the tab is not shown.
     pub fn release(&mut self) {
         if self.page.is_some() || self.checker.is_some() {
             *self = PageTexture::default();
         }
     }
 
-    /// Draws the page where the panel at `display` left its place, for a
-    /// panel `display_w` pixels wide. Copies the page to the texture
-    /// only where the texture's copy is out of date.
+    /// Draws the page in the place that the panel at `display` left clear,
+    /// for a panel `display_w` pixels wide. Copies the page to the texture
+    /// only where the copy in the texture is out of date.
     pub fn draw(
         &mut self,
         canvas: &mut Canvas<Window>,
@@ -543,7 +548,7 @@ impl<'a> PageTexture<'a> {
             self.copied = None;
             return Ok(());
         }
-        // Fitted, a smaller texture sampled from the page does.
+        // When fitted, a smaller texture sampled from the page is enough.
         let halved = match shown.zoom {
             Zoom::Times(_) => 0,
             Zoom::Fit => {
@@ -623,7 +628,8 @@ impl<'a> PageTexture<'a> {
         if across.is_empty() && down.is_empty() {
             return Ok(());
         }
-        // A window pixel wide, however large the panel is drawn.
+        // One window pixel wide, regardless of the size the panel is
+        // drawn at.
         let line = 1.0;
         let mut lines: [Vec<FRect>; 2] = Default::default();
         for (at, cell) in across {

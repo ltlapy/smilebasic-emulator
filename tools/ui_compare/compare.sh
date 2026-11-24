@@ -20,10 +20,10 @@ fi
 before=$1; after=$2; out=$3; only=$4
 here=$(dirname "$0")
 mkdir -p "$out"
-# Two copies of one build compare equal whatever was changed. A build of
-# the old commit made with uncommitted changes in the tree is the new build.
-# Naming one binary twice is allowed: that measures how much two runs of
-# one build differ by themselves.
+# Two copies of one build compare equal regardless of what was changed. A
+# build of the old commit made with uncommitted changes in the tree is the
+# new build. Naming one binary twice is allowed: that measures how much two
+# runs of one build differ with no other change.
 if [ "$before" != "$after" ] && cmp -s "$before" "$after"; then
   echo "BEFORE and AFTER are the same binary: build the old commit from a clean checkout" >&2
   exit 2
@@ -52,7 +52,7 @@ grep -v '^#' "$here/scenes.txt" | while IFS='|' read -r name spec flag; do
   a=$(run "q$i-before" "$before" "$spec" "$flag"); b=$(run "q$i-after" "$after" "$spec" "$flag")
   [ "$a" = "$b" ] && same=same || same=DIFFER
   printf "%-34s %s %s %s\n" "$name" "$a" "$b" "$same"
-  # Keeps what a differing pair printed, as a later run reuses the names.
+  # Keeps the output of a differing pair, because a later run reuses the names.
   if [ "$same" = DIFFER ]; then
     mkdir -p "$out/differ"
     cp "$out/q$i-before.txt" "$out/q$i-after.txt" "$out"/q$i-*-main.pam "$out/differ/" 2>/dev/null

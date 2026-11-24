@@ -1,12 +1,12 @@
 //! Program text as SmileBASIC 4 stores it: UTF-8 in which each UTF-16
-//! unit is written on its own, so a string can hold a surrogate with no
+//! unit is written separately, so a string can hold a surrogate with no
 //! partner, written as the three bytes UTF-8 would give its value.
 //! HSKN_KNJLIB keeps font data in strings that way.
 //!
-//! A Rust string cannot hold such a surrogate, so it stands in as a
-//! character of Unicode's last private use plane, which the lexer turns
-//! back into the surrogate in string literals and saving writes back as
-//! the three bytes.
+//! A Rust string cannot hold such a surrogate, so a character of
+//! Unicode's last private use plane stands in for it. The lexer turns
+//! that character back into the surrogate in string literals, and saving
+//! writes it back as the three bytes.
 
 /// The stand-in for U+D800; the others follow it.
 const STAND_IN: u32 = 0x10_F800;
@@ -36,7 +36,7 @@ pub fn decode(mut bytes: &[u8]) -> Option<String> {
             Err(e) => {
                 let (good, rest) = bytes.split_at(e.valid_up_to());
                 text.push_str(std::str::from_utf8(good).expect("checked"));
-                // Even a pair is kept as two units, as it was written.
+                // Even a pair is kept as two units, the way it was written.
                 match rest {
                     [0xED, b1 @ 0xA0..=0xBF, b2 @ 0x80..=0xBF, ..] => {
                         let unit = 0xD000 | u16::from(b1 & 0x3F) << 6 | u16::from(b2 & 0x3F);
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn lone_surrogates_go_round() {
-        // "A", U+D848 on its own, U+3000, U+DC00 on its own.
+        // "A", a lone U+D848, U+3000, a lone U+DC00.
         let bytes = b"A\xED\xA1\x88\xE3\x80\x80\xED\xB0\x80";
         let text = decode(bytes).unwrap();
         assert_eq!(text.chars().count(), 4);

@@ -124,7 +124,7 @@ class Arch:
     rustflags: str
     # The core qemu runs: an instruction it lacks stops the run.
     qemu_cpu: str
-    # Fedora's, then Debian's and Ubuntu's: a libc for qemu to load.
+    # Folders with a libc for qemu to load: on Fedora, then on Debian and Ubuntu.
     host_runroots: tuple[str, ...]
     runroot_dnf: tuple[str, ...]
     runroot_apt: tuple[str, ...]
@@ -162,7 +162,7 @@ ARCHES = {
     ),
     # A 32-bit userland on the same cores. Rust's armv7 target asks for ARMv7-A, Thumb-2
     # and VFPv3 with 32 double registers. NEON, which every such core has, takes 3 to 15%
-    # off TPERF's instructions and leaves its checksum as it was. A Cortex-A8 has all of
+    # off TPERF's instructions and leaves its checksum unchanged. A Cortex-A8 has all of
     # that, without the integer divide and VFPv4 of later cores.
     "armhf": Arch(
         rust_target="armv7-unknown-linux-gnueabihf",
@@ -202,7 +202,7 @@ HOST_PROGRAMS = [
 
 # Read by cmake through the cmake crate. The compiler comes from the wrappers
 # cargo-zigbuild puts in the environment; the sysroot holds headers and sonames only,
-# so libc's own headers and libraries stay zig's.
+# so the headers and libraries of libc itself still come from zig.
 TOOLCHAIN = """\
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR {processor})
@@ -375,7 +375,7 @@ def check_host(arch: Arch) -> None:
 
 
 def host_sysroot(arch: Arch) -> Path:
-    """Links the host's headers into a folder of their own, beside placeholder libraries.
+    """Links the host's headers into a separate folder, beside placeholder libraries.
 
     The host's /usr/include also holds an x86-64 libc, so it cannot go on the include path.
     SDL reads a soname off the library's file name and opens the library at start-up, so the

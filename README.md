@@ -26,7 +26,7 @@ blank.
 
 SmileBASIC 4's own font, sprites, music and sound effects need an unencrypted
 dump of the game and its update. If you bought SmileBASIC 4 and dumped your
-copy, `smilebasic-import` brings them in:
+copy, `smilebasic-import` imports them:
 
 ```sh
 smilebasic-import BASE_ROMFS BASE_EXEFS UPDATE_ROMFS UPDATE_EXEFS
@@ -58,7 +58,7 @@ text, and the project manager imports and exports SmileBASIC 4's own files.
 
 ## Keys
 
-The keys follow SmileBASIC 4's, and the emulator adds some of its own.
+The keys follow SmileBASIC 4, plus some that the emulator adds.
 
 | Key | What it does |
 |---|---|
@@ -77,8 +77,8 @@ in the menu bar.
 
 ## Documentation
 
-[docs/index.md](docs/index.md) lists the documents, building from source among
-them.
+[docs/index.md](docs/index.md) lists the documents, including the ones on
+building from source.
 
 ## AI disclosure
 

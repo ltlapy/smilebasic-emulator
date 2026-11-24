@@ -49,7 +49,8 @@ fn errors() {
     assert_eq!(kind("LOCATE 50,0"), None);
     assert_eq!(kind("LOCATE 51,0"), Some(ErrorKind::OutOfRange));
     assert_eq!(kind("CLS 5"), Some(ErrorKind::OutOfRange));
-    // No form takes that many arguments, as LOCATE and TOFS on hardware.
+    // No form takes that many arguments, the same as with LOCATE and TOFS on
+    // hardware.
     assert_eq!(kind("COLOR 1,2,3"), Some(ErrorKind::WrongNumberOfArguments));
     assert_eq!(
         kind("LOCATE 1,2,3,4,5"),
@@ -76,12 +77,12 @@ fn inkey_reads_queued_keys() {
     let src = "A$=INKEY$()+INKEY$():B$=INKEY$(1):C$=INKEY$()\n?A$;ASC(B$);LEN(C$)";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
-    // The right operand of + is worked out first, so it reads A.
+    // The right operand of + is evaluated first, so it reads A.
     assert_eq!(row(&rt, 4, 0), "BA300");
 }
 
 /// Keys queued before INPUT, which nothing read, are not typed into its
-/// line, PUSHKEY's included.
+/// line. This includes the keys from PUSHKEY.
 #[test]
 fn input_drops_keys_queued_before_it() {
     let mut rt = Runtime::for_tests(Font::blank());
@@ -127,7 +128,7 @@ fn input_waits_for_enter_and_edits() {
     assert_eq!(row(&rt, 4, 1), "26");
 }
 
-/// What a program waiting in INPUT shows a frame on.
+/// The screen of a program waiting in INPUT, one frame later.
 fn next_frame(rt: &mut Runtime) -> sb_runtime::framebuffer::Framebuffer {
     rt.begin_frame();
     rt.render().clone()
@@ -139,8 +140,9 @@ fn input_cursor_is_a_white_bar_that_blinks() {
     let src = "BACKCOLOR &HFF102030:COLOR &H80FFFF00:INPUT \"N\";A";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
-    // "N? " leaves it in the fourth cell. It is 2 by 8 at the cell's left,
-    // white whatever COLOR is, and leaves the rest of the cell alone.
+    // "N? " leaves the cursor in the fourth cell. It is 2 by 8 at the left
+    // of the cell, white regardless of COLOR, and leaves the rest of the cell
+    // alone.
     let at = |fb: &sb_runtime::framebuffer::Framebuffer, x: usize, y: usize| {
         fb.pixels()[y * fb.width() as usize + x]
     };
@@ -159,8 +161,8 @@ fn input_cursor_is_a_white_bar_that_blinks() {
         assert_eq!(at(&fb, 24, 8), BACK);
         assert_eq!(at(&fb, 23, 0), BACK);
     }
-    // 20 frames on and 20 off, starting on, the first run a frame short
-    // for the frame INPUT came in (this loop starts one frame after it).
+    // 20 frames on and 20 off, starting on. The first run is a frame short
+    // because of the frame INPUT came in (this loop starts one frame after it).
     assert!(shown[0]);
     let flips: Vec<usize> = (1..60).filter(|&i| shown[i] != shown[i - 1]).collect();
     assert_eq!(flips, [18, 38, 58]);
@@ -184,21 +186,21 @@ fn input_cursor_starts_again_on_each_key_that_does_something() {
             })
             .unwrap()
     };
-    // The cursor stands in the first cell after "? ".
+    // The cursor is in the first cell after "? ".
     for _ in 0..10 {
         rt.begin_frame();
     }
     type_keys(&mut rt, "7");
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(flips_after(&mut rt, 24), 18);
-    // Off now. Left to the first character moves, and shows it again.
+    // Off now. Left moves to the first character and shows the cursor again.
     press(&mut rt, keys::LEFT);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(flips_after(&mut rt, 16), 18);
     for _ in 0..5 {
         rt.begin_frame();
     }
-    // Off, and it stays so: Left at the line's start moves nothing.
+    // Off, and it stays off: Left at the start of the line moves nothing.
     press(&mut rt, keys::LEFT);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(flips_after(&mut rt, 16), 14);
@@ -218,7 +220,7 @@ fn input_cursor_is_a_block_after_insert() {
     press(&mut rt, keys::INSERT);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(width(&next_frame(&mut rt), 0), 8);
-    // The next line goes on overwriting.
+    // The next line still overwrites.
     press(&mut rt, keys::ENTER);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(width(&next_frame(&mut rt), 8), 8);
@@ -356,8 +358,8 @@ fn a_full_stack_lets_commands_without_arguments_run() {
     }
 }
 
-/// TEST63, TEST64 and TEST69: a GOSUB that does not fit goes, and the stack
-/// overflow comes on the first command given arguments after it: past
+/// TEST63, TEST64 and TEST69: a GOSUB that does not fit still runs, and the
+/// stack overflow comes on the first command given arguments after it: past
 /// `D=D+1`, on the `LOCATE`.
 #[test]
 fn a_gosub_without_room_stops_the_next_command() {

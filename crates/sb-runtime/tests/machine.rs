@@ -1,4 +1,4 @@
-//! Direct mode and program slots, driven through typed keys.
+//! DIRECT mode and program slots, driven through typed keys.
 
 use sb_runtime::Runtime;
 use sb_runtime::font::Font;
@@ -31,7 +31,7 @@ fn recovering_from_a_panic_keeps_the_editors_text() {
         "{:?}",
         rows(&m)
     );
-    // Direct mode takes lines again.
+    // DIRECT mode takes lines again.
     enter(&mut m, "?\"back\"");
     assert!(rows(&m).iter().any(|r| r == "BACK"), "{:?}", rows(&m));
 
@@ -50,7 +50,7 @@ fn machine() -> Machine {
     m
 }
 
-/// Types a line, presses Enter and runs frames until direct mode waits
+/// Types a line, presses Enter and runs frames until DIRECT mode waits
 /// for input again.
 fn enter(m: &mut Machine, line: &str) {
     m.type_text(line);
@@ -125,7 +125,7 @@ fn direct_mode_declarations() {
     }
     // Checked as the line runs: the first DIM of the two declares.
     enter(&mut m, "?\"x\";:dim h[2]:dim h[2]");
-    // The error goes on from the X.
+    // The error continues from the X.
     assert!(last(&m).starts_with("XDuplicate variable"));
     enter(&mut m, "?len(h)");
     assert_eq!(last(&m), "2");
@@ -155,7 +155,7 @@ fn slots_run_and_new() {
     enter(&mut m, "run 1");
     enter(&mut m, "?x");
     let r = rows(&m);
-    // RUN starts with fresh variables and leaves its own for direct mode.
+    // RUN starts with fresh variables and leaves its own for DIRECT mode.
     assert_eq!(&r[r.len() - 5..], ["RAN1", "OK", "?X", "1", "OK"]);
     enter(&mut m, "new 1");
     assert_eq!(m.slot(1), "");
@@ -176,7 +176,7 @@ fn perfend_times_add_up_until_run() {
     // Begun but not ended, a measurement shows without times.
     assert!(stats[5].used() && stats[5].count == 0);
     assert!(!stats[0].used());
-    // PERFEND in direct mode adds on; RUN starts again.
+    // PERFEND in DIRECT mode adds to the count; RUN starts again.
     enter(&mut m, "perfend 3");
     assert_eq!(m.rt.perf_stats()[3].count, 4);
     m.set_slot(1, String::new());
@@ -197,7 +197,7 @@ fn errors_return_to_direct_mode() {
     m.set_slot(0, "RUN".to_string());
     enter(&mut m, "run");
     let r = rows(&m);
-    // A direct-mode line names no place (TEST70), a program's line does.
+    // A DIRECT mode line names no place (TEST70), but a program's line does.
     assert_eq!(r[5], "Divide by zero", "{r:?}");
     assert_eq!(r[6], "OK");
     assert_eq!(
@@ -209,7 +209,7 @@ fn errors_return_to_direct_mode() {
     assert_eq!(r[12], "OK");
 }
 
-/// An error message goes on from where the program left the cursor (TEST65).
+/// An error message continues where the program left the cursor (TEST65).
 #[test]
 fn errors_follow_the_cursor() {
     let mut m = machine();
@@ -234,10 +234,10 @@ fn stop_breaks_out_of_a_loop() {
     assert!(!m.is_running());
     let r = rows(&m);
     assert_eq!(&r[r.len() - 2..], ["User break on 0:1", "OK"]);
-    // Variables of the stopped code stay for direct mode.
+    // Variables of the stopped code stay for DIRECT mode.
     enter(&mut m, "?i>0");
     assert_eq!(rows(&m)[rows(&m).len() - 2], "1");
-    // Stopping in direct mode does nothing.
+    // Stopping in DIRECT mode does nothing.
     m.stop();
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
@@ -279,7 +279,7 @@ fn sysreq_jumps_to_on_break_once() {
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
 
-/// Ctrl+C is a break ON BREAK GOTO takes, as the + button is, but it
+/// Ctrl+C is a break that ON BREAK GOTO takes, like the + button, but it
 /// never starts PRG0.
 #[test]
 fn keyboard_break_jumps_to_on_break() {
@@ -302,7 +302,8 @@ fn keyboard_break_jumps_to_on_break() {
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
 
-/// Without ON BREAK GOTO, Ctrl+C stops the program as the + button does.
+/// Without ON BREAK GOTO, Ctrl+C stops the program, the same as the + button
+/// does.
 #[test]
 fn keyboard_break_stops_without_on_break() {
     let mut m = machine();
@@ -315,10 +316,10 @@ fn keyboard_break_stops_without_on_break() {
     assert_eq!(&r[r.len() - 2..], ["User break on 0:1", "OK"]);
 }
 
-/// After Ctrl+C's break, the program sees Ctrl held, but C's press
-/// neither reads as a press for KEYBOARD nor types for INKEY$, not even
-/// held on after Ctrl is released, long enough to repeat. Its release
-/// shows.
+/// After the break of Ctrl+C, the program sees Ctrl held, but the press of
+/// C neither reads as a press for KEYBOARD nor types for INKEY$. This holds
+/// even when C stays held after Ctrl is released, long enough to repeat.
+/// Its release shows.
 #[test]
 fn keyboard_break_hides_c_from_the_program() {
     let mut m = machine();
@@ -332,7 +333,7 @@ fn keyboard_break_hides_c_from_the_program() {
     );
     m.run_slot(0);
     m.frame();
-    // What the frontend does as Ctrl+C goes down: C would repeat 'c'.
+    // What the frontend does when Ctrl+C is pressed: C would repeat 'c'.
     m.rt.input.key_down(0x06);
     m.rt.input.key_text(sb_runtime::input::KeyText {
         plain: u16::from(b'c'),
@@ -382,7 +383,7 @@ fn on_break_in_code_execed_from_a_def_ends_with_the_slot() {
         let r = rows(&m);
         assert_eq!(&r[r.len() - 2..], ["BRK", "OK"], "{exec}");
     }
-    // An EXEC from the top level goes back as ever.
+    // An EXEC from the top level returns as usual.
     let mut m = machine();
     m.set_slot(0, "EXEC 3\n?\"BACK\"".to_string());
     m.set_slot(
@@ -400,7 +401,7 @@ fn on_break_in_code_execed_from_a_def_ends_with_the_slot() {
 }
 
 /// A COMMON DEF may not share its name with a DEF of another slot, nor a
-/// DEF with another slot's COMMON DEF: Duplicate function as EXEC
+/// DEF with another slot's COMMON DEF: Duplicate function when EXEC
 /// compiles the second.
 #[test]
 fn exec_refuses_a_def_named_as_another_slots_common_def() {
@@ -451,7 +452,7 @@ fn sysreq_out_of_input_also_stops() {
     m.frame();
     m.sysreq();
     m.frame();
-    // Checked on hardware: the jump goes on after the prompt, and the
+    // Checked on hardware: the jump continues after the prompt, and the
     // program stops after the statement it jumped to.
     assert!(!m.is_running());
     let r = rows(&m);
@@ -564,7 +565,7 @@ fn list_arguments() {
 fn ctrl_digits_switch_slots() {
     let mut m = machine();
     m.set_slot(3, "?3".to_string());
-    // From direct mode, opens the editor on the slot.
+    // From DIRECT mode, opens the editor on the slot.
     m.edit_slot(3);
     assert!(m.is_editing());
     assert_eq!(m.editor().slot(), 3);
@@ -578,8 +579,8 @@ fn ctrl_digits_switch_slots() {
     assert_eq!(m.editor().slot(), 1, "no such slot");
 }
 
-/// TEST14 on hardware: a VSYNC that is behind goes straight on once and
-/// counts from then; WAIT, WAIT 0 too, starts the count anew.
+/// TEST14 on hardware: a VSYNC that is behind continues without waiting
+/// once and counts from then; WAIT, also WAIT 0, starts the count again.
 #[test]
 fn vsync_after_falling_behind() {
     let frames = |between: &str| {
@@ -607,7 +608,8 @@ fn vsync_after_falling_behind() {
 
 /// A line typed in DIRECT mode runs in the frame its Enter is
 /// taken in, and so does CONT's program; RUN's program starts in the
-/// frame after the line's, and two frames later at a Switch 1's speed.
+/// frame after that of the line, and two frames later at the speed of a
+/// Switch 1.
 #[test]
 fn typed_lines_run_and_cont_start_frames() {
     // The frames from the Enter until the console shows `tag`.
@@ -636,7 +638,8 @@ fn typed_lines_run_and_cont_start_frames() {
 }
 
 /// Under a time limit, a frame run to catch up can leave a program at its
-/// VSYNC, so that the frame drawn next shows a whole trip round its loop.
+/// VSYNC, so that the frame drawn next shows a whole iteration of its main
+/// loop.
 #[test]
 fn a_program_can_be_held_at_its_vsync() {
     let mut m = machine();
@@ -660,7 +663,8 @@ fn a_program_can_be_held_at_its_vsync() {
 }
 
 /// Runs `program` to its end, or for `frames` calls of [`Machine::frame`],
-/// with [`Machine::keep_frames`] as given, and gives what it printed last.
+/// with [`Machine::keep_frames`] as given, and returns the last line it
+/// printed.
 fn last_line_kept(program: &str, keep: bool, frames: u32) -> String {
     let mut m = machine();
     m.keep_frames = keep;
@@ -677,9 +681,9 @@ fn last_line_kept(program: &str, keep: bool, frames: u32) -> String {
     last.cloned().unwrap_or_default()
 }
 
-/// A trip round the main loop that takes more than a frame's
+/// An iteration of the program's main loop that takes more than a frame's
 /// instructions misses frames, as on SmileBASIC 4; kept frames give each
-/// trip one frame.
+/// such iteration one frame.
 #[test]
 fn kept_frames_give_each_trip_one_frame() {
     let program = "VSYNC:M=MAINCNT()\n\
@@ -690,8 +694,9 @@ fn kept_frames_give_each_trip_one_frame() {
     assert_eq!(last_line_kept(program, true, 1000).trim(), "5");
 }
 
-/// Kept frames leave alone a program that does not VSYNC and a trip too
-/// long to keep, such as loading: their frames go by as usual.
+/// Kept frames leave alone a program that does not VSYNC and an iteration
+/// of a program's main loop that is too long to keep, such as loading:
+/// their frames go by as usual.
 #[test]
 fn kept_frames_let_long_trips_and_busy_programs_be() {
     let busy = "M=MAINCNT():FOR I=1 TO 600000:NEXT:?MAINCNT()-M\n";
@@ -708,11 +713,11 @@ fn kept_frames_let_long_trips_and_busy_programs_be() {
 }
 
 /// OTAKA_GAME_COLLECTION00's pellets: a relative SPANIM of 32 frames,
-/// started again every 32 trips by a counter in the main loop. A trip of
-/// more than two frames' work misses a frame even though the VSYNC after
-/// it goes straight on, and each missed frame moves the place the next
-/// start counts from, so the sprite wanders off. Kept frames keep it
-/// where it was.
+/// started again every 32 iterations of the program's main loop by a
+/// counter in that loop. An iteration of that loop with more than two
+/// frames' work misses a frame even though the VSYNC after it does not
+/// wait, and each missed frame moves the place the next start counts from,
+/// so the sprite wanders off. Kept frames keep it where it was.
 #[test]
 fn kept_frames_keep_a_restarted_relative_animation_in_place() {
     let program = "SPSET 0,0:SPOFS 0,100,100:C=0:VSYNC\n\
@@ -729,8 +734,8 @@ fn kept_frames_keep_a_restarted_relative_animation_in_place() {
 }
 
 /// The presses and releases of A that a program counts with BUTTON once
-/// a trip, each trip taking `work` FOR steps, when A is held for `hold`
-/// calls of [`Machine::frame`] every 20, 15 times.
+/// per iteration of its main loop, each iteration taking `work` FOR steps,
+/// when A is held for `hold` calls of [`Machine::frame`] every 20, 15 times.
 fn presses_counted(work: u32, hold: u32, keep: bool) -> String {
     let mut m = machine();
     m.keep_frames = keep;
@@ -752,11 +757,12 @@ fn presses_counted(work: u32, hold: u32, keep: bool) -> String {
     rows(&m)[0].trim().to_string()
 }
 
-/// A trip longer than a frame's work reads BUTTON in one of the frames it
-/// takes, and a press or release shows only on the frame it comes in. A
-/// frame that ends part-way through the trip, with nothing read, passes
-/// its presses and releases on to the next, so that none go missing, also
-/// those that start and end in it; kept frames give the trip one frame.
+/// An iteration of the program's main loop that is longer than a frame's
+/// work reads BUTTON in one of the frames it takes, and a press or release
+/// shows only on the frame it comes in. A frame that ends part-way through
+/// the iteration, with nothing read, passes its presses and releases on to
+/// the next frame, so that none go missing, including those that start and
+/// end in it. Kept frames give the iteration one frame.
 #[test]
 fn presses_survive_trips_longer_than_a_frame() {
     for hold in [1, 3] {
@@ -946,7 +952,7 @@ fn direct_mode_completes_words() {
     for _ in 0..10 {
         m.frame();
     }
-    // The variable is unset in direct mode, but the line read it.
+    // The variable is unset in DIRECT mode, but the line read it.
     assert_eq!(&rows(&m)[rows(&m).len() - 3..], ["?SCORE_TOTAL", "0", "OK"]);
     // Up still goes through the history without a list.
     m.rt.key_press(keys::UP);
@@ -1155,11 +1161,11 @@ fn stop_and_cont() {
     enter(&mut m, "RUN");
     let r = rows(&m);
     assert_eq!(&r[r.len() - 2..], ["Break on 0:2", "OK"]);
-    // The main interpreter is running whatever asks.
+    // The main interpreter is running, regardless of what asks.
     enter(&mut m, "?ENVSTAT():A=5");
     assert_eq!(rows(&m)[rows(&m).len() - 2], "3");
-    // Direct mode's changes reach the program; the message follows the
-    // line.
+    // Changes made in DIRECT mode reach the program; the message follows
+    // the line.
     enter(&mut m, "CONT");
     let r = rows(&m);
     assert_eq!(&r[r.len() - 5..], ["cont", "5", "Break on 0:4", "HI", "OK"]);
@@ -1187,7 +1193,7 @@ fn cont_after_edits_and_input_but_not_errors() {
     let r = rows(&m);
     assert_eq!(&r[r.len() - 2..], ["1", "OK"]);
 
-    // + at INPUT stops after the prompt; CONT goes on after the INPUT.
+    // + at INPUT stops after the prompt; CONT continues after the INPUT.
     m.set_slot(0, "X=7\nINPUT \"IN\";X\n?\"AFTER\";X".to_string());
     m.run_slot(0);
     m.frame();
@@ -1369,7 +1375,7 @@ fn paste_that_does_not_fit_the_line_is_left_out_whole() {
     m.paste("123456");
     m.frame();
     assert_eq!(m.rt.line_and_cursor().unwrap().0.len(), 256);
-    // Typed on, it stays as it is, and the cursor at its end.
+    // Typed on, the line stays unchanged, and the cursor stays at its end.
     m.rt.key_press(0x42);
     m.frame();
     assert_eq!(m.rt.line_and_cursor().unwrap().1, 256);
@@ -1404,7 +1410,7 @@ fn backtrace_and_trace() {
         &r[r.len() - 4..],
         ["0:     7", "0:     4", "0:     1", "OK"]
     );
-    // Unlike SmileBASIC 4, the program goes on after BACKTRACE.
+    // Unlike SmileBASIC 4, the program continues after BACKTRACE.
     enter(&mut m, "TRACE");
     let r = rows(&m);
     assert_eq!(&r[r.len() - 3..], ["IN DF1", "Break on 0:8", "OK"]);
@@ -1459,8 +1465,8 @@ fn trace_statement_by_statement() {
     assert_eq!(rows(&m)[rows(&m).len() - 2], "Can't trace");
 
     // TTEST20: a DEF's END runs with what follows the call; RETURN names
-    // the GOSUB's line. NEXT goes round the FOR's step and test, each on
-    // the FOR's line.
+    // the GOSUB's line. NEXT runs the FOR's step and test, each on the
+    // FOR's line.
     let src = "INPUT P\nON P-1 GOSUB @P1,@P2\nEND\n@P1\nDT 5\n?\"BACK\"\nRETURN\n\
                DEF DT N\n STOP\n ?\"X\";N\n ?\"Y\"\nEND\n\
                @P2\nSTOP\nFOR I=0 TO 1\n?\"I\";I\n?\"J\"\nNEXT\n?\"DONE\"\nRETURN";
@@ -1489,7 +1495,7 @@ fn debug_machine() -> Machine {
     m
 }
 
-/// Goes on with the stopped program from the debugger and runs until it
+/// Continues the stopped program from the debugger and runs until it
 /// stops or ends.
 fn debug(m: &mut Machine, how: sb_runtime::machine::Resume) {
     assert!(m.debug(how));
@@ -1543,7 +1549,7 @@ fn breakpoints_stop_before_their_line() {
         (calls[0].line, calls[1].line, &calls[1].kind),
         (6, 9, &CallKind::Gosub)
     );
-    // CONT typed in direct mode passes the breakpoint too.
+    // CONT typed in DIRECT mode passes the breakpoint too.
     enter(&mut m, "CONT");
     assert!(!m.debug(Resume::Cont));
     m.clear_breakpoints();
@@ -1632,7 +1638,7 @@ fn conditional_breakpoints_stop_when_true() {
     m.toggle_breakpoint(0, 4);
     debug(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 4)));
-    // A step over a call whose breakpoint does not stop goes on as a step.
+    // A step over a call whose breakpoint does not stop continues as a step.
     assert_eq!(m.stop_reason(), Some(&StopReason::Breakpoint(None)));
     debug(&mut m, Resume::Step(Step::Over));
     assert_eq!(m.paused_at(), Some((0, 5)));
@@ -1657,7 +1663,7 @@ fn conditional_breakpoints_stop_when_true() {
         m.stop_reason(),
         Some(StopReason::ConditionFailed(_))
     ));
-    // A jump leaves what stopped it behind; the end, any reason.
+    // A jump clears the reason for the stop, and the end clears any reason.
     assert!(m.jump_to(8));
     assert_eq!(m.stop_reason(), None);
     m.clear_breakpoints();
@@ -1692,11 +1698,11 @@ fn watches_stop_where_their_value_changed() {
     assert_eq!(m.paused_at(), Some((0, 5)));
     let r = rows(&m);
     assert_eq!(r[r.len() - 2], "D[1] changed: 0 -> 5");
-    // Direct mode's lines are not stopped by them.
+    // Lines typed in DIRECT mode are not stopped by them.
     enter(&mut m, "B=7");
     assert_eq!(rows(&m).last().unwrap(), "OK");
     assert!(!rows(&m).iter().any(|r| r == "Break on 0:1"));
-    // Taking the watches away lets the program run to its end.
+    // Removing the watches lets the program run to its end.
     m.set_changes(&[]);
     debug(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), None);
@@ -1718,7 +1724,7 @@ fn steps_from_the_editor_leave_the_console_to_the_program() {
     assert_eq!(m.paused_at(), Some((0, 4)));
     // No Break line or OK between what the program printed.
     assert_eq!(rows(&m).last().unwrap(), "AB");
-    // Back in direct mode, OK shows on a line of its own.
+    // Back in DIRECT mode, OK shows on its own line.
     m.toggle_editor();
     m.frame();
     assert_eq!(&rows(&m)[rows(&m).len() - 2..], ["AB", "OK"]);
@@ -1736,7 +1742,7 @@ fn the_panel_shows_before_a_program_runs() {
     m.show_panel(true);
     assert!(m.panel_open());
     assert!(!m.panel_screens());
-    // Direct mode's variables, as slot 0's.
+    // DIRECT mode's variables show as the globals of slot 0.
     assert_eq!(global(&m, "Q"), Some("Int(5)".to_string()));
     m.set_condition(0, 1, "Q>1").unwrap();
     m.toggle_breakpoint(1, 3);
@@ -1789,7 +1795,7 @@ fn breakpoints_follow_prgins_and_prgdel() {
         all,
         [(1, 5, None), (1, 6, Some("A>0".to_string())), (1, 7, None)]
     );
-    // The stopped program goes on with the code it had in slot 1.
+    // The stopped program continues with the code it had in slot 1.
     assert!(m.lines_moved(1));
     enter(&mut m, "CONT");
     enter(&mut m, "RUN 1");
@@ -1807,7 +1813,7 @@ fn exec_gives_the_new_code_its_breakpoints() {
     m.set_slot(1, "A=1\nB=2".to_string());
     m.toggle_breakpoint(1, 2);
     // A line put in before slot 1's first moves its breakpoint to line 3,
-    // which EXEC runs at once.
+    // which EXEC runs immediately.
     m.set_slot(0, "PRGEDIT 1:PRGINS \"Z=0\"\nEXEC 1".to_string());
     enter(&mut m, "RUN");
     assert_eq!(m.paused_at(), Some((1, 3)));
@@ -1859,15 +1865,15 @@ fn stopped_program_keeps_its_lines_after_edits() {
     enter(&mut m, "LIST 1");
     press(&mut m, &[keys::HOME, keys::ENTER]);
     m.toggle_editor();
-    // The text's breakpoint moved; the old code CONT goes on with keeps
-    // its own, and lines of the text are not its lines.
+    // The breakpoint in the text moved. The old code that CONT continues
+    // with keeps its own breakpoint, and lines of the text are not its lines.
     assert_eq!(m.breakpoints(0), [5]);
     assert!(m.lines_moved(0));
     assert!(!m.jump_to(3));
     assert!(!m.debug(Resume::RunTo(0, 3)));
     debug(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 4)));
-    // A new run takes the text's.
+    // A new run takes the lines and the breakpoint of the text.
     enter(&mut m, "CONT");
     enter(&mut m, "RUN");
     assert!(!m.lines_moved(0));
@@ -1961,7 +1967,7 @@ fn debugger_stops_open_the_editor() {
     assert!(!m.is_editing());
     assert_eq!(rows(&m).last().unwrap(), "OK");
     assert_eq!(m.panel_at(), None);
-    // Off, the stop stays in direct mode.
+    // Off, the stop stays in DIRECT mode.
     m.rt.settings.debug_open_editor = false;
     enter(&mut m, "RUN");
     assert!(!m.is_editing());
@@ -2077,7 +2083,7 @@ fn the_panel_closes_until_the_next_stop() {
     assert_eq!(m.editor().marks.stopped, Some(1));
 }
 
-/// A machine whose editor shows apart from the screens.
+/// A machine whose editor shows separately from the screens.
 fn detached_machine() -> Machine {
     let mut m = debug_machine();
     m.set_detached(true);
@@ -2154,7 +2160,7 @@ fn detached_editor_takes_only_its_own_keys() {
     let mut m = detached_machine();
     m.set_slot(0, "A=1".to_string());
     m.edit_slot(0);
-    // Without the keys, typing goes to direct mode.
+    // Without the keys, typing goes to DIRECT mode.
     enter(&mut m, "?6*7");
     assert!(rows(&m).iter().any(|r| r == "42"));
     assert_eq!(m.editor().text(), "A=1");
@@ -2257,8 +2263,8 @@ fn a_program_that_ends_can_leave_a_clean_screen_and_silence() {
     assert_eq!(ended(true), (0xFF00_0000, false));
 }
 
-/// What follows RETURN in a command DEF is a statement; a list of values is
-/// none (TEST62), while `RETURN X,Y` is a command X (KRB_OGIRI_SMBOMB).
+/// The text after RETURN in a command DEF is a statement; a list of values
+/// is not one (TEST62), while `RETURN X,Y` is a command X (KRB_OGIRI_SMBOMB).
 #[test]
 fn return_values_in_a_command_def_when_compiling() {
     let run = |source: &str| {
@@ -2288,8 +2294,8 @@ fn a_prompt_drops_the_keys_of_the_line_before_it() {
     assert!(!r.iter().any(|l| l == "?1"), "{r:?}");
 }
 
-/// SNDSTOP right after VSYNC takes a frame and puts SNDMVOL back at 88, as
-/// RUN does.
+/// SNDSTOP right after VSYNC takes a frame and puts SNDMVOL back at 88, the
+/// same as RUN does.
 #[test]
 fn sndstop_takes_a_frame_and_run_resets_sndmvol() {
     let mut m = machine();
@@ -2331,10 +2337,10 @@ fn a_first_vsync_does_not_wait() {
     assert!(rows(&m).iter().any(|l| l == "0"), "{:?}", rows(&m));
 }
 
-/// TEST62 and TEST56 on real SB4: a program goes on from XSCREEN while the frame
-/// job runs, the job's update behind it and MAINCNT's rise ahead of it. So an
-/// animation started there shows on the third VSYNC 1, with a first VSYNC from
-/// long ago; with one just before, on the second (TEST60).
+/// TEST62 and TEST56 on real SB4: a program continues from XSCREEN while the
+/// frame job runs, the job's update behind it and MAINCNT's rise ahead of it.
+/// So an animation started there shows on the third VSYNC 1, with a first
+/// VSYNC from long ago; with one just before, on the second (TEST60).
 #[test]
 fn an_animation_started_after_xscreen() {
     let rows_of = |source: &str| {
@@ -2403,8 +2409,8 @@ fn maincnt_reads_inside_the_frame_job() {
     }
 }
 
-/// How often the screens were drawn again over `frames` frames of the
-/// program, and whether the last frame given matches one drawn afresh.
+/// The number of times the screens were drawn again over `frames` frames of
+/// the program, and whether the last frame given matches a full redraw.
 fn redraws(program: &str, frames: u32) -> (u32, bool) {
     let mut m = machine();
     m.set_slot(0, program.to_string());
@@ -2443,7 +2449,7 @@ fn screens_are_drawn_again_only_when_changed() {
     assert_eq!(redraws(drawing, 10), (10, true));
 }
 
-/// What a fixed run prints, a few frames in.
+/// The output of a fixed run, a few frames in.
 fn fixed_run(source: &str) -> Vec<String> {
     let mut rt = Runtime::for_tests(Font::blank());
     rt.fix_time_and_chance();

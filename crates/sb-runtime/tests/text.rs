@@ -245,7 +245,7 @@ fn tanim_moves_text_screens() {
         "TOFS 0 OUT X,Y:TOFS 1 OUT ,,Z:TOFS 3 OUT A,B\n",
         "?X;Y;Z;A;B;TCHK(0);TCHK(3)",
     ));
-    // TCHK reports nothing for a stopped screen, as SPCHK does.
+    // TCHK reports nothing for a stopped screen, the same as SPCHK does.
     assert_eq!(out, ["120", "1020120000"]);
 }
 
@@ -302,7 +302,8 @@ fn tarray_cannot_be_resized() {
     assert_eq!(row(&rt, 4, 0, 10).trim_end_matches('.'), "28");
 }
 
-/// A cell TSCREEN or CLS cleared has COLOR and ATTR in it; SCROLL's are empty.
+/// A cell TSCREEN or CLS cleared has COLOR and ATTR in it; cells SCROLL
+/// cleared are empty.
 #[test]
 fn cleared_cells_keep_color_and_attr() {
     let rt = run("T=TARRAY(1):?HEX$(T[0,1]);\" \";T[0,0];\n\
@@ -459,13 +460,15 @@ fn a_tie_can_read_the_page_past_a_cell() {
     let fb = run(&format!(
         "{page}TSCREEN 0,8,8:TPAGE 0,3,0,0:TOFS 0,40.5,40.5:LOCATE 0,0,0:TPRINT 0,CHR$(&HE800);"
     ));
-    // The row under the cell's last, at the pixel its bottom edge runs through.
+    // The row under the last row of the cell, at the pixel its bottom edge
+    // runs through.
     let green = |p: u32| ((p >> 8 & 255) - 8) / 5;
     assert_eq!(green(fb.get(44, 48).unwrap()), 8);
     let fb = run(&format!(
         "{page}TSCREEN 0,24,24:TPAGE 0,3,0,0:TOFS 0,40.5,40.5:LOCATE 0,0,0:TPRINT 0,CHR$(&HE801);"
     ));
-    // The character is the page's second of 24: its left edge reads the first's last.
+    // The character is the page's second of 24: its left edge reads the last
+    // column of the first.
     let red = |p: u32| ((p >> 16 & 255) - 8) / 5;
     assert_eq!(red(fb.get(40, 44).unwrap()), 23);
     assert_eq!(red(fb.get(41, 44).unwrap()), 24);

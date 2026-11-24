@@ -19,7 +19,7 @@ pub struct ScreenMode {
     pub width: u32,
     pub height: u32,
     /// Each pixel is drawn as `sample` x `sample` finer ones, so that
-    /// turned and scaled elements look smoother.
+    /// rotated and scaled elements look smoother.
     pub sample: u32,
     pub filter: Filter,
     /// Width over height on the display; `None` for square pixels.
@@ -28,7 +28,7 @@ pub struct ScreenMode {
 
 impl ScreenMode {
     /// `width` x `height` with square pixels, sampled once each and
-    /// shown with bilinear filtering, as XSCREEN's defaults are.
+    /// shown with bilinear filtering, which are XSCREEN's defaults.
     pub fn new(width: u32, height: u32) -> ScreenMode {
         ScreenMode {
             width,
@@ -50,7 +50,8 @@ impl ScreenMode {
     }
 }
 
-/// How the frame is scaled to the display: XSCREEN's composite mode.
+/// The filter that scales the frame to the display: XSCREEN's composite
+/// mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Filter {
     Bilinear,
@@ -109,21 +110,22 @@ fn font_type(n: i32) -> Result<u32> {
     }
 }
 
-/// FADE: a color over the whole screen, and its way to another one.
+/// FADE: a color over the whole screen, and its change to another one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Fade {
     pub(crate) color: u32,
     from: u32,
     to: u32,
-    /// Frames the change takes, and those gone; equal when it is done.
+    /// The frames the change takes, and the frames elapsed; equal when it
+    /// is done.
     frames: u32,
     elapsed: u32,
 }
 
 impl Fade {
     fn start(&mut self, to: u32, frames: u32) {
-        // A clear end takes the color of the other one, so only the alpha
-        // moves (checked on hardware, fading from and to clear colors).
+        // A clear end takes the color of the other end, so only the alpha
+        // changes (checked on hardware, fading from and to clear colors).
         let clear = |c: u32| c >> 24 == 0;
         let from = match self.color {
             c if clear(c) => to & 0x00FF_FFFF,
@@ -166,7 +168,7 @@ impl Fade {
 
 /// Covers `pixels` with FADE's color, mixing each channel with it
 /// by its alpha, and darkens them to 224/255 when `dim` is set, both
-/// at once with one rounding. The alpha stays as it is.
+/// in one step with one rounding. The alpha is unchanged.
 pub(crate) fn cover(color: u32, pixels: &mut [u32], dim: bool) {
     let a = color >> 24;
     match (a, dim) {
@@ -193,8 +195,8 @@ pub(crate) fn cover(color: u32, pixels: &mut [u32], dim: bool) {
     }
 }
 
-/// What the side without the focus is darkened to beside a subprogram,
-/// out of 255.
+/// The level, out of 255, that the side without the focus is darkened to
+/// while a subprogram runs.
 pub const DIM: u32 = 224;
 
 /// Darkens each channel to [`DIM`]/255, rounded to the nearest: 255 to
@@ -245,7 +247,7 @@ impl Runtime {
     ) -> Result<Vec<Value>> {
         match (command, want, args.len()) {
             (Command::Tofs, Want::Outs(0), 3 | 4) => {
-                // X and Y may be left out (`TOFS 0,,,10`).
+                // X and Y may be omitted (`TOFS 0,,,10`).
                 let coord = |v: &Value| match v {
                     Value::Default => Ok(None),
                     v => real(v).map(Some),
@@ -278,7 +280,7 @@ impl Runtime {
                 Ok(reals(&[x, y]))
             }
             (Command::Trot, Want::Outs(0), 2) => {
-                // Kept in single precision, as SPROT is.
+                // Kept in single precision, like SPROT.
                 let angle = f64::from(real(&args[1])? as f32);
                 self.text[screen_id(&args[0])?].rot = angle;
                 Ok(vec![])
@@ -385,7 +387,7 @@ impl Runtime {
                 // alone it is Out of range for the type. An array that is
                 // not a real [n,2] or [n,4] is Type mismatch. The array is
                 // copied here, into the rows kept from last time if there
-                // are any, as a program may do this every frame.
+                // are any, because a program may do this every frame.
                 self.filters[id] = match (kind, &args[2.min(args.len())..]) {
                     (0, []) => LayerFilter::None,
                     (1, [n]) => LayerFilter::Mosaic(size(n)?),
@@ -419,7 +421,7 @@ impl Runtime {
                         saturation: real(s)?,
                         value: real(v)?,
                     },
-                    // A type that does not go with this many arguments.
+                    // A type that does not take this many arguments.
                     (n, _) => return Err(out_of_range("filter type", n).of_arg(1)),
                 };
                 Ok(vec![])
@@ -429,7 +431,7 @@ impl Runtime {
                 (layer.matrix, layer.projection) = (Affine::IDENTITY, None);
                 Ok(vec![])
             }
-            // Past the first 16 elements nothing is looked at.
+            // Elements past the first 16 are ignored.
             (Command::Lmatrix, Want::Outs(0), 2) => {
                 let id = layer_id(&args[0])?;
                 let wrong = || Error::new(ErrorKind::TypeMismatch).of_arg(1);
@@ -526,8 +528,8 @@ impl Runtime {
                     _ => (screen_id(&args[0])?, &args[1..]),
                 };
                 // A value out of range is named by its own argument:
-                // `ATTR 4,128` is (ATTR:2), the flips and turn of
-                // `ATTR 4,0,0,4` (ATTR:2) to (ATTR:4).
+                // `ATTR 4,128` is (ATTR:2), and the flips and rotation of
+                // `ATTR 4,0,0,4` are (ATTR:2) to (ATTR:4).
                 let ranged = |v: &Value, what: &'static str, max: i32| {
                     checking(v, || match v.to_int()? {
                         n if (0..=max).contains(&n) => Ok(n),
@@ -596,7 +598,7 @@ impl Runtime {
                         )),
                     })?),
                 };
-                // After every range.
+                // Checked after every range.
                 for (i, n) in [w, h].into_iter().enumerate() {
                     if n % 4 != 0 {
                         return Err(Error::new(ErrorKind::UseMultiplesOf4).of_arg(i));

@@ -172,7 +172,7 @@ fn gsave_needs_room_in_multi_dimensional_arrays() {
     let (_, out) =
         run("GPSET 2047,0,#C_RED:DIM W%[0]:GSAVE 2047,0,2,1,W%:?LEN(W%);HEX$(W%[0]);W%[1]");
     assert_eq!(out, "2FFFF00000");
-    // Reals take the colours unsigned, integers signed.
+    // Reals take the colors unsigned, integers signed.
     let (_, out) = run(
         "GPSET 0,0,#C_RED:DIM R#[1],I%[1]:GSAVE 0,0,1,1,R#:GSAVE 0,0,1,1,I%:?R#[0];\" \";I%[0]",
     );
@@ -209,7 +209,7 @@ fn garray_cannot_be_resized() {
     let (mut m, out) = run("G=GARRAY(3):H=G:RESIZE H,9");
     assert_eq!(out, "Can't RESIZE this array in 0:1(RESIZE:1)");
     assert_eq!(m.rt.grp.array(3).borrow().dims, [2048, 2048]);
-    // A copy of its pixels is the program's to resize.
+    // The program may resize a copy of the page's pixels.
     let (_, out) = run("DIM B[0]:COPY B,0,GARRAY(0),0,4:RESIZE B,9:?LEN(B)");
     assert_eq!(out, "9");
 }
@@ -313,8 +313,8 @@ const USER_CELLS: &str = "GTARGET 3:GCLS\n\
      IF (X*5+Y*3) MOD 4==1 THEN GPSET 544+X,544+Y,RGB(X*16,255,Y*16)\n\
      NEXT:NEXT:GTARGET 1:GCLS\n";
 
-/// Whether GRP1's `size` square at 0,0 holds GRP3's at `from`, which has
-/// something drawn.
+/// Whether the `size` square of GRP1 at 0,0 holds the square of GRP3 at
+/// `from`, which has something drawn.
 fn drew_cell(m: &Machine, from: (i32, i32), size: i32) -> bool {
     let at = |page, x, y| m.rt.grp.pixel(page, x, y);
     let square = |f: &dyn Fn(i32, i32) -> bool| (0..size).all(|y| (0..size).all(|x| f(x, y)));
@@ -362,7 +362,7 @@ fn user_characters_under_tpage_minus_one_draw_nothing() {
 
 #[test]
 fn gputchr_multiplies_user_characters_by_the_color() {
-    // As it multiplies the font's glyphs.
+    // The same way it multiplies the font's glyphs.
     let (m, _) = run("GTARGET 3:GCLS:GFILL 0,0,15,15,&HFF80FF40:GTARGET 1:GCLS\n\
          TPAGE 4,3,0,0:GPUTCHR 0,0,CHR$(&HE800),16,&HFFFF0000,0:?1");
     assert_eq!(m.rt.grp.pixel(1, 5, 5), 0xFF80_0000);

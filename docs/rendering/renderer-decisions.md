@@ -21,16 +21,16 @@ The emulator uses (b) on top of (a), because the UI stays on SDL_Renderer
 unchanged. (a) draws everything it can on every driver, and (b) adds only the
 color filter.
 
-**(a) reaches furthest and needs no shader.** It has no new dependencies.
-SmileBASIC 4 blends with fixed function, so SDL's blend modes give its sums, ±1
-where the GPU rounds, as on SmileBASIC 4 itself. `SDL_RenderGeometry` and
-`SDL_RenderGeometryRaw` draw textured triangles with per-vertex color, which
-covers tint. `SDL_SetRenderTextureAddressMode` gives clamp or wrap, which covers
-GSAMPLE.
-Compose mode 4 (`ONE_MINUS_DST_COLOR`, `ONE`, `ADD`) and "add without alpha"
-come from `SDL_ComposeCustomBlendMode`. Custom blend support varies by driver:
-per SDL's header, opengl supports only `ADD` with all factors, opengles2 `ADD`,
-`SUBTRACT` and `REV_SUBTRACT`, and software none.
+**(a) runs on the most machines and needs no shader.** It has no new
+dependencies. SmileBASIC 4 blends with fixed function, so SDL's blend modes give
+its sums, ±1 where the GPU rounds, as happens on SmileBASIC 4 itself.
+`SDL_RenderGeometry` and `SDL_RenderGeometryRaw` draw textured triangles with
+per-vertex color, which covers tint. `SDL_SetRenderTextureAddressMode` gives
+clamp or wrap, which covers GSAMPLE. Compose mode 4 (`ONE_MINUS_DST_COLOR`,
+`ONE`, `ADD`) and "add without alpha" come from `SDL_ComposeCustomBlendMode`.
+Custom blend support varies by driver: per SDL's header, opengl supports only
+`ADD` with all factors, opengles2 `ADD`, `SUBTRACT` and `REV_SUBTRACT`, and
+software none.
 
 It has two limits:
 
@@ -55,7 +55,7 @@ limits, from `SDL_render.h` in `sdl3-src` 3.4.18:
   and the shader with `SDL_CreateGPUShader` on the renderer's device
   (`SDL_GetGPURendererDevice`). SDL's Vulkan backend binds combined image
   samplers: naga cannot make that (its GLSL front end refuses `sampler2D`, and
-  its output keeps the two apart).
+  its output keeps the image and the sampler separate).
 - Only the fragment stage is custom. Vertices are still 2D `SDL_Vertex`, and
   blending is still SDL's blend mode. Only a sum that must be bit-exact would
   need the destination read in the shader. A filter draws its target through the
@@ -86,8 +86,8 @@ compute passes could do the blur and color filters. Its drawbacks:
 
 It also has the same three-format shader problem as (b).
 
-**(d) wgpu** has the widest coverage and one shader language, WGSL, which naga
-translates at run time. Its drawbacks:
+**(d) wgpu** has wider coverage than (b) and (c) and one shader language, WGSL,
+which naga translates at run time. Its drawbacks:
 
 - Cost: it would be the largest dependency in the workspace, and CONTRIBUTING.md
   asks for a reason for each new one. The numbers are below.
@@ -131,14 +131,14 @@ trimming them shrinks both build and binary.
 | New dependencies | none | none (raw sys calls) | none | wgpu tree (61 crates on Linux) |
 | Shader toolchain | none | offline, three formats | offline, three formats | none (WGSL) |
 
-Whichever option had been chosen, the CPU rasterizer stays the only path on
+Regardless of the option chosen, the CPU rasterizer stays the only path on
 machines with no suitable GPU driver. The project puts performance first and
 aims to run on old and low-end machines with few resources, so CPU performance
 work keeps its value.
 
 ## Deciding measurements
 
-### What the CPU costs
+### CPU cost
 
 These are the costs of `Machine::render` in headless runs:
 `smilebasic-check --bench 600 PROJECT PROGRAM` on scratch copies of the
@@ -154,22 +154,24 @@ Take the numbers as orders of magnitude.
 | SOLIDGUNNER_V `MAIN.PRG` | typical sprite game | 1.15 ms | 1.24 ms | 1.72 ms |
 | DVD_BOUNCE `MAIN.PRG` | one moving sprite | 0.51 ms | 0.50 ms | 0.72 ms |
 
-How the costs split:
+Cost breakdown:
 
 - They scale with covered pixels times layers. Full-screen composed layers and
   filters are the expensive part: each composed layer clears and composes a 3.5
   MiB buffer, and blur and color filters touch every pixel.
 - Small sprite games are cheap.
-- Uploading a 1280x720 frame is a further 3.5 MiB a frame.
+- Uploading a 1280x720 frame is another 3.5 MiB per frame.
 
-### The path against the CPU
+### The GPU path compared with the CPU
 
-Measured when the path went in, on one x86-64 desktop with an RTX 3060 Ti, on
-the opengl driver through EGL with no window shown: ms for each frame drawn. GPU
-is the CPU's side (walking the scene, pages, flush) plus the wait for the GPU
-when read back at once, with no vsync and no real present. A window's present is
-not in these. Instructions are in billions over the same run, for TPERF's scenes
-and ELE2020. [benchmarking.md](../performance/benchmarking.md) covers how to measure the path.
+Measured when the path was added, on one x86-64 desktop with an RTX 3060 Ti, on
+the opengl driver through EGL with no window shown: ms per frame drawn. The GPU
+time is the CPU-side work (walking the scene, pages, flush) plus the wait for
+the GPU when read back immediately, with no vsync and no real present. A
+window's present is not in these. Instructions are in billions over the same
+run, for TPERF's scenes and ELE2020.
+[benchmarking.md](../performance/benchmarking.md) covers how to measure the
+path.
 
 | Scene | CPU ms | GPU ms | CPU instr | GPU instr | Peak RSS, CPU, GPU | Pixels 1 off, 2, more, of those compared | Most off |
 |---|---|---|---|---|---|---|---|
@@ -187,8 +189,8 @@ and ELE2020. [benchmarking.md](../performance/benchmarking.md) covers how to mea
 | SOLIDGUNNER_V | 2.3 | 1.4 | 24 | 9 | 276, 329 | 0.01%, 0, 0.02% | 255 |
 | ELE2020 | 13.2 | 2.1 | 143 | 11 | 313, 368 | 5.4%, 0, 0.003% | 255 |
 
-Elements' edges and samples between texels are the 255s. A plain sub screen and
-the inverted cells of DIRECT mode cost about 1 ms either way. Measured by hand
-in a real window, unlike the headless numbers around it, TMULTI took 2.47 ms for
-the screen, and SPROT and TMULTI look as on the CPU there. The other scenes have
-not been measured in a window.
+The 255s come from elements' edges and samples between texels. A plain sub
+screen and the inverted cells of DIRECT mode cost about 1 ms either way.
+Measured by hand in a real window, unlike the headless numbers around it, TMULTI
+took 2.47 ms for the screen, and SPROT and TMULTI look the same as on the CPU
+there. The other scenes have not been measured in a window.

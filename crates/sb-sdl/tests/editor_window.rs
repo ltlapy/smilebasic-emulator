@@ -4,9 +4,9 @@ use std::process::Command;
 
 /// Quitting with the editor open in its own window leaves no texture to
 /// be destroyed after that window's renderer. SDL refuses such a texture
-/// by default, so the run turns its checks of objects off, and a texture
-/// left over is then read after it was freed. That crashes about half of
-/// the runs, so a few of them are made.
+/// by default, so the run turns off its checks of objects, and a leftover
+/// texture is then read after it was freed. That crashes about half of
+/// the runs, so the test makes a few of them.
 #[test]
 fn quitting_destroys_the_editor_windows_textures_before_its_renderer() {
     let dir = std::env::temp_dir().join("sb-editor-window");

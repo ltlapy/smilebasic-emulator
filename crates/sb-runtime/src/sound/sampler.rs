@@ -1,6 +1,6 @@
 //! A small sampler for SmileBASIC 4's own instruments. Each note decodes
-//! its waveform as it plays, so nothing is decoded ahead and memory stays
-//! at the compressed bank's size.
+//! its waveform as it plays, so nothing is decoded ahead. The chunks a note
+//! decodes are kept for later notes, up to a budget (see [`Decoded`]).
 
 use std::sync::Arc;
 
@@ -12,30 +12,31 @@ use super::wave::Envelope as MmlEnvelope;
 
 /// Samples between envelope steps: 5 ms.
 pub(crate) const TICK: usize = RATE as usize / 200;
-/// Milliseconds in a step: the envelope moves a millisecond at a time.
+/// Milliseconds in a step: the envelope advances one millisecond at a time.
 const TICK_MS: u32 = 5;
-/// Notes sounding at once; the oldest makes way for a new one.
+/// Notes sounding at the same time. A new one stops the oldest released
+/// note, or the oldest note when none is released.
 pub(crate) const MAX_VOICES: usize = 48;
-/// Where the attack starts, in 0.1 dB: the note is silent below it.
+/// The level the attack starts at, in 0.1 dB: the note is silent below it.
 const FLOOR: f32 = -904.0;
 /// The lowest sustain level, in 0.1 dB.
 const SUSTAIN_FLOOR: f32 = -723.0;
 /// The instruments' level: @0's A at V127 in the middle records at an
-/// RMS of 850 (TEST40), its regions' volume being 88. A full-scale sample
+/// RMS of 850 (TEST40), with a region volume of 88. A full-scale sample
 /// at region volume 127 then plays about as loud as a full-scale WAVSET
-/// waveform, as the PSG's do (TEST41).
+/// waveform, the same as the PSG's waveforms do (TEST41).
 pub(crate) const OUTPUT_GAIN: f32 = 0.1774;
 
-/// Steps of [`TAPS`] between two samples of a waveform. Fewer leave a
-/// noise of their own: a 1 kHz sine at 8000 Hz gets a component at 15 kHz
+/// Steps of [`TAPS`] between two samples of a waveform. Fewer steps add
+/// their own noise: a 1 kHz sine at 8000 Hz gets a component at 15 kHz
 /// 64 dB down with 256, 84 dB down with 1024.
 const PHASES: usize = 1024;
 
 /// The curve that notes of instruments and waveforms are read through, one
 /// side of it: its value and slope at 0, 0.5, 1, 1.5 and 2 samples from
-/// the position, a cubic between each two. It keeps what lies well below
-/// half the waveform's rate and takes most of the images above it away,
-/// from four samples. PCMSTREAM is not filtered.
+/// the position, a cubic between each two. It keeps what is well below
+/// half the waveform's rate and removes most of the images above it, from
+/// four samples. PCMSTREAM is not filtered.
 // UNVERIFIED: a curve fitted to recordings of SB4's images and harmonics,
 // not SB4's own; SB4 may use another for notes played well above their
 // rate.
@@ -93,7 +94,7 @@ const fn taps() -> [[f32; 4]; PHASES + 1] {
             total += q[k];
             k += 1;
         }
-        // What rounding left over goes to the nearer sample.
+        // The remainder of the rounding goes to the nearer sample.
         q[if 2 * p < PHASES { 1 } else { 2 }] += ONE as i32 - total;
         let mut k = 0;
         while k < 4 {
@@ -116,15 +117,15 @@ pub(crate) fn interpolate(h: &[f32; 4], frac: f64) -> f32 {
     h[0] * w[0] + h[1] * w[1] + h[2] * w[2] + h[3] * w[3]
 }
 
-/// The attack for attack values 109 to 127: how much of the level is
-/// left after 5 ms, in 256ths. Below 109 it is 255 - attack.
+/// The attack for attack values 109 to 127: the share of the level left
+/// after 5 ms, in 256ths. Below 109 it is 255 - attack.
 // These are the Nintendo DS sound engine's values; SmileBASIC 4's own
 // steps of a millisecond are their fifth roots.
 const FAST_ATTACK: [i32; 19] = [
     0, 1, 5, 14, 26, 38, 51, 63, 73, 84, 92, 100, 109, 116, 123, 127, 132, 137, 143,
 ];
 
-/// How much of the level is left after each millisecond of the attack.
+/// The share of the level left after each millisecond of the attack.
 fn attack_factor(attack: u8) -> f32 {
     let per_5ms = match attack.min(127) {
         a @ 109.. => FAST_ATTACK[usize::from(127 - a)],
@@ -133,8 +134,8 @@ fn attack_factor(attack: u8) -> f32 {
     (per_5ms as f32 / 256.0).powf(0.2)
 }
 
-/// How far the level falls each millisecond for a decay or release
-/// value, in 0.1 dB.
+/// The fall of the level per millisecond for a decay or release value,
+/// in 0.1 dB.
 fn fall_rate(value: u8) -> f32 {
     match value.min(127) {
         127 => 65535.0,
@@ -144,7 +145,7 @@ fn fall_rate(value: u8) -> f32 {
     }
 }
 
-/// A 0-127 sustain level in 0.1 dB, squared as Nintendo's volumes are,
+/// A 0-127 sustain level in 0.1 dB, squared like Nintendo's volumes,
 /// and no lower than -72.3 dB (-72.2 for 1).
 fn level(value: u8) -> f32 {
     match value.min(127) {
@@ -170,7 +171,7 @@ pub(crate) fn pan_gains(position: f32) -> [f32; 2] {
     [((1.0 - p) * 0.5).sqrt(), ((1.0 + p) * 0.5).sqrt()]
 }
 
-/// What an LFO moves: MML's @MP, @MA and @ML.
+/// The target of an LFO: MML's @MP, @MA and @ML.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LfoTarget {
     Pitch = 0,
@@ -179,12 +180,12 @@ pub(crate) enum LfoTarget {
 }
 
 /// An LFO's settings, as MML's @MP, @MA and @ML give them: depth,
-/// range, speed and delay. They act as the Nintendo sound engine's:
-/// the wave is a sine of depth / 128 times range units at speed / 2.56
-/// Hz, a unit being a semitone of pitch, 6 dB of volume or the whole
-/// way from the middle to one side of the pan. TEST40 measured @MP7,1,7
-/// at about ±6 cents every 360 ms, @MP32,1,20 at ±25 cents every 130
-/// ms, @MA24,2,7 at ±2.3 dB and @ML24,2,7 swinging each side between
+/// range, speed and delay. They act the same as the Nintendo sound
+/// engine's LFOs: the wave is a sine of depth / 128 times range units at
+/// speed / 2.56 Hz, a unit being a semitone of pitch, 6 dB of volume or
+/// the whole way from the middle to one side of the pan. TEST40 measured
+/// @MP7,1,7 at about ±6 cents every 360 ms, @MP32,1,20 at ±25 cents every
+/// 130 ms, @MA24,2,7 at ±2.3 dB and @ML24,2,7 swinging each side between
 /// 0.77 and 1.2 of the middle's level, both every 360 ms.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Lfo {
@@ -212,7 +213,7 @@ impl Lfo {
     }
 }
 
-/// How far round a note's LFO has gone.
+/// The state of a note's LFO: its phase and the delay waited so far.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LfoState {
     phase: f32,
@@ -257,7 +258,7 @@ impl Lfos {
 /// Decibels as a gain, as the sound engine reads them from its table of
 /// tenths of a dB: truncated, no louder than +6 dB, and silent from
 /// -90.4 dB down. Without these limits a tremolo of a wide range reaches
-/// beyond what a float holds.
+/// beyond the range of a float.
 #[inline(never)]
 fn volume_ratio(db: f32) -> f32 {
     match (db * 10.0).clamp(-904.0, 60.0) as i32 {
@@ -283,7 +284,7 @@ enum Stage {
     Done,
 }
 
-/// A note's level as SmileBASIC's instruments move it, in 0.1 dB a
+/// A note's level as SmileBASIC's instruments move it, in 0.1 dB, one
 /// millisecond at a time, stepped every [`TICK`] samples. The PSG and
 /// user waveforms move the same way. The attack multiplies the level,
 /// which starts at -90.4 dB; the hold lasts (hold + 1)^2 / 4 ms; decay and
@@ -320,7 +321,7 @@ impl Envelope {
         }
     }
 
-    /// Whether the note has been let go.
+    /// Whether the note has been released.
     pub(crate) fn released(&self) -> bool {
         matches!(self.stage, Stage::Release | Stage::Done)
     }
@@ -330,7 +331,7 @@ impl Envelope {
         self.stage == Stage::Done
     }
 
-    /// Moves on a step's milliseconds.
+    /// Advances by one step's milliseconds.
     pub(crate) fn step(&mut self) {
         for _ in 0..TICK_MS {
             self.step_ms();
@@ -356,9 +357,9 @@ impl Envelope {
                 if self.level <= self.sustain {
                     self.level = self.sustain;
                     // SmileBASIC 4 holds a sustain of 0 at -72.3 dB until
-                    // the note is let go; here the note ends there, so that
-                    // drums that ignore being let go cannot pile up notes
-                    // nobody hears.
+                    // the note is released; here the note ends there, so
+                    // that drums that ignore the release cannot pile up
+                    // notes nobody hears.
                     // self.stage = Stage::Sustain;
                     self.stage = if self.sustain <= SUSTAIN_FLOOR {
                         Stage::Done
@@ -394,9 +395,9 @@ struct Channel {
     pan: i32,
     lfos: [Lfo; 3],
     bend: i32,
-    /// MML's @E, over the instruments' own.
+    /// MML's @E, in place of the instruments' own envelopes.
     envelope: Option<MmlEnvelope>,
-    /// BEEP's pan as a position, added to every voice's: see
+    /// BEEP's pan as a position, added to every voice's position: see
     /// [`Synth::pan_offset`].
     pan_offset: f32,
 }
@@ -421,11 +422,12 @@ struct Voice {
     channel: usize,
     key: i32,
     region: Region,
-    /// Where a channel of a stereo waveform sits before the pan: -1 for
-    /// the left, 1 for the right; 0 for a mono waveform.
+    /// The position of a channel of a stereo waveform before the pan: -1
+    /// for the left, 1 for the right; 0 for a mono waveform.
     side: f32,
     reader: Reader,
-    /// The samples either side of the position, and how far between.
+    /// The samples on either side of the position, and the fraction
+    /// between them.
     s0: f32,
     s1: f32,
     frac: f64,
@@ -471,8 +473,8 @@ impl Voice {
         out
     }
 
-    /// Steps the envelope and aims the gains and pitch at where they
-    /// should be by the end of the next step.
+    /// Steps the envelope and aims the gains and pitch at their values for
+    /// the end of the next step.
     fn tick(&mut self, ch: &Channel) {
         self.envelope.step();
         let (cents, tremolo, pan) = self.lfos.step(&ch.lfos);
@@ -497,8 +499,8 @@ impl Voice {
         let [l, r] = pan_gains(at);
         let target = [gain * l, gain * r];
         if !self.begun {
-            // The note starts at its first step's level, as waveforms do:
-            // @0's C4 sounded from its 11th sample (TEST40).
+            // The note starts at its first step's level, the same as waveforms
+            // do: @0's C4 sounded from its 11th sample (TEST40).
             self.begun = true;
             self.gains = target;
         }
@@ -507,9 +509,9 @@ impl Voice {
         self.step = self.base_step * f64::from(2f32.powf(cents / 1200.0));
     }
 
-    /// A step of the envelope lasts [`TICK`] samples, which go as a run: this
-    /// is the most work there is for a voice, and in a run nothing but the
-    /// waveform can change.
+    /// A step of the envelope lasts [`TICK`] samples, which are rendered as
+    /// one run. This is the heaviest part of a voice's work, and in a run
+    /// nothing but the waveform can change.
     fn render(&mut self, bank: &Bank, ch: &Channel, left: &mut [f32], right: &mut [f32]) {
         let wave = &bank.waves[usize::from(self.region.wave)];
         let data = &bank.data[wave.data.clone()];
@@ -530,7 +532,7 @@ impl Voice {
             let (ls, rs) = (&mut left[at..at + run], &mut right[at..at + run]);
             at += run;
             // Land exactly on the target, which may be silence: for the last
-            // sample of a step, which goes on its own.
+            // sample of a step, which is rendered separately.
             let (plain, last) = if ends_step { (run - 1, 1) } else { (run, 0) };
             let (mut g0, mut g1) = (self.gains[0], self.gains[1]);
             let [d0, d1] = self.deltas;
@@ -542,10 +544,10 @@ impl Voice {
             let (mut ended, mut done) = (self.wave_ended, false);
             let mut i = 0;
             while i < lp.len() {
-                // Samples go on from what the reader has decoded already,
-                // with no call in the loop: around one, every float would
+                // Samples continue from what the reader has already decoded,
+                // with no call in the loop: around a call, every float would
                 // have to leave the registers. A sample's reads come after
-                // its output, which does not hang on them, so that the loop
+                // its output, which does not depend on them, so that the loop
                 // can stop between two reads for the reader to decode more.
                 let ahead = if ended { &[][..] } else { reader.ahead() };
                 let mut taken = 0;
@@ -557,7 +559,7 @@ impl Voice {
                     // Here they stay linear: the filter made songs of many
                     // notes take a quarter longer to mix, and the
                     // instruments' samples are 32 kHz and more, where the
-                    // two sound nearly alike.
+                    // two sound nearly the same.
                     let s = s0 + (s1 - s0) * frac as f32;
                     frac += step;
                     g0 += d0;
@@ -610,7 +612,7 @@ impl Voice {
         }
     }
 
-    /// [`Voice::render`] a sample at a time, as it was first written, to
+    /// The first version of [`Voice::render`], one sample at a time, to
     /// compare with.
     #[cfg(test)]
     fn render_by_sample(&mut self, bank: &Bank, ch: &Channel, left: &mut [f32], right: &mut [f32]) {
@@ -637,8 +639,8 @@ impl Voice {
     }
 }
 
-/// What goes on when the position passes a sample of the waveform: the
-/// samples either side move on, and the note is done once the position
+/// The work done when the position passes a sample of the waveform: the
+/// samples on either side advance, and the note is done once the position
 /// passes the silence after the waveform's end.
 #[inline(always)]
 fn read(
@@ -858,7 +860,7 @@ impl Synth for Sampler {
 }
 
 /// An envelope's stages in seconds, as a SoundFont gives them: the decay
-/// and release are how long a fall of 100 dB takes at their rate.
+/// and release are the time a fall of 100 dB takes at their rate.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Times {
     pub attack: f64,
@@ -876,7 +878,7 @@ pub fn times(adshr: Adshr) -> Times {
         e.step_ms();
         ms += 1;
     }
-    // 100 dB, a thousand tenths, at so many tenths a millisecond.
+    // 100 dB, a thousand tenths, at so many tenths per millisecond.
     let fall = |value: u8| 1.0 / f64::from(fall_rate(value));
     Times {
         attack: f64::from(ms) / 1000.0,
@@ -897,7 +899,7 @@ pub(crate) mod tests {
         let near = |db: f32, gain: f32| (volume_ratio(db) - gain).abs() < gain * 1e-3;
         assert_eq!(volume_ratio(0.0), 1.0);
         assert!(near(-6.0, 0.5012) && near(6.0, 1.9953));
-        // Truncated to tenths of a dB, towards 0.
+        // Truncated to tenths of a dB, toward 0.
         assert!(near(0.19, 1.0116) && near(-0.19, 0.9886));
         // No higher than +6 dB, however far it asks.
         assert!(near(6.1, 1.9953) && near(756.0, 1.9953) && near(f32::MAX, 1.9953));
@@ -907,7 +909,7 @@ pub(crate) mod tests {
         assert_eq!(volume_ratio(-756.0), 0.0);
     }
 
-    /// One instrument: a looping square wave at 48 kHz, eight samples a
+    /// One instrument: a looping square wave at 48 kHz, eight samples per
     /// cycle, sounding at key 60.
     fn sampler(adshr: Adshr, ignore_note_off: bool) -> Sampler {
         Sampler::new(Arc::new(bank(adshr, ignore_note_off)), Decoded::new())
@@ -955,7 +957,7 @@ pub(crate) mod tests {
         })
     }
 
-    /// The peak of a stretch of `render` once the note is going.
+    /// The peak of a stretch of `render` once the note is playing.
     fn settled_peak(mut render: impl FnMut(&mut [f32], &mut [f32])) -> f32 {
         let (mut l, mut r) = (vec![0.0; 800], vec![0.0; 800]);
         for _ in 0..6 {
@@ -1075,7 +1077,7 @@ pub(crate) mod tests {
         l.iter().chain(&r).fold(0f32, |m, x| m.max(x.abs()))
     }
 
-    /// A bank of `i` waves: ADPCM, looping and not, and PCM.
+    /// A bank of four waves: ADPCM, looping and not, and PCM.
     fn mixed_bank(adshr: Adshr) -> Bank {
         let mut b = bank(adshr, false);
         let mut data = b.data.clone();
@@ -1146,7 +1148,7 @@ pub(crate) mod tests {
                 let bank = a.bank.clone();
                 let channels = a.channels;
                 let mut plain = a.voices.clone();
-                // Any lengths of block, as well as a frame's.
+                // Blocks of any length, as well as of a frame's length.
                 let n = if frame % 3 == 0 {
                     1 + next(800) as usize
                 } else {

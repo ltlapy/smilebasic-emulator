@@ -1,7 +1,7 @@
-//! Controllers, mouse, touch and keyboard: what the frontend reports, read
-//! once a frame, and the commands that read it: BUTTON, BREPEAT, STICK,
-//! CONTROLLER, XCTRLSTYLE, ACCEL, GYROA, GYROV, GYROSYNC, MOUSE, MBUTTON,
-//! TOUCH, KEYBOARD, KEY and PUSHKEY.
+//! Controllers, mouse, touch and keyboard: the state the frontend reports,
+//! read once per frame, and the commands that read it: BUTTON, BREPEAT,
+//! STICK, CONTROLLER, XCTRLSTYLE, ACCEL, GYROA, GYROV, GYROSYNC, MOUSE,
+//! MBUTTON, TOUCH, KEYBOARD, KEY and PUSHKEY.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
@@ -26,30 +26,31 @@ pub const RIGHT: u32 = 7;
 const BUTTON_IDS: usize = 17;
 const RANY: u32 = 0b1111;
 const LANY: u32 = 0b1111 << 4;
-/// Every button but the stick pushes.
+/// Every button except the stick pushes.
 const ANY: u32 = (1 << 12) - 1;
 /// Touches TOUCH can ask for; only the mouse's left button touches.
 const TOUCHES: i32 = 10;
-/// The most characters KEY keeps; KEY ignores a longer string, while
-/// PUSHKEY's is String is too long (checked on hardware).
+/// The most characters KEY keeps. KEY ignores a longer string, while
+/// PUSHKEY fails with String is too long (checked on hardware).
 const KEY_LENGTH: usize = 256;
 const PUSHKEY_LENGTH: usize = 63;
 /// The highest code PUSHKEY takes.
 const PUSHKEY_CODES: u32 = 0x10FFF;
-/// BREPEAT's start and interval for buttons 0 to 7 and for the rest, as
-/// SmileBASIC 4 starts.
+/// BREPEAT's start and interval for buttons 0 to 7 and for the rest, as set
+/// when SmileBASIC 4 starts.
 const REPEAT_PADS: (u32, u32) = (20, 3);
 const REPEAT_OTHERS: (u32, u32) = (15, 4);
 
-/// How far a stick goes before it counts as a direction for [`PAD_KEYS`].
+/// The distance a stick is pushed before it counts as a direction for
+/// [`PAD_KEYS`].
 const PAD_KEY_STICK: f64 = 0.3;
 /// A held button's key repeats after this many frames, then every so many.
 const PAD_KEY_REPEAT: (u32, u32) = (20, 3);
-/// A keyboard key held for a program, the prompt or the editor types again
-/// this many frames after the press, or after any other keyboard key went
-/// down or up, then every so many.
+/// A keyboard key held for a program, DIRECT mode or the editor types again
+/// this many frames after the press, or after any other keyboard key was
+/// pressed or released, then every so many.
 const KEY_REPEAT: (u32, u32) = (19, 3);
-/// The keys that take over the repeat when they go down, by USB usage ID:
+/// The keys that take over the repeat when they are pressed, by USB usage ID:
 /// Shift, Ctrl, Alt and the Windows keys are not among them.
 const REPEAT_KEYS: std::ops::RangeInclusive<u8> = 0x04..=0x94;
 /// #B_L1 and #B_R1, either of which is Ctrl for [`PAD_KEYS`] and for typing.
@@ -58,9 +59,9 @@ const PAD_KEY_CTRL: u32 = 0b11 << 8;
 const MODIFIER_CTRL: u32 = 1 << 2;
 /// Left and Right Shift's USB usage IDs.
 const SHIFT_KEYS: [u8; 2] = [0xE1, 0xE5];
-/// Left and Right Ctrl's.
+/// The same for Left and Right Ctrl.
 const CTRL_KEYS: [u8; 2] = [0xE0, 0xE4];
-/// Left and Right Alt's.
+/// The same for Left and Right Alt.
 const LEFT_ALT: u8 = 0xE2;
 const RIGHT_ALT: u8 = 0xE6;
 
@@ -74,8 +75,9 @@ fn shift_held(keys: &[u64; 4]) -> bool {
     SHIFT_KEYS.iter().any(|&k| key_held(keys, k))
 }
 
-/// What Alt with a key types, by the key's USB usage ID: characters of
-/// SmileBASIC 4's own, the same for either Alt and with Shift or without.
+/// The characters Alt with a key types, by the key's USB usage ID:
+/// SmileBASIC 4's own characters, the same for either Alt and with or
+/// without Shift.
 /// Keys not here type nothing with Alt.
 const ALT_KEYS: [(u8, u16); 51] = [
     (0x04, 0xE2EC), // A
@@ -131,31 +133,32 @@ const ALT_KEYS: [(u8, u16); 51] = [
     (0x89, 0xE29F), // International 3 (Yen)
 ];
 
-/// What Alt with the key of this USB usage ID types, if anything.
+/// The character that Alt with the key of this USB usage ID types, if any.
 pub fn alt_key_code(usage: u8) -> Option<u16> {
     (ALT_KEYS.iter())
         .find(|&&(key, _)| key == usage)
         .map(|&(_, code)| code)
 }
 
-/// What a keyboard key types, by the modifiers held as it types: each
-/// repeat of a held key types what the modifiers held then give, as its
-/// press did. 0: nothing, or nothing of the runtime's own, as for text
-/// outside ASCII, which comes with the computer's repeats.
+/// The text a keyboard key types, by the modifiers held when it types. Each
+/// repeat of a held key types the character for the modifiers held at that
+/// time, the same as its press did. 0 means nothing, or nothing typed by the
+/// runtime itself, as for text outside ASCII, which comes with the
+/// computer's repeats.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KeyText {
     /// With no modifier.
     pub plain: u16,
     pub shift: u16,
-    /// With Left Alt: [`alt_key_code`]'s.
+    /// With Left Alt: the code from [`alt_key_code`].
     pub alt: u16,
-    /// With Right Alt alone: the layout's AltGr character, or else what
-    /// Left Alt gives.
+    /// With Right Alt alone: the layout's AltGr character, or else the same
+    /// as with Left Alt.
     pub right_alt: u16,
 }
 
 impl KeyText {
-    /// What the key types with the keys of `keys` held.
+    /// The code the key types while the keys of `keys` are held.
     fn code(&self, keys: &[u64; 4]) -> u16 {
         if key_held(keys, LEFT_ALT) {
             self.alt
@@ -169,7 +172,7 @@ impl KeyText {
     }
 }
 
-/// What a row of [`PAD_KEYS`] looks at.
+/// The input a row of [`PAD_KEYS`] checks.
 #[derive(Clone, Copy)]
 enum PadInput {
     /// A button's id.
@@ -181,9 +184,10 @@ enum PadInput {
     StickRight,
 }
 
-/// The keys the controllers type while a program runs: what SmileBASIC 4's
-/// assignment table gives for any mode. The first row that holds gives the
-/// frame's key, so Ctrl's rows come first. `true`: only with Ctrl.
+/// The keys the controllers type while a program runs, from SmileBASIC 4's
+/// assignment table for any mode. The first row that holds gives the
+/// frame's key, so the rows with Ctrl come first. `true` means only with
+/// Ctrl.
 const PAD_KEYS: [(PadInput, bool, u32); 17] = {
     use PadInput::{Button, StickDown, StickLeft, StickRight, StickUp};
     [
@@ -206,7 +210,7 @@ const PAD_KEYS: [(PadInput, bool, u32); 17] = {
         (Button(7), false, codes::RIGHT),
     ]
 };
-/// The buttons [`PAD_KEYS`] looks at, to go past it when none is down.
+/// The buttons [`PAD_KEYS`] checks, to skip it when none is held.
 const PAD_KEY_BUTTONS: u32 = 0b1111_1110;
 
 /// The key a held controller input repeats, and how long it has been held.
@@ -215,7 +219,7 @@ struct PadKeyRepeat {
     code: u32,
     frames: u32,
     repeating: bool,
-    /// Nothing more is typed until all is let go.
+    /// Nothing more is typed until everything is released.
     spent: bool,
 }
 
@@ -224,13 +228,13 @@ struct PadKeyRepeat {
 struct KeyRepeat {
     /// Its USB usage ID; 0 for none.
     usage: u8,
-    /// What it typed at the press, which its repeats type again when
+    /// The codes it typed at the press, which its repeats type again when
     /// [`KeyRepeat::text`] has nothing: keys such as Enter.
     codes: Vec<u16>,
-    /// What it types by the modifiers held.
+    /// The text it types by the modifiers held.
     text: Option<KeyText>,
-    /// Frames since it went down, or since any keyboard key last went down
-    /// or up, counting the frame it did.
+    /// Frames since it was pressed, or since any keyboard key was last
+    /// pressed or released, counting the frame in which that happened.
     frames: u32,
     /// Whether it types into the editor, as known from its first frame.
     editor: Option<bool>,
@@ -241,7 +245,7 @@ struct KeyRepeat {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pad {
     pub connected: bool,
-    /// A gamepad is there, not only the keyboard: the first controller
+    /// A gamepad is connected, not only the keyboard. The first controller
     /// is connected either way.
     pub gamepad: bool,
     /// One bit per button id below [`BUTTONS`].
@@ -282,7 +286,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         let mut pads = [Pad::default(); PADS];
-        // The first controller is the keyboard's, always there.
+        // The first controller belongs to the keyboard and is always there.
         pads[0].connected = true;
         State {
             pads,
@@ -329,8 +333,8 @@ impl State {
     }
 
     /// The default controller's stick: each axis on its own, the value
-    /// furthest from 0 among the controllers, the earlier controller's on
-    /// a tie. X and Y can come from different controllers.
+    /// furthest from 0 among the controllers, or the value of the earlier
+    /// controller on a tie. X and Y can come from different controllers.
     fn stick(&self, stick: usize) -> (f64, f64) {
         let further = |cur: f64, new: f64| if cur.abs() < new.abs() { new } else { cur };
         (self.pads.iter().map(|p| p.sticks[stick])).fold((0.0, 0.0), |(x, y), (nx, ny)| {
@@ -365,7 +369,8 @@ impl State {
 }
 
 pub struct Input {
-    /// What the frontend reports now; [`Input::latch`] makes it the frame's.
+    /// The state the frontend reports now. [`Input::latch`] makes it the
+    /// state of the frame.
     pub live: State,
     now: State,
     before: State,
@@ -385,8 +390,9 @@ pub struct Input {
     pub(crate) toycons: [i32; 4],
     /// IRSTATE of controllers 1 and 2.
     pub(crate) ir_state: [i32; 2],
-    /// What VIBRATE last asked of each controller's left and right side,
-    /// and the frames left before a pattern ends (`None`: until stopped).
+    /// The last VIBRATE request for the left and right side of each
+    /// controller, and the frames left before a pattern ends (`None`: until
+    /// stopped).
     pub(crate) vibration: [[(i32, Option<u32>); 2]; PADS],
     /// KEY's contents for F1 to F5.
     pub function_keys: [Vec<u16>; 5],
@@ -400,7 +406,7 @@ pub struct Input {
     pub editor_held: State,
     /// BUTTON or STICK has been called; see [`Input::take_buttons_read`].
     buttons_read: bool,
-    /// What the program has read of the keyboard; see
+    /// The keyboard keys the program has read; see
     /// [`Input::take_keys_read`].
     pub(crate) keys_read: KeysRead,
     /// The program has read the controllers, the keyboard, the mouse or
@@ -409,18 +415,18 @@ pub struct Input {
     /// Keyboard keys whose press [`Input::hide_press`] keeps from
     /// KEYBOARD, by USB usage ID, until they are released.
     hidden_presses: [u64; 4],
-    /// What went down and what went up since the last frame, as the
-    /// frontend saw it happen; see [`Input::tap`].
+    /// The presses and releases since the last frame, as the frontend saw
+    /// them happen; see [`Input::tap`].
     taps: Taps,
     /// The program read the controls, the keyboard, the mouse or the
     /// touch screen in this frame.
     pub(crate) read: bool,
-    /// The last frame ended with the program part-way through its trip
-    /// round its main loop; see [`Input::latch`].
+    /// The last frame ended with the program part-way through an iteration
+    /// of its main loop; see [`Input::latch`].
     pub(crate) carry: bool,
 }
 
-/// What [`Input::tap`] saw go down or up.
+/// A press or release that [`Input::tap`] saw.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tap {
     /// A controller, 0 to 3 for controllers 1 to 4, and BUTTON's bits.
@@ -430,10 +436,11 @@ pub enum Tap {
 }
 
 /// Presses and releases between two frames, which [`Input::live`] alone,
-/// read once a frame, can miss.
+/// read once per frame, can miss.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Taps {
-    /// Controllers 1 to 4's buttons that went down, then those that went up.
+    /// The buttons of controllers 1 to 4 that were pressed, then those that
+    /// were released.
     down: [u32; PADS],
     up: [u32; PADS],
     /// The same for keyboard keys, by USB usage ID.
@@ -441,9 +448,9 @@ struct Taps {
     keys_up: [u64; 4],
 }
 
-/// `now` with what changed and changed back since `before`: held for one
-/// frame what went down and up again, and let go for one frame what went
-/// up and down again.
+/// `now` with the inputs that changed and changed back since `before`: an
+/// input pressed and released again shows as held for one frame, and one
+/// released and pressed again shows as released for one frame.
 fn with_taps<T>(before: T, now: T, down: T, up: T) -> T
 where
     T: Copy
@@ -512,18 +519,18 @@ impl Default for Input {
 }
 
 impl Input {
-    /// A controller's buttons or a keyboard key went down or up, as the
-    /// frontend saw it happen between two frames. [`Input::live`] holds
-    /// only what is down when the frontend reads it, once a frame; with
-    /// this, a press and its release that both came in between read as
-    /// held for one frame, with the press and the release on the frames
-    /// either side, and a release and a new press read as let go for one
-    /// frame.
+    /// A controller's buttons or a keyboard key were pressed or released,
+    /// as the frontend saw it happen between two frames. [`Input::live`]
+    /// holds only what is down when the frontend reads it, once per frame.
+    /// With this, a press and its release that both came in between read
+    /// as held for one frame, with the press and the release on the frames
+    /// on either side, and a release and a new press read as released for
+    /// one frame.
     ///
     /// SmileBASIC 4 reads the controllers every 1/60 s, more often than a
     /// person presses and releases a button. The emulator's frames come
     /// further apart on a slow computer, which would lose a short tap. At
-    /// 60 frames a second a program sees no difference: a person cannot
+    /// 60 frames per second a program sees no difference: a person cannot
     /// time a press to fall between two frames.
     // UNVERIFIED: whether SmileBASIC 4 can miss a press shorter than a
     // frame, and if it shows one, that it shows it held for a frame.
@@ -537,8 +544,8 @@ impl Input {
         }
     }
 
-    /// Forgets what [`Input::tap`] saw since the last frame, as when one of
-    /// the frontend's own screens had the controls.
+    /// Forgets what [`Input::tap`] saw since the last frame. The frontend
+    /// calls this when one of its own screens had the controls.
     pub fn drop_taps(&mut self) {
         self.taps = Taps::default();
     }
@@ -547,23 +554,25 @@ impl Input {
     /// until the next frame, with the presses and releases
     /// [`Input::tap`] saw since the last.
     ///
-    /// When the last frame ended with the program part-way through its
-    /// trip ([`Input::carry`]) and it read nothing in it, what was held
-    /// before that frame stays what this one compares with, and what
-    /// changed in that frame counts as a tap, so that a press or release
-    /// in that frame still shows as one in this. Otherwise a trip that
-    /// takes two frames and reads BUTTON in its second misses each press
-    /// that starts in its first.
-    // UNVERIFIED: what SmileBASIC 4 shows a program whose trip takes more
-    // than a frame. This keeps the presses at unlimited speed, where the
-    // emulator's frames can be slower than the console's; a program that
-    // keeps 60 frames a second never has such a frame.
+    /// When the last frame ended with the program part-way through an
+    /// iteration of its main loop ([`Input::carry`]) and the program read
+    /// nothing in it, this frame compares with what was held before that
+    /// frame. Each change in that frame counts as a tap, so that a press or
+    /// release in that frame still shows as one in this frame. Otherwise an
+    /// iteration of the program's main loop that takes two frames and reads
+    /// BUTTON in its second frame misses each press that starts in its
+    /// first.
+    // UNVERIFIED: what SmileBASIC 4 shows a program when an iteration of
+    // its main loop takes more than a frame. This keeps the presses at
+    // unlimited speed, where the emulator's frames can be slower than the
+    // console's frames. A program that keeps 60 frames per second never has
+    // such a frame.
     pub fn latch(&mut self) {
         let carry = std::mem::take(&mut self.carry) && !self.read;
         self.read = false;
         let mut t = std::mem::take(&mut self.taps);
         if carry {
-            // What changed in the frame nothing read counts as taps.
+            // The changes in the frame that nothing read count as taps.
             let (was, now) = (&self.before, &self.now);
             for i in 0..PADS {
                 let (a, b) = (was.pads[i].buttons, now.pads[i].buttons);
@@ -622,7 +631,7 @@ impl Input {
 
     /// Forgets what was pressed and for how long, so that buttons held
     /// when a program ends give no presses or repeats to the next one. A
-    /// keyboard key held goes on repeating: from a program into DIRECT
+    /// keyboard key held continues repeating: from a program into DIRECT
     /// mode, and across RUN.
     pub fn forget(&mut self) {
         self.now = self.live;
@@ -630,17 +639,18 @@ impl Input {
         self.taps = Taps::default();
         self.held = [[0; BUTTON_IDS]; PADS + 1];
         self.touch = (0, 0);
-        // What is held goes on counting as held, and types nothing more
-        // until let go.
+        // Anything held continues to count as held, and types nothing more
+        // until it is released.
         self.spend_pad_key();
     }
 
-    /// A keyboard key went down: what [`Runtime::type_held`] types for it
-    /// next, for a program, the prompt or the editor, repeats while it
-    /// stays down, counted in the machine's frames rather than by the
-    /// computer's own key repeat, and the key held before stops repeating.
-    /// Shift, Ctrl, Alt and the Windows keys leave the held key repeating;
-    /// like any key going down or up, they start its count again.
+    /// A keyboard key was pressed. What [`Runtime::type_held`] types for it
+    /// next, for a program, DIRECT mode or the editor, repeats while it
+    /// stays down. The repeat is counted in the machine's frames rather than
+    /// by the computer's own key repeat, and the key held before stops
+    /// repeating. Shift, Ctrl, Alt and the Windows keys leave the held key
+    /// repeating. Like any key pressed or released, they start its count
+    /// again.
     pub fn key_down(&mut self, usage: u8) {
         if REPEAT_KEYS.contains(&usage) {
             self.key_repeat = KeyRepeat {
@@ -650,18 +660,19 @@ impl Input {
         }
     }
 
-    /// A code of its own, such as Enter, that the key that just went down
-    /// types again as it repeats: what [`Runtime::type_held`] typed, or
-    /// what it would have typed but for Ctrl, L or R held.
+    /// A key's own code, such as Enter, that the key just pressed types
+    /// again as it repeats: the code [`Runtime::type_held`] typed, or the
+    /// one it would have typed if Ctrl, L or R were not held.
     pub fn key_code(&mut self, code: u16) {
         let r = &mut self.key_repeat;
-        // Only what came with the press, not what a later frame brings.
+        // Only the codes that came with the press, not those a later frame
+        // brings.
         if r.usage != 0 && r.frames == 0 {
             r.codes.push(code);
         }
     }
 
-    /// What the key that just went down types by the modifiers held, for
+    /// The text that the key just pressed types by the modifiers held, for
     /// its repeats, in place of what it typed at the press.
     pub fn key_text(&mut self, text: KeyText) {
         let r = &mut self.key_repeat;
@@ -670,9 +681,9 @@ impl Input {
         }
     }
 
-    /// Whether the held keyboard key types again this frame, once a frame:
-    /// never once it is let go. `held`: it is still down; `keys`: the
-    /// keyboard keys held now.
+    /// Whether the held keyboard key types again this frame, called once per
+    /// frame. It never does once it is released. `held`: it is still down;
+    /// `keys`: the keyboard keys held now.
     fn repeat_due(&mut self, held: bool, keys: &[u64; 4]) -> bool {
         let r = &mut self.key_repeat;
         if !held {
@@ -680,7 +691,7 @@ impl Input {
             return false;
         }
         r.frames += 1;
-        // Any key going down or up, a modifier or another key let go,
+        // Any key pressed or released, a modifier or another key released,
         // starts the count again.
         if r.keys.replace(*keys).is_some_and(|was| was != *keys) {
             r.frames = 1;
@@ -689,7 +700,8 @@ impl Input {
         r.frames > start && (r.frames - 1 - start).is_multiple_of(interval)
     }
 
-    /// What the controllers hold now types nothing more until let go.
+    /// Makes the input the controllers hold now type nothing more until it
+    /// is released.
     pub(crate) fn spend_pad_key(&mut self) {
         self.pad_key_repeat = PadKeyRepeat {
             code: self.now.pad_key(),
@@ -699,10 +711,10 @@ impl Input {
     }
 
     /// The key the controllers type this frame, if any, after
-    /// [`Input::latch`]: when a button or the stick goes down, and then as
-    /// it repeats. Another input going down meanwhile types nothing while
-    /// both are held; once it is released, the first goes on repeating
-    /// where it was.
+    /// [`Input::latch`]: when a button is pressed or the stick is pushed,
+    /// and then as it repeats. Another input pressed meanwhile types nothing
+    /// while both are held. Once it is released, the first continues
+    /// repeating where it was.
     pub(crate) fn pad_key(&mut self) -> Option<u32> {
         let code = self.now.pad_key();
         let r = &mut self.pad_key_repeat;
@@ -729,9 +741,9 @@ impl Input {
     }
 
     /// Keyboard keys held now count as held before too, so that the key
-    /// that closed a dialog is no press for KEYBOARD afterwards, and
-    /// controller buttons are as they were, so that the button that closed
-    /// it is neither a press nor a release for BUTTON.
+    /// that closed a dialog is not a press for KEYBOARD afterwards.
+    /// Controller buttons count as unchanged, so that the button that closed
+    /// the dialog is neither a press nor a release for BUTTON.
     pub(crate) fn hide_presses(&mut self) {
         for (before, now) in self.before.keys.iter_mut().zip(self.now.keys) {
             *before |= now;
@@ -741,9 +753,9 @@ impl Input {
         }
     }
 
-    /// Keeps the press of keyboard key `usage`, which has just gone down,
-    /// from KEYBOARD, which reads it as held before; its release shows. Its
-    /// typing does not repeat either.
+    /// Hides the new press of keyboard key `usage` from KEYBOARD, which
+    /// reads the key as held before. Its release shows. Its typing does not
+    /// repeat either.
     pub fn hide_press(&mut self, usage: u8) {
         self.hidden_presses[usize::from(usage >> 6)] |= 1 << (usage & 63);
         if self.key_repeat.usage == usage {
@@ -760,8 +772,8 @@ impl Input {
         }
     }
 
-    /// Lets a frame's key from the controllers go without typing it: its
-    /// repeats come on as the button stays down.
+    /// Drops a frame's key from the controllers without typing it. Its
+    /// repeats still come while the button stays down.
     pub(crate) fn drop_pad_key(&mut self) {
         self.pad_key();
     }
@@ -772,13 +784,13 @@ impl Input {
         std::mem::take(&mut self.buttons_read)
     }
 
-    /// What the program has read of the keyboard since the last call, for
-    /// the frontend to leave those keys out of what presses buttons.
+    /// The keyboard keys the program has read since the last call, so that
+    /// the frontend can exclude those keys from the keys that press buttons.
     pub fn take_keys_read(&mut self) -> KeysRead {
         std::mem::take(&mut self.keys_read)
     }
 
-    /// Buttons of any controller that went down this frame, with
+    /// Buttons of any controller that were pressed this frame, with
     /// #B_RANY, #B_LANY and #B_ANY.
     pub(crate) fn pressed(&self) -> u32 {
         self.buttons(0, 2)
@@ -800,13 +812,13 @@ impl Input {
 
     /// The bits of controller `pad`'s buttons that meet BUTTON's
     /// condition `function`, with #B_RANY, #B_LANY and #B_ANY. A press or
-    /// a release has those only when they go on or off themselves: with L
-    /// held, pressing or releasing A gives A and #B_RANY, as #B_ANY stays
-    /// on for L. A wait for buttons in DIALOG answers the same way. A
-    /// repeat has them as they go on and then on their own clocks, by
-    /// their own BREPEAT, counted from the frame each went on: with L
-    /// held, A going down or repeating gives A and #B_RANY, and #B_ANY
-    /// goes on repeating as it did for L.
+    /// a release has those only when they turn on or off themselves: with
+    /// L held, pressing or releasing A gives A and #B_RANY, because #B_ANY
+    /// stays on for L. A wait for buttons in DIALOG answers the same way. A
+    /// repeat has them when they turn on and then on their own clocks, by
+    /// their own BREPEAT, counted from the frame each turned on: with L
+    /// held, A pressed or repeating gives A and #B_RANY, and #B_ANY
+    /// continues repeating as it did for L.
     fn buttons(&self, pad: usize, function: i32) -> u32 {
         let (now, before) = (self.now.buttons(pad), self.before.buttons(pad));
         match function {
@@ -856,7 +868,7 @@ pub(crate) fn in_range(what: &str, v: &Value, range: std::ops::RangeInclusive<i3
     })
 }
 
-/// An omittable argument in `range`, `default` when left out.
+/// An omittable argument in `range`, `default` when omitted.
 fn opt_in_range(
     what: &str,
     v: Option<&Value>,
@@ -869,10 +881,10 @@ fn opt_in_range(
     }
 }
 
-/// Whether a key that types `code` of its own, such as an arrow key,
-/// still types it while [`State::keys_type_nothing`]: Enter, Backspace,
-/// Tab, Delete and Esc do not, while Home and End do. UNVERIFIED: that
-/// Insert, Page Up and Page Down still type.
+/// Whether a key that types its own `code`, such as an arrow key, still
+/// types it while [`State::keys_type_nothing`]: Enter, Backspace, Tab,
+/// Delete and Esc do not, while Home and End do. UNVERIFIED: that Insert,
+/// Page Up and Page Down still type.
 pub fn types_when_blocked(code: u16) -> bool {
     !matches!(
         code,
@@ -908,9 +920,8 @@ fn flag(b: bool) -> Value {
 }
 
 /// XCTRLSTYLE's controllers, style and the numbers after them, checked in
-/// SmileBASIC 4's order: two arguments, four or
-/// five for styles 0 to 3 and for Toy-Con on one controller, six or seven
-/// for Toy-Con on two.
+/// SmileBASIC 4's order: two arguments, four or five for styles 0 to 3 and
+/// for Toy-Con on one controller, six or seven for Toy-Con on two.
 fn xctrlstyle_args(args: &[Value]) -> Result<(i32, i32, Vec<i32>)> {
     let flag = |a: &Value| Ok(opt_int(a)?.unwrap_or(0));
     let toycon = |i: usize| in_range("Toy-Con type", &args[i], 0..=10);
@@ -935,7 +946,8 @@ fn xctrlstyle_args(args: &[Value]) -> Result<(i32, i32, Vec<i32>)> {
             return bad_toycon(5);
         }
         // Types 3, 4 and 7 to 10 are refused for the first controller
-        // here, though the manual allows them, named by its second type.
+        // here, though the manual allows them. The error names the second
+        // type of the first controller.
         if alone(t[0]) {
             return bad_toycon(3);
         }
@@ -1006,16 +1018,16 @@ fn text(v: &Value) -> Result<Vec<u16>> {
 }
 
 impl Runtime {
-    /// Types `code` for the keyboard key that last went down with
-    /// [`Input::key_down`], which types it again while it is held.
+    /// Types `code` for the keyboard key that [`Input::key_down`] last
+    /// reported as pressed, which types it again while it is held.
     pub fn type_held(&mut self, code: u16) {
         self.key_press(code);
         self.input.key_code(code);
     }
 
-    /// Types again what the held keyboard key typed, once a frame before
-    /// the frame's keys go to the program, the prompt or the editor, made
-    /// again from the modifiers held now. `beside` is the other
+    /// Types again what the held keyboard key typed, once per frame before
+    /// the frame's keys go to the program, DIRECT mode or the editor. The
+    /// text is made again from the modifiers held now. `beside` is the other
     /// interpreter's input, which has the keys while it has the focus;
     /// `editor`: the editor has the keys.
     pub(crate) fn repeat_held_key(&mut self, beside: Option<&State>, editor: bool) {
@@ -1024,7 +1036,7 @@ impl Runtime {
         if usage == 0 {
             return;
         }
-        // The key types only where it went down: the editor taking the
+        // The key types only where it was pressed: the editor taking the
         // keys or giving them up stops it.
         let same_place = *r.editor.get_or_insert(editor) == editor;
         let (keys, blocked) = if editor {
@@ -1145,7 +1157,7 @@ impl Runtime {
             (Command::Xctrlstyle, Want::Outs(0), 2 | 4..=7) => {
                 let (max, style, flags) = xctrlstyle_args(args)?;
                 // The connection screen has nothing to ask: all controllers
-                // there are are connected.
+                // that exist are connected.
                 input.style = (max, style);
                 input.ir_allowed = style != 100 && flags.get(1).is_some_and(|&f| f != 0);
                 input.toycons = [0; 4];
@@ -1178,7 +1190,7 @@ impl Runtime {
                 let lcd = opt_in_range("flag", args.first(), 0..=1, 0)? == 1;
                 let m = &input.now.mouse;
                 let (x, y) = if lcd { m.display } else { (m.x, m.y) };
-                // MOUSE counts 120 a notch.
+                // MOUSE counts 120 per notch.
                 let values = [x, y, m.wheel.wrapping_mul(120)];
                 put_ints(out, &values[..want.count()])
             }
@@ -1257,7 +1269,8 @@ impl Runtime {
                 let s = input.function_keys[n as usize - 1].clone();
                 one(out, Value::Str(new_str(s)))
             }
-            // It holds the program until the keys have gone on, a frame.
+            // PUSHKEY holds the program for one frame, until the keys have
+            // been passed on.
             (Command::Pushkey, Want::Outs(0), 1) if self.frame_wait_over() => Ok(()),
             (Command::Pushkey, Want::Outs(0), 1) => {
                 self.pushkey(&args[0])?;
@@ -1274,7 +1287,7 @@ impl Runtime {
         if !matches!(keys, Value::Str(_)) {
             let code = keys.to_int()? as u32;
             if code > PUSHKEY_CODES {
-                // Named.
+                // The error names the argument.
                 return Err(out_of_range("key code", code as i32).of_value(keys));
             }
             self.push_code(code);
@@ -1312,7 +1325,7 @@ mod tests {
         input.live.pads[1].sticks = [(-0.2, -0.9), (0.25, 0.75)];
         input.latch();
         assert_eq!(input.now.stick(0), (0.5, -0.9));
-        // On a tie, the earlier controller's.
+        // On a tie, the value of the earlier controller.
         assert_eq!(input.now.stick(1), (-0.25, 0.75));
     }
 
@@ -1333,7 +1346,7 @@ mod tests {
         let a = 1 << 3;
         let mut input = Input::default();
         press(&mut input, 0);
-        // Down and up again before the next frame: live never shows it.
+        // Pressed and released before the next frame: live never shows it.
         input.tap(Tap::Buttons(0, a), true);
         input.tap(Tap::Buttons(0, a), false);
         press(&mut input, 0);

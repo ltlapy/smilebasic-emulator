@@ -4,8 +4,8 @@
 use std::process::Command;
 
 /// Runs `main` as project `P`'s MAIN for at most `frames` frames with
-/// `script`, keeping the tool from the user's data folder. Gives the exit
-/// status and what the tool printed.
+/// `script`, keeping the tool out of the user's data folder. Returns the
+/// exit status and the text the tool printed.
 fn play(test: &str, main: &str, script: &str, frames: u32) -> (i32, String) {
     let dir = std::env::temp_dir().join(format!(
         "smilebasic-check-plus-{}-{test}",

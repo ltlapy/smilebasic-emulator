@@ -1,7 +1,7 @@
-//! What a frame shows, as plain data: the scene builder holds SmileBASIC
-//! 4's rules for what goes on the screen, in what order, and a rasterizer
-//! only draws what it is given. Nothing here knows about SDL, a GPU or the
-//! operating system. See docs/rendering/renderer.md.
+//! The contents of a frame, as plain data. The scene builder holds
+//! SmileBASIC 4's rules for what is drawn on the screen and in which order,
+//! and a rasterizer only draws what it is given. Nothing here knows about
+//! SDL, a GPU or the operating system. See docs/rendering/renderer.md.
 
 use std::ops::Range;
 
@@ -12,7 +12,7 @@ use crate::screen::ScreenMode;
 use crate::sprites::{Pose, SPRITES, Sprite, Sprites};
 use crate::text::{CONSOLE, LineCursor, TextScreen};
 
-/// What makes up a frame, read when its scene is built.
+/// The inputs of a frame, read when its scene is built.
 pub struct SceneInput<'a> {
     pub mode: &'a ScreenMode,
     pub layers: &'a [Layer; LAYERS],
@@ -22,7 +22,7 @@ pub struct SceneInput<'a> {
     pub grp: &'a Graphics,
     /// BACKCOLOR.
     pub back_color: u32,
-    /// This is a sub interpreter's screen, which goes over the main one's.
+    /// This is the screen of a sub interpreter, drawn over the main screen.
     pub sub: bool,
     /// FADE's color now.
     pub fade: u32,
@@ -36,16 +36,16 @@ pub struct SceneInput<'a> {
 /// frame, so that building one allocates nothing once they are large enough.
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
-    /// How many frame pixels make one screen pixel.
+    /// The number of frame pixels per screen pixel.
     pub sample: u32,
-    /// What the frame is cleared to.
+    /// The color the frame is cleared to.
     pub back: u32,
-    /// The frame stays opaque under composed layers, as the main screen's
-    /// does all through.
+    /// The frame stays opaque under composed layers, the same as the frame
+    /// of the main screen, which is opaque throughout.
     pub opaque_frame: bool,
     /// The frame is made opaque at the end.
     pub opaque_end: bool,
-    /// Layer 7 first, leaving out those with nothing to do.
+    /// Layer 7 first, skipping layers with nothing to do.
     pub passes: Vec<LayerPass>,
     /// FADE's color.
     pub fade: u32,
@@ -54,8 +54,8 @@ pub struct Scene {
     pub dimmed: bool,
     /// The rows of the raster filters of this frame's passes.
     pub raster_rows: Vec<[f64; 4]>,
-    /// All the passes' items back to front, each as a sort key over where
-    /// it is in `sprites` or `texts`.
+    /// The items of all passes, back to front, each as a sort key over its
+    /// index in `sprites` or `texts`.
     order: Vec<u64>,
     sprites: Vec<SpriteItem>,
     texts: Vec<TextItem>,
@@ -77,15 +77,15 @@ pub struct LayerPass {
     /// The frame is made opaque again after the filter: where a raster
     /// filter on a direct layer left nothing, it shows black.
     pub opaque_after_filter: bool,
-    /// Where its items are in the scene.
+    /// The range of its items in the scene.
     items: Range<u32>,
 }
 
-/// How a layer with LMATRIX's 4x4 form is drawn. Sprites go through the
-/// matrix themselves, whole. Text screens are drawn flat on an offscreen
-/// frame first, each run of them between sprites put on in its turn: that
-/// is why they reach at most one screen past each edge (see
-/// docs/using/differences.md).
+/// How a layer with LMATRIX's 4x4 form is drawn. Each sprite goes through
+/// the matrix directly, as a whole. Text screens are drawn flat on an
+/// offscreen frame first, and each run of them between sprites is put on
+/// in its turn. That is why they reach at most one screen past each edge
+/// (see docs/using/differences.md).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Projection {
     pub matrix: [f64; 16],
@@ -101,7 +101,7 @@ pub enum Item<'a> {
     Text(&'a TextItem),
 }
 
-/// A sprite as it is drawn, its links followed and its place worked out.
+/// A sprite as drawn, with its links followed and its place computed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpriteItem {
     /// From the sprite's shown rectangle to the frame's pixels, through
@@ -114,7 +114,7 @@ pub struct SpriteItem {
     pub area: u32,
     /// The graphic page; negative for GRP-1, white all over.
     pub page: i32,
-    /// GSAMPLE 1 on the page: it repeats in every direction. Always so
+    /// GSAMPLE 1 on the page: it repeats in every direction. Always true
     /// for GRP-1.
     pub repeat: bool,
     /// The image's rectangle on the page.
@@ -144,16 +144,16 @@ impl SpriteItem {
         attr: 0,
     };
 
-    /// `layer` is the layer's 2D matrix, already for the frame's pixels.
+    /// `layer` is the layer's 2D matrix, already in frame pixels.
     pub fn new(s: &Sprite, pose: &Pose, layer: &Affine, grp: &Graphics) -> SpriteItem {
-        // A blank page shows nothing, as GRP0 does through #GSPRITE until
-        // something is drawn there, and a clear color makes every pixel
-        // clear.
+        // A blank page shows nothing, the same as GRP0 does through
+        // #GSPRITE until something is drawn there, and a clear color makes
+        // every pixel clear.
         let page = usize::try_from(s.page);
         if page.is_ok_and(|p| p >= PAGES || grp.is_blank(p)) || pose.color >> 24 == 0 {
             return SpriteItem::NOTHING;
         }
-        // The shown rectangle has the same area whichever way it is turned.
+        // The shown rectangle has the same area at any rotation.
         let area = (f64::from(s.w * s.h) * (pose.scale.0 * pose.scale.1).abs()).min(1e7);
         SpriteItem {
             matrix: Affine::place(pose.pos, s.home, pose.rot, pose.scale).then(layer),
@@ -174,21 +174,21 @@ impl SpriteItem {
     }
 }
 
-/// A text screen as it is drawn. Its cells stay where they are, at
-/// [`TextItem::screen`]: copying them, or an item for each, would cost
-/// more than the whole of drawing some scenes.
+/// A text screen as drawn. Its cells stay in place, at
+/// [`TextItem::screen`]: copying them, or making an item for each, would
+/// cost more than all the drawing of some scenes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextItem {
-    /// Which of the text screens it is.
+    /// The number of the text screen.
     pub screen: u8,
-    /// From the screen's pixels to the frame's, through its layer's 2D
-    /// matrix.
+    /// From screen pixels to frame pixels, through the 2D matrix of its
+    /// layer.
     pub matrix: Affine,
     /// Nothing to draw: no character and no cursor.
     pub empty: bool,
     /// TSCREEN's font type: the size of the characters' images.
     pub font_type: u32,
-    /// What size each cell is, in the screen's pixels.
+    /// The size of each cell, in screen pixels.
     pub char_size: u32,
     /// In cells.
     pub width: u32,
@@ -211,18 +211,18 @@ pub struct TextItem {
 /// The cursor of a line being typed, a solid box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CursorBar {
-    /// Its cell, from left, top to right, bottom, in the screen's pixels.
+    /// Its cell, from left, top to right, bottom, in screen pixels.
     pub part: (i32, i32, i32, i32),
-    /// How wide it is from the cell's left.
+    /// Its width from the left of the cell.
     pub width: u32,
     pub color: u32,
 }
 
-// Within a layer, larger Z is further back; at equal Z text screens go
-// behind sprites, and among either, higher ids go behind. A sort key has,
-// from the top: layer (7 first), Z, text screens before sprites, id; then
-// where the item is, which the rest settles. Sorting these moves far less
-// than sorting items.
+// Within a layer, larger Z is further back. At equal Z, text screens go
+// behind sprites, and within each kind, higher ids go behind. A sort key
+// has, from the top: layer (7 first), Z, text screens before sprites, id;
+// then the item's index in `sprites` or `texts`, in the remaining bits.
+// Sorting these moves far less than sorting items.
 const KEY_LAYER: u32 = 58;
 const KEY_Z: u32 = 26;
 const KEY_SPRITE: u64 = 1 << 25;
@@ -244,11 +244,12 @@ impl Scene {
     pub fn build(&mut self, input: &SceneInput) {
         let sample = input.mode.sample;
         let frame = input.mode.frame();
-        // The sub interpreter's screen goes over the main one's, and so is
-        // drawn premultiplied. Its BACKCOLOR's color is put on at full
-        // strength, with its alpha as how much of the main screen shows
-        // through (coverage 255 less it); one of alpha 0 leaves the
-        // screen clear, and an opaque one hides the main screen.
+        // The screen of the sub interpreter goes over the main screen, so
+        // it is drawn premultiplied. The color of its BACKCOLOR is put on
+        // at full strength, and its alpha is how much of the main screen
+        // shows through (coverage is 255 minus the alpha). A BACKCOLOR of
+        // alpha 0 leaves the screen clear, and an opaque one hides the
+        // main screen.
         let back = input.back_color;
         self.back = match (input.sub, back >> 24) {
             (false, _) => back | 0xFF00_0000,
@@ -267,7 +268,7 @@ impl Scene {
         self.texts.clear();
 
         let settings: [Layer; LAYERS] = std::array::from_fn(|i| input.layers[i].fine(sample));
-        // What ends up in no layer is not drawn.
+        // Anything that ends up in no layer is not drawn.
         let layer_of = |layer: i32| usize::try_from(layer).ok().filter(|&l| l < LAYERS);
 
         for id in input.sprites.maybe_used() {
@@ -338,10 +339,10 @@ impl Scene {
             let s = &settings[layer];
             let filter = &input.filters[layer];
             let direct = s.compose == Compose::Direct;
-            // A layer that is not composed filters the whole frame as drawn
-            // so far, the layers behind and BACKCOLOR included (checked on
-            // hardware); a composed one only its own elements.
-            // It does so with no elements in the layer.
+            // A layer that is not composed filters the whole frame drawn so
+            // far, including the layers behind and BACKCOLOR (checked on
+            // hardware). A composed layer filters only its own elements.
+            // A layer that is not composed does so even with no elements.
             if start == items && !(direct && !matches!(filter, Filter::None)) {
                 continue;
             }
@@ -386,18 +387,18 @@ impl Scene {
     }
 }
 
-/// Where the flat frame goes that holds text screens covering `extent`,
-/// which may be beyond the screen, as its top left frame pixel and its size.
-/// It keeps only what `shown` (from [`compose::source_bounds`]) says can
-/// show, and reaches at most a screen past each edge, to keep its memory
-/// bounded.
+/// The area of the flat frame that holds text screens covering `extent`,
+/// which may be beyond the screen, as its top left frame pixel and its
+/// size. The flat frame keeps only what `shown` (from
+/// [`compose::source_bounds`]) says can show, and reaches at most a
+/// screen past each edge, so that its memory stays bounded.
 fn flat_area(
     (fw, fh): (u32, u32),
     (mut x0, mut y0, mut x1, mut y1): (f64, f64, f64, f64),
     shown: Option<(f64, f64, f64, f64)>,
 ) -> ((i32, i32), (u32, u32)) {
     let (fw, fh) = (f64::from(fw), f64::from(fh));
-    // A pixel to spare each side for where the edges fall.
+    // One spare pixel on each side, for where the edges fall.
     let Some((a, b, c, d)) = shown else {
         return ((0, 0), (0, 0));
     };

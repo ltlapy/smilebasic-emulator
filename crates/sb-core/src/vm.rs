@@ -20,25 +20,26 @@ use crate::value::{Array, ArrayData, ElemType, Num, Str, Value, format_number, n
 use crate::vars::Vars;
 use crate::watch::Watch;
 
-/// The stack GOSUBs, DEF calls and RESTORE "PUSH" share, in half slots: 259072
-/// slots. The values of expressions share it too, which is not counted: their
-/// room is left aside, as two values take it.
+/// The stack that GOSUBs, DEF calls and RESTORE "PUSH" share, in half slots:
+/// 259068 slots. The values of expressions share it too, but they are not
+/// counted. Instead, room the size of two values is set aside for them.
 const STACK_SIZE: usize = 518_136;
-/// What is left aside for those values. A DEF call that reaches into it fails on
-/// what follows it, a call that goes past it on the call itself. GOSUB and
-/// RESTORE "PUSH" may fill it, and then the next command given arguments fails.
+/// The room set aside for those values. A DEF call that reaches into it fails on
+/// what follows the call, and a call that goes past it fails on the call itself.
+/// GOSUB and RESTORE "PUSH" may fill it, and then the next command given
+/// arguments fails.
 const VALUES_ROOM: usize = 8;
-/// All of the stack, the values' room too.
+/// The whole stack, including the values' room: 259072 slots.
 const STACK_FULL: usize = STACK_SIZE + VALUES_ROOM;
-/// What a GOSUB takes of it.
+/// The stack space a GOSUB takes.
 const GOSUB_COST: usize = 2;
-/// What a place RESTORE "PUSH" keeps takes of it.
+/// The stack space for each place that RESTORE "PUSH" keeps.
 const RESTORE_COST: usize = 3;
-/// What a DEF's call takes of it, without its variables.
+/// The stack space a DEF call takes, without its variables.
 const CALL_COST: usize = 12;
-/// What a function's call takes on top, for its value.
+/// The extra stack space a function call takes for its value.
 const VALUE_COST: usize = 4;
-/// What each of a DEF's arguments, OUTs and variables takes of it.
+/// The stack space each argument, OUT and variable of a DEF takes.
 const VARIABLE_COST: usize = 4;
 
 /// Counts of the work a [`Vm`] has done, from [`Vm::work`].
@@ -48,7 +49,7 @@ pub struct Work {
     pub statements: u64,
     pub def_calls: u64,
     /// The values those calls set up: parameters, OUT variables, other
-    /// variables and a result. Fused steps leave them out.
+    /// variables and a result. Fused steps do not count them.
     pub def_values: u64,
     pub builtin_calls: u64,
     /// The arguments given to builtin calls.
@@ -64,7 +65,7 @@ pub struct Work {
     pub lookups: u64,
     /// Strings joined.
     pub joins: u64,
-    /// Tests of whether a FOR goes round again: each pass and the end.
+    /// Tests of whether a FOR repeats: each pass and the end.
     pub for_tests: u64,
     /// Statements run inside a DEF of the running slot, which cost
     /// SmileBASIC 4 more than at the top level or in code EXEC ran.
@@ -72,45 +73,47 @@ pub struct Work {
     /// `IF` and `ELSEIF` conditions that are an array element
     /// ([`crate::bytecode::Op::TestIfFalse`]).
     pub element_tests: u64,
-    /// Calls of `CHR$` of a code other than the last four calls', counted
-    /// only for a host that hears of the work.
+    /// Calls of `CHR$` with a code other than those of the last four calls,
+    /// counted only for a host that is notified of the work.
     pub chr_calls: u64,
     /// The calls of each builtin of [`COSTLY`], counted only for a host
-    /// that hears of the work, as the rest of these.
+    /// that is notified of the work, like the rest of these, but the uses of
+    /// `FREEMEM` are counted for every host.
     pub costly_calls: [u64; COSTLY.len()],
-    /// The calls of each builtin of [`CHEAP`], counted as the rest of
-    /// these, and those of `SIN`, `COS` and `TAN` of a number past a
-    /// quarter of pi either way.
+    /// The calls of each builtin of [`CHEAP`], counted like the rest of
+    /// these, and the calls of `SIN`, `COS` and `TAN` of a number past a
+    /// quarter of pi in either direction.
     pub cheap_calls: [u64; CHEAP.len()],
     pub trig_reductions: u64,
-    /// The characters of the strings joins made.
+    /// The characters of the strings that joins made.
     pub join_chars: u64,
-    /// Comparisons and other operators but `+` with a string on the left.
+    /// Comparisons and other operators except `+`, with a string on the left.
     pub str_compares: u64,
 }
 
 /// Builtins that cost SmileBASIC 4 more than a call, each timed alone on
 /// both consoles. [`Work::costly_calls`] counts their calls in this
-/// order, and `FREEMEM`'s, which is no call.
+/// order, and the uses of `FREEMEM`, which is not a call.
 pub const COSTLY: [&str; 15] = [
     "STR$", "FORMAT$", "VAL", "INSTR", "HEX$", "MID$", "SUBST$", "BIN$", "CLASSIFY", "SORT",
     "INSERT", "REMOVE", "UNSHIFT", "SHIFT", "FREEMEM",
 ];
 
-/// Builtins that cost SmileBASIC 4 about what reading a variable does,
-/// or a little more, each timed alone by TEST71, TEST72 and TEST74 on
-/// both consoles, and the rest less than a call with their arguments.
-/// [`Work::cheap_calls`] counts their calls in this order. The first
-/// three cost more for a number past a quarter of pi either way (TEST72's
-/// `SIN` of 1000000.5). UNVERIFIED: `TAN` as `SIN`.
+/// Builtins that cost SmileBASIC 4 about the same as reading a variable or
+/// a little more, each timed alone by TEST71, TEST72 and TEST74 on both
+/// consoles, and the rest of the list, which cost less than a call with
+/// their arguments. [`Work::cheap_calls`] counts their calls in this
+/// order. The first three cost more for a number past a quarter of pi in
+/// either direction (TEST72's `SIN` of 1000000.5). UNVERIFIED: that `TAN`
+/// costs the same as `SIN`.
 pub const CHEAP: [&str; 10] = [
     "SIN", "COS", "TAN", "SQR", "POW", "EXP", "LOG", "ASIN", "LEFT$", "RIGHT$",
 ];
 
 /// Builtins that cost SmileBASIC 4 no more than reading a variable, so
 /// that it seems to run them without a call (TEST69 to TEST71, both
-/// consoles), and LEN (TEST71, TEST74). MIN and MAX of two count among
-/// them too. UNVERIFIED: that MAX of two costs what MIN of two does.
+/// consoles), and LEN (TEST71, TEST74). MIN and MAX of two also count
+/// among them. UNVERIFIED: that MAX of two costs the same as MIN of two.
 const FREE: [&str; 9] = [
     "ASC", "INT", "FLOOR", "ABS", "LEN", "ROUND", "CEIL", "SGN", "TYPEOF",
 ];
@@ -126,8 +129,8 @@ enum Charge {
     Cheap(u8),
 }
 
-/// How a call of each builtin is counted, by its number. Made once, so
-/// that a run that reports its work compares no names.
+/// Returns how a call of each builtin is counted, by its number. Built
+/// once, so that a run that reports its work compares no names.
 fn charges() -> &'static [Charge] {
     static TABLE: std::sync::OnceLock<Vec<Charge>> = std::sync::OnceLock::new();
     fn set(table: &mut Vec<Charge>, name: &str, charge: Charge) {
@@ -172,14 +175,14 @@ pub enum Status {
     },
     /// Waiting on the user or the host, such as INPUT or a confirmation:
     /// call [`Vm::run`] again on the next frame. Unlike WAIT, it leaves
-    /// VSYNC's count alone (checked on hardware for INPUT).
+    /// VSYNC's count unchanged (checked on hardware for INPUT).
     Retry,
     Ended,
     /// The + button stops the program after the statement on `line`.
     Break {
         line: u32,
     },
-    /// STOP on `line`. [`Vm::run`] goes on after it.
+    /// STOP on `line`. [`Vm::run`] continues after it.
     Stop {
         line: u32,
     },
@@ -209,7 +212,7 @@ pub enum Step {
 /// lists them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Call {
-    /// Where it is: the line of the call it made, or for the innermost
+    /// Its position: the line of the call it made, or, for the innermost
     /// one, the line about to run.
     pub slot: usize,
     pub line: u32,
@@ -226,8 +229,8 @@ pub enum CallKind {
     Gosub,
 }
 
-/// Commands and functions the compiler turns into instructions of their
-/// own rather than calls, for CHKCALL.
+/// Commands and functions the compiler turns into their own instructions
+/// rather than calls, for CHKCALL.
 const VM_CALLS: &[&str] = &[
     "CALLIDX", "DEFARG", "DEFARGC", "DEFOUTC", "CHKLABEL", "CHKCALL", "CHKVAR", "VSYNC", "WAIT",
     "FREEMEM",
@@ -262,8 +265,8 @@ const STOP_MESSAGE: usize = 255;
 /// Waits a frame and runs the same instruction again.
 const RETRY: Status = Status::Retry;
 
-/// A READ place RESTORE "PUSH" kept, with the numbers of DEF calls and
-/// GOSUBs then.
+/// A READ place that RESTORE "PUSH" kept, with the numbers of DEF calls
+/// and GOSUBs at that time.
 struct Kept {
     pos: usize,
     from: Rc<Compiled>,
@@ -276,16 +279,17 @@ struct Frame {
     /// The slot the DEF is in, and the one to return to.
     home: usize,
     caller: usize,
-    /// Where its variables start in [`Vm::locals`]. They go on to the next
-    /// frame's, or to the end.
+    /// The start of its variables in [`Vm::locals`]. They continue up to
+    /// the variables of the next frame, or to the end.
     base: usize,
-    /// What a DEF declared with `*` keeps apart from its variables.
+    /// The values that a DEF declared with `*` keeps apart from its variables.
     variadic: Option<Box<Variadic>>,
     want: Want,
     return_pc: usize,
     gosub_base: usize,
     stack_base: usize,
-    /// How much of [`STACK_SIZE`] the DEF calls so far take, this one too.
+    /// The part of [`STACK_SIZE`] that the DEF calls so far take, this one
+    /// included.
     stack_to: usize,
 }
 
@@ -308,8 +312,9 @@ impl Frame {
 
 /// A name that `CALL` or a callback of CALL SPRITE or CALL TEXT found to be
 /// a DEF of the running slot. Finding it takes the name apart and looks it
-/// up, which costs more than most DEFs' bodies; what it finds depends only
-/// on the text, the slot and its program, which is never changed once made.
+/// up, which costs more than the bodies of most DEFs. The result depends
+/// only on the text, the slot and its program, and a program never changes
+/// once made.
 /// The weak reference keeps the program's allocation, so that no other
 /// program can take its address.
 struct Resolved {
@@ -319,12 +324,12 @@ struct Resolved {
     def: u32,
 }
 
-/// How many names [`Vm::resolved`] keeps: CALL SPRITE often goes through a
-/// few names in turn.
+/// The number of names that [`Vm::resolved`] keeps: CALL SPRITE often goes
+/// through a few names in turn.
 const RESOLVED_KEPT: usize = 8;
 
-/// A program slot's program with its variables. The VM keeps the running
-/// slot's in its own fields, and the others here.
+/// A program slot's program with its variables. The VM keeps those of the
+/// running slot in its own fields, and those of the other slots here.
 struct Unit {
     program: Rc<Compiled>,
     globals: Vec<Value>,
@@ -333,7 +338,7 @@ struct Unit {
 
 impl Unit {
     fn new(mut program: Compiled) -> Unit {
-        // Fused code that names a place out of range is left out.
+        // Fused code that names a place out of range is dropped.
         crate::fuse::check(&mut program);
         #[cfg(feature = "jit")]
         crate::jit::attach(&mut program);
@@ -364,15 +369,15 @@ struct Trace {
 /// it has one, is true.
 pub type Breakpoint = (u32, Option<Rc<Watch>>);
 
-/// A watch that stops the program when its value changes, with the value
-/// it had last, when it could be worked out.
+/// A watch that stops the program when its value changes, with its last
+/// value, if that could be evaluated.
 struct Change {
     watch: Rc<Watch>,
     last: Option<Value>,
 }
 
-/// Where breakpoints stop one slot's program: whether each instruction
-/// is one, for the program they were worked out for.
+/// Where breakpoints stop the program of one slot: whether each
+/// instruction is a stop, for the program they were computed for.
 struct Stops {
     program: Rc<Compiled>,
     at: Rc<[bool]>,
@@ -395,22 +400,23 @@ pub struct Vm {
     /// This interpreter's share of [`memory`]'s estimate between slices.
     memory: memory::Estimate,
     /// `executed` when memory was last counted for an instruction to run
-    /// again; it asking twice means there is no room after all.
+    /// again. If the instruction asks twice, there is no room after all.
     memory_checked: Option<u64>,
     program: Rc<Compiled>,
     pc: usize,
     stack: Vec<Value>,
     globals: Vec<Value>,
-    /// Which globals exist, for direct mode's declarations.
+    /// Which globals exist, for declarations in DIRECT mode.
     declared: Vec<bool>,
     frames: Vec<Frame>,
-    /// The variables of the DEF calls under way, each call's after its
-    /// caller's, so that a call and its return move no lists about.
+    /// The variables of the DEF calls under way, those of each call after
+    /// those of its caller, so that a call and its return move no lists
+    /// around.
     locals: Vec<Value>,
     /// Slot and address to return to, and how many READ places
     /// RESTORE "PUSH" had kept then.
     gosubs: Vec<(usize, usize, usize)>,
-    /// READ's place: one for the interpreter, kept when a call goes on
+    /// READ's place: one for the interpreter, kept when a call continues
     /// in another slot, so that a READ in another slot's COMMON DEF reads
     /// the DATA of the program that called it.
     data_pos: usize,
@@ -420,11 +426,11 @@ pub struct Vm {
     /// READ places kept by RESTORE "PUSH".
     data_kept: Vec<Kept>,
     /// Whether a GOSUB or RESTORE "PUSH" has reached into the values' room.
-    /// Until one has, commands need not look at the room; after, it stays
-    /// set until ON BREAK empties the stack, and they look each time.
+    /// Until one has, commands do not need to check the room. After that, it
+    /// stays set until ON BREAK empties the stack, and they check each time.
     values_room_reached: bool,
     /// The program slot running, and whether errors name it (not in
-    /// direct mode).
+    /// DIRECT mode).
     slot: usize,
     in_slot: bool,
     /// The other slots EXEC has run, by slot.
@@ -441,8 +447,8 @@ pub struct Vm {
     resolved: Vec<Resolved>,
     /// Instructions run so far.
     executed: u64,
-    /// What [`Vm::work`] counts. Only a run that reports it counts
-    /// statements, as that takes the fused steps away.
+    /// The counts of [`Vm::work`]. Only a run that reports them counts
+    /// statements, because that turns off the fused steps.
     statements: u64,
     def_calls: u64,
     def_values: u64,
@@ -469,8 +475,8 @@ pub struct Vm {
     /// Where [`Host::call_into`] puts a host call's results, empty between
     /// calls: kept to be used again rather than allocated for each call.
     host_results: Vec<Value>,
-    /// Whether the host hears of [`Vm::work`] before each of its calls,
-    /// and then [`charges`].
+    /// Whether the host is notified of [`Vm::work`] before each of its
+    /// calls, and then the table from [`charges`].
     report_work: bool,
     charges: &'static [Charge],
     /// ON BREAK GOTO's slot and address, until the + button jumps there.
@@ -486,13 +492,13 @@ pub struct Vm {
     /// Breakpoints, by slot, and the line a debugger runs to once.
     breakpoints: Vec<Vec<Breakpoint>>,
     run_to: Option<(usize, u32)>,
-    /// Worked out from them by slot, and the running program's.
+    /// Computed from them, by slot, and those of the running program.
     stops: Vec<Option<Stops>>,
     stop_at: Option<Rc<[bool]>>,
-    /// The slot and instruction the program goes on from, which a
-    /// breakpoint there does not stop it at.
+    /// The slot and instruction the program continues from. A breakpoint
+    /// there does not stop it.
     passed: Option<(usize, usize)>,
-    /// Watches that stop the program when their values change, looked at
+    /// Watches that stop the program when their values change, checked
     /// before each statement.
     changes: Vec<Change>,
     /// Why the debugger last stopped the program.
@@ -500,7 +506,7 @@ pub struct Vm {
 }
 
 /// Why the debugger stopped the program, as [`Vm::take_debug_note`]
-/// tells.
+/// returns it.
 #[derive(Clone, Debug)]
 pub enum DebugNote {
     /// A step ended.
@@ -516,7 +522,7 @@ pub enum DebugNote {
     Condition(Error),
 }
 
-/// Whether two values are alike: the same number, whether integer or
+/// Whether two values are the same: the same number, whether integer or
 /// real, or the same characters or elements.
 fn same(a: &Value, b: &Value) -> bool {
     match (a, b) {
@@ -532,8 +538,8 @@ fn same(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// A copy of a value that changes to the string or array it came from
-/// leave alone.
+/// A copy of a value, unaffected by changes to the string or array it
+/// came from.
 fn snapshot(value: &Value) -> Value {
     match value {
         Value::Str(s) => Value::Str(new_str(s.borrow().clone())),
@@ -552,7 +558,7 @@ fn snapshot(value: &Value) -> Value {
 }
 
 /// A variable's starting value. The suffix decides only this: variables
-/// keep whatever value they are given (checked on hardware: `A%=1E10`
+/// keep any value they are given (checked on hardware: `A%=1E10`
 /// keeps the real, `A$` takes a number and `A%` a string).
 fn initial_value(var: &VarInfo) -> Value {
     if var.array {
@@ -598,7 +604,7 @@ fn parse_input(line: &[u16], kinds: &[InputKind], whole_line: bool) -> Option<Ve
         return Some(vec![Value::Str(new_str(line.to_vec()))]);
     }
     let fields: Vec<&[u16]> = line.split(|&c| c == u16::from(b',')).collect();
-    // Extra fields are left out, whatever they hold.
+    // Extra fields are ignored, regardless of what they hold.
     if fields.len() < kinds.len() {
         return None;
     }
@@ -660,7 +666,8 @@ pub fn label_string(value: &Value) -> Result<(Option<usize>, String)> {
     Ok((slot, name.to_string()))
 }
 
-/// An error in argument `arg` of `command`, named as SmileBASIC 4 does.
+/// An error in argument `arg` of `command`, named the way SmileBASIC 4
+/// names it.
 #[cold]
 fn arg_error(e: Error, arg: usize, command: &str) -> Error {
     e.of_arg(arg).of_command(command)
@@ -688,9 +695,9 @@ impl Vm {
     }
 
     /// Starts with the globals in `values`, keyed by full name (`A$`), set
-    /// to those values. Direct mode uses it to keep variables between lines.
+    /// to those values. DIRECT mode uses it to keep variables between lines.
     pub fn with_globals(mut program: Compiled, values: &HashMap<String, Value>) -> Self {
-        // Fused code that names a place out of range is left out.
+        // Fused code that names a place out of range is dropped.
         crate::fuse::check(&mut program);
         #[cfg(feature = "jit")]
         crate::jit::attach(&mut program);
@@ -781,7 +788,7 @@ impl Vm {
         self
     }
 
-    /// The program slot running, or `None` in direct mode.
+    /// The program slot running, or `None` in DIRECT mode.
     pub fn slot(&self) -> Option<usize> {
         self.in_slot.then_some(self.slot)
     }
@@ -812,7 +819,7 @@ impl Vm {
     }
 
     /// Gives up an INPUT or LINPUT that waits for its line, so that CONT
-    /// goes on with the next statement.
+    /// continues with the next statement.
     pub fn leave_input(&mut self) {
         if !self.reading_input {
             return;
@@ -838,7 +845,8 @@ impl Vm {
 
     /// A debugger's step: the next [`Vm::run`] runs at least one
     /// statement and returns [`Status::Debug`] before the one it stops
-    /// at. Stepping out of the top level runs on as CONT does.
+    /// at. Stepping out of the top level keeps running, the same as CONT
+    /// does.
     pub fn step_by(&mut self, step: Step) {
         let depth = self.depth();
         let depth = match step {
@@ -856,20 +864,20 @@ impl Vm {
         });
     }
 
-    /// How many DEFs, GOSUBs and EXECs are under way.
+    /// Returns the number of DEFs, GOSUBs and EXECs under way.
     fn depth(&self) -> usize {
         self.frames.len() + self.gosubs.len() + self.execs.len()
     }
 
-    /// Lets the program go on from here without a breakpoint here
-    /// stopping it again at once.
+    /// Lets the program continue from here without a breakpoint here
+    /// stopping it again immediately.
     pub fn pass_here(&mut self) {
         self.passed = Some((self.slot, self.pc));
     }
 
     /// Sets the lines of `slot` that stop the program before they run.
-    /// A breakpoint stops where the line's code follows another line's,
-    /// so a loop within the line stops there once.
+    /// A breakpoint stops where the code of the line follows the code of
+    /// another line, so a loop within the line stops there once.
     pub fn set_breakpoints(&mut self, slot: usize, breakpoints: &[Breakpoint]) {
         if self.breakpoints.len() <= slot {
             self.breakpoints.resize_with(slot + 1, Vec::new);
@@ -887,7 +895,7 @@ impl Vm {
         self.update_stops();
     }
 
-    /// Works out where the running program's breakpoints stop it.
+    /// Computes where the breakpoints of the running program stop it.
     fn update_stops(&mut self) {
         self.stop_at = None;
         if !self.in_slot {
@@ -921,8 +929,9 @@ impl Vm {
         self.stop_at = Some(at);
     }
 
-    /// Whether a breakpoint the program has come to stops it: the line it
-    /// runs to does, and so does a condition that is true or fails.
+    /// Whether a breakpoint that the program has reached stops it. The line
+    /// a debugger runs to does, and so does a condition that is true or
+    /// fails.
     fn breakpoint_holds(&mut self) -> bool {
         let line = self.line();
         if self.run_to == Some((self.slot, line)) {
@@ -953,8 +962,8 @@ impl Vm {
     }
 
     /// Sets the watches that stop the program, before the statement
-    /// after the one that changed one of their values. Their values now
-    /// are what changes are told from.
+    /// after the one that changed one of their values. Changes are found
+    /// by comparing with their values at this call.
     pub fn set_changes(&mut self, watches: &[Rc<Watch>]) {
         self.changes = (watches.iter())
             .map(|w| Change {
@@ -968,9 +977,9 @@ impl Vm {
             .collect();
     }
 
-    /// Whether a watch's value changed since it was last looked at,
-    /// noting the first that did. A watch that cannot be worked out
-    /// here, such as one of another DEF's locals, keeps its last value.
+    /// Whether a watch's value changed since it was last checked, noting
+    /// the first watch that changed. A watch that cannot be evaluated here,
+    /// such as one of the locals of another DEF, keeps its last value.
     fn watch_changed(&mut self) -> bool {
         let mut changes = std::mem::take(&mut self.changes);
         let mut changed = None;
@@ -1020,9 +1029,9 @@ impl Vm {
         self.globals.get(i).cloned()
     }
 
-    /// Goes on from `line` of the running slot instead, as GOTO would, if
-    /// that is in the same DEF, or outside DEFs as the program is. False
-    /// when it is not.
+    /// Continues from `line` of the running slot instead, like GOTO, if the
+    /// line is in the DEF that the program is in, or outside DEFs when the
+    /// program is too. False when it is not.
     pub fn jump_to(&mut self, line: u32) -> bool {
         let program = &self.program;
         let def_at = |pc: usize| {
@@ -1042,7 +1051,7 @@ impl Vm {
     }
 
     /// The program's top level and the DEFs and GOSUBs under way, with
-    /// where each one is; the innermost last.
+    /// the position of each one; the innermost last.
     pub fn calls(&self) -> Vec<Call> {
         let mut calls = vec![Call {
             slot: 0,
@@ -1122,7 +1131,7 @@ impl Vm {
             .collect()
     }
 
-    /// Gives a local of a DEF call under way, by [`Call::frame`], a new
+    /// Sets a local of a DEF call under way, by [`Call::frame`], to a new
     /// value. False when it has no such local.
     pub fn set_local(&mut self, frame: usize, name: &str, value: Value) -> bool {
         let Some(f) = self.frames.get(frame) else {
@@ -1151,8 +1160,8 @@ impl Vm {
         self.frames.truncate(frames);
     }
 
-    /// Gives a global of a slot's program that has run a new value. False
-    /// when it has no such global.
+    /// Sets a global to a new value, in the program of a slot that has
+    /// run. False when it has no such global.
     pub fn set_slot_global(&mut self, slot: usize, name: &str, value: Value) -> bool {
         let (program, values) = if slot == self.slot {
             (&self.program, &mut self.globals)
@@ -1186,9 +1195,9 @@ impl Vm {
             .collect()
     }
 
-    /// Where the running code was called from, outermost first: the slot
-    /// and line of each GOSUB and DEF call under way, as BACKTRACE lists
-    /// them.
+    /// The call sites of the running code, outermost first: the slot and
+    /// line of each GOSUB and DEF call under way. BACKTRACE lists the same
+    /// sites, innermost first.
     pub fn call_sites(&self) -> Vec<(usize, u32)> {
         let calls = self.calls();
         let n = calls.len() - 1;
@@ -1200,7 +1209,7 @@ impl Vm {
         self.stop_message.take()
     }
 
-    /// Gives this slot's globals the values of the same names, as direct
+    /// Sets this slot's globals to the values of the same names, as DIRECT
     /// mode left them before CONT.
     pub fn set_globals(&mut self, values: &HashMap<String, Value>) {
         for (var, global) in self.program.globals.iter().zip(&mut self.globals) {
@@ -1231,8 +1240,8 @@ impl Vm {
         self.executed
     }
 
-    /// Whether [`Host::work`] hears of the work done before each host
-    /// call, for hosts that time it as a console would take.
+    /// Sets whether [`Host::work`] is notified of the work done before each
+    /// host call, for hosts that compute the time a console would take.
     pub fn report_work(&mut self, on: bool) {
         self.report_work = on;
         if on && self.charges.is_empty() {
@@ -1240,7 +1249,7 @@ impl Vm {
         }
     }
 
-    /// The work done so far, for hosts that stand for a console's speed.
+    /// The work done so far, for hosts that emulate a console's speed.
     pub fn work(&self) -> Work {
         Work {
             executed: self.executed,
@@ -1274,9 +1283,9 @@ impl Vm {
         if !self.jump_on_break(host) {
             return false;
         }
-        // Out of INPUT, the press is acted on again once the statement
-        // there has run: it stops the program, or jumps to a label set
-        // meanwhile (checked on hardware).
+        // After a jump out of INPUT, the press is acted on again once the
+        // statement there has run: it stops the program, or jumps to a
+        // label set meanwhile (checked on hardware).
         if input {
             self.break_pending = Some((self.executed, self.line()));
         }
@@ -1304,15 +1313,16 @@ impl Vm {
         true
     }
 
-    /// How many of [`Vm::execs`] an ON BREAK jump into `slot` keeps: those
-    /// under the EXEC that started `slot`, as long as none of them was made
-    /// in a DEF, a GOSUB or a callback, which the jump leaves behind. When
-    /// the slot ends, the EXEC below goes on; with none, the program ends.
-    /// UNVERIFIED: SB4 crashed on CONT into the DEF an EXEC was made in
-    /// after such a jump, so its own rule is not known.
+    /// Returns the number of [`Vm::execs`] that an ON BREAK jump into `slot`
+    /// keeps: those under the EXEC that started `slot`, as long as none of
+    /// them was made in a DEF, a GOSUB or a callback, which the jump leaves
+    /// behind. When the slot ends, the EXEC below continues. With none, the
+    /// program ends.
+    /// UNVERIFIED: SB4 crashed on CONT into the DEF that an EXEC was made in
+    /// after such a jump, so SB4's own rule is not known.
     fn execs_kept_on_break(&self, slot: usize) -> usize {
-        // The slot each EXEC started: the next one's caller, or the one
-        // running for the last.
+        // The slot each EXEC started: the caller slot of the next EXEC, or,
+        // for the last EXEC, the running slot.
         let started = (self.execs.iter().skip(1).map(|r| r.slot)).chain(std::iter::once(self.slot));
         let under = (self.execs.iter().zip(started))
             .position(|(_, s)| s == slot)
@@ -1329,7 +1339,7 @@ impl Vm {
         let status = self.run_counted(host, budget);
         self.memory = memory::leave();
         let status = status?;
-        // Where it stopped, or an instruction to be run again.
+        // Statuses that stop at an instruction or run it again.
         if matches!(
             status,
             Status::Break { .. }
@@ -1343,15 +1353,15 @@ impl Vm {
         Ok(status)
     }
 
-    /// [`Vm::run_code`], after counting memory if enough has been made
-    /// since the last time. That is where what small requests add up to is
+    /// [`Vm::run_code`], after counting memory if enough has been allocated
+    /// since the last count. This is where the total of small requests is
     /// refused.
     fn run_counted(&mut self, host: &mut dyn Host, budget: u32) -> Result<Status> {
         if memory::count_due() {
             self.count_for_slice(host)?;
         }
-        // Fused steps leave out what the counts of [`Vm::work`] need, so
-        // a run that reports them goes one instruction at a time.
+        // Fused steps do not keep the counts of [`Vm::work`], so a run that
+        // reports them goes one instruction at a time.
         match self.report_work {
             true => self.run_code::<false>(host, budget),
             false => self.run_code::<true>(host, budget),
@@ -1434,8 +1444,9 @@ impl Vm {
             .collect::<Result<Vec<_>>>()?;
         // Only a one-dimensional array may be empty: DIM R#[0,0] is
         // Subscript out of range (checked on hardware).
-        // One zero among other sizes is, too, naming that size: `DIM
-        // A[2,0]` is argument 2, as ARRAY% is (checked on hardware).
+        // So is one zero among other sizes, and the error names that size:
+        // `DIM A[2,0]` is argument 2, the same as for ARRAY% (checked on
+        // hardware).
         // UNVERIFIED: that with several zeros the first is named.
         if dims.len() > 1
             && let Some(at) = dims.iter().position(|&d| d == 0)
@@ -1503,7 +1514,7 @@ impl Vm {
                 if let Some(end) = self.settle(pc, outcome, host) {
                     return end;
                 }
-                // A callback may have gone on in another slot.
+                // A callback may have continued in another slot.
                 if !Rc::ptr_eq(&program, &self.program) {
                     program = Rc::clone(&self.program);
                 }
@@ -1547,8 +1558,8 @@ impl Vm {
                     (Some(_), _) => {}
                 }
             }
-            // The first breakpoint looked at is passed over if the program
-            // goes on from it.
+            // The first breakpoint checked is skipped if the program
+            // continues from it.
             if let Some(at) = &self.stop_at
                 && at.get(self.pc) == Some(&true)
                 && passed.take() != Some((self.slot, self.pc))
@@ -1578,8 +1589,8 @@ impl Vm {
         Ok(Status::Running)
     }
 
-    /// What [`Vm::run_code`] does with the outcome of instruction `pc`, which
-    /// it counted as run: `Some` ends the slice.
+    /// Handles the outcome of instruction `pc` for [`Vm::run_code`], which
+    /// counted it as run. `Some` ends the slice.
     #[inline(always)]
     fn settle(
         &mut self,
@@ -1612,10 +1623,10 @@ impl Vm {
     /// Runs [`Compiled::fast`] until the budget is spent or something needs
     /// [`Vm::step`]: anything other than plain work on numbers, DEF calls
     /// within the slot and host calls, every failure included. An entry that
-    /// cannot do its work leaves everything as it was, so that `step` goes on
-    /// from the same place. A host call is made here as `step` makes it, and
-    /// what comes of it other than going on is handed back with the
-    /// instruction's address, for [`Vm::settle`].
+    /// cannot do its work leaves everything unchanged, so that `step`
+    /// continues from the same place. A host call is made here the same way
+    /// `step` makes it. Any outcome of it other than continuing is returned
+    /// with the instruction's address, for [`Vm::settle`].
     fn run_fast(
         &mut self,
         program: &Compiled,
@@ -1662,9 +1673,9 @@ impl Vm {
         }
     }
 
-    /// [`Vm::run_fast`] up to a builtin's or host's call. DEF calls and returns within the
-    /// slot are made here, as [`Vm::enter_def_on_stack`] and
-    /// [`Vm::return_op`] make them.
+    /// [`Vm::run_fast`] up to a builtin or host call. DEF calls and returns
+    /// within the slot are made here, the same way [`Vm::enter_def_on_stack`]
+    /// and [`Vm::return_op`] make them.
     #[inline(always)]
     fn run_fused(&mut self, program: &Compiled, stop: u64) -> bool {
         let Vm {
@@ -1682,8 +1693,8 @@ impl Vm {
             ..
         } = self;
         let slot = *slot;
-        // The running DEF's stack taken, GOSUBs and variables, which
-        // GOSUB and RETURN look at.
+        // The stack space taken, the GOSUBs and the variables of the
+        // running DEF, which GOSUB and RETURN check.
         let (mut calls, mut gosub_base, mut base) = innermost(frames, locals);
         // The places fused entries name, which `fuse::check` bounded. Only
         // the `unchecked-vars` view tests these two; see `vars`.
@@ -1694,7 +1705,7 @@ impl Vm {
         let mut vars = Vars::new(&mut globals[..], &mut locals[base..], places);
         let mut pc = *at;
         let mut left = stop.saturating_sub(*executed);
-        // Whether it stopped before a builtin's or host's call.
+        // Whether it stopped before a builtin or host call.
         let mut call = false;
         while let Some(fast) = program.fast.get(pc) {
             let len = u64::from(fast.len);
@@ -1706,7 +1717,7 @@ impl Vm {
             }
             let size = usize::from(fast.len);
             let mut next = pc + size;
-            // An operator the entry's kind names, worked out on its own.
+            // An operator that the entry's kind names, computed separately.
             macro_rules! store {
                 ($op:expr, $a:expr, $b:expr, $to:expr) => {{
                     let Some(n) = ops::binary_numbers($op, get(&vars, $a), get(&vars, $b)) else {
@@ -1725,8 +1736,8 @@ impl Vm {
                     }
                 }};
             }
-            // The same with a constant the entry carries for `b`, as the
-            // constant's place holds it.
+            // The same with a constant that the entry carries for `b`, in
+            // the form that the constant's place holds.
             macro_rules! store_k {
                 ($op:expr, $a:expr, $k:expr, $to:expr) => {{
                     let Some(n) = ops::binary_numbers($op, get(&vars, $a), &$k) else {
@@ -1747,10 +1758,11 @@ impl Vm {
             }
             match fast.op {
                 FastOp::Slow => break,
-                // A loop with native code runs it, and goes on from where
-                // it stops. A failure is a chain's, for `step`, and so is a
-                // loop native code does not take now: `step` runs the
-                // instruction, and the entries after it go on.
+                // A loop with native code runs that code and continues from
+                // where it stops. A failure goes to `step`, the same as a
+                // chain's failure, and so does a loop that native code does
+                // not take now: `step` runs the instruction, and the entries
+                // after it continue.
                 #[cfg(feature = "jit")]
                 FastOp::Native(region) => {
                     let ran = program.native.enter(region, &mut vars, pc, left);
@@ -1855,7 +1867,7 @@ impl Vm {
                 }
                 FastOp::Return if gosubs.len() <= gosub_base => {
                     // Out of a DEF called in this slot, with no GOSUB of the DEF
-                    // pending: as `return_op`. Others are for `step`.
+                    // pending: the same as `return_op`. Others are for `step`.
                     let Some(frame) = frames.last() else {
                         break;
                     };
@@ -1909,8 +1921,8 @@ impl Vm {
                     want,
                     cost,
                 } => {
-                    // As `enter_def_on_stack`, which the fuser has made sure
-                    // the call fits, but for the stack's room.
+                    // The same as `enter_def_on_stack`. The fuser has made
+                    // sure that the call fits, except for the stack's room.
                     let cost = cost as usize;
                     if room_for(calls, gosubs.len(), data_kept.len(), cost) > STACK_SIZE {
                         break;
@@ -1943,8 +1955,9 @@ impl Vm {
                     cost,
                     args,
                 } => {
-                    // As `CallDef`, with the arguments read from where they are,
-                    // before the view of the caller's variables goes.
+                    // The same as `CallDef`, with the arguments read from where
+                    // they are, before the view of the caller's variables is
+                    // replaced.
                     let cost = usize::from(cost);
                     if room_for(calls, gosubs.len(), data_kept.len(), cost) > STACK_SIZE {
                         break;
@@ -1976,7 +1989,8 @@ impl Vm {
                     next = info.entry as usize;
                 }
                 FastOp::ReturnValue => {
-                    // From a function called in this slot: as `leave_def_with`.
+                    // From a function called in this slot: the same as
+                    // `leave_def_with`.
                     let Some(frame) = frames.last() else {
                         break;
                     };
@@ -2000,7 +2014,7 @@ impl Vm {
                     break;
                 }
                 FastOp::Str(i) => {
-                    // As `step` makes it.
+                    // Made the same way as in `step`.
                     let s = &program.strings[i as usize];
                     memory::charge(memory::string_bytes(s.len()));
                     stack.push(Value::Str(new_str(s.clone())));
@@ -2011,8 +2025,9 @@ impl Vm {
                         unreachable!("only functions are fused");
                     };
                     let at = stack.len() - usize::from(argc);
-                    // A failure is left to `step`, which calls it again and
-                    // fails as it always does: these change nothing.
+                    // A failure is left to `step`, which calls the function
+                    // again and fails the same way: these functions change
+                    // nothing.
                     let n = match f(&stack[at..]) {
                         Ok(Value::Int(n)) => Num::Int(n),
                         Ok(Value::Real(x)) => Num::Real(x),
@@ -2217,8 +2232,8 @@ impl Vm {
                     next: to,
                     ..
                 } => {
-                    // The calls a chain makes need the stack's room, as
-                    // `enter_def_on_stack` makes sure; without, `step`
+                    // The calls a chain makes need the stack's room, which
+                    // `enter_def_on_stack` also checks. Without it, `step`
                     // fails on them.
                     if let FastOp::CallChain { cost, .. } = fast.op
                         && room_for(calls, gosubs.len(), data_kept.len(), usize::from(cost))
@@ -2228,12 +2243,12 @@ impl Vm {
                     }
                     next = to as usize;
                     let first = first as usize;
-                    // Where `step` goes on from if a step cannot do its
-                    // work, and the instructions run by then.
+                    // The address `step` continues from if a step cannot do
+                    // its work, and the instructions run by then.
                     let mut done = (pc, 0);
                     let mut failed = false;
-                    // Each step is matched where it is: copied out first,
-                    // all of its fields were loaded whatever its kind.
+                    // Each step is matched in place. Copying it out first
+                    // would load all of its fields, regardless of its kind.
                     'micro: for m in &program.micro[first..first + usize::from(count)] {
                         // A step that cannot do its work leaves the chain to
                         // `step` from its start: those before it wrote only
@@ -2427,8 +2442,9 @@ impl Vm {
                     exit,
                     apart,
                 } => {
-                    // Integers, as nearly all FORs count: what the general
-                    // steps below do on them, each value read once.
+                    // Integers, which nearly all FORs count in: the same work
+                    // as the general steps below do on them, with each value
+                    // read once.
                     if apart
                         && let (Value::Int(v), Value::Int(s0)) =
                             (get(&vars, var), get(&vars, step_slot))
@@ -2482,8 +2498,8 @@ impl Vm {
         e.at_pos(line, col).in_slot(slot)
     }
 
-    /// Whether a FOR goes on, from its variable, its end and its step on the
-    /// stack. Nearly all of them count in integers.
+    /// Whether a FOR continues, from its variable, its end and its step on
+    /// the stack. Nearly all FORs count in integers.
     #[inline]
     fn for_test(&mut self) -> Result<()> {
         let step = self.pop();
@@ -2592,7 +2608,7 @@ impl Vm {
     }
 
     /// CHKLABEL: whether a label exists where GOTO would look for it.
-    /// In a DEF, `outer` also looks at the top level.
+    /// In a DEF, `outer` also checks the top level.
     fn has_label(&self, value: &Value, outer: bool) -> Result<bool> {
         let text = value.clone().into_str()?;
         let text = text.borrow();
@@ -2605,8 +2621,8 @@ impl Vm {
         }
         let (slot, name) = slot_and_name(value)?;
         Ok(match slot {
-            // With a slot, the top level of that slot's program, also in
-            // a DEF of its own: FINITI looks for its own models so.
+            // With a slot, the top level of that slot's program, also from
+            // a DEF of that slot: FINITI looks for its own models this way.
             Some(slot) if slot == self.slot => self.program.labels.contains_key(&name),
             // A slot that EXEC has not run reports 0 rather than an error.
             Some(slot) => (self.program_in(slot)).is_some_and(|p| p.labels.contains_key(&name)),
@@ -2679,8 +2695,8 @@ impl Vm {
         }
     }
 
-    /// Goes on in another slot that EXEC has run, keeping this one's
-    /// program and variables for later.
+    /// Continues in another slot that EXEC has run, and keeps the program
+    /// and variables of this slot for later.
     fn switch_to(&mut self, slot: usize, host: &mut dyn Host) {
         if slot == self.slot {
             return;
@@ -2783,9 +2799,9 @@ impl Vm {
                 || self.gosubs.iter().any(|g| g.0 == s)
         };
         // EXEC of a slot must not start one that is running, but the slot
-        // running now may be started again, from its file or as it is
-        // (checked on hardware: EXEC 0 in a DEF of slot 1 called from slot
-        // 0 is Can't use the specified slot).
+        // running now may be started again, from its file or with the
+        // program it has now (checked on hardware: EXEC 0 in a DEF of slot
+        // 1 called from slot 0 is Can't use the specified slot).
         let own = slot == self.slot as i32;
         if running(slot) && !own {
             return Err(Error::with_detail(
@@ -2834,8 +2850,8 @@ impl Vm {
             }
         }
         self.put_unit(unit, slot, host);
-        // The program EXEC starts reads its own DATA, and the one that
-        // ran EXEC reads where it was once it goes on. UNVERIFIED.
+        // The program EXEC starts reads its own DATA, and the program that
+        // ran EXEC reads from where it was once it continues. UNVERIFIED.
         (self.data_pos, self.data_from) = (0, Rc::clone(&self.program));
         self.pc = 0;
         // Back to the host, which may give the new code its breakpoints
@@ -2844,12 +2860,12 @@ impl Vm {
     }
 
     /// Whether the DEFs of `program`, which EXEC is to start in `slot`,
-    /// can stand beside those of the other slots this run has: a COMMON
-    /// DEF may not take the name of any DEF of another slot, nor any DEF
-    /// that of another slot's COMMON DEF. Duplicate function, naming no
-    /// argument, on the first such DEF's line. The slot's own program,
-    /// which this one replaces, does not count. UNVERIFIED: two plain DEFs
-    /// of one name in two slots are let be.
+    /// can exist alongside those of the other slots of this run: a COMMON
+    /// DEF may not take the name of any DEF of another slot, and no DEF may
+    /// take the name of a COMMON DEF of another slot. The error is Duplicate
+    /// function, naming no argument, on the line of the first such DEF. The
+    /// slot's own program, which this one replaces, does not count.
+    /// UNVERIFIED: two plain DEFs of one name in two slots are allowed.
     fn defs_fit(&self, program: &Compiled, slot: usize) -> Result<()> {
         let others = (self.units.iter().enumerate())
             .filter_map(|(s, unit)| Some((s, &unit.as_ref()?.program)))
@@ -2889,10 +2905,11 @@ impl Vm {
             .map(|r| r.def)
     }
 
-    /// Keeps that `text` names DEF `def` of the running slot, `program`.
+    /// Records that `text` names DEF `def` of the running slot, `program`.
     #[cold]
     fn resolve(&mut self, program: &Compiled, text: &[u16], def: u32) {
-        // `program` is the running slot's, held in `self.program`.
+        // `program` is the program of the running slot, held in
+        // `self.program`.
         if !std::ptr::eq(Rc::as_ptr(&self.program), program) {
             return;
         }
@@ -2907,7 +2924,7 @@ impl Vm {
         });
     }
 
-    /// Goes on to the next callback of the CALL SPRITE or CALL TEXT under
+    /// Moves on to the next callback of the CALL SPRITE or CALL TEXT under
     /// way, or to `end` after the last.
     fn next_callback(&mut self, program: &Compiled, end: Addr, host: &mut dyn Host) -> Result<()> {
         let (kind, at) = (self.callbacks.last_mut()).ok_or(ErrorKind::IllegalStatement)?;
@@ -2994,10 +3011,10 @@ impl Vm {
             "POP" => {
                 // GOSUBs, DEF calls and kept places share one stack, and
                 // only a kept place on top can come off it.
-                // With nothing kept, a GOSUB under way is not in the way:
-                // POP in a GOSUB at the top level is Stack underflow, in a
-                // DEF Use RESTORE "PUSH" (checked on hardware). UNVERIFIED:
-                // why the two differ.
+                // With nothing kept, a GOSUB under way does not block it:
+                // POP in a GOSUB at the top level is Stack underflow, and in a
+                // DEF it is Use RESTORE "PUSH" (checked on hardware).
+                // UNVERIFIED: why the two differ.
                 let (calls, gosubs) = match self.data_kept.last() {
                     Some(k) => (k.calls, k.gosubs),
                     None => (0, usize::MAX),
@@ -3030,8 +3047,8 @@ impl Vm {
         Ok(true)
     }
 
-    /// Whether `cost` more of the stack GOSUBs, DEF calls and RESTORE "PUSH"
-    /// share is free.
+    /// Whether `cost` more of the stack that GOSUBs, DEF calls and RESTORE
+    /// "PUSH" share is free.
     fn stack_has_room(&self, cost: usize) -> bool {
         let calls = self.frames.last().map_or(0, |f| f.stack_to);
         room_for(calls, self.gosubs.len(), self.data_kept.len(), cost) <= STACK_SIZE
@@ -3045,24 +3062,25 @@ impl Vm {
     }
 
     /// A command given arguments when GOSUBs or RESTORE "PUSH" have taken
-    /// the values' room: Stack overflow on it. PRINT goes on while the
-    /// room has space for a value. UNVERIFIED: that a command without
-    /// arguments, and a builtin function, go on.
+    /// the values' room: it fails with Stack overflow. PRINT continues while
+    /// the room has space for a value. UNVERIFIED: that a command without
+    /// arguments, and a builtin function, continue.
     #[inline(always)]
     fn values_room_taken(&self, argc: usize) -> bool {
         argc > 0 && self.values_room_reached && !self.stack_has_room(0)
     }
 
-    /// Keeps [`Vm::values_room_reached`] after a GOSUB or RESTORE "PUSH";
+    /// Updates [`Vm::values_room_reached`] after a GOSUB or RESTORE "PUSH";
     /// DEF calls never go past the room.
     fn note_values_room(&mut self) {
         self.values_room_reached |= !self.stack_has_room(0);
     }
 
-    /// GOSUB to `target` of `slot`. One that reaches into the values' room
-    /// goes, and the first command given arguments after it stops. GOSUBs
-    /// go on until the values' room is full, as RESTORE "PUSH" does, and
-    /// the one past it stops on itself.
+    /// GOSUB to `target` of `slot`. A GOSUB that reaches into the values'
+    /// room still runs, and the first command given arguments after it
+    /// fails. GOSUBs continue until the values' room is full, the same as
+    /// RESTORE "PUSH" does, and the GOSUB past that fails on the GOSUB
+    /// itself.
     fn gosub(&mut self, slot: usize, target: usize, host: &mut dyn Host) -> Result<()> {
         if !self.stack_has_full_room(GOSUB_COST) {
             return Err(ErrorKind::StackOverflow.into());
@@ -3075,10 +3093,9 @@ impl Vm {
         Ok(())
     }
 
-    /// Runs one instruction. `Some` stops the current slice.
-    /// Runs the instruction at the program counter; `program` is the
-    /// running program, which the caller keeps rather than this cloning
-    /// it for every instruction.
+    /// Runs the instruction at the program counter. `Some` stops the current
+    /// slice. `program` is the running program, which the caller keeps so
+    /// that this function does not clone it for every instruction.
     fn step(&mut self, program: &Rc<Compiled>, host: &mut dyn Host) -> Result<Option<Status>> {
         let Some(op) = program.code.get(self.pc) else {
             return Ok(self.end(host));
@@ -3242,8 +3259,8 @@ impl Vm {
                 return Ok(None);
             }
             Op::On { count, gosub } => {
-                // Its table costs about what a builtin's call with no
-                // arguments does.
+                // Its table costs about the same as a builtin call with no
+                // arguments.
                 self.builtin_calls += 1;
                 let selector = self.pop().to_int()?;
                 let after = self.pc + 1 + *count as usize;
@@ -3254,7 +3271,7 @@ impl Vm {
                         unreachable!("ON is followed by its jump table");
                     };
                     if *gosub {
-                        // As in `gosub`.
+                        // The same as in `gosub`.
                         if !self.stack_has_full_room(GOSUB_COST) {
                             return Err(ErrorKind::StackOverflow.into());
                         }
@@ -3410,7 +3427,7 @@ impl Vm {
                 let target = self.pop();
                 name_arg(&target, "CHKVAR")?;
                 let name = name_of(&target)?;
-                // Another slot's, as VAR("n:NAME") would find it.
+                // A global of another slot, as VAR("n:NAME") would find it.
                 let found = match self.other_global(&target) {
                     Ok(Some(_)) => true,
                     Ok(None) => self.dynamic_slot(&name).is_ok(),
@@ -3584,10 +3601,10 @@ impl Vm {
             Op::RestoreDyn => {
                 let target = self.pop();
                 if !self.restore_special(&target)? {
-                    // "n:@LABEL" sends READ to another slot's DATA, as
-                    // FINITI does to read models from the program that
-                    // calls it, also from a DEF: the top level of that
-                    // slot. A slot EXEC has not run gives Undefined label.
+                    // "n:@LABEL" sends READ to the DATA of another slot, at
+                    // the top level of that slot, also from a DEF. FINITI
+                    // does this to read models from the program that calls
+                    // it. A slot EXEC has not run gives Undefined label.
                     // "@LABEL" looks in the DEF running, then the top level.
                     let (slot, name) = label_string(&target)?;
                     let from = slot
@@ -3753,8 +3770,8 @@ impl Vm {
         self.push_results(results, want)
     }
 
-    /// Takes READ's place after a host call. A command that read DATA
-    /// from a `"@label"` moved it, into this slot's program.
+    /// Updates READ's place after a host call. A command that read DATA
+    /// from a `"@label"` moved it into this slot's program.
     #[inline(always)]
     fn data_moved(&mut self, host: &dyn Host) {
         if let Some(pos) = host.data_pos()
@@ -3771,8 +3788,8 @@ impl Vm {
     fn builtin_call(&mut self, program: &Compiled, id: u16, argc: u8, want: Want) -> Result<()> {
         let b = builtins::get(id);
         // CHR$ costs more than a call (TEST68, TEST69).
-        // UNVERIFIED: that the builtins not timed cost what the
-        // meter charges a call.
+        // UNVERIFIED: that the builtins not timed cost the same as the
+        // meter charges for a call.
         let charge = match self.report_work {
             true => self.charges.get(usize::from(id)).copied(),
             false => None,
@@ -3781,10 +3798,10 @@ impl Vm {
             None | Some(Charge::Call) => true,
             Some(Charge::Free) => false,
             Some(Charge::FreeWithTwo) => argc != 2,
-            // A CHR$ of one of the codes the last four made costs only
-            // its call, as CHR$ of two to four codes in turn does.
+            // A CHR$ of one of the codes of the last four calls costs only
+            // its call, the same as CHR$ of two to four codes in turn does.
             // UNVERIFIED: that SmileBASIC 4 keeps the last few strings
-            // CHR$ made, as HGCNV$ and TPERF's VSTR, which make many
+            // CHR$ made, because HGCNV$ and TPERF's VSTR, which make many
             // codes in turn, need CHR$'s cost.
             Some(Charge::Chr) => {
                 let code = self.stack.last().and_then(|v| v.to_int().ok());
@@ -3871,7 +3888,8 @@ impl Vm {
             return Ok(Some(RETRY));
         }
         self.stack.truncate(at);
-        // As `push_results`, without going through a list for none or one.
+        // The same as `push_results`, without going through a list for none
+        // or one.
         let results = &mut self.host_results;
         if results.len() != want.count() {
             results.clear();
@@ -3889,7 +3907,7 @@ impl Vm {
         Ok(None)
     }
 
-    /// Returns false, leaving the stack alone, if the host asked for the
+    /// Returns false, leaving the stack unchanged, if the host asked for the
     /// call to be made again on the next frame.
     fn call_host(
         &mut self,
@@ -3930,7 +3948,8 @@ impl Vm {
         let at = self.stack.len() - argc;
         let info = &self.program.defs[def as usize];
         let call_ok = match want {
-            // A DEF with one OUT may be called as a function, giving it.
+            // A DEF with one OUT may be called as a function that returns
+            // the OUT.
             Want::Value => info.is_function || info.outs.is_none_or(|m| m > 0),
             // A function may be called with one OUT for its value.
             Want::Outs(n) => match info.is_function {
@@ -3967,8 +3986,8 @@ impl Vm {
     }
 
     /// [`Vm::enter_def_on_stack`] for a DEF of the running slot, `program`,
-    /// found by name: a call that fits the DEF and has room starts here, as
-    /// the fused code starts one, and the others go there.
+    /// found by name: a call that fits the DEF and has room starts here, the
+    /// same way the fused code starts one, and the others go there.
     #[inline]
     fn enter_found(&mut self, program: &Compiled, def: u32, argc: usize, want: Want) -> Result<()> {
         let info = &program.defs[def as usize];
@@ -4090,7 +4109,8 @@ impl Vm {
         self.leave_frame(frame, host)
     }
 
-    /// [`Vm::leave_def`] with one value, as a function returns: no list of it.
+    /// [`Vm::leave_def`] with the one value a function returns, without a
+    /// list for it.
     fn leave_def_with(&mut self, result: Value, host: &mut dyn Host) -> Result<usize> {
         let frame = self.pop_frame().ok_or(ErrorKind::IllegalStatement)?;
         self.gosubs.truncate(frame.gosub_base);
@@ -4119,10 +4139,11 @@ impl Vm {
     }
 }
 
-/// What a call of `info` with `argc` arguments, wanting `want`, takes of
-/// [`STACK_SIZE`], when the DEF has fixed numbers of arguments and OUTs and
-/// the call fits them as [`Vm::enter_def_on_stack`] checks. `None` for the
-/// others, which the fuser leaves to it.
+/// Returns the part of [`STACK_SIZE`] that a call of `info` with `argc`
+/// arguments, wanting `want`, takes. This applies when the DEF has fixed
+/// numbers of arguments and OUTs and the call fits them, as checked by
+/// [`Vm::enter_def_on_stack`]. `None` for other calls, which the fuser
+/// leaves to that function.
 pub(crate) fn fixed_call_cost(info: &DefInfo, argc: u8, want: Want) -> Option<u32> {
     let (Some(params), Some(outs)) = (info.params, info.outs) else {
         return None;
@@ -4138,8 +4159,8 @@ pub(crate) fn fixed_call_cost(info: &DefInfo, argc: u8, want: Want) -> Option<u3
     }
 }
 
-/// The innermost DEF call's stack taken, first GOSUB and first variable, or
-/// the top level's.
+/// The stack space taken, first GOSUB and first variable of the innermost
+/// DEF call, or those of the top level.
 #[inline(always)]
 fn innermost(frames: &[Frame], locals: &[Value]) -> (usize, usize, usize) {
     match frames.last() {
@@ -4158,10 +4179,9 @@ fn take_args(stack: &mut Vec<Value>, locals: &mut Vec<Value>, argc: usize) {
     unsafe { stack.set_len(at) };
 }
 
-/// Gives a call's variables after its arguments, from `base` on, their
-/// starting values. OUT variables hold nothing until set: a DEF that never
-/// sets one gives the omitted value, as SmileBASIC Debugger's EMPTY() relies
-/// on.
+/// Sets the starting values of a call's variables after its arguments, from
+/// `base` on. OUT variables hold nothing until set: a DEF that never sets one
+/// returns the omitted value, which SmileBASIC Debugger's EMPTY() relies on.
 #[inline(always)]
 fn start_locals(locals: &mut Vec<Value>, base: usize, info: &DefInfo) {
     let count = info.locals.len();
@@ -4176,15 +4196,15 @@ fn start_locals(locals: &mut Vec<Value>, base: usize, info: &DefInfo) {
     }
 }
 
-/// How much of [`STACK_SIZE`] a call of `info` takes.
+/// Returns the part of [`STACK_SIZE`] that a call of `info` takes.
 #[inline(always)]
 fn call_cost(info: &DefInfo, argc: usize) -> usize {
     let values = info.locals.len() + argc * usize::from(info.params.is_none());
     CALL_COST + values * VARIABLE_COST + if info.is_function { VALUE_COST } else { 0 }
 }
 
-/// Cuts `values` to `len`, without a call when what goes is numbers, as when
-/// a DEF call ends.
+/// Cuts `values` to `len`, without a call when the values removed are
+/// numbers, as happens when a DEF call ends.
 #[inline(always)]
 fn cut(values: &mut Vec<Value>, len: usize) {
     let numbers = (values.get(len..)).is_some_and(|gone| {
@@ -4240,8 +4260,8 @@ fn at_var<'a>(vars: &'a mut Vars, var: Var) -> &'a mut Value {
     vars.at(var)
 }
 
-/// Pushes a number. Pushing a whole [`Value`] made just now would make it first
-/// and then move it, which is what [`Num`] is there to avoid.
+/// Pushes a number. Pushing a whole [`Value`] made just now would build it
+/// first and then move it. [`Num`] exists to avoid that.
 #[inline(always)]
 fn push_num(stack: &mut Vec<Value>, n: Num) {
     if stack.len() == stack.capacity() {
@@ -4327,7 +4347,7 @@ fn top(stack: &mut [Value]) -> &mut Value {
     stack.last_mut().expect("compiler keeps the stack balanced")
 }
 
-/// What `f` makes of the two values on top of the stack.
+/// Returns the result of `f` on the two values on top of the stack.
 #[inline(always)]
 fn on_two<T>(stack: &[Value], f: impl FnOnce(&Value, &Value) -> T) -> T {
     let [.., under, top] = stack else {
@@ -4412,7 +4432,7 @@ fn element_at(array: &Array, at: usize) -> Option<Num> {
     }
 }
 
-/// What [`index`] gives on one index, when that is a number in an array.
+/// The result of [`index`] on one index, when that is a number in an array.
 #[inline(always)]
 fn element1(base: &Value, i: &Value) -> Option<Num> {
     let Value::Array(a) = base else {
@@ -4436,7 +4456,7 @@ fn offset2(array: &Array, i: &Value, j: &Value) -> Option<usize> {
     (i < rows && j < columns).then_some(i * columns + j)
 }
 
-/// What [`index`] gives on two indices, when that is a number in an array.
+/// The result of [`index`] on two indices, when that is a number in an array.
 #[inline(always)]
 fn element2(base: &Value, i: &Value, j: &Value) -> Option<Num> {
     let Value::Array(a) = base else {
@@ -4446,7 +4466,7 @@ fn element2(base: &Value, i: &Value, j: &Value) -> Option<Num> {
     element_at(&a, offset2(&a, i, j)?)
 }
 
-/// [`Array::set`] when it cannot fail. False leaves the element alone.
+/// [`Array::set`] when it cannot fail. False leaves the element unchanged.
 #[inline(always)]
 fn set_element(array: &mut Array, at: usize, value: &Value) -> bool {
     match (&mut array.data, value) {

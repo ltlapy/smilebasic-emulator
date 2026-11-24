@@ -1,5 +1,6 @@
-//! What tracks and BEEP play instruments on: a SoundFont through
-//! rustysynth, or SmileBASIC 4's own instruments through the sampler.
+//! The synthesizers that tracks and BEEP play instruments on: a SoundFont
+//! through rustysynth, or SmileBASIC 4's own instruments through the
+//! sampler.
 
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use super::wave::Envelope;
 /// Channels a synthesizer has: the tracks' 16 and BEEP's 16 handles.
 pub const CHANNELS: usize = 16;
 
-/// Where instruments come from.
+/// The source of the instruments.
 #[derive(Clone, Debug)]
 pub enum Instruments {
     Font(Arc<SoundFont>),
@@ -53,15 +54,15 @@ pub(crate) trait Synth {
     }
     fn bend(&mut self, channel: usize, cents: i32);
     /// MML's @E: the envelope the channel's notes start with from now on,
-    /// in place of their instruments'; `None` for theirs. A SoundFont's
-    /// instruments keep their own.
+    /// in place of the instruments' envelopes; `None` for theirs. A
+    /// SoundFont's instruments keep their own envelopes.
     fn envelope(&mut self, _channel: usize, _envelope: Option<Envelope>) {}
     fn note_on(&mut self, channel: usize, key: i32, velocity: i32);
     fn note_off(&mut self, channel: usize, key: i32);
     /// A portamento: the channel's notes that are held sound `cents`
     /// off their key.
     fn porta(&mut self, _channel: usize, _cents: f32) {}
-    /// A portamento's end: the held note `from` goes on as `to`, without
+    /// A portamento's end: the held note `from` continues as `to`, without
     /// starting again where the synthesizer can.
     fn retune(&mut self, channel: usize, from: i32, to: i32) {
         self.note_off(channel, from);
@@ -69,22 +70,22 @@ pub(crate) trait Synth {
     }
     /// BEEP's pan for a preset effect, 0 to 127: it moves every voice by
     /// as much as a channel's pan would from 64, so a mono effect at 127
-    /// plays right only, and each side of a stereo effect moves on its
-    /// own. Gives whether the synthesizer can; BEEP balances what it gives
-    /// when not.
+    /// plays right only, and each side of a stereo effect moves
+    /// independently. Returns whether the synthesizer can do this. When it
+    /// cannot, BEEP balances what the synthesizer gives.
     fn pan_offset(&mut self, _pan: i32) -> bool {
         false
     }
-    /// Every note on the channel stops at once.
+    /// Every note on the channel stops immediately.
     fn channel_off(&mut self, channel: usize);
-    /// Every note stops at once and the channels go back to how they
-    /// started.
+    /// Every note stops immediately and the channels return to their
+    /// starting state.
     fn reset(&mut self);
     /// Writes `left.len()` samples over the buffers.
     fn render(&mut self, left: &mut [f32], right: &mut [f32]);
     /// Whether nothing sounds: [`Synth::render`] would write zeros and
-    /// change nothing, so that it can be left out. False when the
-    /// synthesizer cannot tell.
+    /// change nothing, so it can be skipped. False when the synthesizer
+    /// cannot tell.
     fn silent(&self) -> bool {
         false
     }
@@ -227,8 +228,8 @@ impl Synth for FontSynth {
 
     /// rustysynth reads outside its samples, and panics, when a note's
     /// steps are longer than its loop: a damaged file can ask for that, and
-    /// it finds out only as the note plays. The notes stop; the song goes
-    /// on. This is once a tick at most, not per sample.
+    /// rustysynth finds out only when the note plays. The notes stop and
+    /// the song continues. This runs at most once per tick, not per sample.
     fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         let synth = &mut self.synth;
         let rendered = catch_unwind(AssertUnwindSafe(|| synth.render(left, right)));
@@ -324,7 +325,7 @@ mod tests {
         l.iter().chain(&r).fold(0.0, |m, x| m.max(x.abs()))
     }
 
-    /// Steps of 100 samples round a loop of 1 run off the end of the data.
+    /// Steps of 100 samples around a loop of 1 run off the end of the data.
     #[test]
     fn a_note_that_reads_past_its_samples_stops_and_the_rest_goes_on() {
         let mut s = FontSynth::new(&font(4_800_000));

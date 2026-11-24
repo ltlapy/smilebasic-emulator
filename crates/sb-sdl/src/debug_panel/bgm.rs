@@ -1,7 +1,7 @@
-//! The debugger panel's BGM tab: what each BGM track that plays or is
-//! paused plays, channel by channel, and the BEEP handles that sound,
-//! gathered only while the tab shows. SmileBASIC 4 has no such view; this
-//! is the emulator's own.
+//! The BGM tab of the debugger panel: what each playing or paused BGM
+//! track plays, channel by channel, and the BEEP handles that sound,
+//! gathered only while the tab is shown. SmileBASIC 4 has no such view;
+//! the emulator adds it.
 
 use sb_runtime::font::Font;
 use sb_runtime::framebuffer::Framebuffer;
@@ -12,23 +12,24 @@ use crate::ui::{DISABLED, Rect, TEXT, fill};
 
 use super::{DebugPanel, HEADING, Hit, Metrics, NUMBER, STRING, STRIPE, TAB, cut};
 
-/// MML's channels, which preset songs' sequences share.
+/// The number of MML channels, which the sequences of preset songs share.
 const CHANNELS: usize = sb_runtime::sound::mml::CHANNELS;
-/// The level bar's colour, and its trough's.
+/// The colors of the level bar and of its trough.
 const LEVEL: u32 = 0xFF40_C060;
 const TROUGH: u32 = 0xFF30_3030;
-/// The lines of MML a track's tip shows at most.
+/// The most lines of MML that a track's tip shows.
 const MML_LINES: usize = 6;
 const TIP_CHARS: usize = 60;
 
-/// What the tab shows, from the sound as the last frame left it.
+/// The data that the tab shows, from the sound as the last frame left it.
 #[derive(Clone, Debug, Default)]
 pub struct Bgm {
     pub tracks: Vec<TrackInfo>,
     pub beeps: Vec<BeepInfo>,
 }
 
-/// Gathers what plays.
+/// Gathers the BGM tracks that play or are paused, and the BEEP handles
+/// that sound.
 pub fn gather(sound: &Sound) -> Bgm {
     Bgm {
         tracks: sound.inspect_tracks(),
@@ -65,7 +66,7 @@ impl Bgm {
         lines
     }
 
-    /// How many lines there are to scroll through.
+    /// Returns the number of lines to scroll through.
     pub fn len(&self) -> usize {
         self.lines().len()
     }
@@ -74,8 +75,8 @@ impl Bgm {
         self.tracks.iter().find(|t| t.track == n)
     }
 
-    /// The right-click menu's copies for what `hit` is on: a label, and
-    /// the text, if there is any.
+    /// Returns the copy items of the right-click menu for the target of
+    /// `hit`: a label, and the text, if there is any.
     pub fn copies(&self, hit: Hit) -> Vec<(&'static str, Option<String>)> {
         let lines = |l: Vec<String>| Some(l.join("\n"));
         match hit {
@@ -116,8 +117,8 @@ impl Bgm {
     }
 }
 
-/// The level bars: how loud each track's channels sounded as last drawn,
-/// and how many notes they had started, to light up on a new one.
+/// The level bars: the loudness of each track's channels as last drawn,
+/// and the number of notes they had started, to light up on a new one.
 pub struct Meters {
     levels: [[f32; CHANNELS]; TRACKS],
     notes: [[u32; CHANNELS]; TRACKS],
@@ -133,9 +134,10 @@ impl Default for Meters {
 }
 
 impl Meters {
-    /// A frame on: a new note lights its channel up to its loudness, a
-    /// held one fades down to part of it, and silence to nothing. Only
-    /// the drawing moves them, so the sound pays nothing.
+    /// Advances one frame: a new note lights its channel up to its
+    /// loudness, a held note fades down to part of it, and silence fades
+    /// to nothing. Only the drawing updates the bars, so the sound has no
+    /// extra cost.
     pub(super) fn update(&mut self, bgm: &Bgm) {
         for t in &bgm.tracks {
             // BGMPLAY's own volume, 64, is full; BGMVOL goes louder.
@@ -189,8 +191,8 @@ fn notes_text(keys: &[i32]) -> String {
     }
 }
 
-/// General MIDI's names, which @0 to @127 follow: the manual calls them
-/// a GM sound source's.
+/// The General MIDI names, which @0 to @127 follow: the manual says they
+/// are the sounds of a GM sound source.
 const GM: [&str; 128] = [
     "Acoustic Grand Piano",
     "Bright Acoustic Piano",
@@ -347,7 +349,7 @@ const DRUMS: [&str; 21] = [
     "Unn",
 ];
 
-/// What @`program` is, as the manual lists them.
+/// Returns the name of @`program`, as the manual lists them.
 pub fn instrument_name(program: i32) -> String {
     match program {
         0..=127 => GM[program as usize].to_string(),
@@ -424,8 +426,8 @@ fn wrapped(text: &str, most: usize) -> Vec<String> {
     lines
 }
 
-/// Everything about a track, for its tip and for copying; the copy has
-/// its MML whole and its channels.
+/// Everything about a track, for its tip and for copying. The copy has
+/// the whole MML and the channels.
 pub fn track_details(t: &TrackInfo, whole: bool) -> Vec<String> {
     let mut lines = vec![format!("TRACK {}  {}", t.track, song_text(t))];
     lines.push(format!(
@@ -510,9 +512,9 @@ pub fn beep_details(b: &BeepInfo) -> Vec<String> {
     ]
 }
 
-/// The channels' columns: heading, characters taken, and whether it can
-/// be left out for want of room. The level is a bar, and the instrument's
-/// name takes what is left.
+/// The columns of the channels: heading, characters taken, and whether
+/// the column can be omitted for lack of room. The level is a bar, and
+/// the instrument name takes the remaining room.
 const COLUMNS: [(&str, usize, bool); 9] = [
     ("CH", 3, false),
     ("@", 4, false),
@@ -573,11 +575,11 @@ fn beep_cells(b: &BeepInfo) -> [String; 6] {
 }
 
 impl DebugPanel {
-    /// What plays from `(x, y)` to `(right, bottom)`: under the channels'
-    /// headings, a line for each track and one for each channel its song
-    /// uses, with a bar for how loud it sounds, then BEEP's handles.
-    /// Channels that have ended are greyed; what does not fit is in the
-    /// rows' tips.
+    /// Draws what plays from `(x, y)` to `(right, bottom)`: under the
+    /// channel headings, a line for each track and one for each channel
+    /// its song uses, with a bar for its loudness, then BEEP's handles.
+    /// Channels that have ended are grayed. Text that does not fit is in
+    /// the tips of the rows.
     pub(super) fn draw_bgm(
         &mut self,
         fb: &mut Framebuffer,
@@ -695,7 +697,8 @@ impl DebugPanel {
                 }
             }
         }
-        // After the rows, which go first.
+        // Pushed after the rows, so that a click on a row finds the row
+        // first.
         self.hits.push((area, Hit::Bgm));
     }
 }
@@ -842,7 +845,7 @@ mod tests {
         assert_eq!(p.tips.len(), 4);
         p.reset();
         assert_eq!(p.tab, Some(Tab::Bgm));
-        // In a short panel, scrolled, the first lines go.
+        // In a short panel, scrolled, the first lines are hidden.
         let f = Rect { h: 80, ..f };
         p.draw(&mut fb, &Font::blank(), f, Some((400, 240)), &view, 1);
         p.wheel(2, view.scrolled());
@@ -865,7 +868,7 @@ mod tests {
         }
         meters.update(&gather(&rt.sound));
         assert_eq!(meters.level(0, 0), 1.0);
-        // Held, it fades to part of it; let go, to nothing.
+        // Held, it fades to part of it; released, to nothing.
         for _ in 0..30 {
             meters.update(&gather(&rt.sound));
         }

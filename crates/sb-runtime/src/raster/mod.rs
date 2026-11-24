@@ -1,10 +1,10 @@
 //! Rasterizers draw a [`Scene`]. They hold none of SmileBASIC 4's rules for
-//! what shows: those are in the scene's builder. A rasterizer is called per
-//! frame, so dispatching to one costs nothing that matters; each item is
-//! drawn through a plain match.
+//! what is shown: those rules are in the scene builder. A rasterizer is
+//! called per frame, so the cost of dispatching to one does not matter; each
+//! item is drawn through a plain match.
 //!
-//! [`CpuRasterizer`] is the reference: it needs nothing but memory, and it is
-//! what the tests and headless tools see.
+//! [`CpuRasterizer`] is the reference: it needs only memory, and its output
+//! is what the tests and headless tools see.
 
 pub mod sprite;
 pub mod text;
@@ -18,8 +18,9 @@ use crate::scene::{Item, LayerPass, Scene};
 use crate::screen::cover;
 use crate::text::{Cell, SCREENS};
 
-/// What a scene refers to and does not copy: the graphic pages, the font
-/// and the cells of the text screens, as they stand when it is drawn.
+/// The data that a scene refers to instead of copying: the graphic pages,
+/// the font and the cells of the text screens, in their state when the
+/// scene is drawn.
 #[derive(Clone, Copy)]
 pub struct RasterInput<'a> {
     pub grp: &'a Graphics,
@@ -32,17 +33,18 @@ pub trait Rasterizer {
     fn draw(&mut self, scene: &Scene, input: &RasterInput);
 }
 
-/// A rasterizer outside this crate, which may draw a scene in the place of
+/// A rasterizer outside this crate, which may draw a scene in place of
 /// [`CpuRasterizer`] and keeps the result itself. The frontend's GPU path
-/// is one: this crate knows nothing of what it is.
+/// is one: this crate does not know what it is.
 pub trait SceneBackend {
-    /// Draws a scene for a frame of `frame` pixels. False leaves it to the
-    /// CPU, for a scene with something the backend cannot draw.
+    /// Draws a scene for a frame of `frame` pixels. Returning false leaves
+    /// it to the CPU, for a scene with something the backend cannot draw.
     fn draw(&mut self, scene: &Scene, input: &RasterInput, frame: (u32, u32)) -> bool;
 
-    /// What the emulator itself shows goes over the scene just drawn, as a
-    /// frame of premultiplied pixels that are clear elsewhere; None if nothing
-    /// does. False leaves the frame, with this, to the CPU.
+    /// Takes the overlay of the emulator itself, to go over the scene just
+    /// drawn: a frame of premultiplied pixels that are clear elsewhere, or
+    /// None if there is none. False leaves the frame, with the overlay, to
+    /// the CPU.
     fn overlay(&mut self, _frame: Option<&Framebuffer>) -> bool {
         true
     }
@@ -53,18 +55,18 @@ pub trait SceneBackend {
         false
     }
 
-    /// Sees the CPU's frame for the scene it has just drawn.
+    /// Receives the frame that the CPU has just drawn for the scene.
     fn compare(&mut self, _cpu: &Framebuffer) {}
 }
 
 /// Draws scenes into a [`Framebuffer`].
 pub struct CpuRasterizer {
     fb: Framebuffer,
-    /// Where a layer that is composed is drawn first.
+    /// The frame that a composed layer is drawn into first.
     scratch: Framebuffer,
     /// The only part of `scratch` that may not be clear.
     scratch_used: Option<Area>,
-    /// Room for what drawing a sprite works out.
+    /// Room for the values that drawing a sprite computes.
     room: sprite::Room,
     /// The text screens' characters.
     glyphs: [text::KeptGlyphs; SCREENS],
@@ -85,8 +87,8 @@ impl CpuRasterizer {
         }
     }
 
-    /// Starts afresh with frames of this size, one at a time so that no
-    /// more are held at once than need be.
+    /// Replaces the frames with new ones of this size, one at a time so
+    /// that no more are held at the same time than needed.
     pub fn set_size(&mut self, width: u32, height: u32) {
         self.fb = Framebuffer::new(width, height);
         self.scratch = Framebuffer::new(width, height);
@@ -99,15 +101,15 @@ impl CpuRasterizer {
         &self.fb
     }
 
-    /// For what goes over the frame after a scene.
+    /// For drawing over the frame after a scene.
     pub fn frame_mut(&mut self) -> &mut Framebuffer {
         &mut self.fb
     }
 }
 
 impl CpuRasterizer {
-    /// Draws the first `count` passes of a scene, for a backend that takes it
-    /// from there: a direct layer's filter works on all that is behind it.
+    /// Draws the first `count` passes of a scene, for a backend that does the
+    /// rest: a direct layer's filter works on everything behind it.
     pub fn draw_first(&mut self, scene: &Scene, input: &RasterInput, count: usize) -> &Framebuffer {
         self.fb.clear(scene.back);
         for pass in &scene.passes[..count] {
@@ -116,8 +118,8 @@ impl CpuRasterizer {
         &self.fb
     }
 
-    /// Draws a composed pass on a clear layer, filter and all, and does not put
-    /// it on the frame: for a backend that does that.
+    /// Draws a composed pass, including its filter, on a clear layer, and does
+    /// not put the layer on the frame: for a backend that does that.
     pub fn draw_layer(
         &mut self,
         scene: &Scene,
@@ -128,8 +130,8 @@ impl CpuRasterizer {
         &self.scratch
     }
 
-    /// A sparse layer costs only what it holds: what the last one left is
-    /// cleared, and the caller composes only the area this returns.
+    /// A sparse layer costs only what it holds: only the area the last layer
+    /// used is cleared, and the caller composes only the area this returns.
     fn layer_alone(&mut self, scene: &Scene, input: &RasterInput, pass: &LayerPass) -> Area {
         let size = (self.scratch.width(), self.scratch.height());
         if let Some(used) = self.scratch_used.take() {
@@ -182,8 +184,9 @@ impl CpuRasterizer {
 /// it on the frame.
 fn layer_area(scene: &Scene, pass: &LayerPass, (width, height): (u32, u32)) -> Area {
     let all = Area::all(width, height);
-    // A filter works on the whole layer, a 4x4 matrix reaches where it will,
-    // and modes 3 and 4 make the whole of a frame opaque if it is not yet.
+    // A filter works on the whole layer, a 4x4 matrix can reach any part
+    // of the frame, and modes 3 and 4 make the whole of a frame opaque if
+    // it is not yet.
     if pass.filter != FilterOp::None
         || pass.projection.is_some()
         || (!scene.opaque_frame && matches!(pass.compose, Compose::Multiply | Compose::Screen))

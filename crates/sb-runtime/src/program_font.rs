@@ -1,18 +1,18 @@
 //! Glyphs from the editor's other font sources put on the font page
 //! (GRP5), so that programs draw with them: an option of the settings,
-//! chosen apart for the 8- and the 16-pixel font. Not SmileBASIC 4's.
+//! chosen separately for the 8- and the 16-pixel font. SmileBASIC 4 has
+//! no such setting.
 //!
-//! Only characters with a place of their own on the font page change, and
+//! Only characters that have their own place on the font page change, and
 //! only those the chosen source has; the rest keep SmileBASIC's glyphs.
-//! Characters the page has no place for keep the box.
-//! The glyphs are made once, when the setting or the font file changes,
-//! and written over the page then and wherever the page is put back:
-//! at start-up and by ACLS.
+//! Characters the page has no place for keep the box. The glyphs are made
+//! once, when the setting or the font file changes, and written over the
+//! page then and every time the page is put back: at start-up and by ACLS.
 
 use crate::extra_glyphs::{ExtraGlyphs, FontSource, Part};
 use crate::font::{Font, FontSize, PAGE_SIZE};
 
-/// Glyph numbers on the font page: font.map's are 12 bits.
+/// Glyph numbers on the font page: font.map's glyph numbers are 12 bits.
 const GLYPHS: usize = 4096;
 
 /// The glyphs written over the font page.
@@ -37,7 +37,8 @@ impl FontPatch {
                 FontSource::File => Part::File,
                 FontSource::Bundled => Part::Bundled,
             };
-            // Codes that share a glyph take the first one's.
+            // Codes that share a glyph take the glyph of the first one that
+            // the source can draw.
             let mut done = vec![false; GLYPHS];
             for code in 0..=u16::MAX {
                 let Some(n) = font.own_glyph(code) else {
@@ -63,7 +64,7 @@ impl FontPatch {
     }
 
     /// Writes the glyphs over `page`, `PAGE_SIZE` pixels square, in white
-    /// as SmileBASIC's font is drawn.
+    /// like SmileBASIC's font.
     pub fn apply(&self, page: &mut [u32]) {
         let mut alpha = self.alpha.iter();
         for &(x, y, size) in &self.cells {
@@ -79,7 +80,7 @@ impl FontPatch {
     }
 
     /// Copies the cells this patch writes from `from` to `to`, both
-    /// `PAGE_SIZE` pixels square: puts back what the patch covered.
+    /// `PAGE_SIZE` pixels square: puts back the pixels the patch covered.
     pub fn restore(&self, to: &mut [u32], from: &[u32]) {
         for &(x, y, size) in &self.cells {
             let n = size as u32;
@@ -147,7 +148,7 @@ mod tests {
         use crate::text::FONT_PAGE;
         let mut rt = Runtime::for_tests(Font::fallback());
         let original = rt.font.page_image();
-        // The defaults leave the page as SmileBASIC's.
+        // The defaults leave SmileBASIC's page unchanged.
         rt.apply_program_font();
         assert_eq!(rt.grp.page(FONT_PAGE).to_rows(), original);
         let (ax, ay) = rt.font.origin('A' as u16, FontSize::Large).unwrap();

@@ -15,11 +15,10 @@ cost it far more than they cost a desktop. So instruction, cache-miss and
 branch-miss counts say more here than a desktop's times; a wide core hides
 much of a drop in those counts.
 
-As a rule of thumb: an RK3326's Cortex-A35, which runs at 1.3 GHz under
-load, does 0.6 to 0.8 instructions a cycle on the interpreter (see
-[the handheld set](#handheld-cpu-from-cc49c48)), so a
-frame has room for 13 to 17 million instructions, to run the program and make
-the sound, with the GPU drawing.
+As a rule of thumb: an RK3326's Cortex-A35, which runs at 1.3 GHz under load,
+does 0.6 to 0.8 instructions per cycle on the interpreter (see [the handheld
+set](#handheld-cpu-from-cc49c48)), so a frame has room for 13 to 17 million
+instructions, to run the program and make the sound, with the GPU drawing.
 
 ## What costs what
 
@@ -35,30 +34,31 @@ This list holds as of `8a7d9e7`, the commit that last revised it.
   (`draw_texels`).
 - **Through a 4x4 matrix**, one division in 16 pixels: what a pixel reads
   steps along the curve in fixed point, with its second difference, and only a
-  pixel too near a whole number gets a sum of its own (`Along`).
+  pixel too near a whole number gets its own sum (`Along`).
 - **Composed layers** take a clear and a pass over only the box of what they
   hold, unless a filter or a 4x4 matrix is at work. A full-frame sprite still
   means 3.5 MB each way at 1280x720. A color on a layer takes three
-  multiplications a channel unless the pixel is like the last, as it mostly
-  is.
-- **Text** keeps each screen's characters from frame to frame, up to 4 MiB a
+  multiplications per channel unless the pixel is like the last, which it
+  mostly is.
+- **Text** keeps each screen's characters from frame to frame, up to 4 MiB per
   screen, for as long as the font page, the TPAGE page and its GSAMPLE,
-  TCOLOR, TBLEND and the size hold. A new color on a character still takes
-  making it.
+  TCOLOR, TBLEND and the size stay the same. A character in a new color still
+  has to be made.
 - **A collision search** reads an array of boxes, brought up to date for the
   sprites changed since the last search.
-- **The interpreter** takes about 20 instructions an operation on numbers, in
-  `crates/sb-core/src/fuse.rs`'s larger steps, with up to 18 of each step on
-  choosing the step. These steps cover jumps by ON, GOSUB and RETURN, WHEN
-  tests, an array indexed by an element of another (`R%[K%[I]]`), and calls
-  of a DEF in the same slot with their returns: about 500 instructions for a
-  call and its return. Strings, built-in calls and anything that may fail go
-  one instruction at a time, as everything does whenever a debugger, TRACE or
-  a breakpoint is active: about 8 times slower, at about 140 million
-  instructions a second. A built-in call costs a few hundred.
+- **The interpreter** takes about 20 instructions per operation on numbers, in
+  the larger steps of `crates/sb-core/src/fuse.rs`, with up to 18 instructions
+  of each step spent on choosing the step. These steps cover jumps by ON,
+  GOSUB and RETURN, WHEN tests, an array indexed by an element of another
+  (`R%[K%[I]]`), and calls of a DEF in the same slot with their returns: about
+  500 instructions for a call and its return. Strings, built-in calls and
+  anything that may fail go one instruction at a time, the same as everything
+  does whenever a debugger, TRACE or a breakpoint is active: about 8 times
+  slower, at about 140 million instructions per second. A built-in call costs
+  a few hundred.
 - **Sound** is small: 16 voices of a bank instrument at 3.5 million
-  instructions a frame, in runs of samples between envelope steps; reverb 0.4
-  million more.
+  instructions per frame, in runs of samples between envelope steps; reverb
+  0.4 million more.
 - **Memory:** peak RSS is about 180 MiB, 158 of it from start-up. A sprite is
   about 360 bytes, and free ones are not walked.
 - **Uploading** a frame is a copy of 3.5 MB at 1280x720, 0.4 MB at 400x240.
@@ -97,7 +97,7 @@ This set ran on the same desktop as the one above, with the same build,
 options and frame counts. Pixels and sound are the same to the bit:
 `SB_BENCH_SOUND` adds a checksum of the sound to a fixed run.
 
-The after runs appear to leave out the interpreter commits `4b18ad3` to
+The after runs appear not to include the interpreter commits `4b18ad3` to
 `2a8b58e`, which the history places between these two commits: GAME ends at
 10.4 G here against 7.64 G in the interpreter table.
 
@@ -118,14 +118,14 @@ Seven composed layers of eight 32x32 sprites each, 100 frames: instructions
 -76%, draw 1.16 ms to 0.30 ms. TPERF whole: instructions -4.7%, cycles -5%,
 cache misses -8%.
 
-The code of `9f0b8de` and `28cf171` is the same, so the last table's after
-column and this one's before column show how much cache misses move between
-runs: ELE2020 has 307 M in one and 354 M in the other.
+The code of `9f0b8de` and `28cf171` is the same, so the after column of the
+last table and the before column of this one show how much cache misses move
+between runs: ELE2020 has 307 M in one and 354 M in the other.
 
 ### Interpreter, `ac43b4e` to `2a8b58e`
 
 This set ran on the same desktop: 100 to 300 frames, one core, start-up
-included. What the two commits run and their checksums are the same.
+included. The two commits do the same work and give the same checksums.
 
 | Scene | Instructions before, release (G) | Instructions after, release (G) | Cycles change, release | Branch misses change | Instructions after, dist (G) | Cycles change, dist |
 |---|---|---|---|---|---|---|
@@ -161,38 +161,38 @@ commits. The table gives the cost per size change, at 2000 and 3200 wide.
 | `screen` | 4 ms | 8 ms | the driver, in the first GL call after the size changed: a bare `glFlush` there takes all of the growth and leaves 0.2 ms |
 | `present` | 5.6 ms | 10 ms | the driver and compositor |
 
-The emulator makes no texture per size. Mutter sends up to 60 configures a
+The emulator makes no texture per size. Mutter sends up to 60 configures per
 second and all that are queued are dispatched in one pump. Once the cost of
 one nears 16.6 ms, as it does with big windows or a busy CPU, the backlog
-feeds itself and single pumps take seconds, with the program and its sound on
-the same thread.
+feeds on itself and single pumps take seconds, with the program and its sound
+on the same thread.
 
 Turning vsync off during the drag, or skipping drawings after a long pump,
 made no difference under a fixed load. Only a cheaper configure did:
-libdecor's cairo plugin, by `LIBDECOR_PLUGIN_DIR`, gave 55 frames a second
-against 49, but it looks different. SDL can throttle configures during an
-interactive resize when built against a libdecor with the resizing state
-(0.3).
+libdecor's cairo plugin, selected with `LIBDECOR_PLUGIN_DIR`, gave 55 frames
+per second against 49, but it looks different. SDL can throttle configures
+during an interactive resize when built against a libdecor with the resizing
+state (0.3).
 
 ### Frames during a drag, `5e076c2` against the standby thread
 
 This set ran on the same machine and setup, dragging a 2500x1400 window for
-900 timed trips with a program that plays a looped MML tune and moves sprites.
-`frames` counts program frames a second, `MAINCNT` agreed in each run. The
-silence is the sound device's, with the dummy driver; about 130 ms of it comes
-from start-up, as a run with no drag shows.
+900 timed iterations with a program that plays a looped MML tune and moves
+sprites. `frames` counts program frames per second, `MAINCNT` agreed in each
+run. The silence is that of the sound device, with the dummy driver; about 130
+ms of it comes from start-up, as a run with no drag shows.
 
-| Load | Build | Frames a second | Silent | Longest trip |
+| Load | Build | Frames per second | Silent | Longest iteration |
 |---|---|---|---|---|
 | None | `5e076c2` | 59.97 | 157 ms | 52 ms |
 | None | standby | 59.96 | 174 ms | 590 ms |
 | 8 busy cores | `5e076c2` | 55.6, 43.2 | 3.6 s, 12.3 s | 0.48 s, 1.72 s |
 | 8 busy cores | standby | 59.94, 59.95 | 0.42 s, 0.31 s | 1.16 s, 0.77 s |
 
-The longest trip round the loop varies from run to run with Mutter, and the
+The longest iteration of the loop varies from run to run with Mutter, and the
 standby thread does not shorten it: it keeps the program and its sound going
-through it. `at=200:sleep:5000` with no window gives 40.2 frames a second and
-4.9 s of silence before, and 60.0 with none after.
+through it. `at=200:sleep:5000` with no window gives 40.2 frames per second
+and 4.9 s of silence before, and 60.0 with none after.
 
 ### Handheld CPU, from `cc49c48`
 
@@ -202,8 +202,8 @@ governor was `ondemand`, between 1.008 and 1.296 GHz, and read 1.296 GHz on
 all cores under load. The emulator's own handheld mode ran on the device at
 the same time, taking about 40% of one core. The device's kernel has no
 performance counters, so the device gives times only; instruction counts come
-from qemu-aarch64 with its Cortex-A35 model, one instruction a block, counted
-exactly from the `exec` log.
+from qemu-aarch64 with its Cortex-A35 model, one instruction per block,
+counted exactly from the `exec` log.
 
 Each scene of TPERF ran alone (`#ONLY`), with `--bench --fixed 80 --log`, the
 `dist` build cross-built by `tools/build_handheld.py`. A scene's time is the
@@ -217,9 +217,9 @@ device's first two sessions ran unpinned; the later ones, for the
 stopped and the benchmark pinned to one core.
 
 The device ran `44fd91e`, an older `main`. The interpreter changed little up
-to `cc49c48`: up to 5% fewer instructions on loops of DEF calls and GOSUBs,
-by the measurements of those commits. Its checksums at 80 frames match the
-desktop's for every scene.
+to `cc49c48`: up to 5% fewer instructions on loops of DEF calls and GOSUBs, by
+the measurements of those commits. Its checksums at 80 frames match those of
+the desktop for every scene.
 
 | Scene | Desktop (ms) | Device (ms) | Device / desktop |
 |---|---|---|---|
@@ -256,39 +256,40 @@ desktop's for every scene.
 | LRASTER | 0.06 | 1.54 | 26 |
 | GAME | 0.44 | 9.29 | 21 |
 
-The device takes 20 to 27 times as long on nearly every scene, about 3.6
-times for the clock and 6 to 7 for instructions a cycle. No scene of the
+The device takes 20 to 27 times as long on nearly every scene, about 3.6 times
+for the clock and 6 to 7 for instructions per cycle. No scene of the
 interpreter or the sprite and text commands stands out, so there is no single
 slow spot: everything on the CPU pays the same.
 
-Instructions a cycle on the device, from qemu's count of a loop iteration
+Instructions per cycle on the device, from qemu's count of a loop iteration
 and the scene's time: VINT 0.77, VREAL 0.67, VARRAY 0.70, VDEF 0.69, VSTR
 0.57. The desktop runs the same code at 2.4 (VINT) to 3.4 (VVAR).
 
-Where the interpreter's instructions go on aarch64, from qemu's trace of one
-iteration:
+Where the interpreter's instructions are spent on aarch64, from qemu's trace
+of one iteration:
 
-- Choosing a fused step takes 21 instructions: the bounds and budget checks,
-  a jump table and one indirect branch. `pc`, the budget left and the step
-  table's address live on the stack, three stores and three loads a step.
-  All steps share the one indirect branch, which a core that predicts it
-  by its last target mostly misses in a loop of different steps.
+- Choosing a fused step takes 21 instructions: the bounds and budget checks, a
+  jump table and one indirect branch. `pc`, the budget left and the step
+  table's address live on the stack, three stores and three loads per step.
+  All steps share the one indirect branch, which a core that predicts it by
+  its last target mostly misses in a loop of different steps.
 - Reading a variable takes about 10: the table (globals and constants, or
   the DEF's locals), its length for the bounds check, the address, the tag.
 - An operator in a fused step switches on the operator again: a second jump
   table and indirect branch inside the step.
 - Pushing and popping go through the stack's length and capacity in memory.
-- VINT's loop runs 8 steps and 583 instructions an iteration; an empty FOR
-  2 steps and 181. A DEF call and its return take about 900, a builtin call
-  outside the fused steps about 440, a `VAR("name")` about 3000, as it
-  makes four `String`s and compares the name with each global's.
+- VINT's loop runs 8 steps and 583 instructions per iteration; an empty FOR 2
+  steps and 181. A DEF call and its return take about 900, a builtin call
+  outside the fused steps about 440, a `VAR("name")` about 3000, because it
+  makes four `String`s and compares the name with the name of each global.
 
-The scenes far above the others, GCOPY, GLOAD and GUPLOAD, draw on GRP
-pages or do almost nothing. [GRP pages and the caches](#grp-pages-and-the-caches-from-da44ce5)
-takes them apart: GCOPY ran 5 to 7 cycles an instruction, which points
-at memory, and GLOAD moves more data than the L2 holds.
+The scenes far above the others, GCOPY, GLOAD and GUPLOAD, draw on GRP pages
+or do almost nothing. [GRP pages and the
+caches](#grp-pages-and-the-caches-from-da44ce5) analyzes them: GCOPY ran 5 to
+7 cycles per instruction, which points at memory, and GLOAD moves more data
+than the L2 holds.
 
-Changes, x86-64 instructions a frame (program and CPU drawing, frames 3 to
+Changes, x86-64 instructions per frame (program and CPU drawing, frames 3 to
 83) of `cc49c48` against the branch, same checksums; scenes not listed moved
 by under 0.5%:
 
@@ -320,18 +321,18 @@ checksum is the same.
 | GAME | 20.45 | 20.59 | +0.7% | 9.37 | 9.14 | -2.4% |
 
 GAME's +0.7% and GCOPY's +0.7% on x86-64 come from LLVM laying out
-`run_fused`'s registers anew; neither scene's own steps changed. The other
-scenes moved by under 7% on the device, except three sprite scenes, which
-came out slower: SPMOVE +5.8%, SPROT +8.4%, SPHIT +8.5%. Run again with the
-front end stopped and pinned, in two rounds of five runs alternating the
-builds, they came to +2.4%, +7.5% and +7.4%. That is code layout, not work, as the
+`run_fused`'s registers again; neither scene's own steps changed. The other
+scenes moved by under 7% on the device, except three sprite scenes, which came
+out slower: SPMOVE +5.8%, SPROT +8.4%, SPHIT +8.5%. Run again with the front
+end stopped and pinned, in two rounds of five runs alternating the builds,
+they came to +2.4%, +7.5% and +7.4%. That is code layout, not work, as the
 [layout set](#code-layout-on-the-handheld-44fd91e-to-314459c) shows.
 
-What changed:
+The changes:
 
-- `59e363e`: a circle that lies on the page no longer sorts its points to
-  drop the repeats, which only occur on the axes and the diagonal. GCIRCLE
-  -50%; on aarch64, 32.3 to 16.9 million instructions a frame.
+- `59e363e`: a circle that lies on the page no longer sorts its points to drop
+  the repeats, which only occur on the axes and the diagonal. GCIRCLE -50%; on
+  aarch64, 32.3 to 16.9 million instructions per frame.
 - `c4eb331`: `run_code` asked `f.op != FastOp::Slow` before each single step,
   a call of the derived `PartialEq`. VSTR's loop -1.7% on aarch64.
 - `59ab61d`: pure numeric builtins (`LEN`, `ASC`, `INT`, `FLOOR`, `ABS`,
@@ -344,42 +345,43 @@ What changed:
   FOR's own, which the fuser notes. An empty FOR 181 to 133, VINT's loop 583
   to 543, a GOSUB loop 346 to 299.
 
-Build options, aarch64 instructions an iteration of seven loops (empty FOR,
-VINT, VREAL, VARRAY, VDEF, a builtin loop, VSTR) and `run_fast`'s size,
-qemu counts only:
+Build options, aarch64 instructions per iteration of seven loops (empty FOR,
+VINT, VREAL, VARRAY, VDEF, a builtin loop, VSTR) and `run_fast`'s size, qemu
+counts only:
 
 | Options | Empty | VINT | VREAL | VARRAY | VDEF | Builtins | VSTR | `run_fast` |
 |---|---|---|---|---|---|---|---|---|
-| `dist` as it is (`opt-level=3`) | 133 | 543 | 947 | 1986 | 1790 | 919 | 3955 | 28.9 KB |
+| `dist` unchanged (`opt-level=3`) | 133 | 543 | 947 | 1986 | 1790 | 919 | 3955 | 28.9 KB |
 | `-C target-cpu=cortex-a35` | 135 | 546 | 947 | 1992 | 1794 | 927 | 4034 | 29.5 KB |
 | the same, `-aes,-sha2,-crc` | 135 | 546 | 947 | 1992 | 1794 | 927 | 4034 | 29.5 KB |
 | `-C opt-level=2` | 139 | 555 | 947 | 2000 | 1738 | 913 | 3959 | 25.2 KB |
 | `-C opt-level=s` | 152 | 597 | 1012 | 2170 | 2033 | 1028 | 4404 | 24.8 KB |
 
-`-C target-cpu=cortex-a35` adds no instruction a core of ARMv8.0 lacks
-except the CRC and crypto ones, which nothing here asks for; with
-`-C target-feature=-aes,-sha2,-crc` it only tunes, for the A35's pipeline,
-and runs on any aarch64. What tuning gains is the order of instructions on an
+`-C target-cpu=cortex-a35` adds no instruction a core of ARMv8.0 lacks except
+the CRC and crypto ones, which nothing here asks for; with
+`-C target-feature=-aes,-sha2,-crc` it only tunes, for the A35's pipeline, and
+runs on any aarch64. What tuning gains is the order of instructions on an
 in-order core, which qemu does not time. On the device, each build ran every
 scene once, best of three, against the plain `dist` build of `314459c` in the
-same session. Leaving out GFILL, GCOPY, GLOAD and GUPLOAD, whose times fall
-in two clusters ([benchmarking.md](benchmarking.md#measuring-on-a-handheld)),
-`cortex-a35` with `-aes,-sha2,-crc` was 1.4% slower by geometric mean, with
-5 scenes faster by more than 1% and 18 slower (GPUTCHR +9.7%, GALPHA +4.9%),
-and `opt-level=2` 0.1% faster, with 11 faster and 15 slower, by swings of 4
-to 7% either way that look like layout. Neither is adopted. Profile-guided
-optimization needs `llvm-profdata`, which the toolchain here lacks (rustup's `llvm-tools` component has it); the aarch64 standard library
-ships the profiler runtime, so an instrumented build can run under qemu.
+same session. Excluding GFILL, GCOPY, GLOAD and GUPLOAD, whose times fall in
+two clusters ([benchmarking.md](benchmarking.md#measuring-on-a-handheld)),
+`cortex-a35` with `-aes,-sha2,-crc` was 1.4% slower by geometric mean, with 5
+scenes faster by more than 1% and 18 slower (GPUTCHR +9.7%, GALPHA +4.9%), and
+`opt-level=2` 0.1% faster, with 11 faster and 15 slower, by swings of 4 to 7%
+either way that look like layout. Neither is adopted. Profile-guided
+optimization needs `llvm-profdata`, which the toolchain here lacks (rustup's
+`llvm-tools` component has it); the aarch64 standard library ships the
+profiler runtime, so an instrumented build can run under qemu.
 
 Larger changes, not made, by what they would save against what they cost:
 
 - **Padding a GRP page's rows**, to a stride that is not a multiple of the
-  caches' way size (2048 plus 16 pixels, say). A cache simulation cuts
-  GCOPY's misses to memory 2 to 5.6 times and leaves GLOAD's as they are;
-  what that saves on the device is not measured yet
-  ([GRP pages and the caches](#grp-pages-and-the-caches-from-da44ce5)).
-  Every reader of a page's pixels assumes the 2048 stride: `index`, the
-  raster, GSAVE and GLOAD, GARRAY, and the GPU path's uploads in `sb-sdl`.
+  caches' way size (for example 2048 plus 16 pixels). A cache simulation cuts
+  GCOPY's misses to memory 2 to 5.6 times and leaves GLOAD's misses unchanged;
+  what that saves on the device is not measured yet ([GRP pages and the
+  caches](#grp-pages-and-the-caches-from-da44ce5)). Every reader of a page's
+  pixels assumes the 2048 stride: `index`, the raster, GSAVE and GLOAD,
+  GARRAY, and the GPU path's uploads in `sb-sdl`.
 - **A cache for `VAR("name")`**, keyed by the string and the running DEF,
   emptied when the program changes. A look-up costs about 3000 instructions
   now, mostly in making `String`s; VVAR would fall from 40 ms toward 5 ms on
@@ -387,16 +389,16 @@ Larger changes, not made, by what they would save against what they cost:
 - **Keeping the fused loop's state in registers**: `pc`, the budget and the
   stack's pointer and length. Moving the stack out of `self` into a local
   `Vec` for the loop, and fewer values live across the `match`, might save 6
-  to 10 of the 21 instructions a step takes to be chosen. LLVM decides what
-  it spills in a function of 29 KB, so the gain can only be measured, and
-  can move from build to build.
+  to 10 of the 21 instructions that choosing a step takes. LLVM decides what
+  it spills in a function of 29 KB, so the gain can only be measured, and can
+  move from build to build.
 - **A register-based form of the fused code**, three-address steps that name
   their operands and their result, with the operator in the step's own kind
-  instead of a second switch: about half the steps and indirect branches an
-  iteration of VINT, perhaps 30 to 40% of the interpreter's time. Made as
-  the [chains](#three-address-chains-from-018017d) below, it took VINT's loop from 8 entries to 2 but its
-  instructions down by 12%, as reading and writing a variable, not choosing
-  an entry, is most of what a step costs.
+  instead of a second switch: about half the steps and indirect branches per
+  iteration of VINT, perhaps 30 to 40% of the interpreter's time. Made as the
+  [chains](#three-address-chains-from-018017d) below, it took VINT's loop from
+  8 entries to 2 but its instructions down by 12%, because reading and writing
+  a variable, not choosing an entry, is most of what a step costs.
 - **Values of 8 bytes** (NaN-boxing, or a separate tag array): halves the
   stack's and the variables' memory traffic. It changes every use of `Value`
   and needs `unsafe` for the boxing.
@@ -406,11 +408,12 @@ Larger changes, not made, by what they would save against what they cost:
 
 ### Code layout on the handheld, `44fd91e` to `314459c`
 
-This set ran on the handheld of the set above, with the front end stopped
-and the benchmark pinned, on 16 builds of the commits from `44fd91e` to
-`314459c`, with the method of that set. Instruction counts come from qemu's Cortex-A35 model over frames 3
-to 5, program and CPU drawing. It explains why SPMOVE, SPROT and SPHIT came
-out slower in the handheld set: where the code lies, not what it runs.
+This set ran on the handheld of the set above, with the front end stopped and
+the benchmark pinned, on 16 builds of the commits from `44fd91e` to `314459c`,
+with the method of that set. Instruction counts come from qemu's Cortex-A35
+model over frames 3 to 5, program and CPU drawing. It explains why SPMOVE,
+SPROT and SPHIT came out slower in the handheld set: the position of the code,
+not what it runs.
 
 | Scene | qemu (M) | Of which drawing (M) | Device, best of three (ms) |
 |---|---|---|---|
@@ -419,47 +422,46 @@ out slower in the handheld set: where the code lies, not what it runs.
 | SPHIT | 154.22 to 154.71 | 80.14 | 25.73 to 27.96 |
 
 The drawing's count is the same in each of the four builds whose count was
-split by function, and `run_us` leaves drawing out. So the program's part
-moves by under 0.5 million instructions, at most 3% of it, while the
-device's times move by 4 to 11%. SPHIT's hot functions, `Sprites::next_hit` and
+split by function, and `run_us` excludes drawing. So the program's part moves
+by under 0.5 million instructions, at most 3% of it, while the device's times
+move by 4 to 11%. SPHIT's hot functions, `Sprites::next_hit` and
 `collision::sweep`, run the same number of instructions in each of those
 builds. The times move up and down along the history with no lasting step.
-SPHIT's last step, to 27.96 ms, came with `d74d9ba`, which changes only
-LOADV code that the scene never runs.
+SPHIT's last step, to 27.96 ms, came with `d74d9ba`, which changes only LOADV
+code that the scene never runs.
 
 Functions are aligned to 4 bytes, so any commit moves the code after it.
 Builds whose hot functions start at the same place in a 64-byte line take
-alike: with `next_hit` and `sweep` at bytes 44 and 16 of a line, SPHIT took
-25.97 to 26.43 ms in four builds; at 28 and 0, 25.82 and 25.87; at 52 and
+similar times: with `next_hit` and `sweep` at bytes 44 and 16 of a line, SPHIT
+took 25.97 to 26.43 ms in four builds; at 28 and 0, 25.82 and 25.87; at 52 and
 24, 26.62 and 26.95.
 
 A simulated instruction cache of 32 KB, 2 ways and 64-byte lines, run over
-qemu's trace of three frames, misses 85 thousand times in SPMOVE at
-`44fd91e` and 168 thousand at `314459c`, and 26 and 127 thousand times in
-SPROT. At 10 to 15 cycles a miss, that accounts for most of those two
-scenes' change. SPHIT's misses grow by only 12 thousand a frame; its extra
-time comes to about 8 to 9 cycles on each pass of its scan loop, the cost of
-one missed branch. The device's kernel has no performance counters to
-confirm it.
+qemu's trace of three frames, misses 85 thousand times in SPMOVE at `44fd91e`
+and 168 thousand at `314459c`, and 26 and 127 thousand times in SPROT. At 10
+to 15 cycles per miss, that accounts for most of those two scenes' change.
+SPHIT's misses grow by only 12 thousand per frame; its extra time comes to
+about 8 to 9 cycles on each pass of its scan loop, the cost of one missed
+branch. The device's kernel has no performance counters to confirm it.
 
 One change in the range is real work: SPROT's program part gained about
 1.5% instructions in `44fd91e..3ff6177`, which adds a check of the sprite
 number before each SPOFS, SPROT and SPSCALE. A fast path for that check is
-under [Tried and left out](#tried-and-left-out).
+under [Tried and not kept](#tried-and-not-kept).
 
 ### Three-address chains, from `018017d`
 
-This set counts instructions, and ends with the handheld's times. Counts
-come from x86-64 with `perf stat -e instructions:u` on the `release` build,
-and aarch64 with qemu's Cortex-A35 model on the `dist` build cross-built by
-`tools/build_handheld.py`, one instruction a block, counted from the `exec`
-log under `setarch -R`. Without `setarch -R`
-the address space moves between runs, and a loop's count with it by up to
-10%. Scenes are TPERF's, run alone with `#ONLY`: x86-64 over frames 3 to 83,
-aarch64 over frames 3 to 6. Loops are small programs run 3200 and 6400 times
-round, the difference over 3200. Every TPERF checksum is the same before and
-after, `e8e5f6dc467db861` at 400 frames and `a6e1ed07824b1ad8` at 3600, on
-both machines.
+This set counts instructions, and ends with the handheld's times. Counts come
+from x86-64 with `perf stat -e instructions:u` on the `release` build, and
+aarch64 with qemu's Cortex-A35 model on the `dist` build cross-built by
+`tools/build_handheld.py`, one instruction per block, counted from the `exec`
+log under `setarch -R`. Without `setarch -R` the address space moves between
+runs, and a loop's count with it by up to 10%. Scenes are from TPERF, run
+alone with `#ONLY`: x86-64 over frames 3 to 83, aarch64 over frames 3 to 6.
+Loops are small programs whose loop runs 3200 and 6400 times; the count is the
+difference over 3200. Every TPERF checksum is the same before and after,
+`e8e5f6dc467db861` at 400 frames and `a6e1ed07824b1ad8` at 3600, on both
+machines.
 
 The loops:
 
@@ -476,34 +478,35 @@ The loops:
 | VINT, VARRAY, VREAL | the loop bodies of those scenes, in a DEF |
 
 What the fused code ran before, from a count of each entry over 80 frames:
-VINT's loop took 8 entries an iteration (the NEXT, the jump back, and 6 for
-its two statements), VREAL's 11, VARRAY's 28. Many entries only pushed a
-value or swapped two, a third of VARRAY's and an eighth of VINT's, because
-the compiler pushes the right side of `X#[J]<0` or `(A%+I*3) AND 1023`
-first. Rebuilding each statement's expression from the stack code, with a
-step for each operator and a step counted as half an entry, chains would
-save 30% of VINT's entries, 40% of VREAL's, 58% of VARRAY's, 22% of GAME's,
-13% of VSTR's and none of VDEF's, whose entries go to its DEF calls.
+VINT's loop took 8 entries per iteration (the NEXT, the jump back, and 6 for
+its two statements), VREAL's loop 11, VARRAY's loop 28. Many entries only
+pushed a value or swapped two, a third of VARRAY's entries and an eighth of
+VINT's entries, because the compiler pushes the right side of `X#[J]<0` or
+`(A%+I*3) AND 1023` first. If chains rebuilt each statement's expression from
+the stack code, with a step for each operator and a step counted as half an
+entry, they would save this share of each scene's entries: VINT 30%, VREAL
+40%, VARRAY 58%, GAME 22%, VSTR 13% and VDEF none, because VDEF's entries go
+to its DEF calls.
 
-What was made:
+The changes:
 
 - `0a28023`: a chain entry stands for whole statements. Its steps
-  (`fuse::Micro`) read variables and constants where they are, keep what
-  they make in eight hidden variables after the constants, and write the
-  result straight to its variable or element, or jump on a comparison. Each
-  common operator is a step kind of its own. A statement's steps write
-  nothing the program sees before its last, and a `Commit` step between
-  statements says where `code` goes on from. A step that cannot do its work
-  leaves the statement to `step` from its start. VINT's loop now runs 2
-  entries an iteration, the NEXT and one chain for both statements and the
-  jump back; VREAL's and VARRAY's 2 as well.
-- `39969a0`: `A=B+C`, `-` and `*`, and `IF A<B THEN` with the six
-  comparisons, which stay single entries, have entry kinds of their own
-  instead of a second switch on the operator.
+  (`fuse::Micro`) read variables and constants where they are, keep what they
+  make in eight hidden variables after the constants, and write the result
+  straight to its variable or element, or jump on a comparison. Each common
+  operator has its own step kind. A statement's steps write nothing the
+  program sees before the last step, and a `Commit` step between statements
+  says where `code` continues from. A step that cannot do its work leaves the
+  statement to `step` from its start. VINT's loop now runs 2 entries per
+  iteration, the NEXT and one chain for both statements and the jump back;
+  VREAL's and VARRAY's loops run 2 as well.
+- `39969a0`: `A=B+C`, `-` and `*`, and `IF A<B THEN` with the six comparisons,
+  which stay single entries, have their own entry kinds instead of a second
+  switch on the operator.
 - `63c1a38`: `Load, Load, Swap`, two arguments put back in order, is one
   `Push2`.
 
-aarch64 instructions an iteration:
+aarch64 instructions per iteration:
 
 | Loop | `018017d` | Branch | Change |
 |---|---|---|---|
@@ -519,7 +522,7 @@ aarch64 instructions an iteration:
 | VARRAY's loop | 1984 | 1342 | -32.4% |
 | VREAL's loop | 965 | 808 | -16.2% |
 
-aarch64 instructions a frame, in millions:
+aarch64 instructions per frame, in millions:
 
 | Scene | `018017d` | Branch | Change |
 |---|---|---|---|
@@ -530,7 +533,7 @@ aarch64 instructions a frame, in millions:
 | VDEF | 7.31 | 7.00 | -4.3% |
 | GAME | 20.56 | 20.21 | -1.7% |
 
-x86-64 instructions a frame, in millions, and an iteration:
+x86-64 instructions per frame, in millions, and per iteration:
 
 | Scene or loop | `018017d` | Branch | Change |
 |---|---|---|---|
@@ -552,26 +555,26 @@ x86-64 instructions a frame, in millions, and an iteration:
 | VDEF | 7.82 | 7.66 | -2.1% |
 | GAME | 28.72 | 28.52 | -0.7% |
 
-The empty loop runs the same entries as before; it moves because LLVM lays
-out `run_fused`'s registers anew, which costs the NEXT entry 4 aarch64
-instructions more. The scalar reals' statements have two operators each,
-which chains leave to entries; on x86-64 the new layout costs them more than
-the operators' own entries save. GAME runs half the entries it did, but the interpreter
-is about a quarter of its frame, by its entries' counts, and most of its
-statements read one element, which an entry did in one already. VSTR's time
-goes to strings, which chains leave alone.
+The empty loop runs the same entries as before; it moves because LLVM lays out
+`run_fused`'s registers again, which costs the NEXT entry 4 aarch64
+instructions more. The scalar reals' statements have two operators each, which
+chains leave to entries; on x86-64 the new layout costs them more than the
+operators' own entries save. GAME runs half the entries it did, but the
+interpreter is about a quarter of its frame, by its entries' counts, and most
+of its statements read one element, which a single entry already did. VSTR's
+time goes to strings, which chains leave alone.
 
-Where an iteration's instructions go now, on aarch64: choosing an entry
-takes 17 to 20, starting a chain 14 more, choosing a chain's step 14, and
-each variable or hidden variable read about 13 (the table, its length, the
-address, the tag) and written about 17, as a write looks at the old value's
-tag in case it holds a string to drop. A step of two operands and a result
-is about 60 against an entry's 70: what the chains save is the entries that
-only moved values about, and the second switch. `pc`, the budget left and
-the entry table's address and length stay in registers through the loop in
-this build; in `018017d`'s the table's address was reloaded from the stack
-for every entry. That is LLVM's choice and may change with the code around
-it or the compiler's version.
+Where an iteration's instructions are spent now, on aarch64: choosing an entry
+takes 17 to 20, starting a chain 14 more, choosing a chain's step 14, and each
+variable or hidden variable read about 13 (the table, its length, the address,
+the tag) and written about 17, because a write looks at the old value's tag in
+case it holds a string to drop. A step of two operands and a result is about
+60 against an entry's 70: what the chains save is the entries that only moved
+values around, and the second switch. `pc`, the budget left and the entry
+table's address and length stay in registers through the loop in this build;
+in the build of `018017d` the table's address was reloaded from the stack for
+every entry. That is LLVM's choice and may change with the code around it or
+the compiler's version.
 
 `run_fast` grew from 27.2 KB to 40.9 KB of aarch64 code, past the A35's
 32 KB instruction cache. A loop runs only the entries and steps it uses, and
@@ -618,44 +621,43 @@ same.
 
 The device gains as much as the aarch64 counts say or more: VINT -17.0%
 against -11.8% of instructions, VREAL -15.9% against -15.9%, VARRAY -38.2%
-against -32.1%, VDEF -4.2% against -4.3%, GAME -4.7% against -1.7%.
-SPMOVE, GARRAY and LRASTER, whose loops work on array elements as VARRAY's
-does, gain 11 to 27%. VVAR's +6.4% is within the
-[noise of code layout](benchmarking.md#measuring-on-a-handheld), and GFILL's
-+10.1% and GUPLOAD's -7.8% within that of their two clusters. The other
-scenes move by 4% or less.
+against -32.1%, VDEF -4.2% against -4.3%, GAME -4.7% against -1.7%. SPMOVE,
+GARRAY and LRASTER, whose loops work on array elements like VARRAY's loop,
+gain 11 to 27%. VVAR's +6.4% is within the [noise of code
+layout](benchmarking.md#measuring-on-a-handheld), and GFILL's +10.1% and
+GUPLOAD's -7.8% within the noise of their two clusters. The other scenes move
+by 4% or less.
 
 ### GRP pages and the caches, from `da44ce5`
 
-This set asks why GCOPY, GLOAD and GUPLOAD take 37 to 74 times as long on
-the handheld as on the desktop when the other scenes take 20 to 27, and
-whether a GRP page's row stride is the cause. A page is 2048 pixels of 4
-bytes, so its rows lie 8 KB apart: one way of the Cortex-A35's 32 KB
-4-way L1, and a quarter of a way of its 256 KB L2, taken here as 8-way.
-The same column of successive rows falls in one L1 set, and in one of four
-L2 sets. Counts come from qemu's Cortex-A35 model
-over frames 3 to 6 of the `dist` build, as in the
+This set asks why GCOPY, GLOAD and GUPLOAD take 37 to 74 times as long on the
+handheld as on the desktop when the other scenes take 20 to 27, and whether a
+GRP page's row stride is the cause. A page is 2048 pixels of 4 bytes, so its
+rows are 8 KB apart: one way of the Cortex-A35's 32 KB 4-way L1, and a quarter
+of a way of its 256 KB L2, taken here as 8-way. The same column of successive
+rows falls in one L1 set, and in one of four L2 sets. Counts come from qemu's
+Cortex-A35 model over frames 3 to 6 of the `dist` build, as in the
 [chains](#three-address-chains-from-018017d) set, and from `perf stat` on
-x86-64 over frames 3 to 83. The device times in the first table are those
-of the sets above; the device's own run of this set is
-[at its end](#grp-rows-on-the-device).
+x86-64 over frames 3 to 83. The device times in the first table are those of
+the sets above; the device's own run of this set is [at its
+end](#grp-rows-on-the-device).
 
-What each scene's program does a frame, and what it costs:
+The work of each scene's program per frame, and its cost:
 
-| Scene | Work a frame | Program, aarch64 (M) | Device (ms) | Cycles an instruction |
+| Scene | Work per frame | Program, aarch64 (M) | Device (ms) | Cycles per instruction |
 |---|---|---|---|---|
 | GFILL | 2000 fills of 32x32 | about 8.0 | 12.5 to 13.8 | about 2.1 |
 | GCOPY | 900 copies of 48x48, page 1 to page 0, mode 1 (clear pixels skipped) | about 11.5 | 45.6 to 59.4 | 5.1 to 6.7 |
 | GLOAD | 6 loads of 400x240 from an integer array | about 0.8 | 2.09 to 2.64 | 3.4 to 4.3 |
 | GUPLOAD | 9 GPSETs | under 0.1 | 0.21 | - |
 
-The program's part is the frame's count less the CPU drawing's (about 6.6
-million), split by function. The interpreter's scenes run 1.3 to 1.8
-cycles an instruction on the device (VINT to VSTR). GCOPY's 4 to 5 extra
-cycles an instruction are 33 to 47 ms of stalls a frame.
+The program's part is the frame's count minus that of the CPU drawing (about
+6.6 million), split by function. The interpreter's scenes run 1.3 to 1.8
+cycles per instruction on the device (VINT to VSTR). GCOPY's 4 to 5 extra
+cycles per instruction are 33 to 47 ms of stalls per frame.
 
-- **GLOAD** reads 384 KB and writes 384 KB six times a frame, 4.6 MB, at
-  1.7 to 2.2 GB/s: memory bandwidth. Neither array fits in the L2, with any
+- **GLOAD** reads 384 KB and writes 384 KB six times per frame, 4.6 MB, at 1.7
+  to 2.2 GB/s: memory bandwidth. Neither array fits in the L2, with any
   stride; the desktop keeps both in its 32 MB L3.
 - **GUPLOAD** in `smilebasic-check` uploads nothing: its program part is
   6 µs on the desktop and 0.21 ms on the device. Its ratio is that of two
@@ -666,11 +668,11 @@ A standalone benchmark ran the emulator's inner loops for GCOPY, GLOAD and
 GFILL, copied from `graphics.rs`, on page buffers of other strides, with
 TPERF's sizes and places, and fed the same order of accesses to a cache
 simulator: L1 32 KB 4-way, L2 256 KB 8-way, 64-byte lines, LRU, physically
-indexed, with a pass over the 400x240 target area each frame as the CPU
-drawing makes. Physical frames were taken either as contiguous (as huge
-pages or an unfragmented free list give) or as scattered 4 KB frames.
-Misses to memory a frame, in thousands; the L2 with 16 ways gives the same
-within 2%:
+indexed, with a pass over the 400x240 target area each frame, like the one the
+CPU drawing makes. Physical frames were taken either as contiguous (as huge
+pages or an unfragmented free list give) or as scattered 4 KB frames. Misses
+to memory per frame, in thousands; the L2 with 16 ways gives the same within
+2%:
 
 | Kernel | Frames | 2048 | 2064 | 2112 | 3072 |
 |---|---|---|---|---|---|
@@ -682,38 +684,39 @@ within 2%:
 | GFILL | scattered | 148 | 75 | 65 | 146 |
 | GLOAD | either | 86 | 86 | 86 | 86 |
 
-Padding the rows by 16 or 64 pixels cuts GCOPY's and GFILL's misses to
-memory 2 to 5.6 times; a stride of 3072 (4 KB more) aliases in the L2
-as 2048 does with scattered frames. Moving the source page against the
-target by 2, 4 or 6 KB changes nothing (330 to 338 thousand): the rows
-that alias are those of the target page, whose 400x240 area is 384 KB and
-uses 100 of the L2's 512 sets with contiguous frames, 200 with scattered
-ones. GLOAD misses on every line with any stride.
+Padding the rows by 16 or 64 pixels cuts GCOPY's and GFILL's misses to memory
+2 to 5.6 times; a stride of 3072 (4 KB more) aliases in the L2 the same as
+2048 does with scattered frames. Moving the source page against the target by
+2, 4 or 6 KB changes nothing (330 to 338 thousand): the rows that alias are
+those of the target page, whose 400x240 area is 384 KB and uses 100 of the
+L2's 512 sets with contiguous frames, 200 with scattered ones. GLOAD misses on
+every line with any stride.
 
-The two clusters of times fit the two placements: scattered frames give
-GCOPY 180 thousand fewer misses a frame than contiguous ones, and the
-clusters lie about 10 ms apart, which prices a miss at about 55 ns. At that
-price, padding would save GCOPY about 5 ms a frame with scattered frames
-and 15 ms with contiguous ones, of 45 to 55: 10 to 27%. Translation
-misses are not modeled: the target's rows lie in 240 different 4 KB pages.
+The two clusters of times fit the two placements: scattered frames give GCOPY
+180 thousand fewer misses per frame than contiguous ones, and the clusters are
+about 10 ms apart, which prices a miss at about 55 ns. At that price, padding
+would save GCOPY about 5 ms per frame with scattered frames and 15 ms with
+contiguous ones, of 45 to 55: 10 to 27%. Translation misses are not modeled:
+the target's rows are in 240 different 4 KB pages.
 
 So this set changed no stride. The rule for changing it was a gain of a
 third or more in GCOPY or GFILL at a padded stride on the device, in every
 process; the device met it ([below](#grp-rows-on-the-device)), and the
 stride became 2112 ([GRP rows padded](#grp-rows-padded)).
 
-What did change, as it costs instructions whatever the caches do:
+The changes that were made, because the old code cost instructions regardless
+of the caches:
 
-- GCOPY copied its whole source rectangle into a new `Vec`, a `memcpy` a
-  row, then matched the drawing mode again on each row. From another page
-  that is not blank, with no GARRAY array on either, rows now go straight
-  from page to page, and the mode is chosen once. The standalone kernel
-  went from 9.0 to 3.8 million aarch64 instructions a frame; its inner loop
-  stays NEON, 11 instructions for 8 pixels. A copy within one page still
-  reads its source first.
+- GCOPY copied its whole source rectangle into a new `Vec`, a `memcpy` per
+  row, then matched the drawing mode again on each row. From another page that
+  is not blank, with no GARRAY array on either, rows now go straight from page
+  to page, and the mode is chosen once. The standalone kernel went from 9.0 to
+  3.8 million aarch64 instructions per frame; its inner loop stays NEON, 11
+  instructions for 8 pixels. A copy within one page still reads its source
+  first.
 - A plain GFILL on a page without a GARRAY array fills each row's columns
   directly instead of through `fill_rows`, which asked a closure for each
-  row's span and matched the mode on each row: about 45 instructions a row
+  row's span and matched the mode on each row: about 45 instructions per row
   before.
 
 | Scene | aarch64, `da44ce5` (M) | aarch64, branch (M) | Change | x86-64, `da44ce5` (M) | x86-64, branch (M) | Change |
@@ -721,24 +724,23 @@ What did change, as it costs instructions whatever the caches do:
 | GFILL | 14.64 | 13.10 | -10.5% | 16.94 | 14.42 | -14.8% |
 | GCOPY | 18.30 | 13.26 | -27.5% | 21.19 | 17.38 | -18.0% |
 
-These are whole frames, the CPU drawing included; GCOPY's program part
-falls from about 11.5 to 6.7 million aarch64 instructions. Of the other
-scenes on x86-64, GPUTCHR moves by +0.4% as LLVM inlines `put_chars`
-differently, and the rest by under 0.5%. TPERF's checksums stay
-`e8e5f6dc467db861` at 400 frames, `a6e1ed07824b1ad8` at 3600 and
-`5d9bb17a39eefb70` at 10500.
+These are whole frames, the CPU drawing included; GCOPY's program part falls
+from about 11.5 to 6.7 million aarch64 instructions. Of the other scenes on
+x86-64, GPUTCHR moves by +0.4% because LLVM inlines `put_chars` differently,
+and the rest by under 0.5%. TPERF's checksums stay `e8e5f6dc467db861` at 400
+frames, `a6e1ed07824b1ad8` at 3600 and `5d9bb17a39eefb70` at 10500.
 
 #### GRP rows on the device
 
 The handheld of the [handheld set](#handheld-cpu-from-cc49c48), front end
 stopped and pinned to one core, ran the standalone benchmark in five
-processes, each timing every stride in two rounds of 30 frames with the
-pass over the target area, then six more processes at strides 2048 and
-2112 with huge pages asked for and refused. Each round maps its pages
-anew. The device's kernel, 4.4, has no transparent huge pages, so the
-last six run as the first five do.
+processes, each timing every stride in two rounds of 30 frames with the pass
+over the target area, then six more processes at strides 2048 and 2112 with
+huge pages asked for and refused. Each round maps its pages again. The
+device's kernel, 4.4, has no transparent huge pages, so the last six run the
+same way as the first five.
 
-The kernels, ms a frame, median of the five processes' ten rounds, and the
+The kernels, ms per frame, median of the five processes' ten rounds, and the
 change against stride 2048:
 
 | Kernel | 2048 | 2064 | 2112 | 3072 |
@@ -759,29 +761,27 @@ fell in the slow one at the padded strides: 7 and 8 of 10 at 2064 and
 2112, against 2 at 2048 and 3 at 3072. A padded build has to time GLOAD
 again.
 
-Stride 3072 gained 16 to 42% for `bfa7e32`'s GCOPY, where the simulation
-has it alias as 2048 does. The L2 model does not account for all the
-misses that cost. One reading, not tested: the 32 KB 4-way L1 holds 8 KB a
-way, so rows 8 KB apart fall in one set and rows 12 KB apart alternate
-between two.
+Stride 3072 gained 16 to 42% for `bfa7e32`'s GCOPY, where the simulation has
+it alias the same as 2048 does. The L2 model does not account for all the
+misses that cost. One reading, not tested: the 32 KB 4-way L1 holds 8 KB per
+way, so rows 8 KB apart fall in one set and rows 12 KB apart alternate between
+two.
 
-The two clusters of times at stride 2048 are 42.07 to 42.59 ms and 50.15
-to 51.10 for `da44ce5`'s GCOPY, and 6.50 to 7.22 and 8.36 to 8.73 for
-GFILL. Of
-the 11 processes, 5 ran in the slow cluster, and each process stayed in
-its cluster through both rounds, although each round mapped its pages on
-other frames. The placement report does not separate them. In every round
-but one, 229 or more of the target rows' 240 pages used 4 of the 8 values
-of physical address bits 12 to 14, in slow and fast processes alike; the
-one round spread over all 8 was fast, as was its process's other round.
-At the padded strides, where a row crosses into the next page, 73 to 92%
-of neighboring pages are physically neighbors too: the kernel hands out
-mostly contiguous frames. The clusters are neither the pages' placement
-nor huge pages. What a process keeps through its rounds, such as its
-frame buffer, its inputs and where its code and stack lie, was not
-measured.
+The two clusters of times at stride 2048 are 42.07 to 42.59 ms and 50.15 to
+51.10 for `da44ce5`'s GCOPY, and 6.50 to 7.22 and 8.36 to 8.73 for GFILL. Of
+the 11 processes, 5 ran in the slow cluster, and each process stayed in its
+cluster through both rounds, although each round mapped its pages on other
+frames. The placement report does not separate them. In every round but one,
+229 or more of the target rows' 240 pages used 4 of the 8 values of physical
+address bits 12 to 14, in slow and fast processes alike; the one round spread
+over all 8 was fast, and so was its process's other round. At the padded
+strides, where a row crosses into the next page, 73 to 92% of neighboring
+pages are physically neighbors too: the kernel hands out mostly contiguous
+frames. The clusters are neither the pages' placement nor huge pages. What a
+process keeps through its rounds, such as its frame buffer, its inputs and the
+position of its code and stack, was not measured.
 
-The scenes, median `run_us` over frames 10 to 69, five runs a build, the
+The scenes, median `run_us` over frames 10 to 69, five runs per build, the
 builds alternating:
 
 | Scene | `da44ce5` (ms) | `bfa7e32` (ms) | Change, best | Change, median |
@@ -795,18 +795,18 @@ builds alternating:
 
 Every checksum is the same for both builds. `bfa7e32`'s GCOPY took 45.4 to
 46.3 ms in all five runs, while `da44ce5`'s fell four times in its slow
-cluster: the gain is real, as the instruction counts fell 27.5% with it.
-GFILL's 3 to 4% is under the noise rule's 10%, though its counts fell
-10.5%. If the scenes save what the kernels do at 2064 or 2112, GCOPY
-would lose 12 to 15 ms of its 46 and GFILL about 3 ms of its 12 to 14.
+cluster. The gain is real: the instruction counts fell 27.5% with it. GFILL's
+3 to 4% is under the noise rule's 10%, though its counts fell 10.5%. If the
+scenes save what the kernels do at 2064 or 2112, GCOPY would lose 12 to 15 ms
+of its 46 and GFILL about 3 ms of its 12 to 14.
 
 #### GRP rows padded
 
-`page::Page` now owns a page's buffer, and rows lie `page::STRIDE` pixels
-apart ([renderer.md](../rendering/renderer.md#frame-data)). To choose the stride,
-the handheld ran four builds, alternating, six runs each, with the method of
-the set above: main (`caa624c`), the branch at stride 2048, and the branch
-at 2064 and 2112. Median `run_us` over frames 10 to 69, in ms:
+`page::Page` now owns a page's buffer, and rows are `page::STRIDE` pixels
+apart ([renderer.md](../rendering/renderer.md#frame-data)). To choose the
+stride, the handheld ran four builds, alternating, six runs each, with the
+method of the set above: main (`caa624c`), the branch at stride 2048, and the
+branch at 2064 and 2112. Median `run_us` over frames 10 to 69, in ms:
 
 | Scene | `caa624c` | 2048 | 2064 | 2112 | Change at 2112, median |
 |---|---|---|---|---|---|
@@ -821,28 +821,29 @@ at 2064 and 2112. Median `run_us` over frames 10 to 69, in ms:
 
 Every checksum is the same in all four builds.
 
-- **GCOPY and GFILL.** At 2112 every run is faster than every run of
-  `caa624c` and of the branch at 2048, which fall in the two clusters seen
-  before (GFILL at 11.6 to 11.7 and 13.1 to 13.4 ms; GCOPY once at 38.6,
-  otherwise 46.0 to 47.2). The padded builds show one cluster each. 2112 is
-  ahead of 2064 in every run, by 4% in GCOPY and 3% in GFILL, as it was in
-  the standalone kernels (6% and 5%), which share no code layout with the
-  scenes.
+- **GCOPY and GFILL.** At 2112 every run is faster than every run of `caa624c`
+  and of the branch at 2048, which fall in the two clusters seen before (GFILL
+  at 11.6 to 11.7 and 13.1 to 13.4 ms; GCOPY once at 38.6, otherwise 46.0 to
+  47.2). The padded builds show one cluster each. 2112 is ahead of 2064 in
+  every run, by 4% in GCOPY and 3% in GFILL. In the standalone kernels, which
+  share no code layout with the scenes, it was also ahead for `bfa7e32`'s
+  GCOPY and for GFILL (6% and 5%), but behind for `da44ce5`'s GCOPY.
 - **GLOAD** stays memory bound. Its usual time moves from 2.52 to 2.59 ms to
   2.69 to 2.72 at both padded strides, 0.15 ms; one run in each of the
   builds at 2048 and 2112 fell in a fast cluster near 2.1 ms. Its
   instructions do not change. GCOPY saves 24 ms where GLOAD loses 0.15.
-- **GARRAY** gains from the array being filled a row at a time
+- **GARRAY** gains from the array being filled one row at a time
   (`Graphics::array`, `mirror_page`), 8.9% fewer aarch64 instructions,
-  whatever the stride.
-- **GUPLOAD**'s 0.01 to 0.02 ms is of the size its runs differ by.
+  regardless of the stride.
+- **GUPLOAD**'s 0.01 to 0.02 ms is the same size as the differences between
+  its runs.
 
-The stride is 2112: 2048 + 64 pixels, 256 bytes, so that successive rows
-start 4 sets of the L1 apart. A page takes 2048 x 2112 x 4 bytes, 16.5 MiB,
-512 KiB (3.1%) more than before; six pages in use, 3 MiB more. 2064 would
-cost 128 KiB (0.8%) a page for 3 to 4% less of the gain. GARRAY arrays,
-files and textures keep 2048 pixels a row. `FREEMEM` counts a program's
-strings and arrays only, so pages never entered it.
+The stride is 2112: 2048 + 64 pixels, 256 bytes, so that successive rows start
+4 sets of the L1 apart. A page takes 2048 x 2112 x 4 bytes, 16.5 MiB, 512 KiB
+(3.1%) more than before; six pages in use, 3 MiB more. 2064 would cost 128 KiB
+(0.8%) per page for 3 to 4% less of the gain. GARRAY arrays, files and
+textures keep 2048 pixels per row. `FREEMEM` counts a program's strings and
+arrays only, so pages never entered it.
 
 The branch as merged, against main (`9c1b55a`) on the handheld, six runs
 each, alternating:
@@ -858,11 +859,11 @@ each, alternating:
 | SPMOVE | 9.05 | 9.07 | +0.2% |
 | VINT | 7.77 | 7.77 | +0.1% |
 
-Every checksum is the same for both builds. GFILL's main runs fell mostly
-in the fast cluster this time; every run of the branch is still faster than
-every one of main's. GUPLOAD's 0.02 ms is of the size of its runs' spread.
+Every checksum is the same for both builds. GFILL's main runs fell mostly in
+the fast cluster this time; every run of the branch is still faster than every
+run of main. GUPLOAD's 0.02 ms is the same size as the spread of its runs.
 
-Instructions a frame, in millions, x86-64 over frames 3 to 83 and aarch64
+Instructions per frame, in millions, x86-64 over frames 3 to 83 and aarch64
 (qemu, `setarch -R`) over frames 3 to 6, main against the branch:
 
 | Scene | x86-64, `9c1b55a` | x86-64, branch | Change | aarch64, `9c1b55a` | aarch64, branch | Change |
@@ -882,43 +883,42 @@ Instructions a frame, in millions, x86-64 over frames 3 to 83 and aarch64
 | VINT | 8.74 | 8.74 | 0.0% | 8.14 | 8.14 | 0.0% |
 
 On x86-64 no other scene of the 32 moves by more than 0.13%, and every
-checksum is the same; TPERF's stay `e8e5f6dc467db861` at 400 frames,
-`a6e1ed07824b1ad8` at 3600 and `5d9bb17a39eefb70` at 10500. Taking rows
-whole from `Page` first cost GCOPY and GTRI 0.8 and 1.4% on x86-64, and
-offsets worked out in 64 bits cost GPUTCHR 1.5% on aarch64, until
-rectangles were checked once (`Page::spans`) and single pixels placed in
-32 bits.
+checksum is the same; TPERF's checksums stay `e8e5f6dc467db861` at 400 frames,
+`a6e1ed07824b1ad8` at 3600 and `5d9bb17a39eefb70` at 10500. Taking rows whole
+from `Page` first cost GCOPY and GTRI 0.8 and 1.4% on x86-64, and offsets
+computed in 64 bits cost GPUTCHR 1.5% on aarch64, until rectangles were
+checked once (`Page::spans`) and single pixels placed in 32 bits.
 
-Uploads to the GPU pass the pitch. On GLES2 they go in bands of at most
-64 KiB, as SDL's driver copies a rectangle to a buffer of its own whenever
-the pitch is not the rectangle's width
-([renderer.md](../rendering/renderer.md#grp-pages)). The device's GLES2 self-test
-passes all 26 scenes with main and with the branch. Two of its counts of
-pixels off differ: blur, 52048 off by one with main and 52072 with the
-branch, and 4x4 text, 212 far against 208. Builds of the branch at stride
-2048 with the bands and at 2112 without them give 208 too, and blur's
-count moves between those builds (52072, 52068) although their textures
-hold the same bytes. On the PC's GLES2 driver, main and the branch give
-the same 4x4 text count and blur counts 4 pixels apart. So stride and
-bands do not cause the 4x4 text change; what does was not found.
+Uploads to the GPU pass the pitch. On GLES2 they go in bands of at most 64
+KiB, because SDL's driver copies a rectangle to its own buffer whenever the
+pitch is not the rectangle's width
+([renderer.md](../rendering/renderer.md#grp-pages)). The device's GLES2
+self-test passes all 26 scenes with main and with the branch. Two of its
+counts of pixels off differ: blur, 52048 off by one with main and 52072 with
+the branch, and 4x4 text, 212 far against 208. Builds of the branch at stride
+2048 with the bands and at 2112 without them give 208 too, and blur's count
+moves between those builds (52072, 52068) although their textures hold the
+same bytes. On the PC's GLES2 driver, main and the branch give the same 4x4
+text count and blur counts 4 pixels apart. So stride and bands do not cause
+the 4x4 text change; the cause was not found.
 
 ### Calls, from `48f7cfc`
 
-This set counts what a call costs: a DEF's, a builtin's that the fused
-steps do not stand for, and a runtime command's, which most game loops are
-made of. Counts come from x86-64 with `perf stat -e instructions:u` on the
-`release` build, and aarch64 with qemu's Cortex-A35 model on the `dist`
-build under `setarch -R`, counted from whole blocks
+This set counts the cost of calls of a DEF, of a builtin that the fused steps
+do not stand for, and of a runtime command, which most game loops are made of.
+Counts come from x86-64 with `perf stat -e instructions:u` on the `release`
+build, and aarch64 with qemu's Cortex-A35 model on the `dist` build under
+`setarch -R`, counted from whole blocks
 ([benchmarking.md](benchmarking.md#measuring-on-a-handheld)). A loop's count
-is the difference of programs that run it 3200 and 9600 times (the game
-loops 50 and 150), over 6400; the two give the same count to within a
-couple of instructions, as the start-up varies a little with the hash
-tables' seeds. Scenes are TPERF's, run alone with `#ONLY`, x86-64 over
-frames 3 to 83 and aarch64 over frames 3 to 6. Every checksum is the same
-before and after: TPERF's `e8e5f6dc467db861` at 400 frames and
-`a6e1ed07824b1ad8` at 3600 on both machines, and each scene's and loop's.
+is the difference of programs that run it 3200 and 9600 times (the game loops
+50 and 150), over 6400; the two give the same count to within a couple of
+instructions, because the start-up varies a little with the hash tables'
+seeds. Scenes are from TPERF, run alone with `#ONLY`, x86-64 over frames 3 to
+83 and aarch64 over frames 3 to 6. Every checksum is the same before and
+after: TPERF's `e8e5f6dc467db861` at 400 frames and `a6e1ed07824b1ad8` at 3600
+on both machines, and those of each scene and loop.
 
-The loops, each in a DEF of its own locals, `FOR I=1 TO N` round the
+The loops, each in a DEF with its own locals, with `FOR I=1 TO N` around the
 statement:
 
 | Loop | Statement |
@@ -942,8 +942,8 @@ statement:
 | Game 2 | the same with the movement and the test written out in the loop |
 | Game 3 | `B=BUTTON(0)`, then for 32 sprites `SPOFS K OUT X,Y`, `IF RND(8)==0 THEN X=X+1`, `SPOFS K,X,Y`, and a `LOCATE` |
 
-Where a call's aarch64 instructions went, from one iteration's trace, in the
-fused entries the loop runs (choosing each entry included). The function
+Where a call's aarch64 instructions were spent, from one iteration's trace, in
+the fused entries the loop runs (choosing each entry included). The function
 DEF loop:
 
 | Part | `48f7cfc` | Branch |
@@ -962,44 +962,44 @@ wrote a frame of 112 bytes, and came back; a return read the frame back,
 scanned the variables for strings to drop and gave the list back to the
 pile.
 
-A runtime command, from the `CallHost` instruction to the fused code
-again: SPOFS 758 aarch64 instructions before, 543 after. Of the 758, about 115
-were `run_code`'s checks and `step`'s match around the call, and 80
-telling whether the screens changed: `sight`, and the sprite's appearance
-taken before and after and compared. Of the 543, about 150 are the VM's (the call, cutting the
-arguments, handing READ's place to the host and back), about 390 the
-runtime's: `Host::call`'s dispatch on the command (`run`, `run_counted`,
-`sp_command`'s own match) and SPOFS's work. BUTTON(0) takes 975 an
-iteration before and 868 after, of which 137 are still `malloc` and `free`
-for the one-value list every function of the runtime returns. STR$ went
-from 1295 to 1192; 423 of them are allocations in making the string.
+A runtime command, from the `CallHost` instruction to the fused code again:
+SPOFS 758 aarch64 instructions before, 543 after. Of the 758, about 115 were
+`run_code`'s checks and `step`'s match around the call, and 80 went to
+checking whether the screens changed: `sight`, and the sprite's appearance
+taken before and after and compared. Of the 543, about 150 are in the VM (the
+call, cutting the arguments, handing READ's place to the host and back), about
+390 in the runtime: `Host::call`'s dispatch on the command (`run`,
+`run_counted`, `sp_command`'s own match) and SPOFS's work. BUTTON(0) takes 975
+per iteration before and 868 after, of which 137 are still `malloc` and `free`
+for the one-value list every function of the runtime returns. STR$ went from
+1295 to 1192; 423 of them are allocations in making the string.
 
-What was made:
+The changes:
 
 - `8937306`: a host call is a fused entry. `run_fast` makes it with the code
-  `step` uses, factored out as `host_call`, and hands anything other than
-  going on back to `run_code`, which settles it as `step`'s outcome.
-- `208e0ee`: the variables of all DEF calls under way follow each other in
-  one list, and a frame holds where its own start.
+  `step` uses, factored out as `host_call`, and hands any outcome other than
+  continuing back to `run_code`, which settles it as `step`'s outcome.
+- `208e0ee`: the variables of all DEF calls in progress follow each other in
+  one list, and a frame holds the position where its own variables start.
 - `9fa9146`: a DEF call and its return are made inside the fused loop, which
   only points its view of the variables at the new frame. The fuser checks
   once that a call fits its DEF and keeps what it takes of the stack in the
   entry.
-- `8edef75`: once the frame has changed, `Host::call` skips telling whether a
+- `8edef75`: once the frame has changed, `Host::call` skips checking whether a
   command changes the screens: only drawing a frame clears that.
 - `23907aa`: a host call's one result is pushed without extending from a
   list.
 - `daf54eb`: a builtin's call is a fused entry, made by `builtin_call`, the
   code `step` uses.
-- `b08aba3`: a frame keeps the lists of `*` DEFs in one box most frames do
-  without, 112 bytes to 72, and a return cuts the stack and the variables
-  with a check that what goes is numbers.
+- `b08aba3`: a frame keeps the lists of `*` DEFs in one box that most frames
+  do not need, 112 bytes to 72, and a return cuts the stack and the variables
+  with a check that the values removed are numbers.
 - `bd8e2c7`: a call of one to three arguments that are variables or numbers
   reads them where they are, in one entry.
 - `72fd0be`: `run_fused` only says that it stopped before a builtin's or
   host's call, and `run_fast` reads the call from the entry.
 
-aarch64 instructions an iteration:
+aarch64 instructions per iteration:
 
 | Loop | `48f7cfc` | Branch | Change |
 |---|---|---|---|
@@ -1029,7 +1029,7 @@ aarch64 instructions an iteration:
 | Game 2 (64 sprites) | 141539 | 125990 | -11.0% |
 | Game 3 (32 sprites) | 97836 | 82969 | -15.2% |
 
-x86-64 instructions an iteration:
+x86-64 instructions per iteration:
 
 | Loop | `48f7cfc` | Branch | Change |
 |---|---|---|---|
@@ -1059,7 +1059,7 @@ x86-64 instructions an iteration:
 | Game 2 (64 sprites) | 152602 | 139635 | -8.5% |
 | Game 3 (32 sprites) | 103245 | 86918 | -15.8% |
 
-Instructions a frame, in millions, program and CPU drawing:
+Instructions per frame, in millions, program and CPU drawing:
 
 | Scene | aarch64 `48f7cfc` | aarch64 branch | Change | x86-64 `48f7cfc` | x86-64 branch | Change |
 |---|---|---|---|---|---|---|
@@ -1081,28 +1081,27 @@ Instructions a frame, in millions, program and CPU drawing:
 
 VDEF, whose loop is a function call and a command call with two OUTs, goes
 down by a quarter. The other scenes move by under 2% of their frames: their
-program parts call little, and the sprite and text scenes' counts are
-mostly drawing. GAME calls GTRI, SPOFS and LOCATE a few hundred times a
-frame, under 1% of its count. On x86-64 the scenes and loops that make no
-calls (VINT, VREAL, VSTR, VARRAY, the empty FOR and GOSUB) cost 1 to 3%
-more, as LLVM lays out `run_fused`'s registers anew; on aarch64 they move
-by under 3%, the empty FOR and GOSUB down.
+program parts call little, and the sprite and text scenes' counts are mostly
+drawing. GAME calls GTRI, SPOFS and LOCATE a few hundred times per frame,
+under 1% of its count. On x86-64 the scenes and loops that make no calls
+(VINT, VREAL, VSTR, VARRAY, the empty FOR and GOSUB) cost 1 to 3% more,
+because LLVM lays out `run_fused`'s registers again; on aarch64 they move by
+under 3%, the empty FOR and GOSUB down.
 
 `run_fast` is 40872 bytes of aarch64 code at `48f7cfc` and 40612 on the
 branch, with `host_call` (1828 bytes) and `builtin_call` (1708) outside it.
 Making the calls in the fused loop added little to it; `step` shrank from
-16648 to 15056 bytes, as its call arms went to those functions.
+16648 to 15056 bytes, because its call arms went to those functions.
 
-The handheld of the [handheld set](#handheld-cpu-from-cc49c48) ran
-`72a5db7`, the last commit before this set, and `d081e7a`, its end, with
-that set's method, quiet and pinned, the builds alternating within each
-round with those of the [next set](#variables-and-constants-from-d081e7a).
-Times are the best of three runs, and for GFILL, GCOPY, GLOAD and GUPLOAD
-the median of five, as their runs fall in two clusters. The last column is
-the change in aarch64 instructions a frame, in millions: for VINT to VDEF,
-SPHIT and GAME from the table above (`48f7cfc` against the branch), for
-the rest counted on these two builds the same way. Every checksum is the
-same.
+The handheld of the [handheld set](#handheld-cpu-from-cc49c48) ran `72a5db7`,
+the last commit before this set, and `d081e7a`, its end, with that set's
+method, quiet and pinned, the builds alternating within each round with those
+of the [next set](#variables-and-constants-from-d081e7a). Times are the best
+of three runs, and for GFILL, GCOPY, GLOAD and GUPLOAD the median of five,
+because their runs fall in two clusters. The last column is the change in
+aarch64 instructions per frame, in millions: for VINT to VDEF, SPHIT and GAME
+from the table above (`48f7cfc` against the branch), for the rest counted on
+these two builds the same way. Every checksum is the same.
 
 | Scene | `72a5db7` (ms) | `d081e7a` (ms) | Change | Instructions (M) |
 |---|---|---|---|---|
@@ -1139,9 +1138,9 @@ same.
 | LRASTER | 1.05 | 1.04 | -0.5% | -0.06 |
 | GAME | 8.93 | 8.79 | -1.5% | -0.13 |
 
-The game loops, run 10 times a frame with a `VSYNC` after, timed the same
-way, best of five (their checksums include the start-up banner, which
-names the build, so they differ by build and were not compared):
+The game loops, run 10 times per frame with a `VSYNC` after, timed the same
+way, best of five (their checksums include the start-up banner, which names
+the build, so they differ by build and were not compared):
 
 | Loop | `72a5db7` (ms) | `d081e7a` (ms) | Change | aarch64 instructions |
 |---|---|---|---|---|
@@ -1149,57 +1148,57 @@ names the build, so they differ by build and were not compared):
 | Game 2 | 2.14 | 1.93 | -9.8% | -11.0% |
 | Game 3 | 1.52 | 1.29 | -15.2% | -15.2% |
 
-The device runs at 1.008 GHz and 1.3 to 1.8 cycles an instruction in the
-interpreter, so a million instructions is 1.3 to 1.8 ms. Real, as the time
-moves with the counts: VDEF (-1.56 ms, -1.63 M), SPMOVE (-1.31 ms,
--0.62 M), SPROT (-1.11 ms, -0.80 M), LCOMP and LMATRIX (-0.11 and
--0.07 ms, -0.16 and -0.09 M), and the three game loops. These save 0.7 to
-2.1 ms a million instructions. LBLUR, LMOSAIC and LCOLOR gain as LCOMP
-does and were not counted. TPUT's -1.93 ms is about three times what its
--0.46 M explain: part of it is layout, as `72a5db7` ran it 1.2 ms slower
-than `0dc842c` did in the chains set. Layout, with no count behind it:
-VINT, VREAL and VARRAY up 2%, VVAR up 3%, SPHIT up 7%, VSTR down 3%. The
-other scenes move by under 6%.
+The device runs at 1.008 GHz and 1.3 to 1.8 cycles per instruction in the
+interpreter, so a million instructions is 1.3 to 1.8 ms. The following gains
+are real, since the time moves with the counts: VDEF (-1.56 ms, -1.63 M),
+SPMOVE (-1.31 ms, -0.62 M), SPROT (-1.11 ms, -0.80 M), LCOMP and LMATRIX
+(-0.11 and -0.07 ms, -0.16 and -0.09 M), and the three game loops. These save
+0.7 to 2.1 ms per million instructions. LBLUR, LMOSAIC and LCOLOR gain the
+same way as LCOMP and were not counted. TPUT's -1.93 ms is about three times
+what its -0.46 M explain. Part of it is layout: `72a5db7` ran it 1.2 ms slower
+than `0dc842c` did in the chains set. Layout, with no count behind it: VINT,
+VREAL and VARRAY up 2%, VVAR up 3%, SPHIT up 7%, VSTR down 3%. The other
+scenes move by under 6%.
 
-What calls still cost, for later work:
+The remaining costs of calls, for later work:
 
 - A function of the runtime returns its value in a `Vec`: 137 aarch64
   instructions of `malloc` and `free` in each BUTTON(0), RND or similar. Its
   commands return results through `Result<Vec<Value>>` throughout, so a way
-  round it is a method on `Host` for one value, which the hot functions would
-  need code of their own for.
+  around it is a method on `Host` for one value, for which the hot functions
+  would need their own code.
 - `Host::call`'s dispatch, `run`'s match on the command and the form, then
   each group's own match on the command, the form and the count, about 100
   instructions before a command's work.
-- A DEF's RETURN out of a command DEF, 140 instructions with choosing the
-  entry, against 86 for a function's: it works out the OUT variables from
-  the DEF's description on each return.
-- `CALL "NAME"` (2798) makes a `String` of the name and looks it up in a
-  hash table on each call. A cache of the last name, valid for the running
-  program, would leave out most of it.
+- A RETURN out of a command DEF costs 140 instructions with choosing the
+  entry, against 86 for a RETURN out of a function DEF: it computes the OUT
+  variables from the DEF's description on each return.
+- `CALL "NAME"` (2798) makes a `String` of the name and looks it up in a hash
+  table on each call. A cache of the last name, valid for the running program,
+  would skip most of it.
 
 ### Variables and constants, from `d081e7a`
 
-This set counts what reading and writing a variable costs in the fused
-code, and what choosing an entry costs before its work. Counts are taken
+This set counts the cost of reading and writing a variable in the fused
+code, and the cost of choosing an entry before its work. Counts are taken
 as in the [calls](#calls-from-48f7cfc) set: x86-64 with
 `perf stat -e instructions:u` on the `release` build, aarch64 with qemu's
 Cortex-A35 model on the `dist` build under `setarch -R`, from whole
 blocks. A loop's count is the difference of programs that run it 3200 and
 6400 times (the sprite and game loops 50 and 100), over the difference.
-Scenes are TPERF's, run alone with `#ONLY`. Every checksum is the same
-before and after: TPERF's `e8e5f6dc467db861` at 400 frames,
+The scenes come from TPERF, run alone with `#ONLY`. Every checksum is the
+same before and after: TPERF's `e8e5f6dc467db861` at 400 frames,
 `a6e1ed07824b1ad8` at 3600 and `5d9bb17a39eefb70` at 10500 on x86-64, the
-first two on aarch64, and each scene's.
+first two on aarch64, and the checksum of each scene.
 
 The loops are those of the [chains](#three-address-chains-from-018017d)
-and [calls](#calls-from-48f7cfc) sets, each in a DEF of its own locals.
+and [calls](#calls-from-48f7cfc) sets, each in a DEF with its own locals.
 The scalar reals' loop uses `U#`, `W#` and `T#` for `DX#`, `DY#` and `T#`.
 Three more: `VINT, unsuffixed` is VINT's loop on `A` and `B`, and the
-globals' rows run VINT's, the counters' and VARRAY's loops at the top
+globals rows run the loops of VINT, the counters and VARRAY at the top
 level, on globals.
 
-Where one iteration's aarch64 instructions went at `d081e7a`, from qemu's
+The aarch64 instructions of one iteration at `d081e7a`, from qemu's
 trace, by the source line and inlined function each instruction comes
 from (finding a place includes loading the value's tag):
 
@@ -1223,23 +1222,23 @@ disassembly of `run_fast`:
   to look at the old value's tag in case it holds a string or array to drop,
   and 2 stores.
 - **Choosing an entry** takes 16: the entry table's length (on the stack)
-  compared with `pc`, the entry's address (`madd`, as an entry is 20 bytes),
-  its length loaded and taken from the budget, its kind loaded, the jump
-  table and the indirect branch, and two register moves.
+  compared with `pc`, the entry's address (`madd`, because an entry is 20
+  bytes), its length loaded and subtracted from the budget, its kind
+  loaded, the jump table and the indirect branch, and two register moves.
 - **Choosing a chain's step** took 16: the step's end compared, then six
-  loads of all of the step's fields before the jump table, whatever its
-  kind.
-- **A constant** costs a read like any variable's, as constants are places
-  after the globals.
+  loads of all of the step's fields before the jump table, regardless of
+  its kind.
+- **A constant** costs a read like any variable, because constants are
+  places after the globals.
 
-A variable's suffix gives nothing to build on: it only sets the starting
+A variable's suffix cannot be relied on: it only sets the starting
 value ([sb4-pitfalls.md](../smilebasic4/sb4-pitfalls.md)): `A%="X"` stores a string, and
 a variable of any suffix can hold any kind of value. Only constants and
 the chains' hidden places are known to hold numbers.
 
-What was made:
+The changes:
 
-- `cc60440`: a chain's steps are matched where they are rather than copied
+- `cc60440`: a chain's steps are matched in place rather than copied
   out first, so each kind loads only its own fields. Choosing a step falls
   from 16 to about 10 instructions.
 - `9113d96`: an operator with a constant integer or real on its right
@@ -1248,16 +1247,16 @@ What was made:
   real forms, the comparison jumps of chains (`JumpLessInt` and the others),
   and `AddStoreInt`, `SubStoreInt`, `MulStoreInt`, `AddStoreReal` and the
   `Unless` entries' integer forms. A constant on the left of an operator
-  whose sides can change places (`+`, `*`, `AND`, `OR`, `XOR`, `==`, `!=`)
-  goes to the right; for reals that gives the same result, as a constant is
-  never NaN. Each saves the constant's read and one tag check, about 12
-  instructions.
+  whose operands can be swapped (`+`, `*`, `AND`, `OR`, `XOR`, `==`, `!=`)
+  moves to the right; for reals that gives the same result, because a
+  constant is never NaN. Each saves the constant's read and one tag check,
+  about 12 instructions.
 - `4ae34d1`: the random programs of `tests/fuse_random.rs` call COMMON
   DEFs of a slot they EXEC, a DEF 40 calls deep and DEFs whose variables
   have the globals' names, and put strings, arrays, reals and integers into
   variables of any suffix.
 
-aarch64 instructions an iteration:
+aarch64 instructions per iteration:
 
 | Loop | `d081e7a` | `cc60440` | `9113d96` | Change |
 |---|---|---|---|---|
@@ -1282,7 +1281,7 @@ aarch64 instructions an iteration:
 | Game 2 (64 sprites) | 124839 | - | 120358 | -3.6% |
 | Game 3 (32 sprites) | 82930 | - | 82661 | -0.3% |
 
-x86-64 instructions an iteration:
+x86-64 instructions per iteration:
 
 | Loop | `d081e7a` | `9113d96` | Change |
 |---|---|---|---|
@@ -1303,10 +1302,10 @@ x86-64 instructions an iteration:
 | Game 2 (64 sprites) | 138473 | 131474 | -5.1% |
 | Game 3 (32 sprites) | 86948 | 86913 | 0.0% |
 
-The globals' and unsuffixed rows match the locals' within 0.5 on both
+The globals and unsuffixed rows match the locals rows within 0.5 on both
 machines: the two tables cost the same, and a suffix changes nothing.
 
-Instructions a frame, in millions, program and CPU drawing, aarch64 over
+Instructions per frame, in millions, program and CPU drawing, aarch64 over
 frames 3 to 6 and x86-64 over frames 3 to 83:
 
 | Scene | aarch64 `d081e7a` | aarch64 `9113d96` | Change | x86-64 `d081e7a` | x86-64 `9113d96` | Change |
@@ -1337,7 +1336,7 @@ the same method. `0f41de0`, the code that the `unchecked-vars` feature
 builds, reads the fused code's places without a bounds check on each; its
 `run_fast` is 41436 bytes. Times are the best of three runs, the median of
 five for GFILL, GCOPY, GLOAD and GUPLOAD. The instruction columns are the
-change in aarch64 instructions a frame, in millions: for VINT to VDEF,
+change in aarch64 instructions per frame, in millions: for VINT to VDEF,
 SPHIT and GAME from the table above and the same count of `0f41de0`, for
 the rest counted on these builds. Every checksum is the same.
 
@@ -1385,55 +1384,57 @@ the change in aarch64 instructions from the table above:
 | Game 2 | 1.93 | 1.88 | -2.7% | -3.6% | 1.81 | -3.3% | -5.9% |
 | Game 3 | 1.29 | 1.20 | -6.4% | -0.3% | 1.24 | +2.7% | +1.4% |
 
-`500b8ca` against `d081e7a`: real, as the time moves with the counts, are
-VINT (-0.71 ms, -0.80 M), VARRAY (-1.26 ms, -1.75 M), VREAL by less than
-its count (-0.22 ms, -0.60 M), TPUT, LRASTER, and game loops 1 and 2.
-GARRAY's -0.57 M does not show. Where the counts stay within 0.2 M, the
-times move both ways: VSTR, VVAR and SPANIM up 3 to 5%, VDEF, SPMOVE and
-SPROT down 5 to 8%, game 3 down 6%. That is layout. A cost from the
-46 KB `run_fast`, past the 32 KB instruction cache, would make the scenes
-it does not speed up slower together, and they do not.
+`500b8ca` against `d081e7a`: the real changes, because the time moves
+with the counts, are VINT (-0.71 ms, -0.80 M), VARRAY (-1.26 ms,
+-1.75 M), VREAL by less than its count (-0.22 ms, -0.60 M), TPUT,
+LRASTER, and game loops 1 and 2. GARRAY's -0.57 M does not show. Where
+the counts stay within 0.2 M, the times move both ways: VSTR, VVAR and
+SPANIM up 3 to 5%, VDEF, SPMOVE and SPROT down 5 to 8%, game 3 down 6%.
+These changes come from code layout. A cost from the 46 KB `run_fast`,
+larger than the 32 KB instruction cache, would make all the scenes it
+does not speed up slower, and they are not slower.
 
 `0f41de0` against `500b8ca`, the measured gain of the option: VINT -11.8%
 (-0.94 ms, -0.96 M), VREAL -10.5% (-0.75 ms, -0.77 M), VARRAY -13.9%
-(-1.74 ms, -1.70 M) and GARRAY -13.7% (-1.41 ms, -0.91 M), with the
-counts, as are GAME's -10.3% (-0.90 ms, -0.52 M) and game loops 1 and 2,
--4.9 and -3.3% against -5.7 and -5.9% of instructions. VSTR, whose count
-rises by 0.21 M, takes 5.4% less, and the sprite scenes 2.5 to 7.5% less
-with their counts within 0.25 M: none of them loses, and their gains
-beyond the counts are layout. The largest rises, game 3's +2.7% with
-+1.4% of instructions and GCOPY's +2.4%, are within the noise.
+(-1.74 ms, -1.70 M) and GARRAY -13.7% (-1.41 ms, -0.91 M) follow the
+counts, and so do GAME's -10.3% (-0.90 ms, -0.52 M) and game loops 1 and
+2, -4.9 and -3.3% against -5.7 and -5.9% of instructions. VSTR, whose
+count rises by 0.21 M, takes 5.4% less, and the sprite scenes 2.5 to 7.5%
+less with their counts within 0.25 M: none of them is slower, and their
+gains beyond the counts come from layout. The largest rises, game 3's
++2.7% with +1.4% of instructions and GCOPY's +2.4%, are within the noise.
 
-What a step still costs, for later work:
+The remaining cost of a step, for later work:
 
-- Finding a place, 9 or 10 instructions a read and a write, of which 3 are
-  the bounds check against a table's length kept on the stack. Safe Rust
-  keeps the check: a mask leaves a test of the length, and only a table of
-  fixed size, `&[Value; 32768]`, drops it, which would take 512 KB of
-  globals a slot and frames padded to as many variables
-  ([tried and left out](#tried-and-left-out)).
+- Finding a place, 9 or 10 instructions per read and per write, of which
+  3 are the bounds check against a table's length kept on the stack. Safe
+  Rust keeps the check: a mask leaves a test of the length, and only a
+  table of fixed size, `&[Value; 32768]`, drops it, which would take 512 KB
+  of globals per slot and frames padded to as many variables
+  ([tried and not kept](#tried-and-not-kept)).
 - Choosing an entry, 16 instructions, the indirect branch included.
 - A write's look at the old value, 3 instructions, which only the chains'
   hidden places could do without: they hold only numbers, but a step does
   not know whether it writes one.
 
-The `unchecked-vars` feature of `sb-core`, off by default, takes the
-bounds check out with `unsafe`, in one small module,
+The `unchecked-vars` feature of `sb-core`, off by default, removes the
+bounds check with `unsafe`, in one small module,
 `crates/sb-core/src/vars.rs`. Its invariant and checks are in that file
 and in [security.md](../development/security.md): `fuse::check` bounds every global
 place by the program's globals and constants on every program the VM
-takes, and works out what each entry needs of the running DEF's
-variables, which `run_fused` compares with the DEF's before each entry,
-in 3 instructions an entry. Choosing an entry takes about 19 instead of
-16 with it, as LLVM now rebuilds the jump table's address and the entry
-size each time instead of keeping them in registers. A read then takes 4
-or 5 instructions and the tag's load, against 9 or 10: the table bit and
-the index split off, the table's pointer loaded from the stack, and the
-index added. A default build runs `fuse::check` too, but keeps the check
-on each read and compiles out the one before each entry. It counts what
-`9113d96` counts, within 0.3% on every loop and scene below on both
-machines, and its `run_fast` is 46228 bytes. Against `9113d96`, aarch64
-instructions an iteration with the feature on:
+takes. `fuse::check` also computes how many of the running DEF's
+variables each entry needs, and `run_fused` compares that number with the
+DEF's variable count before each entry, in 3 instructions per entry.
+Choosing an entry takes about 19 instead of 16 with it, because LLVM now
+rebuilds the jump table's address and the entry size each time instead of
+keeping them in registers. A read then takes 4 or 5 instructions and the
+tag's load, against 9 or 10: the table bit and the index split off, the
+table's pointer loaded from the stack, and the index added. A default
+build runs `fuse::check` too, but keeps the check on each read and
+compiles out the one before each entry. It counts what `9113d96` counts,
+within 0.3% on every loop and scene below on both machines, and its
+`run_fast` is 46228 bytes. Against `9113d96`, aarch64 instructions per
+iteration with the feature on:
 
 | Loop | `9113d96` | Unchecked | Change |
 |---|---|---|---|
@@ -1455,11 +1456,11 @@ instructions an iteration with the feature on:
 | Game 3 (32 sprites) | 82661 | 83801 | +1.4% |
 
 x86-64, the same loops: empty FOR 157.0 to 136.5, VINT's loop 477.2 to
-369.1, VARRAY's 1228.9 to 922.5, VREAL's 763.4 to 625.7, counters 541.9
-to 460.3, sprites 115500 to 96754, game 1 244749 to 224742, game 3 86913
-to 87058.
+369.1, VARRAY's loop 1228.9 to 922.5, VREAL's loop 763.4 to 625.7,
+counters 541.9 to 460.3, sprites 115500 to 96754, game 1 244749 to
+224742, game 3 86913 to 87058.
 
-Instructions a frame, in millions:
+Instructions per frame, in millions:
 
 | Scene | aarch64 `9113d96` | aarch64 unchecked | Change | x86-64 `9113d96` | x86-64 unchecked | Change |
 |---|---|---|---|---|---|---|
@@ -1472,7 +1473,7 @@ Instructions a frame, in millions:
 | TPUT | 31.60 | 31.54 | -0.2% | 51.63 | 51.16 | -0.9% |
 | GAME | 19.94 | 19.42 | -2.6% | 28.28 | 27.51 | -2.7% |
 
-Finding a place, aarch64 instructions an iteration, from the same traces
+Finding a place, aarch64 instructions per iteration, from the same traces
 as the first table:
 
 | Loop | `d081e7a` | `9113d96` | Unchecked |
@@ -1485,7 +1486,8 @@ as the first table:
 
 VSTR and game 3 run many entries that read little, where the check before
 each entry costs more than the reads save. `run_fast` shrinks from 46236
-to 41436 bytes with the feature, as the panics of the bounds checks go.
+to 41436 bytes with the feature, because the panics of the bounds checks
+are removed.
 
 ### Runtime commands, from `7021a05`
 
@@ -1493,7 +1495,7 @@ This set asks where real games spend the program's part of a frame
 outside the interpreter: the runtime's commands, the builtins that are not
 fused, and the runtime's own work each frame. It ran eleven census
 projects with their input scripts (`--bench --fixed --script`, start-up
-and the first menus left out) and TPERF's scenes alone, on an x86-64
+and the first menus excluded) and TPERF's scenes alone, on an x86-64
 desktop loaded by other work. Times come from a scratch build that reads
 the time stamp counter around each host call, builtin call, PRINT, CALL
 SPRITE step, the sound, the animations and the VM; they move with the
@@ -1504,18 +1506,18 @@ and 6400 iterations as in the [calls](#calls-from-48f7cfc) set, and of
 switched on and off around it through `--control`. aarch64 counts come
 from qemu's Cortex-A35 model on the `dist` build, as in the earlier sets.
 Every project's and scene's checksum is the same before and after, and
-TPERF's are `e8e5f6dc467db861` at 400 frames, `a6e1ed07824b1ad8` at
-3600 and `5d9bb17a39eefb70` at 10500.
+TPERF's checksums are `e8e5f6dc467db861` at 400 frames,
+`a6e1ed07824b1ad8` at 3600 and `5d9bb17a39eefb70` at 10500.
 
-The program's part a frame at `7021a05`, x86-64 ms (CPU drawing is the
-GPU's in the front end and is left out); the runs had no sound bank, so
-the sound is the silent minimum (with one, TENSMA's sound takes 0.39 ms
-of its 0.61):
+The program's part per frame at `7021a05`, x86-64 ms (in the front end
+the GPU does the drawing, and CPU drawing is not counted); the runs had
+no sound bank, so the sound is the silent minimum (with one, TENSMA's
+sound takes 0.39 ms of its 0.61):
 
 | Project | Program | Interpreter | Commands and builtins | Sound, animations | Largest |
 |---|---|---|---|---|---|
-| S51_MEDAL4 | 4.15 | 2.65 | 1.47 | 0.02 | TOUCH OUT 0.74, BUTTON() 0.69 (25000 each a frame) |
-| SOLIDGUNNER_V | 1.90 | 0.39 | 1.41 | 0.10 | GCLS 1.19 (1 a frame), SPVAR 0.11 (1000) |
+| S51_MEDAL4 | 4.15 | 2.65 | 1.47 | 0.02 | TOUCH OUT 0.74, BUTTON() 0.69 (25000 each per frame) |
+| SOLIDGUNNER_V | 1.90 | 0.39 | 1.41 | 0.10 | GCLS 1.19 (1 per frame), SPVAR 0.11 (1000) |
 | NEON_DRIFTWAY | 1.33 | 0.52 | 0.74 | 0.08 | ARYOP 0.16 (308), COPY 0.15 (171), GFILL 0.11, GLINE 0.09 (534), GCLS 0.08 |
 | ELE2020 | 0.74 | 0.10 | 0.56 | 0.08 | GCOPY 0.42 (56 tinted glyphs), SPHITSP 0.05, GFILL 0.05, CALL SPRITE 0.03 |
 | OTAKA_PAC | 0.59 | 0.39 | 0.15 | 0.06 | SPVAR 0.09 (961), CALL SPRITE 0.02 (732) |
@@ -1526,20 +1528,20 @@ of its 0.61):
 | RYUSI | 0.10 | 0.06 | 0.01 | 0.04 | GCIRCLE |
 | TENSMA | 0.07 | 0.04 | 0.01 | 0.02 | CLS |
 
-What was made:
+The changes:
 
-- `5d7aef8`: each page keeps a ground color, which every pixel outside a
-  set of tiles drawn on since holds, and a plain fill in that color writes
-  only those tiles. GCLS on a page with nothing drawn since went from
-  2.66 million x86-64 instructions to 1600; on one drawn on in a 400x240
-  corner it writes 28 of the 1024 tiles.
+- `5d7aef8`: each page keeps a ground color. Every pixel outside a set
+  of tiles drawn on since the ground color was set holds that color, and
+  a plain fill in that color writes only those tiles. GCLS on a page with
+  nothing drawn since went from 2.66 million x86-64 instructions to 1600;
+  on one drawn on in a 400x240 corner it writes 28 of the 1024 tiles.
 - `181b8f9`, `44821d3`: `Host::call_into` hands the runtime the list the
   VM keeps for a call's results, and the sprite, input, system and GRP
-  groups put their values there instead of in a new `Vec` a call.
+  groups put their values there instead of in a new `Vec` per call.
 - `f00a654`: a tinted GCOPY of 256 pixels or more multiplies through
   tables of the tint's products, with a loop for each blend, and
-  `#G_NORMAL2` passes clear pixels by untinted.
-- `a066657`: GLINE draws its pixels as it works them out, in i64, instead
+  `#G_NORMAL2` skips clear pixels without tinting them.
+- `a066657`: GLINE draws its pixels as it computes them, in i64, instead
   of making a list and dividing i128s.
 - `541ddd8`: GRP commands read their coordinates into arrays, not lists.
 - `8912894`: SPVAR's and TVAR's maps hash with a multiply, not SipHash.
@@ -1549,7 +1551,7 @@ What was made:
 - `e6921c5`: ARYOP reads real arrays other than its result in place and
   runs a loop for each operation.
 
-Instructions an iteration:
+Instructions per iteration:
 
 | Loop | x86-64 `7021a05` | x86-64 `6ba52d7` | Change | aarch64 `7021a05` | aarch64 `e6921c5` | Change |
 |---|---|---|---|---|---|---|
@@ -1571,7 +1573,7 @@ Instructions an iteration:
 | `TPUT 0,I AND 15,3,"A"` | 1748 | 1742 | -0.3% | | | |
 | `LOCATE I AND 31,3` | 825 | 801 | -3% | | | |
 
-The program's part a frame (`Machine::frame`), x86-64 instructions in
+The program's part per frame (`Machine::frame`), x86-64 instructions in
 millions, `7021a05` against `e6921c5`:
 
 | Project | Before | After | Change |
@@ -1588,47 +1590,48 @@ millions, `7021a05` against `e6921c5`:
 | RYUSI | 1.17 | 1.17 | -0.3% |
 | TENSMA | 0.69 | 0.68 | -0.7% |
 
-Of TPERF's scenes the same way: GLINE 15.00 to 13.28 (-11.5%), GCOPY 10.08
-to 9.33, GAME 8.57 to 8.02, GTRI 25.39 to 23.99, GFILL 6.64 to 6.29, SPROT
-4.42 to 4.19; the interpreter's scenes within 0.05%. TPUT rose 1.2% at
-`e6921c5`, which `6ba52d7` takes back. On aarch64, whole frames with the
-CPU drawing over frames 3 to 6, millions: GLINE 20.42 to 17.58 (-13.9%),
-GTRI 26.12 to 25.12, GCOPY 12.82 to 12.28, GAME 19.96 to 19.58, with the
-same checksums.
+TPERF's scenes, counted the same way: GLINE 15.00 to 13.28 (-11.5%),
+GCOPY 10.08 to 9.33, GAME 8.57 to 8.02, GTRI 25.39 to 23.99, GFILL 6.64
+to 6.29, SPROT 4.42 to 4.19; the interpreter's scenes within 0.05%. TPUT
+rose 1.2% at `e6921c5`, and `6ba52d7` undoes the rise. On aarch64, whole
+frames with the CPU drawing over frames 3 to 6, millions: GLINE 20.42 to
+17.58 (-13.9%), GTRI 26.12 to 25.12, GCOPY 12.82 to 12.28, GAME 19.96 to
+19.58, with the same checksums.
 
-Where the rest goes, for later work:
+The remaining costs, for later work:
 
-- **Sound** with a bank is most of what an idle game's frame costs:
+- **Sound** with a bank is most of the cost of an idle game's frame:
   TENSMA's sound takes 0.39 of 0.61 ms on the desktop, about half of it
   in decoding ADPCM one sample at a time (`bank::Reader::next_of`) and the
   rest in the sampler's loop.
 - **The interpreter's side of a host call**, about 150 aarch64
   instructions: the entry, `host_call`, the three calls through `dyn Host`
   around it for READ's place and a retry, and cutting the arguments.
-- **GTRI** works out each edge's ends for each row with two divisions;
-  stepping along the rows would leave them out.
+- **GTRI** computes the ends of each edge for each row with two
+  divisions; stepping along the rows would avoid them.
 - **CALL SPRITE** copies the callback's name for each sprite, and the VM
   looks the name up for each.
 - **SPHITSP** and **GCIRCLE**, which make a list of points, at a few
-  hundred to a few thousand instructions a call.
+  hundred to a few thousand instructions per call.
 
 ### Calls by name and leaf functions, from `7021a05`
 
-This set counts what a DEF call costs where games make most of them: in
-leaf functions of one expression, called hundreds of times a frame outside
-any loop, and in callbacks of CALL SPRITE. Counts are taken as in the
-[calls](#calls-from-48f7cfc) set: x86-64 with `perf stat -e instructions:u`
-on the `release` build, aarch64 with qemu's Cortex-A35 model on the `dist`
-build under `setarch -R`, from whole blocks. A loop's count is the
-difference of programs that run it 3200 and 6400 times (recursion 800 and
-1600, CALL SPRITE 20 and 40, the game loop 50 and 100), over the
-difference. Every checksum is the same before and after: TPERF's
-`e8e5f6dc467db861` at 400 frames and `a6e1ed07824b1ad8` at 3600 on both
-machines, each scene's, and each game's on x86-64.
+This set counts the cost of a DEF call where games make most of them: in
+leaf functions of one expression, called hundreds of times per frame
+outside any loop, and in callbacks of CALL SPRITE. Counts are taken as in
+the [calls](#calls-from-48f7cfc) set: x86-64 with
+`perf stat -e instructions:u` on the `release` build, aarch64 with qemu's
+Cortex-A35 model on the `dist` build under `setarch -R`, from whole
+blocks. A loop's count is the difference of programs that run it 3200 and
+6400 times (recursion 800 and 1600, CALL SPRITE 20 and 40, the game loop
+50 and 100), over the difference. Every checksum is the same before and
+after: TPERF's `e8e5f6dc467db861` at 400 frames and `a6e1ed07824b1ad8` at
+3600 on both machines, the checksum of each scene, and that of each game
+on x86-64.
 
 The loops are those of the [calls](#calls-from-48f7cfc) and
-[variables](#variables-and-constants-from-d081e7a) sets, each in a DEF of
-its own locals, and these:
+[variables](#variables-and-constants-from-d081e7a) sets, each in a DEF
+with its own locals, and these:
 
 | Loop | Statement |
 |---|---|
@@ -1640,8 +1643,8 @@ its own locals, and these:
 | One OUT as a function | `R=WG(I)`, `DEF WG NAME OUT N: N=G+NAME` |
 | CALL SPRITE | 256 sprites with `SPFUNC K,"CB"`, `DEF CB: G=G+CALLIDX()` |
 
-Where the aarch64 instructions of an iteration of the LINTP loop went at
-`7021a05`, from qemu's trace, by fused entry (choosing each included):
+The aarch64 instructions of an iteration of the LINTP loop at `7021a05`,
+from qemu's trace, by fused entry (choosing each entry included):
 
 | Part | Instructions |
 |---|---|
@@ -1655,7 +1658,7 @@ Where the aarch64 instructions of an iteration of the LINTP loop went at
 So the call, its return and the store took 345, more than the body. A
 callback of CALL SPRITE, `DEF CB: G=G+CALLIDX()` on 256 sprites, by the
 function each instruction is in (inlined ones in the function they are
-inlined into), aarch64 instructions a callback from qemu's counts of each
+inlined into), aarch64 instructions per callback from qemu's counts of each
 instruction:
 
 | Part | `7021a05` | `b799de0` |
@@ -1669,34 +1672,35 @@ instruction:
 | Other | 198 | 17 |
 | A callback | 2525 | 1025 |
 
-What was made:
+The changes:
 
 - `263fac8`: CALL and the callbacks keep the last 8 names that named a DEF
   of the running slot, with a weak reference to the slot's program, and go
   straight to the DEF when text, slot and program match. A call found
-  that way that fits its DEF starts as the fused code starts one.
+  this way that fits its DEF is started the same way the fused code
+  starts one.
 - `a1d2a12`: a string constant, CALLIDX() and the step to the next
-  callback are fused entries. The step stops the fused loop, as a host's
-  call does, and `run_fast` makes it with `step`'s code.
+  callback are fused entries. The step stops the fused loop, the same as
+  a host call does, and `run_fast` makes it with `step`'s code.
 - `b799de0`: a chain takes in the call of a function whose body is one
-  RETURN of numbers worked out from its arguments, the slot's globals and
-  constants. The body's steps read the arguments where they are. Nothing
-  of the call can be seen but its value: before its statement's last step
-  a chain writes only its hidden places; a step that cannot do its work
-  leaves the statement to `code`, which makes the call and fails there,
-  on the body's line; the chain counts the body's instructions and its
-  RETURN as run and runs whole or not at all, so slices end where they
-  did; it runs only when the stack has room for its largest call
-  (`FastOp::CallChain`), so a call that overflows is made by `code`; and
-  the DEF has no variables but its arguments and calls nothing. Such a
-  chain may end in pushing several values, as for
+  RETURN of numbers computed from its arguments, the slot's globals and
+  constants. The body's steps read the arguments in place. Only the
+  call's value can be seen: before its statement's last step a chain
+  writes only its hidden places; a step that cannot do its work leaves
+  the statement to `code`, which makes the call and fails there, on the
+  body's line; the chain counts the body's instructions and its RETURN as
+  run and runs whole or not at all, so slices end where they did; it runs
+  only when the stack has room for its largest call (`FastOp::CallChain`),
+  so a call that overflows is made by `code`; and the DEF has no variables
+  other than its arguments, and calls nothing. Such a chain may end in
+  pushing several values, for example for
   `RGB(LINTP(..),LINTP(..),LINTP(..),LINTP(..))`, where RGB is not a
-  builtin chains take.
+  builtin that chains take.
 
 After it, the LINTP loop is one chain of four steps and the room check,
 about 200 instructions, and the FOR.
 
-aarch64 instructions an iteration:
+aarch64 instructions per iteration:
 
 | Loop | `7021a05` | `b799de0` | Change |
 |---|---|---|---|
@@ -1722,7 +1726,7 @@ aarch64 instructions an iteration:
 | VINT's loop | 429.0 | 429.0 | +0.0% |
 | Reals | 536.5 | 538.0 | +0.3% |
 
-x86-64 instructions an iteration:
+x86-64 instructions per iteration:
 
 | Loop | `7021a05` | `b799de0` | Change |
 |---|---|---|---|
@@ -1749,12 +1753,12 @@ x86-64 instructions an iteration:
 | Reals | 620.6 | 619.7 | -0.1% |
 
 Calls that are not taken in move by -1.2 to +0.4% on aarch64 and by
-+0.4 to +3.2% on x86-64, where LLVM laid out `run_fused` anew at
-`b799de0`; leaving out the room check does not bring x86-64 back. The
-string argument's DEF, `RETURN LEN(S$)`, is taken in, as LEN is a builtin
-chains take.
++0.4 to +3.2% on x86-64, where LLVM laid out `run_fused` again at
+`b799de0`; removing the room check does not bring x86-64 back. The
+string argument's DEF, `RETURN LEN(S$)`, is taken in, because LEN is a
+builtin that chains take.
 
-Instructions a frame, in millions, program and CPU drawing, aarch64 over
+Instructions per frame, in millions, program and CPU drawing, aarch64 over
 frames 3 to 6 and x86-64 over frames 3 to 83:
 
 | Scene | aarch64 `7021a05` | aarch64 `b799de0` | Change | x86-64 `7021a05` | x86-64 `b799de0` | Change |
@@ -1770,9 +1774,9 @@ frames 3 to 6 and x86-64 over frames 3 to 83:
 | GAME | 19.94 | 19.96 | +0.1% | 28.21 | 28.20 | -0.0% |
 
 Two games, run headless on copies with `--bench --fixed` and the
-same input script, x86-64 instructions a frame in play, in millions,
+same input script, x86-64 instructions per frame in play, in millions,
 drawing included, over frames 700 to 1800 of a shooting game and 1200 to
-2500 of a maze game (aarch64 was not counted, as qemu takes too long
+2500 of a maze game (aarch64 was not counted, because qemu takes too long
 over that many frames):
 
 | Game | `7021a05` | `263fac8` | `a1d2a12` | `b799de0` | Change |
@@ -1781,24 +1785,24 @@ over that many frames):
 | Maze game | 23.98 | 22.71 | 22.34 | 22.39 | -6.6% |
 
 The shooting game fades colors with a DEF that calls LINTP four times,
-some 1100 calls a frame, and calls a one-OUT DEF that reads SPVAR with a
-string constant some 840 times a frame. The maze game calls four DEFs by
-CALL SPRITE on 240 to 490 sprites a frame, and has no leaf function
+some 1100 calls per frame, and calls a one-OUT DEF that reads SPVAR with
+a string constant some 840 times per frame. The maze game calls four DEFs
+by CALL SPRITE on 240 to 490 sprites per frame, and has no leaf function
 that is hot, so `b799de0` costs it what the calls not taken in cost on
 x86-64. Their times were not compared: other builds shared the machine.
 
-What calls still cost, for later work:
+The remaining cost of calls, for later work:
 
 - A callback of CALL SPRITE, 1025 aarch64 instructions with the
   body: about 360 in the runtime's `next_callback`, which walks the
   sprites and copies the name into a new `Vec` each time (165 more in
   `malloc`, `free` and the comparison), and about 160 in `enter_found`.
-  `Host::next_callback` handing out an `Rc<[u16]>`, with the sprites' and
-  text screens' callbacks kept as one, would leave out the copy.
+  `Host::next_callback` handing out an `Rc<[u16]>`, with the callbacks of
+  sprites and text screens kept as one, would avoid the copy.
 - A DEF that calls the host, such as `DEF WKGET NAME OUT N: N=SPVAR(..)`,
   is still called: its string argument is made and dropped on each call,
-  SPVAR's value comes back in a `Vec`, and a command DEF's RETURN works
-  out its OUTs from the DEF's description.
+  SPVAR's value comes back in a `Vec`, and a command DEF's RETURN
+  computes its OUTs from the DEF's description.
 - A command DEF of one statement that writes a variable, `DEF P A,B:
   G=A+B`, could be made in a chain the same way, its store the statement's
   last step: no game measured here has one that is hot.
@@ -1809,11 +1813,11 @@ What calls still cost, for later work:
 
 The sound is made on the thread that runs the program, a frame of 800
 samples at a time, so its cost comes out of the frame. On the RK3326,
-games spent 0.7 to 4.7 ms a frame outside the interpreter even when
+games spent 0.7 to 4.7 ms per frame outside the interpreter even when
 nearly idle, and with the instrument bank imported from the console
 nearly all of that was sound. This set ran with that bank.
 
-Method: seven programs of our own (below) and five games with the input
+Method: seven of our own programs (below) and five games with the input
 scripts of the [runtime commands](#runtime-commands-from-7021a05) set,
 `--bench --fixed`, `SB_BENCH_SOUND` set, the games over the frames of
 play the device kit measured (TENSMA 500-649, RYUSI 300-449,
@@ -1841,52 +1845,53 @@ after, on x86-64 for all cases and on aarch64 for those given there.
 | REVERB | a preset song, effects every 20 frames, `EFCSET 2` | 100-400 |
 | FADES | PSG and a WAVSET waveform, BGMPAUSE, BGMVOL, SNDMVOL fades | 100-400 |
 
-Where TENSMA's sound went at `c92ad81`, by function, x86-64
-instructions a frame (2.19 million in all; about 13 000 samples of
-voices a frame, in 16 voices on average):
+The cost of TENSMA's sound at `c92ad81`, by function, x86-64
+instructions per frame (2.19 million in all; about 13 000 samples of
+voices per frame, in 16 voices on average):
 
 | Part | Instructions |
 |---|---|
 | The sampler's voice loop | 1 087 000 |
-| `bank::Reader::next_of`, decoding DSP-ADPCM a sample at a time | 922 000 |
+| `bank::Reader::next_of`, decoding DSP-ADPCM one sample at a time | 922 000 |
 | `Sound::render_frame`, the mix and output | 59 000 |
 | Tracks, BEEP, NaN check, envelopes and the rest | 120 000 |
 
-A voice that sounds a whole frame cost about 84 instructions a sample
+A voice that sounds a whole frame cost about 84 instructions per sample
 in the loop and 55 for each sample it decoded. An idle sound system
-cost 94 000 a frame: the output loop a sample at a time, the NaN check,
-and BEEP's synthesizer cleared and added in with no voice. Each track
-that had played and stopped cost about 20 000 more, its synthesizer
-cleared and its zeros added into the mix with its fade stepped: RYUSI's
-idle tracks took 0.30 million. A preset effect, once its sequence had
-ended, rendered its 60 frames of tail a sample at a time: in MULTI,
-`Beeps::render`, `ceil`, `memset` and `Player::ended` together took 0.7
-million.
+cost 94 000 per frame: the output loop one sample at a time, the NaN
+check, and BEEP's synthesizer cleared and added in with no voice. Each
+track that had played and stopped cost about 20 000 more, its
+synthesizer cleared and its zeros added into the mix with its fade
+stepped: RYUSI's idle tracks took 0.30 million. A preset effect, once its
+sequence had ended, rendered its 60 frames of tail one sample at a time:
+in MULTI, `Beeps::render`, `ceil`, `memset` and `Player::ended` together
+took 0.7 million.
 
-What was made:
+The changes:
 
-- `49bafe3`: an ended effect's tail goes as one run a frame.
-- `bd2208c`: `Reader` decodes the rest of a 14-sample frame at once,
+- `49bafe3`: an ended effect's tail is rendered as one run per frame.
+- `bd2208c`: `Reader` decodes the rest of a 14-sample frame in one step,
   the nibbles' parts before the chain of predictions, and hands samples
   out of a buffer.
 - `bf91c27`: the voice loop takes samples from that buffer itself, with
   no call in the loop; around a call x86-64 keeps every float on the
   stack.
-- `7560964`: `Synth::silent` lets tracks, BEEP and the mix leave out
+- `7560964`: `Synth::silent` lets tracks, BEEP and the mix skip
   synthesizers with no voice and sources that would add zeros, and the
-  loops for a gain that does not move have nothing else in them. The
+  loops for a gain that does not change have nothing else in them. The
   buffers start at +0 and only take sums, so they never hold -0, and
-  adding a zero leaves them as they are.
+  adding a zero leaves them unchanged.
 - `3a04a87`: a sound system keeps what its notes decode, in chunks of
   1024 samples, at most 4 MiB, for the next notes of the same waveforms
-  (`sound::decoded`). A waveform no note plays makes way, the one
+  (`sound::decoded`). A waveform no note plays is removed, the one
   played longest ago first; with every waveform kept in use, a note
-  decodes on alone. A loop takes the kept samples when its history is
-  the first pass's, as for all 742 looping waveforms of the bank.
-- `71f1e60`: PSG and WAVSET notes go as runs of a step of the envelope,
-  their state in locals.
+  continues decoding alone. A loop takes the kept samples when its
+  history is that of the first pass, which is the case for all 742
+  looping waveforms of the bank.
+- `71f1e60`: PSG and WAVSET notes are rendered as runs, one per step of
+  the envelope, with their state in locals.
 
-Sound's instructions a frame, x86-64, `c92ad81` against `71f1e60`:
+Sound's instructions per frame, x86-64, `c92ad81` against `71f1e60`:
 
 | Case | Before | After | Change |
 |---|---|---|---|
@@ -1916,7 +1921,7 @@ alone in brackets:
 | MAMANATSU | 57 (54) | 17 (15) |
 
 Whole frames on aarch64 (the program, the sound, and the bench's CPU
-drawing), instructions a frame over the frames given, `c92ad81` against
+drawing), instructions per frame over the frames given, `c92ad81` against
 `71f1e60`, each case's checksums the same before and after:
 
 | Case | Frames | Before | After | Change |
@@ -1933,30 +1938,30 @@ drawing), instructions a frame over the frames given, `c92ad81` against
 TENSMA's 1.1 million are 7 to 8% of what an A35 runs in a frame. The sound
 checksums of MULTI, MML, REVERB, FADES, SOLIDGUNNER_V and NK8_ROGUE2020
 over their whole runs are the same on aarch64 as on x86-64, before and
-after. TENSMA's differs between the two machines, the same before and
-after. Its notes use `powf`, `sin` and `exp2` more than the others',
-and the two C libraries' last bits may differ; this was not followed
-further.
+after. TENSMA's checksum differs between the two machines, the same
+before and after. Its notes use `powf`, `sin` and `exp2` more than those
+of the others, and the two C libraries' last bits may differ; this was
+not followed further.
 
 The decoded waveforms took at most 3.5 MB in TENSMA, 1.3 MB in MML,
 0.96 MB in SOLIDGUNNER_V and 31 KB in NK8_ROGUE2020; no chunk was
-refused for the budget. A voice now costs about 41 x86-64 instructions a
-sample, and the voice loop is 82% of TENSMA's sound.
+refused for the budget. A voice now costs about 41 x86-64 instructions
+per sample, and the voice loop is 82% of TENSMA's sound.
 
-Where the rest goes, for later work:
+The remaining costs, for later work:
 
-- **The voice loop**, about 30 instructions a sample of each voice in
+- **The voice loop**, about 30 instructions per sample of each voice in
   its loop: interpolating, the gains' slide, and adding into the mix,
   whose loads and stores take a third of it. Mixing two to four voices in
   one pass over the buffers would share the loads and stores, with each
-  voice's sums as they are.
+  voice's sums unchanged.
 - **PSG and WAVSET notes**, 0.46 of FADES's 0.71 million: the filter's
   four taps, and converting the position, an `f64`, to an index and a
   phase each sample.
-- **The reverb**, 0.32 of REVERB's 0.73 million while `EFCEN` is on, a
-  sample at a time over six taps, four combs and two all-passes a side,
+- **The reverb**, 0.32 of REVERB's 0.73 million while `EFCEN` is on, one
+  sample at a time over six taps, four combs and two all-passes per side,
   and 0.15 million more in `render_frame` for the effector's buses. A
-  tail that has died to exactly zero could be left out until something
+  tail that has died to exactly zero could be skipped until something
   is sent again.
 - **The first note of a waveform** decodes a chunk ahead, about 10 000
   instructions, where it decoded 14 samples before.
@@ -1964,11 +1969,12 @@ Where the rest goes, for later work:
 ### Games on the handheld, `7021a05` to `dac7ad2`
 
 The runtime command, call and sound passes together, timed on the
-Cortex-A35 handheld with the imported instrument bank: program time a frame
-in milliseconds, the median over each project's measured frames, best of
-three rounds with the two builds alternating. Both are `dist` builds with
-`unchecked-vars`, run without drawing, pinned to one core with the front end
-stopped. Every project's checksum is the same in both builds.
+Cortex-A35 handheld with the imported instrument bank: program time per
+frame in milliseconds, the median over each project's measured frames,
+best of three rounds with the two builds alternating. Both are `dist`
+builds with `unchecked-vars`, run without drawing, pinned to one core with
+the front end stopped. Every project's checksum is the same in both
+builds.
 
 | Project | `7021a05` | `dac7ad2` | Change |
 |---|---|---|---|
@@ -1987,34 +1993,34 @@ stopped. Every project's checksum is the same in both builds.
 The run does not separate the three passes. S51_MEDAL4 and NEON_DRIFTWAY
 still take more than a 16.7 ms frame.
 
-## Tried and left out
+## Tried and not kept
 
 Each of these was measured and not kept.
 
 - **The sampler's voice state in locals, with the reader's call left in
   the loop**: TENSMA's sound went from 1.45 to 1.55 million x86-64
-  instructions a frame, as the floats still went to the stack around
-  the call. Taking the decoded samples in the loop and calling the
+  instructions per frame, because the floats still went to the stack
+  around the call. Taking the decoded samples in the loop and calling the
   reader outside it (`bf91c27`) gave 1.23 million (2026-11-17).
 - **The table in a variable's lowest bit** instead of its highest, to find
   the table's place in one instruction fewer: on top of `cc60440`, loops
-  moved by -2.3% (VARRAY's) to +2.7% (an empty FOR); on top of the
+  moved by -2.3% (VARRAY's loop) to +2.7% (an empty FOR); on top of the
   constants, 5 of 8 loops came out worse, by up to 3.5% (a GOSUB loop). LLVM
-  lays out `run_fused`'s registers anew, which outweighs the instruction
+  lays out `run_fused`'s registers again, which outweighs the instruction
   (2026-11-16).
 - **A write that drops a string out of line**, a cold call to clear the
   place and then `mem::forget(mem::replace(..))` for the stores, to keep
   the drop's code out of the 70 or so places that write a number:
   `run_fast` 432 bytes smaller, but VINT's loop 424 to 465 aarch64
-  instructions and VARRAY's 1124 to 1202, as the call kept values out of
-  registers (2026-11-16).
+  instructions and VARRAY's loop 1124 to 1202, because the call kept
+  values out of registers (2026-11-16).
 - **Bounds checks folded in safe Rust.** For `v[i & (v.len() - 1)]` LLVM
   keeps a test of the length for zero; with the mask kept elsewhere it
   keeps the whole check. Only an index into a fixed-size array,
   `&[Value; 32768]` with the index masked to 15 bits, has none, which would
   mean 512 KB for each slot's globals, and padding every DEF call's
-  variables to the same, as a call's variables follow each other in one
-  list (2026-11-16).
+  variables to the same, because a call's variables follow each other in
+  one list (2026-11-16).
 - **Steps typed by suffix**, for `A%=B%+1`: a suffix only sets a
   variable's starting value, so the tag check stays (2026-11-16).
 - **Handing a builtin's or host's call back from `run_fused` with its id
@@ -2026,17 +2032,17 @@ Each of these was measured and not kept.
 - **LLVM's own inlining of `Vec::truncate`** where a fused DEF return
   drops the callee's variables: 0.7 KB more of `run_fast` for the drop of
   strings and arrays, which a return rarely has to do. `cut` checks that
-  what goes is numbers and leaves the rest to a function of its own
-  (2026-11-16).
-- **The room check of a chain that makes calls out of line**, a function
-  of its own that reads the frames: the LINTP loop of the
+  the removed values are numbers and leaves the rest to a separate
+  function (2026-11-16).
+- **The room check of a chain that makes calls out of line**, in a
+  separate function that reads the frames: the LINTP loop of the
   [leaf functions](#calls-by-name-and-leaf-functions-from-7021a05) set
-  went from 372 to 395 x86-64 instructions an iteration and the function
-  DEF's from 297 to 317, and the calls not taken in were no cheaper
+  went from 372 to 395 x86-64 instructions per iteration and the function
+  DEF loop from 297 to 317, and the calls not taken in were no cheaper
   (2026-11-17).
 
 - **Dropping the memos on missed branches.** SPANIM's and LCOMP's branch
-  misses come from working out a paint or a blend only when the pixel differs
+  misses come from computing a paint or a blend only when the pixel differs
   from the last. Without the memos, SPANIM has branch misses -47% and
   instructions +28%, and LCOMP has -66% and +89%, with cycles +126%. An
   in-order core spends few cycles on a miss and at least one on each
@@ -2044,47 +2050,48 @@ Each of these was measured and not kept.
 - **Blending plain layers with SSE2**, in lanes with the same sums:
   instructions -3 to -8% on layer scenes, cycles -1 to -8%, branch misses -9
   to -20%. It would be the first `unsafe` in `crates/sb-runtime/src`, for a
-  gain on x86 alone. NEON was not tried, as no Arm target was available to
-  build for on 2026-11-05, when this was measured. The cross-build in
-  [building-handheld.md](../building/building-handheld.md), added in `bc19803`, provides
-  one.
+  gain on x86 alone. NEON was not tried, because no Arm target was
+  available to build for on 2026-11-05, when this was measured. The
+  cross-build in [building-handheld.md](../building/building-handheld.md),
+  added in `bc19803`, provides one.
 - **The fused steps' variables as two fields** instead of an array of two
   tables indexed by the variable's table bit, for a select in place of a
   load: VINT's loop 583 to 580 aarch64 instructions, the others within 2%
-  either way, as the tables' pointers still went to the stack (2026-11-15).
+  either way, because the tables' pointers still went to the stack
+  (2026-11-15).
 - **Chain registers in `run_fused`'s own locals** instead of hidden
   variables: as an array of `Num`, LLVM kept the numbers on the stack and
   copied them in and out of every step, a loop of scalar real updates 588 to
-  701 aarch64 instructions an iteration; as an array of `Value`, 670. The
+  701 aarch64 instructions per iteration; as an array of `Value`, 670. The
   hidden variables cost a variable's read and write but no branch on what
   kind of operand a step has (2026-11-16).
-- **A chain's steps in a function of their own** (`#[inline(never)]`), to
-  keep their registers out of the other entries': the call and the variables
-  passed through memory took a loop of scalar real updates from 683 to 1005
-  x86-64 instructions an iteration, VINT's frame from 9.9 to 13.4 million
-  (2026-11-16).
+- **A chain's steps in a separate function** (`#[inline(never)]`), to
+  keep their registers out of those of the other entries: the call and the
+  variables passed through memory took a loop of scalar real updates from
+  683 to 1005 x86-64 instructions per iteration, VINT's frame from 9.9 to
+  13.4 million (2026-11-16).
 - **Chains for every statement of two operators**, at a cost of 30 to start
-  and 40 a step: a chain's step costs about 60 aarch64 instructions against
-  70 for an entry, so two steps and the start cost more than two entries.
-  With that weighting a loop of sprite updates in reals went from 2294 to
-  2426 x86-64 instructions an iteration and one of scalar reals from 652 to
-  683; the weighting in `fuse.rs` takes a chain only where it leaves out an
-  entry (2026-11-16).
+  and 40 per step: a chain's step costs about 60 aarch64 instructions
+  against 70 for an entry, so two steps and the start cost more than two
+  entries. With that weighting a loop of sprite updates in reals went from
+  2294 to 2426 x86-64 instructions per iteration and one of scalar reals
+  from 652 to 683; the weighting in `fuse.rs` takes a chain only where it
+  removes an entry (2026-11-16).
 - **`-C target-cpu=cortex-a35` and `opt-level`** (see the handheld set).
   Under qemu, `cortex-a35` adds 0 to 2% instructions, `opt-level=2` moves
   loops by -3 to +4% and shrinks `run_fast` by 13%, and `opt-level=s` adds 6
   to 14%. On the device, `cortex-a35` with `-aes,-sha2,-crc` ran 1.4% slower
   by geometric mean, and `opt-level=2` 0.1% faster, within the noise of code
-  layout. `dist` stays as it is (2026-11-16).
+  layout. `dist` stays unchanged (2026-11-16).
 - **ARYOP reading every array in place**, the result too, with a match
   on each parameter's type for each element: `ARYOP 0,PX#,PX#,DX#` 4482
-  to 5575 x86-64 instructions an iteration, against 3399 for reading
+  to 5575 x86-64 instructions per iteration, against 3399 for reading
   only other real arrays in place and a loop for each operation
   (2026-11-17).
 - **A fast path for the sprite-number check** before SPOFS, SPROT and
-  SPSCALE: it saved about 5 aarch64 instructions a call, and SPROT's time
+  SPSCALE: it saved about 5 aarch64 instructions per call, and SPROT's time
   on the device did not change (2026-11-16).
 - **Comparing scenes to skip a frame:** the emulator draws a frame only after
   a command changed what shows. Of about 1100 frames each in five projects, 0
-  to 3 had a scene, pages and cells like the last, so a hash would cost every
-  frame for nothing.
+  to 3 had a scene, pages and cells the same as the last, so a hash would
+  cost every frame needlessly.

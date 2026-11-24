@@ -1,5 +1,5 @@
 //! One BGM track: a song's channels stepped through tick by tick, played
-//! on a synthesizer of the track's own.
+//! on the track's own synthesizer.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -15,17 +15,17 @@ use super::talk::{Singer, key_hz};
 use super::wave::{self, Envelope, Waves};
 use super::{RATE, Ramp, add_scaled};
 
-/// Ticks in a quarter note; T counts quarter notes a minute.
+/// Ticks in a quarter note; T counts quarter notes per minute.
 const QUARTER: u32 = WHOLE / 4;
 /// Commands a channel may run on one tick before it is taken to be stuck
 /// in a loop that plays nothing.
 const COMMANDS_PER_TICK: u32 = 10_000;
-/// A sung note's level, as TALK's.
-// UNVERIFIED: how loud singing is beside the instruments.
+/// A sung note's level, the same as TALK's level.
+// UNVERIFIED: how loud singing is compared with the instruments.
 const SUNG_GAIN: f32 = 0.7;
-/// Samples in a unit of an LFO's delay: 40 ms, whatever the tempo.
+/// Samples in a unit of an LFO's delay: 40 ms, regardless of the tempo.
 const LFO_DELAY_UNIT: u32 = RATE / 25;
-/// What a channel plays with, from @.
+/// The instrument a channel plays with, from @.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Voice {
     /// An instrument of the synthesizer.
@@ -43,8 +43,8 @@ struct Channel {
     wait: u32,
     /// Ticks until the sounding notes stop; 0 when held for a link.
     gate: u32,
-    /// Open repeats: where they start and how many times are left (0 for
-    /// ever).
+    /// Open repeats: where they start and how many times are left (0
+    /// repeats forever).
     repeats: Vec<(usize, u32)>,
     octave: i32,
     length: u32,
@@ -54,9 +54,9 @@ struct Channel {
     velocity: i32,
     detune: i32,
     pan: i32,
-    /// @E's, over the waveform's own.
+    /// The @E envelope, which overrides the waveform's own envelope.
     envelope: Option<Envelope>,
-    /// @MP's, @MA's and @ML's settings, which @MON turns back on after
+    /// The settings of @MP, @MA and @ML, which @MON turns back on after
     /// @MOF.
     lfo_set: [Lfo; 3],
     /// The LFOs now: as set, or off after @MOF or their own OF.
@@ -68,7 +68,7 @@ struct Channel {
     sounding: Vec<i32>,
     /// Notes started, for the debugger.
     notes: u32,
-    /// How the last note joins the next.
+    /// The link from the last note to the next.
     link: Link,
     /// A portamento under way.
     glide: Option<Glide>,
@@ -80,7 +80,7 @@ struct Channel {
 }
 
 /// A note glides to the next one's key over its gate, in a straight line
-/// in semitones, then the next note goes on from there without starting
+/// in semitones, then the next note continues from there without starting
 /// again: `C2_G2` slides up from C for a second and holds G for a second
 /// (TEST41).
 #[derive(Clone, Copy, Debug)]
@@ -124,7 +124,7 @@ impl Default for Channel {
 }
 
 pub(crate) struct Track {
-    /// None without instruments: the song goes on, silent.
+    /// None without instruments: the song continues, silent.
     synth: Option<Box<dyn Synth>>,
     waves: Rc<RefCell<Waves>>,
     /// Waveform notes sounding, with their channels.
@@ -149,7 +149,7 @@ pub(crate) struct Track {
     until_tick: f64,
     /// Plays: a song that has not ended, or a preset that is not there.
     pub(crate) playing: bool,
-    /// How far a song started since the last frame was mixed has got.
+    /// The progress of a song started since the last frame was mixed.
     pub(crate) fresh: Fresh,
     /// Frames BGMCHK still says 1 after a fade out ended.
     pub(crate) linger: u32,
@@ -158,7 +158,7 @@ pub(crate) struct Track {
     pub(crate) volume: i32,
     /// Fades in, out and around pauses.
     pub(crate) fade: Ramp,
-    /// What happens when the fade ends.
+    /// The action taken when the fade ends.
     pub(crate) after_fade: AfterFade,
     /// BGMPITCH, in cents.
     pub(crate) pitch: i32,
@@ -273,7 +273,7 @@ impl Track {
         self.silence();
     }
 
-    /// Every note stops at once.
+    /// Stops every note immediately.
     fn silence(&mut self) {
         if let Some(s) = &mut self.synth {
             (0..self.channels.len()).for_each(|c| s.channel_off(c));
@@ -402,8 +402,9 @@ impl Track {
         }
     }
 
-    /// The end of a portamento: the held notes `from` go on as `to`, the
-    /// first to the first and any left over to the last.
+    /// The end of a portamento: the held notes `from` continue as `to`, the
+    /// first to the first. Keys left over in `to` start as new notes, and
+    /// keys left over in `from` are released.
     fn retune(&mut self, c: usize, from: &[i32], to: &[i32]) {
         if let (true, Some(&key)) = (self.channels[c].singing, to.first()) {
             let hz = key_hz(key, self.cents(c).rem_euclid(100));
@@ -430,8 +431,8 @@ impl Track {
         self.porta(c, 0.0);
     }
 
-    /// The keys the next note of channel `c` from command `pc` on plays,
-    /// none for a rest.
+    /// The keys that the next note of channel `c`, from command `pc` on,
+    /// plays; none for a rest.
     fn next_keys(&self, c: usize, pc: usize) -> Vec<i32> {
         let Some(song) = &self.song else {
             return Vec::new();
@@ -487,15 +488,16 @@ impl Track {
                 for &key in keys {
                     // As many as the sampler keeps, so that long releases
                     // (and a release of 0, which never ends) cannot pile
-                    // up notes: the oldest let go makes way.
+                    // up notes: the oldest released note is removed.
                     if self.voices.len() >= sampler::MAX_VOICES {
                         let oldest = self.voices.iter().position(|(.., v)| v.released());
                         self.voices.remove(oldest.unwrap_or(0));
                     }
                     // A 16-bit sample loops between its loop points, the
-                    // whole of it by default; BEEP's flag is BEEP's alone.
-                    // Drivers such as DAW_MUSIC's give a 128-sample cycle
-                    // that way, which played once was a 2 ms click.
+                    // whole of it by default; BEEP's flag applies to BEEP
+                    // only. Drivers such as the one in DAW_MUSIC give a
+                    // 128-sample cycle that way, which was a 2 ms click
+                    // when played once.
                     let v = wave::Voice::new(w.clone(), envelope, key, cents, true);
                     self.voices.push((c, program, v));
                 }
@@ -510,8 +512,8 @@ impl Track {
         (octave + 1) * 12 + semitone + shift
     }
 
-    /// Starts `keys` for `ticks`, joined to what sounds as the last note
-    /// asked.
+    /// Starts `keys` for `ticks`, joined to the sounding notes in the way
+    /// the last note asked.
     fn sound(&mut self, c: usize, keys: Vec<i32>, ticks: u32, link: Link) {
         let tie = self.channels[c].link != Link::None;
         let keys: Vec<i32> = keys.into_iter().filter(|k| (0..128).contains(k)).collect();
@@ -519,8 +521,8 @@ impl Track {
         let lyric = self.channels[c].lyric.take().filter(|_| !keys.is_empty());
         let gate = (ticks * (self.channels[c].quantize as u32 + 1) / 33).max(1);
         if let Some(letters) = lyric {
-            // A sung note starts again whatever joins it to the last; the
-            // instrument does not play it.
+            // A sung note starts again regardless of its link to the last
+            // note; the instrument does not play it.
             let old = std::mem::take(&mut self.channels[c].sounding);
             self.keys_off(c, &old);
             let length = if link == Link::None { gate } else { ticks };
@@ -531,9 +533,9 @@ impl Track {
             ch.notes = ch.notes.wrapping_add(1);
             ch.sounding = keys;
         } else if tie && self.channels[c].sounding == keys {
-            // A tie: the notes go on.
+            // A tie: the notes continue.
         } else if tie && !keys.is_empty() && !self.channels[c].sounding.is_empty() {
-            // A slur or the end of a portamento: the notes go on at the
+            // A slur or the end of a portamento: the notes continue at the
             // new keys without striking again.
             let old = std::mem::take(&mut self.channels[c].sounding);
             self.retune(c, &old, &keys);
@@ -576,7 +578,7 @@ impl Track {
         };
     }
 
-    /// Sets @MP's, @MA's or @ML's depth, range, speed and delay.
+    /// Sets the depth, range, speed and delay of @MP, @MA or @ML.
     fn set_lfo(&mut self, c: usize, target: LfoTarget, v: [Num; 4]) {
         let [depth, range, speed, delay] = v.map(|n| self.var(n).clamp(0, 128));
         let lfo = Lfo {
@@ -700,7 +702,7 @@ impl Track {
                 // @MPON, @MAON and @MLON send the last settings of one LFO
                 // again; a `:` forgets them, so `@MP64,1,20,0@MPOF:0@MPON`
                 // sends the default settings, which do nothing.
-                // UNVERIFIED: an LFO that sounds goes on past the `:`.
+                // UNVERIFIED: an LFO that sounds continues past the `:`.
                 Cmd::ForgetLfos => self.channels[c].lfo_set = [Lfo::default(); 3],
                 Cmd::VibratoOn => self.apply_lfo(c, LfoTarget::Pitch, true),
                 Cmd::TremoloOn => self.apply_lfo(c, LfoTarget::Volume, true),
@@ -768,11 +770,11 @@ impl Track {
         }
     }
 
-    /// One tick: notes whose time is up stop, and channels go on.
+    /// One tick: notes whose time is up stop, and channels continue.
     fn tick(&mut self) {
         self.ticks += 1;
         if let Some(p) = &mut self.seq {
-            // Without instruments a preset goes on, silent, until stopped.
+            // Without instruments a preset continues, silent, until stopped.
             if let Some(s) = &mut self.synth {
                 p.tick(s.as_mut());
                 if p.ended() {
@@ -810,7 +812,7 @@ impl Track {
         }
     }
 
-    /// What the track plays, while it plays or is paused.
+    /// Returns what the track plays, while it plays or is paused.
     pub(crate) fn inspect(&self, track: usize) -> Option<TrackInfo> {
         if !self.playing {
             return None;
@@ -867,8 +869,8 @@ impl Track {
         }
     }
 
-    /// Adds `left.len()` samples of the track to the buffers, and to the
-    /// effector's as much as it sends there.
+    /// Adds `left.len()` samples of the track to the buffers, and its send
+    /// share of them to the effector's buffers.
     pub(crate) fn render(
         &mut self,
         left: &mut [f32],
@@ -880,7 +882,7 @@ impl Track {
         self.linger = self.linger.saturating_sub(1);
         if self.hold > 0 {
             self.hold -= 1;
-            // A fade out goes on while the song waits to begin.
+            // A fade out continues while the song waits to begin.
             if self.after_fade == AfterFade::Stop {
                 (0..left.len()).for_each(|_| self.fade.step_sample());
                 self.end_fade();
@@ -896,7 +898,7 @@ impl Track {
         }
         let n = left.len();
         // Nothing sounds, and nothing plays that could start a note: the
-        // track would add zeros, which leave the mix as it is.
+        // track would add zeros, which leave the mix unchanged.
         let quiet = self.voices.is_empty()
             && !self.singers.iter().any(|(_, s)| s.sounding())
             && self.synth.as_ref().is_none_or(|s| s.silent());
@@ -965,18 +967,18 @@ impl Track {
             done += chunk;
         }
         // Levels are measured at BGMPLAY's own volume of 64; BGMVOL goes
-        // on up to twice that.
+        // up to twice that.
         let volume = self.volume as f32 / 64.0 * self.seq.as_ref().map_or(1.0, Player::volume);
         if !sounded {
-            // Zeros, which adding leaves the mix as it is: the mix and the
-            // effector's bus start at 0 and only take sums, and so never
-            // hold -0.
+            // Zeros, which leave the mix unchanged when added: the mix and
+            // the effector's bus start at 0 and only take sums, and so
+            // never hold -0.
             if !self.fade.done() {
                 (0..n).for_each(|_| self.fade.step_sample());
             }
         } else if self.fade.done() {
-            // The gain stays as it is, and the loops do as the one below
-            // with nothing else in them.
+            // The gain is constant, and the loops do the same as the loop
+            // below, with nothing else in them.
             let gain = volume * self.fade.value as f32;
             add_scaled(left, &l[..n], gain);
             add_scaled(right, &r[..n], gain);
@@ -1032,8 +1034,8 @@ mod tests {
 
     #[test]
     fn samples_loop_in_songs() {
-        // WAVSETA's 16-bit form with its loop over the whole sample, as
-        // drivers that build one cycle of 128 samples give it.
+        // WAVSETA's 16-bit form with its loop over the whole sample, the
+        // same as drivers that build one cycle of 128 samples give it.
         let waves = Rc::new(RefCell::new(Waves::default()));
         waves.borrow_mut().user[0] = Some(Rc::new(wave::Wave {
             samples: (0..128)
@@ -1085,7 +1087,7 @@ mod tests {
         t.play(Some(Rc::new(parse("T120@219O4C2_G2").unwrap())), 127, 0);
         let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
         let mut scratch = Default::default();
-        // Half way through C2, half way to G.
+        // Halfway through C2, halfway to G.
         for _ in 0..30 {
             t.render(&mut l, &mut r, &mut scratch, None);
         }
@@ -1165,8 +1167,8 @@ mod tests {
             .unwrap()
     }
 
-    /// `*A,` sings: without instruments the note is heard all the same,
-    /// at the note's pitch, and it ends with the note.
+    /// `*A,` sings: without instruments the note is still heard, at the
+    /// note's pitch, and it ends with the note.
     #[test]
     fn sung_notes_sing_at_their_pitch() {
         let waves = Rc::new(RefCell::new(Waves::default()));

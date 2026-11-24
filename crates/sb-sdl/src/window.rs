@@ -1,14 +1,15 @@
-//! The emulator's windows: what size the main one starts at, the sizes
-//! View > Window size gives it, which one comes to the front for input
-//! that another window's dialog keeps, and the shape it is kept at.
-//! Where things go inside a window is [`crate::placement`]'s.
+//! The emulator's windows: the start size of the main window, the
+//! sizes that View > Window size gives it, which window comes to the
+//! front when a dialog on the other window keeps the input, and the
+//! shape the main window is kept at. [`crate::placement`] decides
+//! where things go inside a window.
 
 use sdl3::event::Event;
 use std::time::{Duration, Instant};
 
-/// View > Window size: each item's label and the multiple of the
-/// profile's display (1280x720 for SmileBASIC 4) it sets the main
-/// window's pixels to, in halves. A line here is an item there.
+/// View > Window size: the label of each item, and the multiple of the
+/// profile's display (1280x720 for SmileBASIC 4) that it sets the main
+/// window's pixels to, in halves. Each line here is one menu item.
 pub const SCALES: [(&str, u32); 6] = [
     ("0.5x", 1),
     ("1x", 2),
@@ -24,7 +25,7 @@ pub fn scaled(display: (u32, u32), halves: u32) -> (u32, u32) {
 }
 
 /// The size in the system's window coordinates that holds `pixels`, at
-/// `density` pixels to a coordinate: 2 on a Mac's Retina display, the
+/// `density` pixels per coordinate: 2 on a Mac's Retina display, the
 /// desktop's scale on Wayland, 1 on Windows and X11, whose coordinates are
 /// pixels.
 pub fn coordinates((w, h): (u32, u32), density: f32) -> (u32, u32) {
@@ -35,8 +36,9 @@ pub fn coordinates((w, h): (u32, u32), density: f32) -> (u32, u32) {
 
 /// The items of [`SCALES`] whose size fits a display's usable area
 /// `usable` with the window's `borders` (top, left, bottom, right) around
-/// it, as bits from the first item up. The others are disabled rather
-/// than shrunk, as a shrunk size is not the multiple asked for.
+/// it, as bits with the first item in the lowest bit. The others are
+/// disabled rather than shrunk, because a shrunk size is not the multiple
+/// asked for.
 pub fn fitting(
     display: (u32, u32),
     density: f32,
@@ -52,24 +54,25 @@ pub fn fitting(
         .fold(0, |bits, (i, _)| bits | 1 << i)
 }
 
-/// The item of [`SCALES`] the main window is at, which is checked: its
-/// pixels are that multiple exactly, and it is not fullscreen.
+/// The item of [`SCALES`] that the main window is at, which the menu shows
+/// checked: its pixels are exactly that multiple, and it is not fullscreen.
 pub fn current(display: (u32, u32), pixels: (u32, u32), fullscreen: bool) -> Option<usize> {
     let at = |&(_, halves): &(&str, u32)| scaled(display, halves) == pixels;
     SCALES.iter().position(at).filter(|_| !fullscreen)
 }
 
-/// One of the emulator's windows: the main one, or the editor's own.
+/// One of the emulator's windows: the main window or the editor window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Which {
     Main,
     Editor,
 }
 
-/// The window that shows the emulator's window taking all input, if one
-/// is `modal` and the editor's own window is shown (`apart`): the window
-/// that had the keys when it opened, `ui_editor` for the editor's. With
-/// one window there is nothing to bring forward.
+/// The window showing the emulator's window that takes all input, if one
+/// is open (`modal`) and the editor window is shown (`apart`). This is the
+/// window that had the keys when the modal window opened: the editor
+/// window if `ui_editor`. With one window there is nothing to bring
+/// forward.
 pub fn modal_window(apart: bool, modal: bool, ui_editor: bool) -> Option<Which> {
     match (apart && modal, ui_editor) {
         (false, _) => None,
@@ -81,11 +84,11 @@ pub fn modal_window(apart: bool, modal: bool, ui_editor: bool) -> Option<Which> 
 /// The window to bring to the front for `event`, from window `from`,
 /// while one of the emulator's windows that take all input (a dialog,
 /// the projects, the settings, the editor colors, the keyboard
-/// shortcuts, Ctrl+S's and Ctrl+L's windows) shows on `modal_on`. A
+/// shortcuts, the windows of Ctrl+S and Ctrl+L) shows on `modal_on`. A
 /// press, a click, the wheel or typing in the other window brings that
-/// one forward, and goes no further: it would otherwise reach the window
-/// the user cannot see, or nothing, which looks like a hang. The pointer's
-/// motion and releases are left alone.
+/// window forward and goes no further. Otherwise it would reach the window
+/// the user cannot see, or nothing, which looks like a hang. Pointer
+/// motion and releases are not blocked.
 pub fn blocked_by(event: &Event, modal_on: Option<Which>, from: Which) -> Option<Which> {
     let input = matches!(
         event,
@@ -98,13 +101,13 @@ pub fn blocked_by(event: &Event, modal_on: Option<Which>, from: Which) -> Option
     modal_on.filter(|&on| input && on != from)
 }
 
-/// The size the main window starts at, in the system's window
-/// coordinates, when it asks for `w` x `h` on a display whose usable area
-/// is `usable`: no larger on either side. A window larger than the
-/// display shows only in part on most systems; on Linux's KMS/DRM, the
-/// console without a desktop, SDL draws into a buffer the display's size
-/// while the window keeps the size it asked for, so the renderer would
-/// lay its frames out for the wrong size.
+/// The start size of the main window, in the system's window
+/// coordinates, when it asks for `w` x `h` on a display with the usable
+/// area `usable`: no larger than that area in either dimension. On most
+/// systems a window larger than the display shows only in part. On
+/// Linux's KMS/DRM, the console without a desktop, SDL draws into a buffer
+/// of the display's size while the window keeps the size it asked for, so
+/// the renderer would lay out its frames for the wrong size.
 pub fn start_size((w, h): (u32, u32), usable: Option<(u32, u32)>) -> (u32, u32) {
     match usable {
         Some((uw, uh)) if uw > 0 && uh > 0 => (w.min(uw), h.min(uh)),
@@ -113,11 +116,12 @@ pub fn start_size((w, h): (u32, u32), usable: Option<(u32, u32)>) -> (u32, u32) 
 }
 
 /// The size nearest to `(w, h)` with the shape of `display` (16:9 for
-/// SmileBASIC 4) that fits `room`, the display's usable area less the
-/// window's borders, if known; `None` where the size is that shape to a
-/// pixel already. The width stays and the height follows, unless that
-/// leaves the room; then the height stays and the width follows, and
-/// where neither fits, the largest size of the shape that does.
+/// SmileBASIC 4) that fits `room`, the display's usable area minus the
+/// window's borders, if known. `None` when the size already has that
+/// shape to within a pixel. The width stays and the height follows it,
+/// unless the result does not fit the room. Then the height stays and the
+/// width follows it. When neither fits, the result is the largest size of
+/// the shape that fits.
 pub fn snap_to_shape(
     (w, h): (u32, u32),
     display: (u32, u32),
@@ -150,18 +154,19 @@ pub fn snap_to_shape(
     (size != (w, h)).then_some(size)
 }
 
-/// How long the main window's size has to stay before View > "Keep 16:9
-/// when resizing" puts it right: a drag sends sizes more often than this.
+/// The time the main window's size must stay unchanged before View >
+/// "Keep 16:9 when resizing" corrects it. A drag sends sizes more often
+/// than this.
 pub const SETTLE: Duration = Duration::from_millis(300);
 
-/// How many sizes in a row the system may refuse before the window's
-/// shape is left as it is, until the item is turned on again.
+/// The number of sizes in a row the system may refuse before the window's
+/// shape is left unchanged until the item is turned on again.
 const STRIKES: u32 = 2;
 
 /// Puts the main window back to the display's shape after the user
-/// resizes it, where the system ignores the shape the window asks for
-/// (some Wayland compositors do): once the size has settled, never during
-/// a drag, and never in a loop with a system that keeps refusing.
+/// resizes it, on systems that ignore the shape the window asks for (some
+/// Wayland compositors do). It acts once the size has settled, never
+/// during a drag, and never in a loop with a system that keeps refusing.
 #[derive(Debug, Default)]
 pub struct KeepShape {
     /// When the window was last resized, until its size has settled.
@@ -179,9 +184,9 @@ impl KeepShape {
         self.resized = Some(now);
     }
 
-    /// The item was turned on, or the window has to be put right at once:
-    /// starts afresh and gives the size to ask for, if any. `free` is a
-    /// window the shape is not kept for: fullscreen or maximized.
+    /// The item was turned on, or the window must be corrected now:
+    /// resets and returns the size to ask for, if any. `free` means a
+    /// window that the shape is not kept for: fullscreen or maximized.
     pub fn now(
         &mut self,
         size: (u32, u32),
@@ -209,7 +214,8 @@ impl KeepShape {
         }
         self.resized = None;
         let wanted = snap_to_shape(size, display, room);
-        // The size that settled after one asked for: given, or refused.
+        // The size that settled after a size was asked for: given or
+        // refused.
         if self.asked.take().is_some() {
             match wanted {
                 None => self.strikes = 0,
@@ -290,14 +296,14 @@ mod tests {
     fn input_in_the_other_window_brings_the_dialogs_forward() {
         use Which::{Editor, Main};
         for event in inputs() {
-            // The dialog on the main window, input in the editor's.
+            // The dialog on the main window, input in the editor window.
             assert_eq!(blocked_by(&event, Some(Main), Editor), Some(Main));
-            // And the other way round.
+            // And the reverse.
             assert_eq!(blocked_by(&event, Some(Editor), Main), Some(Editor));
             // In the dialog's own window, it goes to the dialog.
             assert_eq!(blocked_by(&event, Some(Main), Main), None);
             assert_eq!(blocked_by(&event, Some(Editor), Editor), None);
-            // With no dialog, or no editor's window, nothing is blocked.
+            // With no dialog, or no editor window, nothing is blocked.
             assert_eq!(blocked_by(&event, None, Editor), None);
             assert_eq!(blocked_by(&event, None, Main), None);
         }
@@ -311,8 +317,8 @@ mod tests {
             assert_eq!(modal_window(false, true, ui_editor), None);
             assert_eq!(modal_window(true, false, ui_editor), None);
         }
-        // A press in the editor's window with the settings on the main
-        // one brings the main one forward.
+        // A press in the editor window, with the settings on the main
+        // window, brings the main window forward.
         let modal_on = modal_window(true, true, false);
         assert_eq!(
             blocked_by(&key(2), modal_on, Which::Editor),
@@ -375,7 +381,7 @@ mod tests {
             let n: f32 = label.trim_end_matches('x').parse().unwrap();
             assert_eq!(n * 2.0, halves as f32, "{label}");
         }
-        // In window coordinates: a Retina display's are half the pixels.
+        // In window coordinates: on a Retina display, half the pixels.
         assert_eq!(coordinates((1280, 720), 1.0), (1280, 720));
         assert_eq!(coordinates((1280, 720), 2.0), (640, 360));
         assert_eq!(coordinates((1920, 1080), 1.5), (1280, 720));
@@ -386,8 +392,8 @@ mod tests {
     fn sizes_past_the_display_are_left_out() {
         let sb4 = (1280, 720);
         let none = (0, 0, 0, 0);
-        // 1920x1080 with a 40-pixel panel: up to 1.5x, as 1080 lines with a
-        // title bar do not fit in 1040.
+        // 1920x1080 with a 40-pixel panel: up to 1x, because 1.5x takes 1080
+        // lines, which with a title bar do not fit in 1040.
         assert_eq!(fitting(sb4, 1.0, none, (1920, 1040)), 0b11);
         assert_eq!(fitting(sb4, 1.0, none, (1920, 1080)), 0b111);
         assert_eq!(fitting(sb4, 1.0, (30, 1, 1, 1), (1920, 1080)), 0b11);
@@ -415,7 +421,7 @@ mod tests {
     fn a_window_snaps_to_16_9() {
         let sb4 = (1280, 720);
         let snap = |size, room| snap_to_shape(size, sb4, room);
-        // 16:9 already, to a pixel of height: nothing.
+        // Already 16:9 to within a pixel of height: nothing.
         for size in [
             (1280, 720),
             (640, 360),
@@ -436,7 +442,8 @@ mod tests {
         // Neither fits: the largest that does.
         assert_eq!(snap((1900, 1000), Some((1700, 900))), Some((1600, 900)));
         assert_eq!(snap((1000, 1000), Some((800, 1000))), Some((800, 450)));
-        // An unknown or empty room is no limit; nothing has no shape.
+        // An unknown or empty room is no limit, and a size with a zero
+        // side has no shape.
         assert_eq!(snap((640, 480), Some((0, 0))), Some((640, 360)));
         assert_eq!(snap((0, 480), None), None);
     }
@@ -464,7 +471,7 @@ mod tests {
         // Given: the settled size is 16:9, and nothing more is asked.
         keep.resized(at(2100));
         assert_eq!(keep.tick(at(2500), (800, 450), false, sb4, None), None);
-        // Fullscreen or maximized windows are left as they are.
+        // Fullscreen or maximized windows are left unchanged.
         keep.resized(at(3000));
         assert_eq!(keep.tick(at(3500), (1920, 1040), true, sb4, None), None);
     }
@@ -508,12 +515,12 @@ mod tests {
     #[test]
     fn the_window_starts_no_larger_than_the_display() {
         assert_eq!(start_size((1280, 720), Some((1920, 1040))), (1280, 720));
-        // A handheld's 640x480 display: the window covers it, as the
-        // buffer SDL draws into does.
+        // A handheld's 640x480 display: the window covers it, the same as
+        // the buffer SDL draws into does.
         assert_eq!(start_size((1280, 720), Some((640, 480))), (640, 480));
         // A 1024x768 display with a panel at the bottom.
         assert_eq!(start_size((1280, 720), Some((1024, 738))), (1024, 720));
-        // Unknown, it asks for what it wanted.
+        // With the area unknown, the window asks for the size it wanted.
         assert_eq!(start_size((1280, 720), None), (1280, 720));
         assert_eq!(start_size((1280, 720), Some((0, 0))), (1280, 720));
     }

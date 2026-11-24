@@ -21,8 +21,8 @@ pub fn eval(source: &str, var: &dyn Fn(&str) -> Option<Value>) -> Result<Value> 
     Watch::new(source)?.eval(var)
 }
 
-/// A watch expression parsed once, to be worked out again and again, as
-/// a breakpoint's condition is.
+/// A watch expression parsed once and evaluated many times, like a
+/// breakpoint's condition.
 #[derive(Debug)]
 pub struct Watch {
     source: String,
@@ -44,7 +44,7 @@ impl Watch {
         &self.source
     }
 
-    /// Its value, finding variables by full name (`A%`) with `var`.
+    /// Returns its value, finding variables by full name (`A%`) with `var`.
     pub fn eval(&self, var: &dyn Fn(&str) -> Option<Value>) -> Result<Value> {
         value(&self.expr, var)
     }
@@ -54,7 +54,7 @@ fn refused(what: &str) -> Error {
     Error::with_detail(ErrorKind::IllegalFunctionCall, format!("{what} in a watch"))
 }
 
-/// Works out `expr` from the first operand of its chain up (see
+/// Evaluates `expr` from the first operand of its chain upward (see
 /// [`Expr::chain_operand`]), the left operand before the right.
 fn value(expr: &Expr, var: &dyn Fn(&str) -> Option<Value>) -> Result<Value> {
     let mut links = Vec::new();

@@ -1,8 +1,8 @@
-//! The debugger panel's Sprites tabs: the sprites SPSET has set on the
-//! main interpreter's screen, or on a subprogram's in a tab of their
-//! own, gathered only while the tab shows, and the outline of the one
-//! chosen on its screen. SmileBASIC 4 has no such list; this is the
-//! emulator's own.
+//! The Sprites tabs of the debugger panel: the sprites that SPSET has set
+//! on the main interpreter's screen, or on a subprogram's screen in a
+//! separate tab, gathered only while the tab is shown, and the outline of
+//! the chosen sprite on its screen. SmileBASIC 4 has no such list; the
+//! emulator adds it.
 
 use sb_core::value::{Value, format_number};
 use sb_runtime::Runtime;
@@ -15,12 +15,12 @@ use crate::ui::Rect;
 
 use super::value_text;
 
-/// Pixels across and down a row's thumbnail of the sprite's image.
+/// The width and height in pixels of a row's thumbnail of the sprite image.
 pub const THUMB: usize = 16;
 /// SPANIM's targets in SPCHK's bit order.
 const TARGETS: [&str; 8] = ["XY", "Z", "R", "S", "C", "V", "UV", "I"];
-/// The outline of the sprite chosen, and its dark edge; dashed while it
-/// does not show.
+/// The colors of the chosen sprite's outline and of its dark edge. The
+/// outline is dashed while the sprite does not show.
 const OUTLINE: u32 = 0xFFFF_DC00;
 const OUTLINE_EDGE: u32 = 0xFF00_0000;
 
@@ -41,8 +41,8 @@ pub struct Row {
     pub scale: (f64, f64),
     pub color: u32,
     pub layer: i32,
-    /// SPSHOW or SPHIDE, and whether it shows once its parents' are
-    /// followed.
+    /// SPSHOW or SPHIDE, and whether it shows once the SPSHOW or SPHIDE of
+    /// its parents is followed.
     pub shown: bool,
     pub shows: bool,
     pub parent: Option<usize>,
@@ -59,7 +59,7 @@ pub struct Row {
     pub thumb: Option<Vec<u32>>,
 }
 
-/// Where the chosen sprite shows on the frame.
+/// The corners of the chosen sprite on the frame, and whether it shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Outline {
     pub corners: [(f64, f64); 4],
@@ -69,8 +69,8 @@ pub struct Outline {
 /// The subprogram's screen, for the outline of one of its sprites.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SubScreen {
-    /// Where XSUBSCREEN puts it on the 1280x720 display: x, y, width
-    /// and height, while it shows.
+    /// The place where XSUBSCREEN puts it on the 1280x720 display: x, y,
+    /// width and height, while it shows.
     pub place: Option<[i32; 4]>,
     /// The size of its frame, which the outline's corners are on.
     pub frame: (u32, u32),
@@ -80,17 +80,17 @@ pub struct SubScreen {
 #[derive(Clone, Debug, Default)]
 pub struct List {
     pub total: usize,
-    /// From the `first` in use on.
+    /// The position of the first row among the sprites in use.
     pub first: usize,
     pub rows: Vec<Row>,
     pub outline: Option<Outline>,
-    /// For a subprogram's sprites, its screen; `None` for the main
-    /// interpreter's, outlined on the main screens.
+    /// For a subprogram's sprites, its screen; `None` for the sprites of
+    /// the main interpreter, outlined on the main screens.
     pub sub: Option<SubScreen>,
 }
 
-/// The sprites in use on `rt`'s screen, with rows for `count` of them
-/// from the `first`, and the outline of `chosen`.
+/// Returns the sprites in use on the screen of `rt`, with rows for
+/// `count` of them from the `first`, and the outline of `chosen`.
 pub fn list(rt: &Runtime, first: usize, count: usize, chosen: Option<usize>) -> List {
     let all = &rt.sprites.list();
     let used = (0..all.len()).filter(|&i| all[i].used);
@@ -164,8 +164,8 @@ fn is_empty(v: &Value) -> bool {
     }
 }
 
-/// The sprite's image fitted into the thumbnail at its shape, its top
-/// left at the thumbnail's, nearest pixels.
+/// The sprite image fitted into the thumbnail at its shape, with its top
+/// left corner at the top left of the thumbnail, by nearest pixels.
 fn thumb(rt: &Runtime, s: &Sprite) -> Option<Vec<u32>> {
     let [u, v, w, h] = [s.u, s.v, s.w, s.h];
     let blank = usize::try_from(s.page).is_ok_and(|p| p >= PAGES || rt.grp.is_blank(p));
@@ -231,8 +231,8 @@ pub fn anim_text(row: &Row) -> String {
     }
 }
 
-/// The list's columns: heading, characters taken, and whether it can be
-/// left out for want of room. The colour is a swatch.
+/// The columns of the list: heading, characters taken, and whether the
+/// column can be omitted for lack of room. The color is a swatch.
 pub const COLUMNS: [(&str, usize, bool); 11] = [
     ("#", 5, false),
     ("DEF", 5, false),
@@ -248,7 +248,7 @@ pub const COLUMNS: [(&str, usize, bool); 11] = [
 ];
 
 /// The columns that fit in `room` characters, after `taken` for the
-/// thumbnail: those that cannot be left out, and then the others in turn
+/// thumbnail: those that cannot be omitted, and then the others in order
 /// as long as there is room.
 pub fn fitting(room: usize, taken: usize) -> usize {
     let mut used = taken;
@@ -263,7 +263,7 @@ pub fn fitting(room: usize, taken: usize) -> usize {
     n
 }
 
-/// A row's text in each column; the colour's is empty.
+/// A row's text in each column; the color column is empty.
 pub fn cells(row: &Row) -> [String; 11] {
     let link = row.parent.map_or("-".to_string(), |p| p.to_string());
     [
@@ -360,7 +360,7 @@ pub fn details(row: &Row, hex: bool) -> Vec<String> {
     let vars: Vec<String> = (row.vars.iter())
         .map(|(k, v)| format!("{k}={}", value_text(v, 20, hex).0))
         .collect();
-    // A few to a line.
+    // A few per line.
     for chunk in vars.chunks(4) {
         lines.push(format!("VAR {}", chunk.join("  ")));
     }
@@ -394,10 +394,10 @@ pub fn draw_outline(
     }
 }
 
-/// Where the outline of a subprogram's sprite goes on the display, whose
-/// pixels are those of the 1280x720 display: the place of its screen,
-/// and that within the `display`'s `(w, h)` and above `top`, where what
-/// is below covers the screen. `None` once nothing of it is left.
+/// The place of a subprogram sprite's outline on the display, in pixels
+/// of the 1280x720 display: the place of its screen, and the part of it
+/// within the `(w, h)` of `display` and above `top`, because what is below
+/// `top` covers the screen. `None` once no part of it is left.
 pub fn sub_place(
     [x, y, w, h]: [i32; 4],
     (dw, dh): (u32, u32),
@@ -421,7 +421,7 @@ pub fn sub_place(
 }
 
 /// A line from `a` to `b` of squares `thick` pixels across, within
-/// `clip`, every other few pixels left out if `dashed`.
+/// `clip`, with every other run of a few pixels skipped if `dashed`.
 fn line(
     fb: &mut Framebuffer,
     a: (f64, f64),

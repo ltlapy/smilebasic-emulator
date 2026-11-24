@@ -1,9 +1,9 @@
-//! What a VM counts of its work for hosts that time it as a console would.
+//! The work counts that a VM keeps for hosts that time it like a console.
 
 use sb_core::host::TextHost;
 use sb_core::vm::{Status, Vm, Work};
 
-/// Runs `source` to its end, reporting the work or not, and gives the
+/// Runs `source` to its end, reporting the work or not, and returns the
 /// counts and the output.
 fn run(source: &str, report: bool) -> (Work, String) {
     let mut host = TextHost::default();
@@ -33,8 +33,8 @@ fn a_reported_run_counts_its_work() {
     let (work, out) = run(PROGRAM, true);
     assert_eq!(out, "6ABC4\n");
     assert_eq!(work.def_calls, 4);
-    // ON's jump as a call with no arguments. LEN and MAX of two count as
-    // no call.
+    // ON's jump counts as a call with no arguments. LEN and MAX of two
+    // count as no call.
     assert_eq!(work.builtin_calls, 1);
     assert_eq!(work.builtin_args, 0);
     // A%[I] written four times and read once, and M[1,2] written.
@@ -49,8 +49,8 @@ fn a_reported_run_counts_its_work() {
     assert!(work.statements > 10);
 }
 
-/// Reporting takes the fused steps away, which changes nothing a program
-/// or a frame's budget sees.
+/// Reporting removes the fused steps, which changes nothing that a program
+/// or the budget of a frame sees.
 #[test]
 fn reporting_changes_nothing_else() {
     let (counted, out) = run(PROGRAM, true);
@@ -60,7 +60,7 @@ fn reporting_changes_nothing_else() {
     assert_eq!(plain.statements, 0);
 }
 
-/// Characters of a string read or written by index are counted apart
+/// Characters of a string read or written by index are counted separately
 /// from the other elements.
 #[test]
 fn string_characters_by_index_count_apart() {
@@ -72,7 +72,7 @@ fn string_characters_by_index_count_apart() {
     assert_eq!(work.str_elements, 3);
 }
 
-/// An IF or ELSEIF of an array element is counted apart; one of a
+/// An IF or ELSEIF of an array element is counted separately; one of a
 /// comparison or a variable is not.
 #[test]
 fn ifs_of_array_elements_count_apart() {
@@ -84,8 +84,8 @@ fn ifs_of_array_elements_count_apart() {
     assert_eq!(work.element_tests, 3);
 }
 
-/// ASC and LEN are not counted as builtin calls, and CHR$ is counted on
-/// its own too, when the work is reported, but not when it makes a code
+/// ASC and LEN are not counted as builtin calls. CHR$ is also counted
+/// separately when the work is reported, but not when the code it makes is
 /// one of the last four made.
 #[test]
 fn asc_and_chr_count_apart() {
@@ -97,9 +97,10 @@ fn asc_and_chr_count_apart() {
     assert_eq!(run(source, false).0.chr_calls, 0);
 }
 
-/// SIN, COS, TAN and SQR are counted apart and as no call, and SIN, COS
-/// and TAN of a number past a quarter of pi apart again. Statements in a
-/// DEF are counted apart: the FOR and its NEXT three times.
+/// SIN, COS, TAN and SQR are counted separately and as no call, and SIN,
+/// COS and TAN of a number past a quarter of pi separately again.
+/// Statements in a DEF are counted separately: the FOR and its NEXT three
+/// times.
 #[test]
 fn cheap_builtins_and_fors_in_defs_count_apart() {
     let source = "DEF F\n FOR I=1 TO 2:NEXT\nEND\n\
@@ -125,8 +126,8 @@ fn fill_counts_its_elements() {
     assert_eq!(run(source, false).0.filled, 0);
 }
 
-/// The builtins that cost more than a call are counted apart, and those
-/// that cost none, INT and MIN of two among them, are not calls.
+/// The builtins that cost more than a call are counted separately, and
+/// those that cost none, INT and MIN of two among them, are not calls.
 #[test]
 fn builtins_count_by_what_they_cost() {
     let source = "X=2.5:A$=STR$(X)+STR$(1):B=VAL(\"3\"):C=INT(X)+MIN(X,1)+MAX(X,1,2)\n?A$;B;C\n";
@@ -139,8 +140,8 @@ fn builtins_count_by_what_they_cost() {
     assert_eq!(work.builtin_calls, 4);
 }
 
-/// A join counts the characters of what it makes, and comparing strings
-/// is no join.
+/// A join counts the characters of the string it makes, and comparing
+/// strings is not a join.
 #[test]
 fn joins_count_their_characters() {
     let source = "S$=\"AB\":T$=S$+\"CDE\"\nIF S$==T$ THEN S$=\"\"\n?T$;S$\n";

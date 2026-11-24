@@ -55,7 +55,7 @@ impl<T: Clone> Popup<T> {
         self.hovered = self.at(at).filter(|&i| self.items[i].1);
     }
 
-    /// What the item under a click does, if it can be chosen.
+    /// Returns the action of the item under a click, if it can be chosen.
     pub fn click(&self, at: (i32, i32)) -> Option<T> {
         let (_, enabled, what) = &self.items[self.at(at)?];
         enabled.then(|| what.clone())

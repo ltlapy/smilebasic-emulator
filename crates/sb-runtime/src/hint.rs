@@ -1,6 +1,6 @@
-//! Argument hints: while the arguments of an instruction, a function or
-//! one of the program's DEFs are typed, every form the help gives for it
-//! shows above the cursor, with the argument being typed marked in each
+//! Argument hints. While the arguments of an instruction, a function or
+//! one of the program's DEFs are typed, every form that the help gives for
+//! it shows above the cursor. The argument being typed is marked in each
 //! form it fits.
 
 use crate::complete::{BACK, BORDER, DIM, Item, Library, SYNTAX, TEXT, draw_syntax, fill};
@@ -9,11 +9,11 @@ use crate::framebuffer::Framebuffer;
 use crate::syntax::{Role, highlight, is_ident_char, is_ident_start};
 use crate::text::TextScreen;
 
-/// Forms shown at most.
+/// The maximum number of forms shown.
 const FORMS: usize = 6;
 const MARK: u32 = 0xFF20_2838;
 
-/// What the cursor is typing: an argument of a command.
+/// The argument of a command that the cursor is typing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hint {
     pub name: String,
@@ -30,7 +30,7 @@ pub struct Hint {
 #[derive(Clone, Debug, Default)]
 struct Frame {
     name: Option<String>,
-    /// Where the name ends, for a statement.
+    /// The end of the name, for a statement.
     name_end: usize,
     /// Commas and the other separators read so far.
     commas: usize,
@@ -77,14 +77,14 @@ pub fn find(line: &[u16], col: usize, library: &Library, names: &[Item]) -> Opti
             let statement = stack.len() == 1;
             let frame = stack.last_mut().expect("never empty");
             match word.as_str() {
-                // What follows THEN and ELSE is a statement of its own.
+                // The text after THEN and ELSE is a separate statement.
                 "THEN" | "ELSE" if statement => *frame = Frame::default(),
                 "OUT" => {
                     frame.out = true;
                     frame.commas = 0;
                 }
-                // These separate arguments as a comma does: FOR's end
-                // value and step, the labels after ON or IF's GOTO.
+                // These separate arguments, the same as a comma does: FOR's
+                // end value and step, the labels after ON or IF's GOTO.
                 "TO" | "STEP" | "GOTO" | "GOSUB" if frame.name.is_some() => frame.commas += 1,
                 _ if statement && frame.name.is_none() => {
                     frame.name = Some(word.clone());
@@ -157,7 +157,7 @@ pub struct Arguments {
     pub ins: Spans,
     /// Those after OUT.
     pub outs: Spans,
-    /// Whether the last of `ins` repeats, as `...` writes it.
+    /// Whether the last of `ins` repeats, which a form writes as `...`.
     pub ins_repeat: bool,
     /// Whether the last of `outs` repeats.
     pub outs_repeat: bool,
@@ -165,7 +165,7 @@ pub struct Arguments {
     pub call: bool,
 }
 
-/// Words of a form that separate its arguments as a comma does.
+/// Words of a form that separate its arguments, the same as a comma does.
 const SEPARATORS: &[&str] = &["TO", "STEP", "GOTO", "GOSUB", "THEN", "ELSE", "ENDIF"];
 
 fn is_word_char(c: char) -> bool {
@@ -176,9 +176,9 @@ fn is_suffix(c: char) -> bool {
     matches!(c, '$' | '#' | '%')
 }
 
-/// Where the command's name ends in a form: after the name as a whole
-/// word, or else after the form's first word, as for `ARRAY%(` among
-/// ARRAY#'s forms and `VAR` among DIM's.
+/// Returns the end of the command's name in a form: after the name as a
+/// whole word, or else after the first word of the form, as for `ARRAY%(`
+/// among the forms of ARRAY# and `VAR` among the forms of DIM.
 fn name_end(chars: &[char], name: &str) -> usize {
     let name: Vec<char> = name.chars().collect();
     let n = name.len();
@@ -200,7 +200,7 @@ fn name_end(chars: &[char], name: &str) -> usize {
             .take_while(|&&c| is_word_char(c))
             .count();
     if i == start {
-        // No command's form, as REM's `'`.
+        // Not a command's form, such as REM's `'`.
         return chars.len();
     }
     if chars.get(i).copied().is_some_and(is_suffix) {
@@ -209,7 +209,7 @@ fn name_end(chars: &[char], name: &str) -> usize {
     i
 }
 
-/// Whether a character of a form is no part of an argument: a space, or
+/// Whether a character of a form is not part of an argument: a space, or
 /// one of the icons of SmileBASIC 4's font that the help puts after some
 /// forms (in Unicode's private use area).
 fn is_blank(c: char) -> bool {
@@ -299,7 +299,7 @@ impl Arguments {
             false => (&mut self.ins, &mut self.ins_repeat),
         };
         if let Some(start) = piece.start {
-            // PRINT's `[;Or,Expression]` says either separator goes.
+            // PRINT's `[;Or,Expression]` means either separator is allowed.
             if !matches!(chars[start..piece.end], ['O' | 'o', 'r']) {
                 list.push((start, piece.end));
             }
@@ -331,7 +331,7 @@ pub fn arguments(form: &str, name: &str) -> Arguments {
         let c = chars[i];
         match c {
             '"' => {
-                // A quote the help never closes is no string.
+                // A quote the help never closes is not a string.
                 let close = chars[i + 1..].iter().position(|&c| c == '"');
                 let to = close.map_or(i + 1, |at| i + at + 2);
                 piece.text(i, to);
@@ -387,8 +387,9 @@ pub fn arguments(form: &str, name: &str) -> Arguments {
     args
 }
 
-/// Where the hints go when they show at the bottom: pixel columns from
-/// `left`, rows from `top` to `bottom`, and the cursor's row at `cursor`.
+/// The band where the hints are drawn when they show at the bottom: pixel
+/// columns from `left`, rows from `top` to `bottom`, and the cursor's row at
+/// `cursor`.
 #[derive(Clone, Copy, Debug)]
 pub struct Band {
     pub left: i64,
@@ -633,7 +634,7 @@ mod tests {
             // An array's size is part of the argument, and has no hint.
             ("DIM", "DIM Name[[Size[,Size...]]]", "DIM ", Some("Name[[Size[,Size...]]]")),
             ("DIM", "DIM Name[[Size[,Size...]]]", "DIM A[", None),
-            // A form named otherwise than the topic, and one with an icon.
+            // A form named differently from the topic, and one with an icon.
             ("DIM", "VAR Variable[=Expression][,Variable[=Expression]...]",
                 "DIM A,", Some("Variable[=Expression]")),
             ("ARRAY#", "ARRAY%(Size[,Size...])", "A=ARRAY#(", Some("Size")),

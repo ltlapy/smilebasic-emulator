@@ -23,8 +23,8 @@ impl fmt::Display for NsoError {
 
 impl std::error::Error for NsoError {}
 
-/// The most a segment may decompress to. SmileBASIC 4's are a few MB; the
-/// header can ask for 4 GB.
+/// The most a segment may decompress to. SmileBASIC 4's segments are a few
+/// MB; the header can ask for 4 GB.
 const SEGMENT_BYTES: usize = 1 << 28;
 /// The most a byte of LZ4 can become: a match gets 255 more bytes for each
 /// byte of its length, and nothing makes more.
@@ -59,8 +59,8 @@ pub fn segments(nso: &[u8]) -> Result<[Vec<u8>; 3], NsoError> {
 
 /// Decompresses one LZ4 block of known decompressed size.
 fn lz4_block(src: &[u8], size: usize) -> Result<Vec<u8>, NsoError> {
-    // Checked first: the size comes from the file, and only then is
-    // memory set aside for it.
+    // Checked first, because the size comes from the file; memory is set
+    // aside for it only after this check.
     if size > SEGMENT_BYTES || size / LZ4_RATIO > src.len() {
         return Err(NsoError::BadCompression);
     }

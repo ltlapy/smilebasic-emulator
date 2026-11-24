@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Prints a short hash of a .pam shot, leaving out the places that name
-the build's commit and so differ between two builds by themselves:
+"""Prints a short hash of a .pam shot, masking the places that name the
+build's commit and so differ between two builds with no other change:
 DIRECT mode's banner (x 760..930, y 0..21 at 1280 wide) and the corner of
 the Simple UI's pause menu at 1024 wide, the size the offscreen driver
 gives --simple-ui (x 610..710, y 225..245 over a program; x 530..650,
-y 276..294 over the game list)."""
+y 276..293 over the game list)."""
 import hashlib, sys
 d = open(sys.argv[1], 'rb').read()
 h, b = d.split(b'ENDHDR\n', 1)

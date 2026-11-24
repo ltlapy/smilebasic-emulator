@@ -1,5 +1,6 @@
-//! What programs read from controllers, the mouse and the keyboard: SDL's
-//! gamepads and keys turned into the runtime's input state each frame.
+//! The input that programs read from controllers, the mouse and the
+//! keyboard: SDL's gamepads and keys turned into the runtime's input state
+//! each frame.
 
 use sb_runtime::input::{
     KeyText, KeysRead, Mouse, PADS, State, Tap, alt_key_code, types_when_blocked,
@@ -35,8 +36,8 @@ pub fn face(button: Button, swap: bool) -> Button {
     }
 }
 
-/// A button event with its button as [`face`] has it. The first thing
-/// done with every event the system gives.
+/// Sets the button of a button event to the one [`face`] returns. This is
+/// the first thing done with every event the system gives.
 pub fn swap_event(event: &mut Event, swap: bool) {
     if let Event::GamepadButtonDown { button, .. } | Event::GamepadButtonUp { button, .. } = event {
         *button = face(*button, swap);
@@ -44,8 +45,8 @@ pub fn swap_event(event: &mut Event, swap: bool) {
 }
 
 /// SDL's buttons to read for BUTTON's ids: [`PAD_BUTTONS`], or with
-/// `swap` the same with A and B, and X and Y, traded as [`face`] trades
-/// them.
+/// `swap` the same with A and B, and X and Y, traded the same way [`face`]
+/// trades them.
 fn pad_buttons(swap: bool) -> &'static [(Button, u32); 12] {
     if swap { &SWAPPED_BUTTONS } else { &PAD_BUTTONS }
 }
@@ -59,7 +60,7 @@ fn held_buttons(down: impl Fn(Button) -> bool, swap: bool) -> u32 {
 }
 
 /// SDL's buttons for BUTTON's ids, by position: the top face button is
-/// #B_RUP whatever its label says.
+/// #B_RUP regardless of its label.
 const PAD_BUTTONS: [(Button, u32); 12] = [
     (Button::North, 0),
     (Button::South, 1),
@@ -110,23 +111,23 @@ pub const KEY_BUTTONS: [(Scancode, u32); 12] = [
     (Scancode::_2, 11),
 ];
 
-/// How long a key stays out of [`KEY_BUTTONS`] after the program last read
-/// it, in frames. Long enough for programs that read the keyboard only now
-/// and then, short enough that a game's name entry doesn't cost the rest of
-/// the game its keys.
+/// The time a key stays out of [`KEY_BUTTONS`] after the program last read
+/// it, in frames. It is long enough for programs that read the keyboard only
+/// now and then, and short enough that a game's name entry does not cost the
+/// rest of the game its keys.
 const KEY_RESERVED_FRAMES: u16 = 60;
 
-/// Which of [`KEY_BUTTONS`] press their buttons now: not a key the program
-/// has lately read for itself, or the same press would act twice. A typing
-/// program that also takes the controller would have A delete the letter it
-/// types.
+/// The keys of [`KEY_BUTTONS`] that press their buttons now. A key the
+/// program has lately read for itself does not press its button, or the same
+/// press would act twice: a typing program that also takes the controller
+/// would have A delete the letter it types.
 #[derive(Debug, Default)]
 pub struct KeyButtons {
     reserved: [u16; KEY_BUTTONS.len()],
 }
 
 impl KeyButtons {
-    /// Goes once a frame, with what the program read in that frame.
+    /// Called once per frame, with what the program read in that frame.
     pub fn update(&mut self, read: KeysRead) {
         for (left, (key, _)) in self.reserved.iter_mut().zip(KEY_BUTTONS) {
             if read.covers(key as i32 as u8) {
@@ -153,7 +154,7 @@ impl KeyButtons {
 /// KEYBOARD's modifier bits, Windows key, Shift, Ctrl and Alt, from the keys
 /// held rather than from SDL's modifier state. SDL takes that from what the
 /// layout makes of a key, so a Korean layout that turns Right Alt into
-/// Han/Eng would leave Alt out, while KEYBOARD sees the key itself.
+/// Han/Eng would not report Alt, while KEYBOARD sees the key itself.
 fn modifiers(down: impl Fn(Scancode) -> bool) -> u32 {
     use Scancode::{LAlt, LCtrl, LGui, LShift, RAlt, RCtrl, RGui, RShift};
     [[LGui, RGui], [LShift, RShift], [LCtrl, RCtrl], [LAlt, RAlt]]
@@ -164,18 +165,18 @@ fn modifiers(down: impl Fn(Scancode) -> bool) -> u32 {
         })
 }
 
-/// What last went down, for the text that follows.
+/// The last key press, for the text that follows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Last {
-    /// Nothing, or a key that typed its code itself: text after it is an
-    /// input method's, or comes with no key.
+    /// Nothing, or a key that typed its code itself: text after it comes
+    /// from an input method, or comes with no key.
     None,
     /// A key whose text comes next, and whether Shift was held.
     Typing { shift: bool },
     /// The computer's key repeat, or a key that types no text.
     Repeat,
     /// A key that typed what Alt gives with it, or nothing: none of the
-    /// computer's text for it goes, in any script.
+    /// computer's text for it is typed, in any script.
     Alt,
 }
 
@@ -210,37 +211,37 @@ fn among(keys: &[u64; 4], key: Scancode) -> bool {
         .is_ok_and(|usage| keys[usize::from(usage / 64)] >> (usage % 64) & 1 != 0)
 }
 
-/// A character the runtime types itself as a key repeats: ASCII. What lies
-/// outside it comes with the computer's own repeats.
+/// A character the runtime types itself as a key repeats: ASCII. Characters
+/// outside it come with the computer's own repeats.
 fn ascii(c: Option<char>) -> u16 {
     c.filter(|c| c.is_ascii()).map_or(0, |c| c as u16)
 }
 
-/// How the keyboard types for programs, the prompt and the editor, as on
+/// Typing from the keyboard for programs, DIRECT mode and the editor, as on
 /// SmileBASIC 4: with its own Caps Lock, with repeats counted in the
 /// machine's frames rather than by the computer's key repeat, and with its
 /// own characters for Alt.
 #[derive(Debug)]
 pub struct Typing {
     /// SmileBASIC 4's Caps Lock, which is on at start, the same for
-    /// programs, the prompt and the editor. The Caps Lock key toggles it
-    /// wherever it is pressed, so it keeps step with the computer's own
-    /// unless that was on when the emulator started or was toggled in
-    /// another program's window.
+    /// programs, DIRECT mode and the editor. The Caps Lock key toggles it
+    /// regardless of where it is pressed, so it stays in step with the
+    /// computer's Caps Lock unless that was on when the emulator started or
+    /// was toggled in another program's window.
     caps_lock: bool,
     last: Last,
-    /// Keys type no text, as [`State::keys_type_nothing`] says of the
+    /// Keys type no text, as [`State::keys_type_nothing`] says about the
     /// last frame's controls.
     blocked: bool,
     /// The keyboard keys held on the last frame, by USB usage ID.
     held: [u64; 4],
-    /// Letters type as SmileBASIC 4's do (the setting for capitals without
+    /// Letters type as on SmileBASIC 4 (the setting for capitals without
     /// Shift); otherwise they keep the case the computer gave them.
     pub upper_case: bool,
-    /// The key that last went down.
+    /// The key last pressed.
     pressed: Option<Scancode>,
-    /// What it types by the modifiers held, when the computer's text for it
-    /// is still to come.
+    /// The text it types with the modifiers held, when the computer's text
+    /// for it is still to come.
     text: Option<KeyText>,
     layout: Layout,
 }
@@ -272,7 +273,7 @@ impl Typing {
         self.held = held.keys;
     }
 
-    /// Goes for every key that goes down on the emulator's windows, before
+    /// Called for every key pressed on the emulator's windows, before
     /// anything else takes it. A key that does not type, such as a
     /// shortcut, stops the key held before from repeating.
     pub fn any_key_down(
@@ -294,9 +295,10 @@ impl Typing {
         rt.input.key_down(usage.unwrap_or(0));
     }
 
-    /// What `key` types by the modifiers held: Shift and SmileBASIC 4's
-    /// Caps Lock, or Alt, which types SmileBASIC 4's own characters, or
-    /// with Right Alt, on a layout where it is AltGr, the layout's.
+    /// Returns the text that `key` types with the modifiers held: Shift and
+    /// SmileBASIC 4's Caps Lock, or Alt, which types SmileBASIC 4's own
+    /// characters, or, with Right Alt on a layout where it is AltGr, the
+    /// layout's characters.
     fn key_text(&self, key: Scancode, keymod: Mod) -> KeyText {
         let usage = u8::try_from(key as i32).unwrap_or(0);
         let alt = alt_key_code(usage).unwrap_or(0);
@@ -348,7 +350,7 @@ impl Typing {
         left || right && key.is_none_or(|key| self.alt_gr(key).is_none())
     }
 
-    /// A key going down that types, after [`Typing::any_key_down`]; `code`
+    /// A press of a key that types, after [`Typing::any_key_down`]; `code`
     /// is what it types itself, such as Enter or an arrow, if it types no
     /// text. The computer's repeats type nothing: the runtime repeats the
     /// press.
@@ -364,12 +366,12 @@ impl Typing {
             self.last = if alt { Last::Alt } else { Last::Repeat };
             return;
         }
-        // Ctrl as SDL has it too, for a key that goes down in the frame
-        // Ctrl does.
+        // Ctrl as SDL reports it too, for a key pressed in the same frame
+        // as Ctrl.
         let blocked = self.blocked || keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
         if let Some(code) = code {
-            // Held on once Ctrl, L or R is released, it repeats as a
-            // letter does. UNVERIFIED: that it does.
+            // Still held after Ctrl, L or R is released, it repeats like a
+            // letter. UNVERIFIED: that it does.
             match !blocked || types_when_blocked(code) {
                 true => rt.type_held(code),
                 false => rt.input.key_code(code),
@@ -403,7 +405,7 @@ impl Typing {
     ///
     /// Text outside ASCII, from an input method or a layout of another
     /// script, types once as the computer gives it, its repeats included,
-    /// as which key it came from is not known.
+    /// because the key it came from is not known.
     pub fn text(&mut self, rt: &mut sb_runtime::Runtime, text: &str) {
         if self.last == Last::Alt {
             return;
@@ -438,7 +440,7 @@ impl Typing {
     }
 
     /// A letter as SmileBASIC 4 types it: upper case with Caps Lock on,
-    /// Shift turning it round, whatever case the computer typed it in.
+    /// Shift swapping the case, regardless of the case the computer typed.
     fn letter_case(&self, c: char, shift: bool) -> char {
         if self.caps_lock != shift {
             c.to_ascii_uppercase()
@@ -457,25 +459,26 @@ fn swap_case(c: char) -> char {
     }
 }
 
-/// How far a stick has to be tilted to count as held through a screen: where
-/// it starts to type keys for a program, past any drift.
+/// The tilt at which a stick counts as held through a screen: where it
+/// starts to type keys for a program, past any drift.
 pub(crate) const CARRIED_STICK: f64 = 0.3;
 
-/// The bench's keys come from this keyboard, which is none, so that they
-/// stay out of [`Controls::taps`] as they stay out of what is held.
+/// The bench's keys come from this keyboard, which does not exist, so that
+/// they stay out of [`Controls::taps`], the same as they stay out of what is
+/// held.
 pub const BENCH_KEYBOARD: u32 = u32::MAX;
 
-/// What an event presses or releases for the program, for
-/// [`sb_runtime::input::Input::tap`]: a key, and the button it presses as
-/// a controller's; or a controller's button.
+/// The presses or releases of an event for the program, for
+/// [`sb_runtime::input::Input::tap`]: a key, and the controller button it
+/// presses; or a controller's button.
 pub type Taps = [Option<(Tap, bool)>; 2];
 
 /// ZL and ZR's triggers, and their bits in BUTTON's value.
 const TRIGGERS: [(Axis, u32); 2] = [(Axis::TriggerLeft, 10), (Axis::TriggerRight, 11)];
 
-/// What a controller's event presses or releases, as controller `pad`, 0
-/// to 3: a button as [`face`] made it, or a trigger past its threshold
-/// one way or the other, by `triggers`, which this keeps.
+/// Returns what a controller's event presses or releases, as controller
+/// `pad`, 0 to 3: a button as [`face`] made it, or a trigger past its
+/// threshold one way or the other, by `triggers`, which this keeps.
 fn pad_tap(event: &Event, pad: usize, triggers: &mut [bool; 2]) -> Option<(Tap, bool)> {
     let (bits, down) = match *event {
         Event::GamepadButtonDown { button, .. } => (button_bit(button), true),
@@ -494,10 +497,10 @@ fn pad_tap(event: &Event, pad: usize, triggers: &mut [bool; 2]) -> Option<(Tap, 
     (bits != 0).then_some((Tap::Buttons(pad, bits), down))
 }
 
-/// What a key's event presses or releases: the key, by its USB usage ID,
-/// and with `buttons`, when the keyboard is a controller too, the button
-/// of controller 1 it presses. A key's repeat and the bench's keys press
-/// nothing.
+/// Returns what a key's event presses or releases: the key, by its USB
+/// usage ID, and with `buttons`, when the keyboard is a controller too, the
+/// button of controller 1 it presses. A key's repeat and the bench's keys
+/// press nothing.
 fn key_taps(event: &Event, buttons: Option<&KeyButtons>) -> Taps {
     let (key, down) = match *event {
         Event::KeyDown {
@@ -527,11 +530,11 @@ pub const RIGHT_BUTTON: u32 = 1 << 1;
 
 /// Keeps from the program what was pressed for one of the emulator's own
 /// screens, such as the A that chose Run in Projects: a button or stick held
-/// when the screen goes reads as let go until it really is, so that it
-/// neither types Enter nor reads as a press beneath or after the screen.
-/// The same goes for a key, as KEYBOARD reads it, and a mouse button,
-/// and for a mouse button that clicked the menu bar or a panel, which are
-/// no screens: see [`Carried::took_mouse`].
+/// when the screen closes reads as released until it really is released, so
+/// that it neither types Enter nor reads as a press beneath or after the
+/// screen. The same applies to a key, as KEYBOARD reads it, and a mouse
+/// button, and to a mouse button that clicked the menu bar or a panel, which
+/// are not screens: see [`Carried::took_mouse`].
 #[derive(Debug, Default)]
 pub struct Carried {
     buttons: [u32; PADS],
@@ -548,10 +551,11 @@ pub struct Carried {
 }
 
 impl Carried {
-    /// What the program sees of `state`, once a frame. `screen`: a screen
-    /// has the controls now, so that the program sees nothing at all. The
-    /// frame it goes in has no buttons or sticks yet, as the press that closed
-    /// it came in that frame, whichever order the events came in.
+    /// Returns the part of `state` that the program sees, once per frame.
+    /// `screen` means a screen has the controls now, so that the program sees
+    /// nothing at all. The frame in which the screen closes has no buttons or
+    /// sticks yet, because the press that closed it came in that frame,
+    /// regardless of the order of the events.
     pub fn program_sees(&mut self, mut state: State, screen: bool) -> State {
         let was_screen = std::mem::replace(&mut self.screen, screen);
         self.blanked = screen || was_screen;
@@ -591,18 +595,18 @@ impl Carried {
         if screen { State::default() } else { state }
     }
 
-    /// The emulator used a press of the mouse buttons `bits`, MBUTTON's,
-    /// for something of its own that is no screen, such as the menu bar: the
-    /// program reads them as let go until they are. Goes before the
-    /// frame's [`Carried::program_sees`].
+    /// The emulator used a press of the mouse buttons `bits` (MBUTTON's
+    /// bits) for a part of its own that is not a screen, such as the menu
+    /// bar: the program reads them as released until they are released. Called
+    /// before the frame's [`Carried::program_sees`].
     pub fn took_mouse(&mut self, bits: u32) {
         self.mouse |= bits;
     }
 
-    /// Whether [`Carried::program_sees`] left out every button and stick
-    /// in its last frame, as a screen had the controls in it or the frame
-    /// before: so that a press or release in that frame is none of the
-    /// program's either.
+    /// Whether [`Carried::program_sees`] removed every button and stick in
+    /// its last frame, because a screen had the controls in that frame or the
+    /// one before: a press or release in that frame then does not belong to
+    /// the program either.
     pub fn blanked(&self) -> bool {
         self.blanked
     }
@@ -611,7 +615,7 @@ impl Carried {
 /// Puts the pointer at the screen's pixel `screen`, of a screen `size`
 /// big, and the pixel `display` of SmileBASIC 4's display, which
 /// [`Mapping::lcd`] maps. The program reads a pointer past the edges of
-/// either as at them.
+/// either as on the nearest edge.
 pub fn place_mouse(m: &mut Mouse, (sx, sy): (i32, i32), (w, h): (i32, i32), display: (i32, i32)) {
     (m.x, m.y) = (sx.clamp(0, w - 1), sy.clamp(0, h - 1));
     m.display = on_display(display);
@@ -624,7 +628,7 @@ pub(crate) fn on_display((x, y): (i32, i32)) -> (i32, i32) {
     (x.clamp(0, w - 1), y.clamp(0, h - 1))
 }
 
-/// How far a trigger goes before it counts as ZL or ZR pressed.
+/// The distance a trigger travels before it counts as ZL or ZR pressed.
 const TRIGGER: i16 = i16::MAX / 2;
 /// Sticks read as centered until tilted this far.
 const DEAD_ZONE: f64 = 0.15;
@@ -675,14 +679,14 @@ impl Controls {
         })
     }
 
-    /// How many gamepads are connected.
+    /// Returns the number of connected gamepads.
     pub fn gamepads(&self) -> usize {
         self.pads.len()
     }
 
-    /// Opens controllers as they are connected, and lets go of them; a
-    /// button's event gets the button [`face`] makes of it. Goes first
-    /// for every event the system gives.
+    /// Opens controllers when they are connected, and drops them when they
+    /// are removed; a button's event gets the button [`face`] makes of it.
+    /// Called first for every event the system gives.
     pub fn event(&mut self, event: &mut Event) {
         swap_event(event, self.swap);
         self.stick_mouse.select.event(event);
@@ -704,9 +708,9 @@ impl Controls {
 
     /// The presses and releases of `event` for the program, which
     /// [`sb_runtime::input::Input::tap`] keeps for the next frame in case
-    /// what is held then misses them. Goes after [`Controls::event`], for
-    /// events the system gave. `keys_press_buttons`: the keyboard presses
-    /// controller 1's buttons too.
+    /// what is held then misses them. Called after [`Controls::event`], for
+    /// events the system gave. `keys_press_buttons` means the keyboard
+    /// presses controller 1's buttons too.
     pub fn taps(&mut self, event: &Event, keys_press_buttons: bool) -> Taps {
         let (Event::GamepadButtonDown { which, .. }
         | Event::GamepadButtonUp { which, .. }
@@ -714,8 +718,8 @@ impl Controls {
         else {
             return key_taps(event, keys_press_buttons.then_some(&self.key_buttons));
         };
-        // No controller has the id 0: the bench's buttons come so, and
-        // are controller 1's.
+        // No controller has the id 0: the bench's buttons come with id 0,
+        // and belong to controller 1.
         let pad = match which == 0.into() {
             true => Some(0),
             false => (self.pads.iter()).position(|p| p.id().is_ok_and(|id| id == which)),
@@ -738,17 +742,18 @@ impl Controls {
         (self.stick_mouse).frame(state, role, self.mouse.display)
     }
 
-    /// Makes `event` a click of the left mouse button where R3 clicks for
-    /// the emulator's screens (`role`), at the pointer on `window`, whose
-    /// coordinates `map`, a [`Mapping::lcd`], has. Goes after [`Controls::event`] and before
-    /// [`Controls::taps`], so that the program has no tap of that R3.
+    /// Turns `event` into a click of the left mouse button where R3 clicks
+    /// for the emulator's screens (`role`), at the pointer on `window`, whose
+    /// coordinates `map` (a [`Mapping::lcd`]) has. Called after
+    /// [`Controls::event`] and before [`Controls::taps`], so that the program
+    /// has no tap of that R3.
     pub fn stick_click(&mut self, event: &mut Event, role: StickRole, window: u32, map: Mapping) {
         let at = map.display_to_window(self.mouse.display);
         self.stick_mouse.click(event, role, window, at);
     }
 
     /// Puts the pointer where [`Controls::stick_pointer`] moved it, in
-    /// `state` too; the arguments are [`place_mouse`]'s.
+    /// `state` too; the arguments are those of [`place_mouse`].
     pub fn place_pointer(
         &mut self,
         state: &mut State,
@@ -763,8 +768,8 @@ impl Controls {
         };
     }
 
-    /// What the program sees now. `keys_press_buttons` lets the keyboard
-    /// press the first controller's buttons too.
+    /// Returns the state the program sees now. `keys_press_buttons` lets the
+    /// keyboard press the first controller's buttons too.
     pub fn state(
         &self,
         keyboard: &KeyboardState,
@@ -838,8 +843,9 @@ mod tests {
         state
     }
 
-    /// Goes through frames as the frontend does, each with the buttons held
-    /// and whether a screen has the controls, and gives what INKEY$ has then.
+    /// Runs frames the same way the frontend does, each with the buttons held
+    /// and whether a screen has the controls, and returns the number of
+    /// characters INKEY$ has then.
     fn typed_after(frames: &[(u32, bool)]) -> usize {
         use sb_core::vm::{Status, Vm};
         let mut rt = sb_runtime::Runtime::for_tests(sb_runtime::font::Font::blank());
@@ -926,12 +932,12 @@ mod tests {
             _ => None,
         };
         for (swap, a) in [(false, Button::East), (true, Button::South)] {
-            // What the emulator's screens take as A...
+            // The button the emulator's screens take as A...
             for mut event in [down(a), up(a)] {
                 swap_event(&mut event, swap);
                 assert_eq!(button_of(&event), Some(Button::East), "swap {swap}");
             }
-            // ...and what BUTTON reads as A.
+            // ...and the one BUTTON reads as A.
             assert_eq!(held_buttons(|b| b == a, swap), A_BUTTON);
         }
         assert_eq!(held_buttons(|b| b == Button::East, true), B_BUTTON);
@@ -942,9 +948,9 @@ mod tests {
         assert!(matches!(quit, Event::Quit { .. }));
     }
 
-    /// The A that turns the swap on, in the pause menu, is held on as the
-    /// setting changes: as B now. The program sees neither, not even once
-    /// the menu has closed, until it is released.
+    /// The A that turns the swap on, in the pause menu, is still held as the
+    /// setting changes, and now reads as B. The program sees neither, not
+    /// even once the menu has closed, until it is released.
     #[test]
     fn a_button_held_through_the_swap_reads_as_nothing() {
         let east = |b| b == Button::East;
@@ -969,7 +975,7 @@ mod tests {
         assert_eq!(typed_after(&frames), 0);
     }
 
-    /// With no screen in sight, a program sees what is held as ever.
+    /// With no screen open, a program sees what is held as usual.
     #[test]
     fn carried_leaves_other_buttons_alone() {
         let mut carried = Carried::default();
@@ -989,7 +995,7 @@ mod tests {
         };
         let (left, right) = (1, 2);
         let mut carried = Carried::default();
-        // A click that closes a screen, held on after it.
+        // A click that closes a screen, still held after it.
         carried.program_sees(clicking(left), true);
         let closed = carried.program_sees(clicking(left), false);
         assert_eq!(closed.mouse.buttons, 0, "the frame it closes in");
@@ -1003,7 +1009,7 @@ mod tests {
         carried.took_mouse(left);
         let on_bar = carried.program_sees(clicking(left), false);
         assert_eq!(on_bar.mouse.buttons, 0);
-        // One let go before the frame leaves nothing behind.
+        // One released before the frame leaves nothing behind.
         carried.program_sees(clicking(0), false);
         carried.took_mouse(left);
         carried.program_sees(clicking(0), false);
@@ -1278,8 +1284,8 @@ mod tests {
         })
     }
 
-    /// A layout where Right Alt is AltGr: with Q it gives "@", as German
-    /// layouts do, and with E "€".
+    /// A layout where Right Alt is AltGr: with Q it gives "@", like German
+    /// layouts, and with E "€".
     fn alt_gr_layout(key: Scancode, keymod: Mod) -> Option<char> {
         match key {
             Scancode::Q if keymod.contains(Mod::MODEMOD) => Some('@'),
@@ -1292,8 +1298,8 @@ mod tests {
         Typing::with_layout(us_layout)
     }
 
-    /// Presses `key` with `keymod` held and types `text` for it, as the
-    /// frontend does.
+    /// Presses `key` with `keymod` held and types `text` for it, the same as
+    /// the frontend does.
     fn type_key(
         keys: &mut Typing,
         rt: &mut sb_runtime::Runtime,
@@ -1308,7 +1314,7 @@ mod tests {
         keys.text(rt, text);
     }
 
-    /// What INKEY$ gets from [`type_key`].
+    /// Returns what INKEY$ gets from [`type_key`].
     fn press(keys: &mut Typing, key: Scancode, keymod: Mod, text: &str, upper: bool) -> String {
         let mut rt = runtime();
         type_key(keys, &mut rt, key, keymod, text, upper);
@@ -1319,8 +1325,8 @@ mod tests {
         keys.any_key_down(&mut runtime(), Some(Scancode::CapsLock), repeat);
     }
 
-    /// TEST68: A types "A" and Shift+A "a", as SmileBASIC 4's Caps Lock
-    /// starts on. Caps Lock turns both round, whatever case the computer's
+    /// TEST68: A types "A" and Shift+A "a", because SmileBASIC 4's Caps Lock
+    /// starts on. Caps Lock swaps both, regardless of the case the computer's
     /// own Caps Lock typed them in.
     #[test]
     fn letters_follow_smilebasic_4s_own_caps_lock() {
@@ -1334,7 +1340,7 @@ mod tests {
             .into();
         assert_eq!(gks, ["47", "4B", "53"]);
         caps_lock(&mut keys, false);
-        // The computer's Caps Lock went on with it, and typed "A".
+        // The computer's Caps Lock turned on with it, and typed "A".
         assert_eq!(press(&mut keys, Scancode::A, Mod::CAPSMOD, "A", true), "61");
         assert_eq!(press(&mut keys, Scancode::A, shift, "a", true), "41");
         // A repeat of Caps Lock toggles nothing.
@@ -1374,7 +1380,7 @@ mod tests {
 
     /// The runtime repeats a held key in frames, so the computer's repeats
     /// type nothing, but text outside ASCII, which an input method may
-    /// send, still goes.
+    /// send, is still typed.
     #[test]
     fn the_computers_repeats_type_nothing() {
         let mut keys = typing();
@@ -1398,7 +1404,7 @@ mod tests {
         assert_eq!(inkey(&mut rt), "D");
     }
 
-    /// What a key that types `code` of its own types.
+    /// Returns what INKEY$ gets from a key that types its own `code`.
     fn press_code(keys: &mut Typing, key: Scancode, keymod: Mod, code: u16) -> String {
         let mut rt = runtime();
         keys.any_key_down(&mut rt, Some(key), false);
@@ -1408,7 +1414,7 @@ mod tests {
 
     /// Letters typed while the controller's L and R are held type nothing,
     /// nor do they with L or R alone or with Right Ctrl. Of the keys that
-    /// type a code of their own, Enter, Backspace, Tab, Delete and Esc type
+    /// type their own code, Enter, Backspace, Tab, Delete and Esc type
     /// nothing then either, while the arrow keys, Home and End still type.
     #[test]
     fn keys_type_nothing_with_l_or_r_or_ctrl_held() {
@@ -1467,7 +1473,7 @@ mod tests {
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "41");
     }
 
-    /// A machine at the prompt, or in the editor with `editing`.
+    /// A machine in DIRECT mode, or in the editor with `editing`.
     fn machine(editing: bool) -> sb_runtime::machine::Machine {
         let mut m = sb_runtime::machine::Machine::new(runtime());
         m.boot();
@@ -1491,8 +1497,9 @@ mod tests {
         })
     }
 
-    /// The editor and the prompt type letters by the same Caps Lock as
-    /// programs, which the Caps Lock key toggles wherever it is pressed.
+    /// The editor and DIRECT mode type letters by the same Caps Lock as
+    /// programs, which the Caps Lock key toggles regardless of where it is
+    /// pressed.
     #[test]
     fn the_editor_and_the_prompt_type_by_smilebasic_4s_caps_lock() {
         let mut keys = typing();
@@ -1501,13 +1508,13 @@ mod tests {
         type_key(&mut keys, &mut m.rt, Scancode::A, Mod::NOMOD, "a", true);
         type_key(&mut keys, &mut m.rt, Scancode::B, shift, "B", true);
         caps_lock(&mut keys, false);
-        // The computer's Caps Lock went on with it.
+        // The computer's Caps Lock turned on with it.
         type_key(&mut keys, &mut m.rt, Scancode::C, Mod::CAPSMOD, "C", true);
         type_key(&mut keys, &mut m.rt, Scancode::D, shift, "d", true);
         m.frame();
         assert_eq!(m.editor().text(), "AbcD");
 
-        // Caps Lock is off now at the prompt too.
+        // Caps Lock is off now in DIRECT mode too.
         let mut m = machine(false);
         type_key(&mut keys, &mut m.rt, Scancode::A, Mod::CAPSMOD, "A", true);
         type_key(&mut keys, &mut m.rt, Scancode::B, shift, "b", true);
@@ -1515,8 +1522,8 @@ mod tests {
         assert_eq!(last_row(&m).as_deref(), Some("aB"));
     }
 
-    /// With "Type capitals without Shift" off, the editor and the prompt
-    /// keep the computer's case, as programs do.
+    /// With "Type capitals without Shift" off, the editor and DIRECT mode
+    /// keep the computer's case, the same as programs do.
     #[test]
     fn the_editor_with_the_setting_off_types_as_the_computer_does() {
         let mut keys = typing();
@@ -1558,9 +1565,9 @@ mod tests {
         assert_eq!(modifiers(|k| k == Scancode::CapsLock), 0);
     }
 
-    /// The prompt's line after `key` went down with `keymod` and typed
-    /// `text`, and then `frames` frames with the keys `held` gives for
-    /// each held.
+    /// Returns the DIRECT mode line after `key` was pressed with `keymod`
+    /// and typed `text`, and then `frames` frames with the keys that `held`
+    /// gives for each held.
     fn prompt_after(
         keys: &mut Typing,
         (key, keymod, text): (Scancode, Mod, &str),
@@ -1581,7 +1588,7 @@ mod tests {
     }
 
     /// A held key's repeats type what the modifiers held give then: 1 with
-    /// Shift gone down types "!" 19 frames later, and A "a".
+    /// Shift pressed in the meantime types "!" 19 frames later, and A "a".
     #[test]
     fn repeats_type_what_shift_gives_now() {
         let mut keys = typing();
@@ -1603,8 +1610,8 @@ mod tests {
         );
     }
 
-    /// A key pressed with Ctrl types nothing, but held on once Ctrl is let
-    /// go it repeats.
+    /// A key pressed with Ctrl types nothing, but if it is still held after
+    /// Ctrl is released, it repeats.
     #[test]
     fn a_key_pressed_with_ctrl_repeats_once_ctrl_is_let_go() {
         let mut keys = typing();
@@ -1624,9 +1631,9 @@ mod tests {
         );
     }
 
-    /// Alt with a key types SmileBASIC 4's own character, whatever text the
-    /// computer gave, with either Alt and Shift or not, or nothing for keys
-    /// without one.
+    /// Alt with a key types SmileBASIC 4's own character, regardless of the
+    /// text the computer gave, with either Alt and Shift or not, or nothing
+    /// for keys without one.
     #[test]
     fn alt_types_smilebasic_4s_own_characters() {
         let mut keys = typing();
@@ -1648,7 +1655,7 @@ mod tests {
         held.set_key(Scancode::RAlt as i32 as u8, true);
         keys.hold(&held);
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "E2EC");
-        // Held on, it repeats.
+        // Still held, it repeats.
         keys.hold(&State::default());
         let alt_a = (Scancode::A, left, "a");
         let alt_held = |_| vec![Scancode::A, Scancode::LAlt];
@@ -1657,8 +1664,8 @@ mod tests {
     }
 
     /// On a layout where Right Alt is AltGr, it types the layout's
-    /// character with keys that have one, and SmileBASIC 4's with the rest.
-    /// Left Alt always types SmileBASIC 4's.
+    /// character with keys that have one, and SmileBASIC 4's character with
+    /// the rest. Left Alt always types SmileBASIC 4's characters.
     #[test]
     fn right_alt_types_the_layouts_alt_gr_characters() {
         let mut keys = Typing::with_layout(alt_gr_layout);

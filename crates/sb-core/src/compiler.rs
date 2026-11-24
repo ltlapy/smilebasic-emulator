@@ -19,9 +19,9 @@ fn key(var: &Var) -> Key {
     (var.name.clone(), var.suffix)
 }
 
-/// Compiles `program`; `direct` for a line typed in direct mode, where
-/// global declarations are checked as they run rather than here.
-/// `unparsed` is the error of its [`StmtKind::Unparsed`], given when
+/// Compiles `program`. `direct` is set for a line typed in DIRECT mode,
+/// where global declarations are checked as they run rather than here.
+/// `unparsed` is the error of its [`StmtKind::Unparsed`], returned when
 /// compiling reaches it.
 pub fn compile(
     program: &Program,
@@ -75,8 +75,8 @@ pub fn compile(
             c.emit(Op::End);
             c.resolve_patches(None)?;
         }
-        // Only the DEFs before it still compile, to find an error of
-        // theirs that comes first.
+        // Only the DEFs before it still compile, to find an error in
+        // them that comes first.
         Some(_) => {
             c.patches.clear();
             c.loops.clear();
@@ -111,8 +111,8 @@ struct DefScope {
     index: u32,
     is_function: bool,
     /// The DEF's variables made so far, in source order: its parameters,
-    /// those of its VARs, and those a use made. SmileBASIC 4 compiles in one
-    /// pass, so a VAR further down does not exist before it.
+    /// those of its VARs, and those made by a use. SmileBASIC 4 compiles in
+    /// one pass, so a VAR further down does not exist before it.
     locals: HashMap<Key, u32>,
 }
 
@@ -135,7 +135,7 @@ struct Compiler<'h> {
     global_slots: HashMap<Key, u32>,
     /// VAR statements compiled so far at top level, to report duplicates.
     global_var_seen: HashSet<Key>,
-    /// Globals that top-level code has used so far, in source order.
+    /// Globals that top-level code has used so far.
     global_used: HashSet<Key>,
     /// By global slot, whether a top-level VAR or use compiled so far made
     /// the global. Kept only with an OPTION STRICT.
@@ -143,33 +143,33 @@ struct Compiler<'h> {
     /// The top-level statement each global first appears in. A DEF sees
     /// only those from before it: SmileBASIC compiles in one pass.
     global_first: HashMap<Key, usize>,
-    /// The statement the DEF being compiled is.
+    /// The index of the DEF being compiled in the top-level statements.
     def_at: usize,
     direct: bool,
     /// The error the program's [`StmtKind::Unparsed`] gives.
     unparsed: Option<Error>,
-    /// Where the first statement starts: in DIRECT mode, the commands
-    /// of DIRECT mode work only there, at the start of the line.
+    /// The start of the first statement: in DIRECT mode, the commands of
+    /// DIRECT mode work only there, at the start of the line.
     first: Option<(u32, u32)>,
     /// The program slot compiled for, `#_SLOT`.
     slot: i32,
-    /// Where the first OPTION STRICT stands. From there on, through and out
-    /// of DEFs, a variable must exist before it is used, as SmileBASIC 4
-    /// keeps the flag in its compile state.
+    /// The position of the first OPTION STRICT. From there on, inside and
+    /// outside DEFs, a variable must exist before it is used, because
+    /// SmileBASIC 4 keeps the flag in its compile state.
     strict_at: Option<(u32, u32)>,
-    /// The program's constants, each with where its name stands: a use
-    /// before that place is Undefined constant, as SmileBASIC 4 compiles
-    /// in one pass.
+    /// The program's constants, each with the position of its name: a use
+    /// before that position is Undefined constant, because SmileBASIC 4
+    /// compiles in one pass.
     constants: HashMap<String, (Literal, Span)>,
     /// Errors the pre-pass found, each given when compiling reaches its
     /// statement, so that the errors before it come first.
     pending: Vec<(*const Stmt, Error)>,
-    /// Where the first OPTION DEFINT stands. The default type is int from
-    /// there to the end of the program, DEFs included, as SmileBASIC 4
-    /// keeps it in its compile state.
+    /// The position of the first OPTION DEFINT. The default type is int
+    /// from there to the end of the program, DEFs included, because
+    /// SmileBASIC 4 keeps it in its compile state.
     defint_at: Option<(u32, u32)>,
-    /// Where each variable of the scope being compiled is first seen,
-    /// worked out only when there is a [`Self::defint_at`].
+    /// The position where each variable of the scope being compiled is
+    /// first seen, computed only when there is a [`Self::defint_at`].
     first_seen: HashMap<Key, (u32, u32)>,
     /// The array a VAR or DIM declares, while its sizes compile.
     declaring: Option<Key>,
@@ -180,13 +180,14 @@ struct Compiler<'h> {
     line: u32,
     col: u32,
     temp_count: u32,
-    /// The expression being compiled is part of a constant one already
-    /// worked out without error, so its parts need no check of their own.
+    /// The expression being compiled is part of a constant expression
+    /// already computed without error, so its parts do not need a separate
+    /// check.
     constant_checked: bool,
-    /// What the constant strings worked out in this statement have taken
-    /// of [`CONSTANT_BYTES`].
+    /// The part of [`CONSTANT_BYTES`] taken by the constants of this
+    /// statement and the strings computed from them.
     constant_bytes: Cell<usize>,
-    /// What constant strings have taken of the code memory so far.
+    /// The code memory that constant strings have taken so far.
     string_words: Cell<usize>,
 }
 
@@ -206,8 +207,8 @@ fn err(kind: ErrorKind, detail: impl Into<String>) -> Error {
     Error::with_detail(kind, detail)
 }
 
-/// `Undefined variable`, placed at the name, as SmileBASIC 4 places the
-/// errors of a variable's name.
+/// `Undefined variable`, placed at the name, where SmileBASIC 4 places
+/// the errors of a variable's name.
 #[cold]
 fn undefined_variable(var: &Var) -> Error {
     err(
@@ -218,10 +219,10 @@ fn undefined_variable(var: &Var) -> Error {
 }
 
 /// The numbers of arguments of a function SmileBASIC 4 compiles in place
-/// when it is called with brackets. Another number is `Wrong number of arguments`
-/// as the program compiles. MIN and MAX are in the table too, but only
-/// two arguments are compiled in place; other numbers are calls, which
-/// check as they run.
+/// when it is called with brackets. Any other number is
+/// `Wrong number of arguments` as the program compiles. MIN and MAX are
+/// in the table too, but only two arguments are compiled in place; other
+/// numbers are calls, which check as they run.
 fn in_place_counts(name: &str) -> Option<std::ops::RangeInclusive<usize>> {
     Some(match name {
         "DEFARGC" | "DEFOUTC" => 0..=0,
@@ -379,8 +380,9 @@ impl Compiler<'_> {
         }
     }
 
-    /// CONST/ENUM definitions, DATA and its labels, in source order across
-    /// DEFs, up to the first statement with an error, which it gives.
+    /// Walks CONST/ENUM definitions, DATA and its labels, in source order
+    /// across DEFs, up to the first statement with an error, and returns
+    /// that error.
     /// `def` is the index of the DEF `stmts` are in.
     fn walk_source_order(
         &mut self,
@@ -406,8 +408,8 @@ impl Compiler<'_> {
         (self.line, self.col) = (stmt.line, stmt.col);
         self.constant_bytes.set(0);
         let at = |e: Error| e.at_pos(stmt.line, stmt.col);
-        // A value that is not worked out as the program compiles is a
-        // Syntax error in DATA, but its own error in CONST and ENUM.
+        // A value that is not computed as the program compiles is a
+        // Syntax error in DATA, but in CONST and ENUM it has its own error.
         let illegal = |mut e: Error| {
             if e.kind == ErrorKind::SyntaxError {
                 e.kind = ErrorKind::IllegalConstantExpression;
@@ -425,7 +427,7 @@ impl Compiler<'_> {
                     .or_insert(self.out.data.len() as u32);
             }
             StmtKind::Option(o) => self.option(o, stmt)?,
-            // SmileBASIC 4 checks a CONST name after working out its
+            // SmileBASIC 4 checks a CONST name after computing its
             // value, and an ENUM name before.
             StmtKind::Const(items) => {
                 for (name, span, expr) in items {
@@ -473,8 +475,8 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    /// OPTION, which may stand anywhere, in a DEF too, and holds from
-    /// there on. Another name is a Syntax error.
+    /// OPTION, which may appear anywhere, in a DEF too, and holds from
+    /// there on. Any other name is a Syntax error.
     #[cold]
     fn option(&mut self, name: &str, stmt: &Stmt) -> Result<()> {
         let at = Some((stmt.line, stmt.col));
@@ -490,8 +492,8 @@ impl Compiler<'_> {
     }
 
     /// `Duplicate constant` if CONST or ENUM may not define `#name`, which
-    /// stands at `at`: a built-in constant, or one defined before anywhere
-    /// in this program, in a DEF or not. Other slots have their own.
+    /// is at `at`: a built-in constant, or one defined before anywhere in
+    /// this program, in a DEF or not. Other slots have their own constants.
     fn check_new_constant(&self, name: &str, at: Span) -> Result<()> {
         let builtin =
             matches!(name, "_LINE" | "_SLOT" | "_FILENAME") || constants::lookup(name).is_some();
@@ -503,7 +505,7 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    /// The value of constant `#name`, which stands at `at`. Undefined
+    /// The value of constant `#name`, which is at `at`. Undefined
     /// constant is placed there, not at the statement or its `=`.
     // UNVERIFIED: for constants outside an assignment's value.
     fn constant(&self, name: &str, at: Span) -> Result<Literal> {
@@ -524,7 +526,7 @@ impl Compiler<'_> {
             "_LINE" if self.direct => return Ok(Literal::Int(0)),
             "_LINE" => return Ok(Literal::Int(self.line as i32)),
             "_SLOT" => return Ok(Literal::Int(self.slot)),
-            // PRGNAME$'s name in a program, empty in direct mode.
+            // PRGNAME$'s name in a program, empty in DIRECT mode.
             "_FILENAME" if self.direct => return Ok(Literal::Str(Vec::new())),
             "_FILENAME" => {
                 let name = self.host.program_name(self.slot as usize);
@@ -552,7 +554,7 @@ impl Compiler<'_> {
         })
     }
 
-    /// Works out a constant expression: its first operand, then each
+    /// Computes a constant expression: its first operand, then each
     /// operator up the chain in turn (see [`Expr::chain_operand`]).
     fn const_value(&self, expr: &Expr) -> Result<Value> {
         let (links, first) = chain(expr, false);
@@ -637,9 +639,9 @@ impl Compiler<'_> {
     }
 
     /// Puts the two values pushed from `at`, the second one on top, back
-    /// in order. Where each was a single push that cannot be seen to
+    /// in order. When each was a single push that cannot be seen to
     /// happen early, such as a constant or a variable, the two pushes
-    /// trade places instead, which saves a Swap each time it runs.
+    /// swap places instead, which saves a Swap each time the code runs.
     fn put_back_two(&mut self, at: usize) {
         let simple = |op: &Op| matches!(op, Op::Int(_) | Op::Real(_) | Op::Str(_) | Op::Load(_));
         let code = &mut self.out.code;
@@ -676,9 +678,10 @@ impl Compiler<'_> {
         (self.out.strings.len() - 1) as u32
     }
 
-    /// POP or SHIFT of what proved a string constant, compiled from `start`
-    /// on: as a constant takes no block, it is not made for them to work on.
-    /// POP's result is known now. An empty constant is an error as it runs.
+    /// POP or SHIFT of an argument that turned out to be a string constant,
+    /// compiled from `start` on. A constant takes no block, so no block is
+    /// made for POP or SHIFT to work on. POP's result is known now. An
+    /// empty constant is an error as it runs.
     fn take_from_constant(&mut self, start: usize, arg: &Expr, shift: bool) -> bool {
         let bytes = self.constant_bytes.get();
         let value = self.const_value(arg);
@@ -733,8 +736,8 @@ impl Compiler<'_> {
                 None => &self.out.labels,
             };
             // ON BREAK GOTO in a DEF may name a label outside it, all of
-            // which are known by then. One outside comes before a label of
-            // the DEF's own.
+            // which are known by then. A label outside takes precedence
+            // over a label of the DEF itself.
             let outside = matches!(self.out.code[at], Op::OnBreak(_))
                 .then(|| self.out.labels.get(&label))
                 .flatten();
@@ -756,9 +759,10 @@ impl Compiler<'_> {
 
     // ---- variables ----
 
-    /// Whether variable `k`, made now, starts as an int: it has no suffix
-    /// and OPTION DEFINT stands before where it is first seen, or before
-    /// the statement compiling if it is not seen in the source.
+    /// Whether variable `k`, made now, starts as an int: it has no suffix,
+    /// and OPTION DEFINT comes before the position where it is first seen,
+    /// or before the statement being compiled if it is not seen in the
+    /// source.
     fn starts_int(&self, k: &Key) -> bool {
         let Some(defint) = self.defint_at else {
             return false;
@@ -826,7 +830,7 @@ impl Compiler<'_> {
                 return Ok(Slot::Local(slot));
             }
             if let Some(&slot) = self.global_slots.get(&k) {
-                // A DEF sees the globals top-level code above it made.
+                // A DEF sees the globals that top-level code above it made.
                 if self.global_first.get(&k).is_some_and(|&i| i < self.def_at) {
                     return Ok(Slot::Global(slot));
                 }
@@ -843,10 +847,10 @@ impl Compiler<'_> {
         })
     }
 
-    /// [`Self::slot`] in a program with an OPTION STRICT. From where it
-    /// stands, a use of a variable that does not exist yet is `Undefined
-    /// variable`. SmileBASIC 4 looks in the DEF's variables, then in the
-    /// globals made so far, all in one pass.
+    /// [`Self::slot`] in a program with an OPTION STRICT. From the OPTION
+    /// STRICT on, a use of a variable that does not exist yet is
+    /// `Undefined variable`. SmileBASIC 4 looks in the DEF's variables,
+    /// then in the globals made so far, all in one pass.
     #[inline(never)]
     fn strict_slot(&mut self, var: &Var) -> Result<Slot> {
         let k = key(var);
@@ -854,8 +858,8 @@ impl Compiler<'_> {
         let found = match &self.def {
             Some(def) => match def.locals.get(&k) {
                 Some(&n) => Some(Slot::Local(n)),
-                // A DEF sees the globals top-level code above it made, by
-                // now compiled past this DEF.
+                // A DEF sees the globals that top-level code above it
+                // made. By now that code is compiled past this DEF.
                 None => match self.global_first.get(&k) {
                     Some(&i) if i < self.def_at => {
                         self.global_slots.get(&k).map(|&n| Slot::Global(n))
@@ -949,8 +953,8 @@ impl Compiler<'_> {
             .map_err(|e| e.at_pos(stmt.line, stmt.col))?;
         self.check_code_memory()
             .map_err(|e| e.at_pos(stmt.line, stmt.col))?;
-        // A FOR's own start is no statement for TRACE: it runs on into
-        // the body (checked on hardware). A label emits nothing.
+        // The start of a FOR is not a statement for TRACE: it continues
+        // into the body (checked on hardware). A label emits nothing.
         if !matches!(stmt.kind, StmtKind::For { .. } | StmtKind::Label(_)) {
             self.mark_start(start);
         }
@@ -970,9 +974,9 @@ impl Compiler<'_> {
                 value,
                 eq_col,
             } => {
-                // An error found as the value compiles, as a division by
-                // zero of constants, is placed at the `=`, as one found as
-                // it parses is.
+                // An error found as the value compiles, such as a division
+                // by zero of constants, is placed at the `=`, the same as
+                // an error found as it parses.
                 // UNVERIFIED: for errors other than Divide by zero. A
                 // function compiled in place that has the wrong number of
                 // arguments is placed at the statement (checked on
@@ -1024,7 +1028,7 @@ impl Compiler<'_> {
                 targets,
                 whole_line,
             } => {
-                // VAR's name, when only running it tells what it holds.
+                // The name in VAR(...), when it is known only at run time.
                 let mut named = Vec::with_capacity(targets.len());
                 for target in targets {
                     named.push(match target {
@@ -1135,7 +1139,7 @@ impl Compiler<'_> {
                 self.mark_start(test_at);
                 let check = self.here();
                 self.patch(enter, check);
-                // STEP, then TO, are worked out again before each test
+                // STEP, then TO, are evaluated again before each test
                 // (checked on hardware).
                 match step {
                     Some(s) => self.expr(s)?,
@@ -1246,8 +1250,8 @@ impl Compiler<'_> {
                     self.store(t)?;
                 }
             }
-            // A DEF's own labels first, then the top level's, all known by
-            // now. A label that is not there is an error only when the
+            // The labels of the DEF first, then those of the top level, all
+            // known by now. A missing label is an error only when the
             // RESTORE runs.
             StmtKind::Restore(Target::Label(l)) => match (self.def.as_ref())
                 .and_then(|d| self.out.def_data_labels[d.index as usize].get(l))
@@ -1270,7 +1274,7 @@ impl Compiler<'_> {
                 return Err(e.unwrap_or_else(|| ErrorKind::SyntaxError.into()));
             }
             StmtKind::Swap(a, b) => {
-                // Each place is worked out once, the second first (checked
+                // Each place is evaluated once, the second first (checked
                 // on hardware).
                 let b = self.place(b)?;
                 let a = self.place(a)?;
@@ -1305,7 +1309,7 @@ impl Compiler<'_> {
         // Using a variable before its DIM or VAR also makes the DIM a
         // duplicate (checked on hardware), in a DEF too, unless the use
         // was of a global that top-level code above the DEF made: the VAR
-        // then makes the DEF's own from there on.
+        // then makes the DEF's own variable from there on.
         let first = match &self.def {
             Some(def) => !def.locals.contains_key(&k),
             None => {
@@ -1344,8 +1348,9 @@ impl Compiler<'_> {
         }
         let elem = elem_type(d.var.suffix, self.var_info(slot).int);
         match (&d.dims, &d.init) {
-            // With sizes, they decide the array's shape and the values fill
-            // it from the start (as the reference's DIM POS$[10,5]=["X",...]).
+            // With sizes, they decide the array's shape and the values
+            // fill it from the start (as in the reference's
+            // DIM POS$[10,5]=["X",...]).
             (Some(dims), Some(Init::Array(values))) if !dims.is_empty() => {
                 if dims.len() > crate::value::MAX_DIMS {
                     return Err(err(ErrorKind::SyntaxError, "more than 4 dimensions"));
@@ -1400,8 +1405,8 @@ impl Compiler<'_> {
     /// A[A]`). SmileBASIC 4 compiles the sizes before the array exists:
     /// the name is a global that top-level code above the DEF made, or
     /// under OPTION STRICT `Undefined variable` (checked on hardware).
-    // UNVERIFIED: that without OPTION STRICT it is a new variable's 0, so
-    // `DIM A[A]` makes an array of no elements (it is no error there).
+    // UNVERIFIED: that without OPTION STRICT it is the 0 of a new variable,
+    // so `DIM A[A]` makes an array of no elements (it is not an error there).
     #[cold]
     fn declaring_ref(&mut self, v: &Var) -> Result<()> {
         let k = key(v);
@@ -1443,7 +1448,7 @@ impl Compiler<'_> {
                 c.emit(Op::Load(s));
             }
         };
-        // Every item is worked out before anything prints, the last
+        // Every item is evaluated before anything prints, the last
         // first (checked on hardware), so the first ends up on top.
         for item in items.iter().rev() {
             if let PrintItem::Expr(e) = item {
@@ -1523,8 +1528,8 @@ impl Compiler<'_> {
             "CALLIDX" | "CHKLABEL" | "CHKCALL" | "CHKVAR" | "DEFARG" | "DEFARGC" | "DEFOUTC" => {
                 return self.handler_command(&full, args, outs);
             }
-            // The handlers check for no OUT as they run, and read the
-            // first argument only, past any others.
+            // The handlers check that there is no OUT as they run, and
+            // read the first argument only, past any others.
             "VSYNC" | "WAIT" => {
                 if !outs.is_empty() {
                     return self.fail_after(ErrorKind::WrongNumberOfOutArguments, &full, args);
@@ -1612,8 +1617,8 @@ impl Compiler<'_> {
             self.emit(Op::CallHost { id, argc, want });
         } else if let Some(id) = builtins::lookup(&full, Form::Function) {
             // A function with no OUT variable or more than one compiles,
-            // and the call finds the count wrong as it runs, as SmileBASIC
-            // 4's handlers look at it themselves.
+            // and the call finds the count wrong as it runs, because the
+            // handlers of SmileBASIC 4 check the count themselves.
             self.emit(Op::CallBuiltin { id, argc, want });
         } else {
             self.call_common(&full, argc, want)?;
@@ -1632,8 +1637,8 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    /// Works out `args` and fails with `kind` as the call runs, as the
-    /// handler of builtin `name` does when it checks them.
+    /// Evaluates `args` and fails with `kind` as the call runs, the same
+    /// as the handler of builtin `name` does when it checks them.
     fn fail_after(&mut self, kind: ErrorKind, name: &str, args: &[Option<Expr>]) -> Result<()> {
         self.args(args)?;
         let name = self.string_const(name.encode_utf16().collect());
@@ -1766,8 +1771,8 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    /// Works out where `target` is once, into temporaries, for statements
-    /// that read and write it.
+    /// Emits code that evaluates the location of `target` once, into
+    /// temporaries, for statements that read and write it.
     fn place(&mut self, target: &LValue) -> Result<Place> {
         let keep = |c: &mut Self| {
             let tmp = c.temp();
@@ -1922,8 +1927,8 @@ impl Compiler<'_> {
             true => Vec::new(),
             false => self.check_chain(&links, first),
         };
-        // Where each link's right operand starts, and whether constants
-        // were checked outside the link.
+        // The code address where each link's right operand starts, and
+        // whether constants were checked outside the link.
         let mut down = Vec::with_capacity(links.len());
         for (i, link) in links.iter().enumerate() {
             let outer = self.constant_checked;
@@ -1991,23 +1996,24 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    /// SmileBASIC 4 works out operations on constants when it compiles,
+    /// SmileBASIC 4 computes operations on constants when it compiles,
     /// so their errors stop the program before it runs (checked on
     /// hardware with `"A"*-1`).
     ///
-    /// For each link of a chain from [`chain`], whether all of it is a
-    /// constant that worked out (then every operation in it did too, and
-    /// need not be checked again), or the error of its own operation on
-    /// constant operands. `&&`, `||` and indexing are never checked.
+    /// For each link of a chain from [`chain`], returns whether all of it
+    /// is a constant computed without error (then every operation in it
+    /// was too, and does not need to be checked again), or the error of
+    /// its own operation on constant operands. `&&`, `||` and indexing
+    /// are never checked.
     ///
-    /// The chain is worked out once from its first operand up, where
-    /// checking each link anew would take time growing with the square of
-    /// the chain's length, both in a constant chain such as
+    /// The chain is computed once from its first operand up. Checking
+    /// each link again would take time growing with the square of the
+    /// chain's length, both in a constant chain such as
     /// `"A"+#LF+"B"+...` and in one led by a variable.
     fn check_chain(&self, links: &[&Expr], first: &Expr) -> Vec<Result<bool>> {
         let mut checks: Vec<Result<bool>> = links.iter().map(|_| Ok(false)).collect();
         let mut value = self.const_value(first).ok();
-        // How long the string worked out last is: the program holds it
+        // The length of the string computed last: the program holds it
         // when what comes next is not a constant too.
         let mut made = None;
         for (link, check) in links.iter().zip(&mut checks).rev() {
@@ -2015,8 +2021,9 @@ impl Compiler<'_> {
                 (_, None) | (Expr::Index { .. }, _) => None,
                 (Expr::Unary { op, .. }, Some(v)) => Some(ops::unary(*op, &v)),
                 (Expr::Binary { op, rhs, .. }, Some(l)) => {
-                    // A right side that is no constant is compiled on its
-                    // own later, and takes what it takes then.
+                    // A right side that is not a constant is compiled
+                    // separately later, and its constants take their share
+                    // of [`CONSTANT_BYTES`] then.
                     let before = self.constant_bytes.get();
                     let right = self.const_value(rhs);
                     if right.is_err() {
@@ -2042,10 +2049,10 @@ impl Compiler<'_> {
                     };
                     Some(v)
                 }
-                // Too large to work out for what is free now: it is the
-                // program's to run into, if it ever gets there.
+                // Too large to compute with the memory free now: the
+                // program runs into the error if it ever gets there.
                 Some(Err(e)) if e.kind == ErrorKind::MemoryCheck => None,
-                // Values of different types are not worked out: `A=1+"A"`
+                // Values of different types are not computed: `A=1+"A"`
                 // is a Type mismatch as it runs (checked on hardware).
                 // UNVERIFIED: for operators other than `+`.
                 Some(Err(e)) if e.kind == ErrorKind::TypeMismatch => None,
@@ -2069,9 +2076,9 @@ impl Compiler<'_> {
         checks
     }
 
-    /// Each constant of an expression has its place in [`CONSTANT_BYTES`],
-    /// though only strings worked out are refused for it: a literal string's
-    /// characters stay where they are in the source.
+    /// Each constant of an expression takes room in [`CONSTANT_BYTES`],
+    /// but only computed strings are refused for lack of room: a literal
+    /// string's characters stay where they are in the source.
     fn take_constant_node(&self) {
         self.constant_bytes.set(
             self.constant_bytes
@@ -2088,8 +2095,9 @@ impl Compiler<'_> {
     }
 
     /// Whether what has been compiled so far fits in the code memory.
-    // The rest of the code is taken as a word an instruction. Ours are not
-    // SmileBASIC 4's, but it is constant strings that come near.
+    // The rest of the code counts as one word per instruction. The
+    // emulator's instructions are not those of SmileBASIC 4, but constant
+    // strings are what come near the limit.
     fn check_code_memory(&self) -> Result<()> {
         let most = if self.direct {
             DIRECT_CODE_WORDS
@@ -2102,14 +2110,14 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    /// [`ops::binary`] for working out constants, adding a string to the end
-    /// of one no one else holds rather than copying it: a chain such as
-    /// `"A"+"B"+...` then takes time in proportion to its length.
+    /// [`ops::binary`] for computing constants. It adds a string to the end
+    /// of a string that nothing else holds, rather than copying it, so a
+    /// chain such as `"A"+"B"+...` takes time in proportion to its length.
     ///
-    /// Each string worked out stays until the statement has compiled, in
-    /// [`CONSTANT_BYTES`], beside the constants it came from. The rest of
-    /// the statement takes from there too, which is not counted: it is
-    /// little, and this way nothing is refused that SmileBASIC 4 compiles.
+    /// Each computed string stays in [`CONSTANT_BYTES`] until the statement
+    /// has compiled, next to the constants it came from. The rest of the
+    /// statement also takes from there, which is not counted: it is little,
+    /// and this way nothing that SmileBASIC 4 compiles is refused.
     fn const_binary(&self, op: BinaryOp, lhs: Value, rhs: &Value) -> Result<Value> {
         let chars = match (op, &lhs, rhs) {
             (BinaryOp::Add, Value::Str(a), Value::Str(b)) => {
@@ -2189,7 +2197,7 @@ impl Compiler<'_> {
                 .collect::<Option<Vec<_>>>();
             if let Some(constants) = constants {
                 builtins::check_constant_args(&full, &constants)?;
-                // SmileBASIC 4 works out a number from constants as it
+                // SmileBASIC 4 computes a number from constants as it
                 // compiles: TEST74's A=RGB(1,2,3) costs less than
                 // A=FLOOR(R#). A call that fails still fails as it runs.
                 let b = builtins::get(id);
@@ -2245,7 +2253,7 @@ impl Compiler<'_> {
 
     // ---- DEF ----
 
-    /// Compiles `def`, which stands at `at`.
+    /// Compiles `def`, whose statement starts at `at`.
     fn def(&mut self, def: &Def, at: (u32, u32)) -> Result<()> {
         let index = self.out.def_names[&call_name(&def.name)];
         self.out.defs[index as usize].entry = self.here();
@@ -2331,12 +2339,16 @@ const DIRECT_COMMANDS: &[&str] = &[
     "SUBHIDE",
 ];
 
-/// What one statement's constant strings can take as it compiles, and
-/// what each takes beside its characters.
+/// The bytes that the constants of one statement can take as it compiles:
+/// its numbers, strings and `#` constants, and the strings computed from
+/// them.
 const CONSTANT_BYTES: usize = 4 << 20;
+/// The bytes each constant takes, besides the characters of a computed
+/// string.
 const CONSTANT_NODE_BYTES: usize = 24;
-/// The code memory, of 16-bit words, of a program slot and of direct mode.
+/// The code memory of a program slot, in 16-bit words.
 const SLOT_CODE_WORDS: usize = 4 << 20;
+/// The code memory of DIRECT mode, in 16-bit words.
 const DIRECT_CODE_WORDS: usize = 32768;
 
 fn literal_value(l: &Literal) -> Value {
@@ -2387,8 +2399,8 @@ fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
     }
 }
 
-/// Where each variable in `stmts` is first seen: the statement it is
-/// in, innermost, not descending into DEFs.
+/// Records where each variable in `stmts` is first seen: the statement
+/// it is in, innermost, not descending into DEFs.
 fn first_seen(stmts: &[Stmt], seen: &mut HashMap<Key, (u32, u32)>) {
     let (mut used, mut declared) = (Vec::new(), Vec::new());
     for stmt in stmts {

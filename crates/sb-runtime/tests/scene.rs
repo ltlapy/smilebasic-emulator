@@ -1,5 +1,5 @@
-//! What the scene builder decides, without drawing anything: the order of
-//! items, which layers get a pass, and what it costs.
+//! The decisions the scene builder makes, without drawing anything: the
+//! order of items, which layers get a pass, and what it costs.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -23,7 +23,7 @@ thread_local! {
 // SAFETY: passes everything on to the system allocator unchanged.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // A thread being torn down has no counter left, and isn't counted.
+        // A thread being torn down has no counter left, and is not counted.
         let _ = ALLOCATIONS.try_with(|n| n.set(n.get() + 1));
         // SAFETY: the caller's obligations are the same as ours.
         unsafe { System.alloc(layout) }
@@ -104,7 +104,7 @@ impl World {
     }
 }
 
-/// Each pass's items, as a text screen's number or a sprite's color.
+/// Each pass's items, as a text screen's number or the U of a sprite's image.
 fn listed(scene: &Scene) -> Vec<Vec<i64>> {
     (scene.passes.iter())
         .map(|pass| {
@@ -194,8 +194,9 @@ fn sprites_that_show_nothing_keep_their_place() {
 fn only_layers_with_something_to_do_get_a_pass() {
     let mut w = World::new();
     assert!(w.scene().passes.is_empty());
-    // A filter on a direct layer works on the frame so far, with nothing
-    // of its own; one on a composed layer has nothing to work on.
+    // A filter on a direct layer works on the frame so far, even when the
+    // layer has nothing in it; one on an empty composed layer has nothing to
+    // work on.
     w.filters[2] = Filter::Blur(4);
     w.filters[3] = Filter::Mosaic(4);
     w.layers[3].compose = Compose::Add;

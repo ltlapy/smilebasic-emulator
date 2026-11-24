@@ -37,7 +37,7 @@ fn page_arg(v: &Value) -> Result<usize> {
     })
 }
 
-/// The kind of a file named for reading, whose type cannot be left out.
+/// The kind of a file named for reading, whose type cannot be omitted.
 fn read_kind(spec: &str) -> Option<FileKind> {
     spec.contains(':')
         .then(|| storage::parse_read_name(spec, FileKind::Txt).ok())
@@ -71,8 +71,8 @@ fn value_type(spec: &str) -> Result<()> {
     Err(Error::with_detail(ErrorKind::FileTypeMismatch, detail))
 }
 
-/// SAVEG's type of file, checked as SAVEV's is: GRP, JPG or none, which
-/// is GRP. `TXT:`, `DAT:` and `PNG:` are File type mismatch.
+/// SAVEG's type of file, checked the same way as for SAVEV: GRP, JPG or
+/// none, which is GRP. `TXT:`, `DAT:` and `PNG:` are File type mismatch.
 fn saveg_type(spec: &str) -> Result<()> {
     match storage::split_name(spec).and_then(|parts| parts.kind) {
         None | Some(NamedKind::File(FileKind::Grp | FileKind::Jpg)) => Ok(()),
@@ -83,9 +83,9 @@ fn saveg_type(spec: &str) -> Result<()> {
     }
 }
 
-/// What LOADV gives when a file cannot be read: an empty string for TXT,
-/// otherwise the omitted value (TYPEOF 0), although the manual says an
-/// empty array (checked on hardware).
+/// The value LOADV returns when a file cannot be read: an empty string for
+/// TXT, otherwise the omitted value (TYPEOF 0), although the manual says
+/// an empty array (checked on hardware).
 fn failed_value(spec: &str) -> Value {
     match read_kind(spec) {
         Some(FileKind::Txt) => Value::str(""),
@@ -114,7 +114,7 @@ fn image_array(image: Image) -> Array {
     }
 }
 
-/// What an array's strings take.
+/// The bytes an array's strings take.
 fn strings_size(array: &Array) -> usize {
     match &array.data {
         ArrayData::Str(v) => (v.iter())
@@ -124,7 +124,7 @@ fn strings_size(array: &Array) -> usize {
     }
 }
 
-/// What an array holds, its strings too.
+/// The bytes an array takes, its strings included.
 fn array_size(array: &Array) -> usize {
     memory::array_bytes(array.elem_type(), array.len()).saturating_add(strings_size(array))
 }
@@ -142,7 +142,7 @@ fn keep_first(array: &mut Array, len: usize) {
     }
 }
 
-/// Puts `source`'s elements at the start of `target`'s, of the same type.
+/// Puts the elements of `source` at the start of `target`, of the same type.
 fn overwrite(target: &mut ArrayData, source: ArrayData) {
     fn put<T>(to: &mut [T], from: Vec<T>) {
         for (d, s) in to.iter_mut().zip(from) {
@@ -159,8 +159,8 @@ fn overwrite(target: &mut ArrayData, source: ArrayData) {
 
 /// Fills `target` with `source`, taking its size: numbers convert between
 /// integer and real, but strings and numbers do not mix, and the number
-/// of dimensions must agree. An array of the system's keeps its size and
-/// takes what fits, the rest of it left as it was.
+/// of dimensions must agree. A system array keeps its size and takes what
+/// fits, and the rest of it stays unchanged.
 fn fill(target: &ArrayRef, source: Array) -> Result<()> {
     let mut target = target.borrow_mut();
     if target.dims.len() != source.dims.len() {
@@ -172,7 +172,8 @@ fn fill(target: &ArrayRef, source: Array) -> Result<()> {
         (ArrayData::Str(_), _) | (_, ArrayData::Str(_)) => {
             return Err(ErrorKind::TypeMismatch.into());
         }
-        // Truncated as INT() does, so 2147483647.5 fits, with a NaN as 0.
+        // Truncated the same way as INT(), so 2147483647.5 fits, with a NaN
+        // as 0.
         (ArrayData::Int(_), ArrayData::Real(v)) => ArrayData::Int(
             v.into_iter()
                 .map(|x| match x.is_nan() {
@@ -214,11 +215,12 @@ fn array_data(array: &Array) -> Data {
 /// The most SmileBASIC 4 saves of a DAT or GRP file's PCBN body, in bytes.
 const MAX_SAVED: usize = 0x100_0000;
 
-/// SmileBASIC 4 stores a DAT or GRP file's PCBN body compressed, or as it
-/// is when compressed is still too large; too large both ways is Array is
-/// too large, after the questions. As it is, only the values count, not
-/// the body's header. Ours writes the body as it is, so this only checks,
-/// and compresses only what is too large as it is.
+/// SmileBASIC 4 stores a DAT or GRP file's PCBN body compressed, or
+/// uncompressed when the compressed body is still too large; too large both
+/// ways is Array is too large, after the questions. Uncompressed, only the
+/// values count, not the body's header. The emulator writes the body
+/// uncompressed, so this only checks, and compresses only a body that is
+/// too large uncompressed.
 fn check_saved_size(values: usize, body: impl FnOnce() -> Vec<u8>) -> Result<()> {
     if values > MAX_SAVED
         && miniz_oxide::deflate::compress_to_vec_zlib(&body(), 6).len() > MAX_SAVED
@@ -337,9 +339,9 @@ impl Runtime {
                 let spec = checking(spec, || str_arg(spec))?;
                 check_file_name(&spec, 0)?;
                 value_type(&spec)?;
-                // The command form is for DAT and GRP files only, whatever
-                // it is given to load into: a TXT file into a string is the
-                // same error as into an array.
+                // The command form is for DAT and GRP files only, regardless
+                // of what it is given to load into: a TXT file into a string
+                // is the same error as into an array.
                 if let Some(kind @ FileKind::Txt) = read_kind(&spec) {
                     let detail = format!("{} in the command form", kind.name());
                     return Err(Error::with_detail(
@@ -347,7 +349,8 @@ impl Runtime {
                         detail,
                     ));
                 }
-                // Before the file is looked for, for GRP files as for DAT.
+                // Before the file is looked for, for GRP files the same as
+                // for DAT.
                 let Value::Array(target) = target else {
                     return Err(Error::new(ErrorKind::TypeMismatch).of_arg(1));
                 };
@@ -363,8 +366,8 @@ impl Runtime {
                     };
                 self.charge_loadv_array(&spec, outcome.as_ref().ok().map(Array::len));
                 // The array stays where it is unless it has to grow, which
-                // needs a new block beside the old, as RESIZE does. One of
-                // the system's never grows: SmileBASIC 4 reads only the
+                // needs a new block beside the old, the same as for RESIZE.
+                // A system array never grows: SmileBASIC 4 reads only the
                 // elements it has room for.
                 if let Ok(array) = &mut outcome {
                     let target = target.borrow();
@@ -491,7 +494,7 @@ impl Runtime {
                 if matches!(rest.len(), 0 | 1 | 4 | 5) =>
             {
                 // The page, the rectangle and the quality come before the
-                // name, as SmileBASIC 4 checks them.
+                // name, in the order SmileBASIC 4 checks them.
                 let spec = checking(spec, || str_arg(spec))?;
                 let page = page_arg(page)?;
                 let (rect, quality) = match rest {
@@ -549,20 +552,20 @@ impl Runtime {
     }
 
     /// LOADG's type of file, once the name is checked, in a program, a
-    /// subprogram or at the prompt: `PNG:` is Can't access other project
+    /// subprogram or in DIRECT mode: `PNG:` is Can't access other project
     /// in this mode, unless SmileBASIC 4's own `#` projects are involved
-    /// (and then fails, as we cannot load those), and `TXT:` File type
-    /// mismatch. A type that is none (`XYZ:`) is Illegal format, as the
-    /// name is. JPG and DAT files load, and so do files named with any
-    /// project.
+    /// (and then fails, because the emulator cannot load those), and `TXT:`
+    /// File type mismatch. An unknown type (`XYZ:`) is Illegal format, from
+    /// the name check. JPG and DAT files load, and so do files named with
+    /// any project.
     fn loadg_type(&self, spec: &str) -> Result<()> {
         let Some(parts) = storage::split_name(spec) else {
             return Ok(());
         };
         match parts.kind {
             Some(NamedKind::Png) => {
-                // `PNG:#NAME` is a file of the current project, not a
-                // system project's.
+                // `PNG:#NAME` is a file of the current project, not of a
+                // system project.
                 let named = parts.project.is_some_and(|p| p.starts_with('#'));
                 match named || self.storage.project().starts_with('#') {
                     true => Ok(()),
@@ -600,8 +603,8 @@ impl Runtime {
         Ok(image::decode(&bytes).map(|i| (i, stored)).map_err(bad_file))
     }
 
-    /// Asks before reading a file that exists, as LOAD does; whether the
-    /// command must stop here for the answer.
+    /// Asks before reading a file that exists, the same as LOAD does, and
+    /// returns whether the command must stop here for the answer.
     // LOADV and LOADG in a program do not ask, like LOAD.
     fn ask_load(&mut self, spec: &str, default: FileKind) -> bool {
         let Ok(file) = self.read_name(spec, default) else {
@@ -624,7 +627,7 @@ impl Runtime {
         self.held(ask)
     }
 
-    /// Asks before writing a file, as SAVE does.
+    /// Asks before writing a file, the same as SAVE does.
     fn ask_save(&mut self, file: &storage::Result<FileRef>) -> bool {
         let Ok(file) = file else {
             return false;

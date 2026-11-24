@@ -1,8 +1,9 @@
-//! The debugger's panel below the editor while a program is stopped: room
-//! for the screens as the program left them, which the frontend draws at
-//! the window's resolution, its calls under way, the watch expressions,
-//! and the variables of the call chosen or of a slot, what PERFEND has
-//! timed, the sprites in use, a graphic page, or what BGM and BEEP play.
+//! The debugger's panel below the editor while a program is stopped. It
+//! has room for the screens as the program left them, which the frontend
+//! draws at the window's resolution. It shows the program's calls under
+//! way and the watch expressions, and a tab with the variables of the
+//! chosen call or of a slot, the times that PERFEND measured, the sprites
+//! in use, a graphic page, or what BGM and BEEP play.
 
 pub mod bgm;
 pub mod sprites;
@@ -23,8 +24,8 @@ const FACE: u32 = 0xFF18_1818;
 pub(crate) const TAB: u32 = 0xFF40_4040;
 const ERROR: u32 = 0xFFF0_6060;
 const SELECTED: u32 = 0xFF30_3850;
-/// The mark of a watch that stops the program when it changes, red as
-/// the editor's breakpoints.
+/// The mark of a watch that stops the program when it changes, red like
+/// the breakpoints in the editor.
 const BREAKS: u32 = 0xFFDC_2828;
 /// A breakpoint's condition, orange as in the editor.
 const CONDITION: u32 = 0xFFE0_7818;
@@ -32,19 +33,19 @@ const CONDITION: u32 = 0xFFE0_7818;
 const CHANGED: u32 = 0xFFFF_DC00;
 /// Every other row of the lists.
 const STRIPE: u32 = 0xFF24_2428;
-/// Characters of the calls' and watches' column, and of a watch's
-/// expression, in large text; small text keeps the column's width and
-/// fits twice as many.
+/// Characters of the column of calls and watches, and of a watch's
+/// expression, in large text. Small text keeps the column width and fits
+/// twice as many.
 const CALL_CHARS: u32 = 20;
 const WATCH_CHARS: usize = 9;
 /// The most characters a variable's name takes before it is cut.
 const NAME_CHARS: usize = 10;
 /// A value shown whole when the pointer rests on a row that cuts it:
-/// characters to a line, and lines.
+/// characters per line, and lines.
 const TIP_CHARS: usize = 60;
 const TIP_LINES: usize = 14;
 
-/// Which variables the panel lists.
+/// The variables that the panel lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
     /// Those of the chosen call's DEF.
@@ -56,30 +57,32 @@ pub enum Tab {
     Perf,
     /// The sprites in use, which only this tab gathers.
     Sprites,
-    /// The running subprogram's, kept apart from the main interpreter's.
+    /// The running subprogram's sprites, kept separate from those of the
+    /// main interpreter.
     SubSprites,
     /// A graphic page, which SmileBASIC 4 shows only as the program
     /// draws it.
     Grp,
-    /// What the BGM tracks and BEEP play, which only this tab gathers.
+    /// The sounds that the BGM tracks and BEEP play, which only this tab
+    /// gathers.
     Bgm,
 }
 
-/// What the panel shows, gathered from the machine each frame.
+/// The data that the panel shows, gathered from the machine each frame.
 pub struct View {
     pub calls: Vec<Call>,
     /// The tabs there are, and the variables of the one shown.
     pub tabs: Vec<Tab>,
     pub variables: Vec<(String, Value)>,
-    /// Where the variables shown are: a DEF call's, by
+    /// The source of the variables shown: a DEF call, by
     /// [`Call::frame`], or a slot's globals.
     pub frame: Option<usize>,
     pub slot: usize,
     /// The value of each watch, or why it has none.
     pub watches: Vec<Result<Value, String>>,
     /// A line at the bottom: why and where the program stopped, or that
-    /// a step runs, red for a failure; then the keys, which go first when
-    /// there is no room.
+    /// a step runs, red for a failure; then the keys, which are dropped
+    /// first when there is no room.
     pub status: String,
     pub status_failed: bool,
     pub keys: String,
@@ -87,18 +90,18 @@ pub struct View {
     pub changed: Option<String>,
     /// Every breakpoint: slot, line and condition.
     pub breakpoints: Vec<(usize, u32, Option<String>)>,
-    /// What PERFEND has timed since RUN.
+    /// The times that PERFEND has measured since RUN.
     pub perf: [PerfStats; 8],
     /// The sprites in use, while the Sprites or Sub sprites tab shows.
     pub sprites: Option<sprites::List>,
     /// The GRP tab's page.
     pub grp: Probe,
-    /// What plays, while the BGM tab shows.
+    /// The sounds that play, while the BGM tab shows.
     pub bgm: Option<bgm::Bgm>,
 }
 
 impl View {
-    /// How many rows the tab shown has to scroll through.
+    /// Returns the number of rows that the tab shown has to scroll through.
     pub fn scrolled(&self) -> usize {
         match (&self.sprites, &self.bgm) {
             (Some(list), _) => list.total,
@@ -108,7 +111,7 @@ impl View {
     }
 }
 
-/// What a click on the panel chose.
+/// The part of the panel that a click chose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     /// A call, by its place in the list from the outermost.
@@ -129,17 +132,17 @@ pub enum Hit {
     /// The GRP tab's buttons for the pages, and its view of one.
     GrpPage(usize),
     Grp,
-    /// The BGM tab's lines for a track and for a channel of it, a BEEP
-    /// handle's, and the rest of the tab.
+    /// The BGM tab's lines for a track, for a channel of it and for a BEEP
+    /// handle, and the rest of the tab.
     BgmTrack(usize),
     BgmChannel(usize, usize),
     Beep(usize),
     Bgm,
-    /// The button that puts the panel away.
+    /// The button that closes the panel.
     Close,
 }
 
-/// What is being typed into the panel.
+/// The target of the text typed into the panel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     NewWatch,
@@ -148,7 +151,7 @@ pub enum Target {
     Variable(String),
 }
 
-/// What a key typed into the panel did.
+/// The result of a key typed into the panel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Typed {
     Stay,
@@ -163,7 +166,8 @@ pub struct DebugPanel {
     pub tab: Option<Tab>,
     /// Variables scrolled past.
     scroll: usize,
-    /// Where the panel and its clickable parts were last drawn.
+    /// The rectangles of the panel and of its clickable parts, as last
+    /// drawn.
     frame: Option<Rect>,
     hits: Vec<(Rect, Hit)>,
     /// Rows of variables the last frame had room for.
@@ -177,14 +181,14 @@ pub struct DebugPanel {
     typing: Option<(Target, String)>,
     /// Integers show in hexadecimal.
     pub hex: bool,
-    /// Where the pointer is, and the rows of the last frame that cut
-    /// their values, with the whole value's lines.
+    /// The pointer position, and the rows of the last frame that cut
+    /// their values, with the lines of each whole value.
     pointer: Option<(i32, i32)>,
     tips: Vec<(Rect, Vec<String>)>,
-    /// How many times its size the 8-pixel font is drawn, as last drawn.
+    /// The scale of the 8-pixel font, as last drawn.
     scale: u32,
     /// The sprite chosen in the Sprites tab, outlined on the screens,
-    /// and in the Sub sprites tab, outlined on the subprogram's.
+    /// and in the Sub sprites tab, outlined on the subprogram's screen.
     pub sprite: Option<usize>,
     pub sub_sprite: Option<usize>,
     pub grp: GrpView,
@@ -281,8 +285,8 @@ pub fn value_text(value: &Value, chars: usize, hex: bool) -> (String, u32) {
     (cut(&text, chars), color)
 }
 
-/// A value's type as TYPEOF tells them apart, with an array's sizes;
-/// STR for an array of strings, to leave the value room.
+/// A value's type, as one of the types that TYPEOF distinguishes, with an
+/// array's sizes; STR for an array of strings, to leave room for the value.
 fn type_text(value: &Value) -> String {
     let elem = |e: ElemType| match e {
         ElemType::Int => "INT",
@@ -347,10 +351,10 @@ impl DebugPanel {
         self.chosen.map_or(last, |c| c.min(last))
     }
 
-    /// Goes back to the innermost call, as after a new stop, and shows its
-    /// locals if the locals were shown. The tabs that have nothing to do
-    /// with the call stay, with their scroll, so that a slot's globals or
-    /// a sprite can be followed step by step.
+    /// Goes back to the innermost call, for example after a new stop, and
+    /// shows its locals if the locals were shown. The tabs that have
+    /// nothing to do with the call stay, with their scroll, so that a
+    /// slot's globals or a sprite can be followed step by step.
     pub fn reset(&mut self) {
         self.chosen = None;
         if !matches!(
@@ -365,13 +369,13 @@ impl DebugPanel {
     }
 
     /// Whether the tab shown lists the subprogram's sprites rather than
-    /// the main interpreter's.
+    /// those of the main interpreter.
     pub fn sub_tab(&self) -> bool {
         self.tab == Some(Tab::SubSprites)
     }
 
-    /// The sprite chosen among the subprogram's sprites, or the main
-    /// interpreter's.
+    /// The sprite chosen among the subprogram's sprites, or among those of
+    /// the main interpreter.
     pub fn sprite_in(&self, sub: bool) -> Option<usize> {
         match sub {
             true => self.sub_sprite,
@@ -379,8 +383,8 @@ impl DebugPanel {
         }
     }
 
-    /// Chooses a sprite, or none, among the subprogram's sprites or the
-    /// main interpreter's.
+    /// Chooses a sprite, or none, among the subprogram's sprites or those
+    /// of the main interpreter.
     pub fn choose_sprite(&mut self, sub: bool, sprite: Option<usize>) {
         match sub {
             true => self.sub_sprite = sprite,
@@ -406,11 +410,12 @@ impl DebugPanel {
         self.grp.release();
     }
 
-    /// The pointer moved to `at`, with the left button `held` or not as
-    /// the motion tells; it drags the GRP tab's page only while the
-    /// button stays down since it went down on the page. A motion with
-    /// the button up ends a drag whose button-up never came, so that the
-    /// page does not follow a pointer it was let go of.
+    /// The pointer moved to `at`, with the left button `held` or not, as
+    /// the motion reports. It drags the GRP tab's page only while the
+    /// button stays held after it was pressed on the page. A motion with
+    /// the button up ends a drag whose button release never arrived, so
+    /// that the page does not keep following the pointer after the button
+    /// is up.
     pub fn motion(&mut self, at: (i32, i32), held: bool) {
         self.pointer = Some(at);
         if !held {
@@ -424,7 +429,7 @@ impl DebugPanel {
         self.pointer = None;
     }
 
-    /// The left button went up.
+    /// The left button was released.
     pub fn release(&mut self) {
         self.grp.release();
     }
@@ -467,7 +472,7 @@ impl DebugPanel {
             Hit::Grp => self.grp.press(at),
             Hit::Close => {}
             Hit::Watch(i) if double => self.edit_watch(i),
-            // A second click lets go of the sprite.
+            // A second click deselects the sprite.
             Hit::Sprite(id) => {
                 let sub = self.sub_tab();
                 self.choose_sprite(sub, (self.sprite_in(sub) != Some(id)).then_some(id));
@@ -525,7 +530,7 @@ impl DebugPanel {
         self.breaks.iter().map(String::as_str).collect()
     }
 
-    /// Lets go of the breaks of watches there are no more.
+    /// Drops the breaks of watches that no longer exist.
     fn forget_breaks(&mut self) {
         let watches = &self.watches;
         self.breaks.retain(|b| watches.contains(b));
@@ -559,7 +564,8 @@ impl DebugPanel {
                 match target {
                     Target::NewWatch if !typed.is_empty() => self.watches.push(typed),
                     Target::Watch(i) if typed.is_empty() => self.remove_watch(i),
-                    // A watch that breaks goes on breaking as edited.
+                    // A watch that breaks continues to break after it is
+                    // edited.
                     Target::Watch(i) => {
                         let old = std::mem::replace(&mut self.watches[i], typed.clone());
                         if self.breaks.contains(&old) && !self.breaks.contains(&typed) {
@@ -591,10 +597,8 @@ impl DebugPanel {
         self.scroll = (self.scroll as i64 + i64::from(rows)).clamp(0, most as i64) as usize;
     }
 
-    /// Draws the panel into `f`, with the screens scaled down to fit on
-    /// its left.
-    /// Where the screens go in the panel at `f`, for screens of `size`:
-    /// its height, at their shape.
+    /// The place of the screens in the panel at `f`, for screens of
+    /// `size`: the panel's height, at their shape.
     pub fn screen_place(f: Rect, (sw, sh): (u32, u32)) -> Rect {
         let h = f.h.saturating_sub(2 + PAD + 4);
         let w = (u64::from(h) * u64::from(sw.max(1)) / u64::from(sh.max(1))) as u32;
@@ -606,18 +610,19 @@ impl DebugPanel {
         }
     }
 
-    /// A frame on, for what the panel animates: the BGM tab's level bars.
+    /// Advances one frame for what the panel animates: the BGM tab's level
+    /// bars.
     pub fn advance(&mut self, view: &View) {
         if let Some(bgm) = &view.bgm {
             self.meters.update(bgm);
         }
     }
 
-    /// Draws the panel at `f` on the display into `fb`, a frame of `f`'s
-    /// size, leaving the place of screens of `size` clear for the
+    /// Draws the panel at `f` on the display into `fb`, a frame the size
+    /// of `f`, leaving the place of screens of `size` clear for the
     /// frontend to draw them. Without a size, the screens show elsewhere
     /// and the panel has no place for them. The whole value of a row cut
-    /// short goes elsewhere too: see [`DebugPanel::draw_tip`].
+    /// short is drawn elsewhere too: see [`DebugPanel::draw_tip`].
     pub fn draw(
         &mut self,
         fb: &mut Framebuffer,
@@ -637,7 +642,7 @@ impl DebugPanel {
     }
 
     /// Draws the panel at `f` on `fb`, a frame the size of the display,
-    /// as part of what else is drawn there.
+    /// together with the rest of what is drawn there.
     pub fn draw_on_display(
         &mut self,
         fb: &mut Framebuffer,
@@ -650,6 +655,9 @@ impl DebugPanel {
         self.draw_at(fb, font, f, size, view, scale);
     }
 
+    /// Draws the panel into `f`. With `size`, it clears and outlines a place
+    /// on its left for the screens scaled down to fit, and does not draw the
+    /// screens themselves.
     fn draw_at(
         &mut self,
         fb: &mut Framebuffer,
@@ -666,8 +674,8 @@ impl DebugPanel {
         self.tips.clear();
         self.grp.set_place(None);
         fill(fb, f, BORDER);
-        // A frame without room for a line of tabs, as a window made very
-        // small or minimized gives, shows only the border.
+        // A frame without room for a line of tabs, for example in a window
+        // made very small or minimized, shows only the border.
         if f.h < 2 + m.line + m.pad || f.w < m.line + m.pad {
             return;
         }
@@ -712,7 +720,8 @@ impl DebugPanel {
         );
         self.hits.push((close, Hit::Close));
 
-        // The calls, innermost last as BACKTRACE lists them reversed.
+        // The calls are kept innermost last. They are drawn reversed, in
+        // the order BACKTRACE lists them.
         let cx = x0 + w + 2 * m.pad;
         let mut y = inner.y + m.pad;
         m.draw(fb, font, cx, y + m.text, "CALLS", HEADING);
@@ -901,7 +910,8 @@ impl DebugPanel {
         } else if let (Some(Tab::Sprites | Tab::SubSprites), Some(list)) = (tab, &view.sprites) {
             // The headings take a row.
             self.rows = self.rows.saturating_sub(1);
-            // Scrolled past sprites cleared since, it comes back next frame.
+            // A scroll past sprites cleared since is moved back, and takes
+            // effect next frame.
             self.scroll = self.scroll.min(list.total.saturating_sub(self.rows));
             self.draw_sprites(fb, font, &m, (vx, y), (right, bottom), list);
             // The frontend outlines a subprogram's sprite on its screen.
@@ -913,7 +923,7 @@ impl DebugPanel {
         } else if let (Some(Tab::Bgm), Some(bgm)) = (tab, &view.bgm) {
             // The headings take a row.
             self.rows = self.rows.saturating_sub(1);
-            // Scrolled past what ended since, it comes back.
+            // A scroll past lines that have ended since is moved back.
             self.scroll = self.scroll.min(bgm.len().saturating_sub(self.rows));
             self.draw_bgm(fb, font, &m, (vx, y), (right, bottom), bgm);
         } else if tab == Some(Tab::Grp) {
@@ -1003,9 +1013,9 @@ impl DebugPanel {
     }
 
     /// The measurements PERFBEGIN or PERFEND used since RUN, from `(x,
-    /// y)` to `(right, bottom)`: PERFBEGIN's colour, the last, average
-    /// and longest times, and how many PERFENDs there were. Times show in
-    /// milliseconds too where there is room, else in a tip.
+    /// y)` to `(right, bottom)`: PERFBEGIN's color, the last, average
+    /// and longest times, and the number of PERFENDs. Times show in
+    /// milliseconds too when there is room, else in a tip.
     fn draw_perf(
         &mut self,
         fb: &mut Framebuffer,
@@ -1074,7 +1084,7 @@ impl DebugPanel {
                     w: m.char,
                     h: m.line - 2 * m.text,
                 };
-                // Opaque, so that a colour code without alpha still shows.
+                // Opaque, so that a color code without alpha still shows.
                 fill(fb, swatch, color | 0xFF00_0000);
             }
             m.draw(fb, font, x + 2 * m.char, y + m.text, &id.to_string(), TEXT);
@@ -1097,7 +1107,7 @@ impl DebugPanel {
     /// The sprites in use from `(x, y)` to `(right, bottom)`, a row each
     /// with a thumbnail of its image; the columns that do not fit, and
     /// everything else, are in its tip. A sprite that does not show is
-    /// greyed.
+    /// grayed.
     fn draw_sprites(
         &mut self,
         fb: &mut Framebuffer,
@@ -1176,12 +1186,13 @@ impl DebugPanel {
             self.hits.push((r, Hit::Sprite(row.id)));
             y += m.line;
         }
-        // After the rows, which go first.
+        // Pushed after the rows, so that a click on a row finds the row
+        // first.
         self.hits.push((area, Hit::Sprites));
     }
 
-    /// The whole value of the row under the pointer, above it, if the row
-    /// cuts it, on `fb` the size of the display.
+    /// Draws the whole value of the row under the pointer, above the row,
+    /// if the row cuts it, on `fb` the size of the display.
     pub fn draw_tip(&self, fb: &mut Framebuffer, font: &Font) {
         let m = Metrics::new(self.scale);
         let Some(at) = self.pointer else {
@@ -1247,7 +1258,7 @@ mod tests {
 
     use sb_core::value::{Array, new_str};
 
-    /// What the panel shows with nothing in it but `tabs`.
+    /// A view with nothing in it but `tabs`.
     fn view(tabs: Vec<Tab>) -> View {
         View {
             calls: Vec::new(),
@@ -1316,7 +1327,7 @@ mod tests {
         p.motion(at, false);
         p.motion((at.0 - 40, at.1 - 20), false);
         assert_eq!(p.grp.page_at(corner), Some((0, 0)));
-        // Nor does a press elsewhere, as on the tab's own button.
+        // Nor does a press elsewhere, for example on the tab's own button.
         let (tab, _) = *(p.hits.iter())
             .find(|(_, h)| *h == Hit::Tab(Tab::Grp))
             .expect("the tab");
@@ -1333,8 +1344,9 @@ mod tests {
         p.release();
         p.motion((at.0 - 80, at.1 - 40), false);
         assert_eq!(p.grp.page_at(corner), Some((20, 10)));
-        // A button-up that never came, taken by a dialog or lost on the
-        // way, ends with the first motion that has the button up.
+        // When a button release never arrives, because a dialog took it or
+        // it was lost on the way, the drag ends with the first motion that
+        // has the button up.
         p.click(at, false);
         p.motion((at.0 - 40, at.1 - 20), false);
         p.motion((at.0 - 80, at.1 - 40), false);
@@ -1410,7 +1422,8 @@ mod tests {
             h: 300,
         };
         p.draw(&mut fb, &Font::blank(), f, Some((400, 240)), &view, 2);
-        // The outline is on the screens' place, around (100, 100) of 400.
+        // The outline is in the place of the screens, around (100, 100) of
+        // 400.
         let s = DebugPanel::screen_place(f, (400, 240));
         let (x, y) = (s.x + 100 * s.w / 400, s.y + 100 * s.h / 240);
         let lit = |x: u32, y: u32| fb.get(x, y).is_some_and(|c| c >> 24 != 0);
@@ -1477,7 +1490,7 @@ mod tests {
         };
         p.draw(&mut fb, &Font::blank(), f, Some((400, 240)), &view, 2);
         // Not outlined on the main screens: the frontend does it on the
-        // subprogram's.
+        // subprogram's screen.
         let s = DebugPanel::screen_place(f, (400, 240));
         let (x, y) = (s.x + 100 * s.w / 400, s.y + 100 * s.h / 240);
         assert_eq!(fb.get(x + 2, y), Some(0));
@@ -1492,7 +1505,7 @@ mod tests {
         assert_eq!((p.sub_sprite, p.sprite), (Some(9), Some(9)));
         p.click(((r.x + 4) as i32, (r.y + 4) as i32), false);
         assert_eq!((p.sub_sprite, p.sprite), (None, Some(9)));
-        // The main tab's choice is its own.
+        // The main tab keeps a separate choice.
         p.tab = Some(Tab::Sprites);
         assert!(!p.sub_tab());
         p.choose_sprite(false, None);
@@ -1516,7 +1529,7 @@ mod tests {
         p.text("3");
         p.key(Keycode::Return);
         assert_eq!(p.watches, ["A*3"]);
-        // A watch that breaks goes on breaking once edited.
+        // A watch that breaks continues to break after it is edited.
         p.toggle_break(0);
         assert!(p.breaks(0));
         p.edit_watch(0);
@@ -1529,7 +1542,7 @@ mod tests {
         p.key(Keycode::Backspace);
         p.key(Keycode::Backspace);
         p.key(Keycode::Return);
-        // Emptied, a watch goes.
+        // An emptied watch is removed.
         p.edit_watch(0);
         for _ in 0..3 {
             p.key(Keycode::Backspace);
@@ -1571,7 +1584,7 @@ mod tests {
             h: 300,
         };
         let view = busy_view(7);
-        // As it was drawn before: on the display's overlay, the tip last.
+        // Drawn the old way: on the display's overlay, with the tip last.
         let mut before = DebugPanel::default();
         let mut display = Framebuffer::new(1280, 720);
         display.clear(0);
@@ -1591,7 +1604,7 @@ mod tests {
         after.draw_tip(&mut overlay, &font);
         assert_eq!(after.hits, before.hits);
         assert_eq!(after.frame, before.frame);
-        // The GRP tab's page goes where it went.
+        // The GRP tab's page goes to the same place as before.
         let grp = View {
             tabs: vec![Tab::Globals(0), Tab::Grp],
             ..busy_view(7)

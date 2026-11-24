@@ -1,52 +1,52 @@
-//! How a GRP page's pixels lie in memory.
+//! The memory layout of a GRP page's pixels.
 //!
 //! A page is [`GRP_SIZE`] rows of [`GRP_SIZE`] pixels, each row starting
 //! [`STRIDE`] pixels after the one before. Only [`Page`] knows the stride:
 //! everything else takes rows from it as slices of exactly [`GRP_SIZE`]
 //! pixels, or, where a loop steps through a page by offsets (the sprite
-//! rasterizer, GPU uploads), uses [`STRIDE`] and [`at`] by name. What lies
-//! past a row's end within its stride is never written and never read.
+//! rasterizer, GPU uploads), uses [`STRIDE`] and [`at`] by name. The pixels
+//! past a row's end within its stride are never written and never read.
 
 use std::ops::Range;
 
 use crate::graphics::GRP_SIZE;
 
-/// The pixels of a row.
+/// The number of pixels in a row.
 const SIDE: usize = GRP_SIZE as usize;
 
 /// Pixels from the start of one row of a page to the start of the next.
 ///
-/// Rows 2048 pixels apart lie 8 KiB apart, one way of a 32 KiB 4-way L1
-/// data cache such as the Cortex-A35's, so the same column of successive
-/// rows falls in one cache set. 64 pixels more, 256 bytes, spreads the rows
-/// over the sets: on an RK3326, GCOPY's scene took 52% less time and
-/// GFILL's 23% less, for 3% more memory a page. See
+/// Rows 2048 pixels apart are 8 KiB apart, the size of one way of a 32 KiB
+/// 4-way L1 data cache such as the one in the Cortex-A35, so the same
+/// column of successive rows falls in one cache set. 64 pixels more, 256
+/// bytes, spreads the rows over the sets: on an RK3326, GCOPY's scene took
+/// 52% less time and GFILL's 23% less, for 3% more memory per page. See
 /// docs/performance/benchmark-results.md, "GRP rows padded".
 pub const STRIDE: usize = SIDE + 64;
 const _: () = assert!(STRIDE >= SIDE);
 
-/// The pixels a page that is not blank holds, rows and what lies between
-/// them.
+/// The number of pixels in a page that is not blank, counting the rows and
+/// the padding at the end of each row, the last one too.
 pub const LEN: usize = SIDE * STRIDE;
 
-/// Where pixel `(x, y)` of a page lies in [`Page::raw`].
+/// The offset of pixel `(x, y)` of a page in [`Page::raw`].
 #[inline]
 pub const fn at(x: usize, y: usize) -> usize {
     y * STRIDE + x
 }
 
 /// [`at`] in 32 bits, for pixels plotted one at a time: on aarch64 the
-/// offset then takes one instruction fewer to work out than in 64.
+/// offset then takes one instruction fewer to compute than in 64 bits.
 #[inline]
 fn at32(x: u32, y: u32) -> usize {
     y.wrapping_mul(STRIDE as u32).wrapping_add(x) as usize
 }
 
 /// A page's pixels, `0xAARRGGBB`. A blank page holds none and reads 0
-/// everywhere, as at start-up.
+/// everywhere, the same as at start-up.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Page {
-    /// Empty, or [`LEN`] pixels laid out as the module says.
+    /// Empty, or [`LEN`] pixels laid out as the module comment describes.
     pixels: Vec<u32>,
 }
 
@@ -59,7 +59,7 @@ impl Page {
     }
 
     /// A page from an image of [`GRP_SIZE`] rows of [`GRP_SIZE`] pixels,
-    /// one after another, as files and arrays hold pages.
+    /// one after another, the way files and arrays hold pages.
     pub fn from_rows(rows: Vec<u32>) -> Page {
         assert_eq!(rows.len(), SIDE * SIDE, "a page image is 2048x2048");
         if STRIDE == SIDE {
@@ -92,7 +92,7 @@ impl Page {
         self.pixels.is_empty()
     }
 
-    /// Makes a blank page one that is not, every pixel 0.
+    /// Turns a blank page into one that is not blank, every pixel 0.
     #[inline]
     pub fn make_room(&mut self) {
         if self.is_blank() {
@@ -194,10 +194,10 @@ impl Page {
             .map(move |row| &mut row[..n])
     }
 
-    /// The pixels as they lie, for loops that step through them by offsets
-    /// from [`at`] and [`STRIDE`]: rows apart, and empty when blank. An
-    /// offset of a pixel on the page is always in range; what lies between
-    /// rows is never to be read.
+    /// The pixels in their memory layout, for loops that step through them
+    /// by offsets from [`at`] and [`STRIDE`]: rows apart, and empty when
+    /// blank. An offset of a pixel on the page is always in range; the
+    /// pixels between rows must never be read.
     #[inline]
     pub fn raw(&self) -> &[u32] {
         &self.pixels

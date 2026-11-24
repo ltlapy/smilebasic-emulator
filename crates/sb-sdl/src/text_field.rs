@@ -16,17 +16,18 @@ const FACE: u32 = 0xFF0B_0C10;
 pub struct TextField {
     chars: Vec<char>,
     cursor: usize,
-    /// The most UTF-16 units it holds, as SmileBASIC counts characters.
+    /// The most UTF-16 units it holds, the unit SmileBASIC counts
+    /// characters in.
     max: usize,
     multiline: bool,
-    /// Pixels to a line, and lines shown: the field's size.
+    /// Pixels per line, and lines shown: the size of the field.
     width: u32,
     rows: usize,
     /// The first line shown.
     scroll: usize,
 }
 
-/// What a key did to a field.
+/// The effect of a key on a field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Keyed {
     /// The field used the key.
@@ -142,8 +143,8 @@ impl TextField {
         lines
     }
 
-    /// The line the cursor is on: at the end of a full line it goes on
-    /// the next, where the next character will be.
+    /// The line the cursor is on. At the end of a full line the cursor is
+    /// on the next line, where the next character will be.
     fn line_of_cursor(&self) -> usize {
         let lines = self.lines();
         let last = lines.len() - 1;
@@ -198,7 +199,7 @@ mod tests {
     use crate::ui::CHAR;
 
     fn field(text: &str, multiline: bool) -> TextField {
-        // Four ASCII characters to a line, two lines shown.
+        // Four ASCII characters per line, two lines shown.
         let r = Rect {
             x: 0,
             y: 0,
@@ -229,7 +230,7 @@ mod tests {
 
     #[test]
     fn lines_wrap_by_width() {
-        // Full-width characters take two ASCII ones' room.
+        // A full-width character takes the room of two ASCII characters.
         let f = field("가가가ab가", true);
         assert_eq!(f.lines(), [(0, 2), (2, 5), (5, 6)]);
     }

@@ -3,7 +3,7 @@
 The second font of the antialiased set of 16-pixel glyphs: glyphs for the
 GB2312 characters M PLUS 1p Bold lacks, for the editor, the menus and
 windows, and the fallback font. In the pixel set it comes last, and adds
-nothing, as Unifont JP draws every GB2312 character.
+nothing, because Unifont JP draws every GB2312 character.
 
 - Source: [Noto Sans CJK](https://github.com/notofonts/noto-cjk) tag
   Sans2.004, `Sans/SubsetOTF/SC/NotoSansSC-Bold.otf`.
@@ -14,7 +14,7 @@ nothing, as Unifont JP draws every GB2312 character.
   metrics removed; renamed, as the license asks of modified versions.
 - It draws CJK characters shared with Japanese in their Simplified Chinese
   forms, so it comes after M PLUS 1p Bold, whose Japanese forms win.
-- The build script (`build.rs`) draws each glyph into a 16x16 cell, as
-  the M PLUS 1p Bold glyphs are drawn (an em of 15 pixels), in 16 steps of
-  gray. Only the cells of characters M PLUS 1p Bold lacks go into the
+- The build script (`build.rs`) draws each glyph into a 16x16 cell, the
+  same way as the M PLUS 1p Bold glyphs (an em of 15 pixels), in 16 steps
+  of gray. Only the cells of characters M PLUS 1p Bold lacks go into the
   program: the others are never drawn.

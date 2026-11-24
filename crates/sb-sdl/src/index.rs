@@ -40,8 +40,8 @@ pub struct IndexPanel {
 }
 
 impl IndexPanel {
-    /// The index of a slot's labels and DEFs, with the one the cursor is
-    /// in, or after, chosen.
+    /// The index of a slot's labels and DEFs. The chosen entry is the one
+    /// that the cursor is in, or after.
     pub fn new(size: (u32, u32), slot: usize, entries: Vec<(usize, String)>, at: usize) -> Self {
         let mut panel = IndexPanel {
             size,
@@ -68,8 +68,8 @@ impl IndexPanel {
         side_rect(self.size, self.left, 0)
     }
 
-    /// Goes on a display of another size, as when the editor's window is
-    /// resized, keeping the chosen entry in view.
+    /// Moves to a display of another size, for example when the editor
+    /// window is resized, and keeps the chosen entry in view.
     pub fn set_size(&mut self, size: (u32, u32)) {
         if size != self.size {
             self.size = size;

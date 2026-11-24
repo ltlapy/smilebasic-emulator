@@ -1,7 +1,7 @@
 //! SmileBASIC 4's preset songs and sound effects, which are sequences: up
 //! to 16 tracks of notes and commands for the instruments, in Nintendo's
 //! sequence code. The importer copies them out of the sound archive into
-//! a file of the emulator's own:
+//! a file in the emulator's own format:
 //!
 //! ```text
 //! "SBSEQ001"
@@ -24,7 +24,7 @@ const COMMANDS_PER_TICK: u32 = 10_000;
 const CALL_DEPTH: usize = 8;
 /// Commands run and sounding notes counted down in one block of sound (a
 /// frame) before the whole sequence is taken to be stuck. Tracks can start
-/// each other again for ever, so that `COMMANDS_PER_TICK` never ends them,
+/// each other again forever, so that `COMMANDS_PER_TICK` never ends them,
 /// and a block has as many ticks as samples at the highest tempo. Mixing
 /// shares the program's thread, so this must not take long. The busiest
 /// block of all 359 of SmileBASIC 4's sequences needs 195.
@@ -37,7 +37,7 @@ const RECORD_EVENTS: usize = 1 << 22;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sequence {
-    /// The whole sound's volume, 127 as it is.
+    /// The volume of the whole sound; 127 leaves it unchanged.
     pub volume: u8,
     pub start: usize,
     pub code: Vec<u8>,
@@ -172,8 +172,8 @@ impl SeqTrack {
     }
 }
 
-/// What a sequence last set a channel to, kept only for the debugger:
-/// the synthesizer has it already.
+/// The values a sequence last set on a channel, kept only for the
+/// debugger: the synthesizer has them already.
 #[derive(Clone, Copy, Debug)]
 struct Settings {
     program: i32,
@@ -185,7 +185,7 @@ struct Settings {
 }
 
 impl Default for Settings {
-    /// MIDI's, as a synthesizer starts.
+    /// The MIDI defaults that a synthesizer starts with.
     fn default() -> Self {
         Settings {
             program: 0,
@@ -204,13 +204,13 @@ pub(crate) struct Player {
     seq: Arc<Sequence>,
     tracks: [Option<SeqTrack>; CHANNELS],
     settings: [Settings; CHANNELS],
-    /// Quarter notes a minute.
+    /// Quarter notes per minute.
     pub(crate) tempo: u32,
     /// Ticks in a quarter note.
     pub(crate) timebase: u32,
     /// BGMPITCH or BEEPPIT, in cents.
     pitch: i32,
-    /// What is left of `BLOCK_WORK` in this block.
+    /// The part of `BLOCK_WORK` left in this block.
     work: u32,
 }
 
@@ -271,7 +271,7 @@ impl Player {
         f32::from(self.seq.volume) / 127.0
     }
 
-    /// Samples a tick lasts at `rate` samples a second.
+    /// The number of samples a tick lasts at `rate` samples per second.
     pub(crate) fn tick_samples(&self, rate: u32) -> f64 {
         f64::from(rate) * 60.0 / f64::from(self.tempo.max(1) * self.timebase.max(1))
     }
@@ -460,7 +460,7 @@ impl Player {
     }
 }
 
-/// A change a sequence makes, as [`record`] gives it.
+/// A change a sequence makes, as [`record`] returns it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     Program(i32),
@@ -472,7 +472,7 @@ pub enum Event {
     Bend(i32),
     NoteOn(i32, i32),
     NoteOff(i32),
-    /// Quarter notes a minute.
+    /// Quarter notes per minute.
     Tempo(u32),
 }
 
@@ -543,12 +543,12 @@ impl Synth for Recorder {
     fn render(&mut self, _: &mut [f32], _: &mut [f32]) {}
 }
 
-/// Ticks a recording goes on for at most.
+/// The most ticks a recording lasts.
 const RECORD_TICKS: u32 = 48 * 4 * 2000;
 
-/// Plays a sequence through without sound and gives what it did, tick by
-/// tick, and its ticks a quarter note. A song that loops is played up to
-/// where every track has gone round once; notes still sounding then stop.
+/// Plays a sequence through without sound and returns its events, tick by
+/// tick, and its ticks per quarter note. A song that loops is played until
+/// every track has looped once; notes still sounding then stop.
 pub fn record(seq: Arc<Sequence>) -> (Vec<Timed>, u32) {
     let mut player = Player::new(seq);
     player.work = RECORD_WORK;
@@ -593,7 +593,7 @@ impl CodeReader<'_> {
         Some(a | b << 8 | c << 16)
     }
 
-    /// Seven bits a byte, most significant first, while the top bit is set.
+    /// Seven bits per byte, most significant first, while the top bit is set.
     fn varlen(&mut self) -> Option<u32> {
         let mut v = 0u32;
         for _ in 0..4 {
@@ -673,8 +673,8 @@ mod tests {
             0x80, 1, // wait
             0xFF,
         ];
-        // What the debugger sees: both tracks, track 0 ended, and the
-        // chord sounding on channel 1.
+        // The debugger sees both tracks, track 0 ended, and the chord
+        // sounding on channel 1.
         let channels = run(code.clone(), 3).0.channels();
         assert_eq!(channels.len(), 2);
         assert!(channels[0].ended);
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn calls_jumps_and_bends() {
-        // Call 10, bend, then jump back to the call for ever. At 10: a
+        // Call 10, bend, then jump back to the call forever. At 10: a
         // wait and a return.
         let code = vec![
             0x8A, 10, 0, 0, // call
@@ -760,7 +760,7 @@ mod tests {
 
     /// Each track sets the volume, starts the next track and loops on the
     /// volume without waiting. A track ended for that loop is started
-    /// again by the track before it on the next tick, for ever.
+    /// again by the track before it on the next tick, forever.
     fn tracks_restarting_each_other() -> Vec<u8> {
         let mut code = Vec::new();
         for c in 0..CHANNELS as u32 {
@@ -813,7 +813,8 @@ mod tests {
         }))
     }
 
-    /// Ticks as many as a block's samples: the most a block can hold.
+    /// Runs as many ticks as a block has samples: the most a block can
+    /// hold.
     fn stuck_within_a_block(code: Vec<u8>) -> (Player, usize) {
         let (mut p, mut synth) = (player(code), Count::default());
         p.begin_block();
@@ -834,8 +835,8 @@ mod tests {
 
     #[test]
     fn notes_piling_up_are_stopped() {
-        // Notes that do not wait and last long, one a tick, on a track
-        // that then goes round: counting them down must not grow for ever.
+        // Notes that do not wait and last long, one per tick, on a track
+        // that then loops: counting them down must not grow forever.
         let code = vec![
             0xC7, 0, // notes stop waiting
             60, 100, 0xFF, 0xFF, 0x7F, // a note of two million ticks

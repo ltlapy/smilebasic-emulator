@@ -21,7 +21,7 @@ use crate::sound::wave::{BEEP_TICKS_A_SECOND, Envelope, SIXTEEN_BIT, Wave, beep_
 use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, TRACKS, frames};
 
 /// The preset songs that end rather than loop, and their lengths in
-/// frames, worked out by playing SmileBASIC 4's own sequences through the
+/// frames, computed by playing SmileBASIC 4's own sequences through the
 /// emulator's player; every other preset loops until stopped. BGMCHK says
 /// 0 a frame or two after the last notes have died away.
 const JINGLES: [(i32, u32); 3] = [(4, 167), (5, 111), (6, 342)];
@@ -49,7 +49,7 @@ fn track_id(v: &Value) -> Result<usize> {
     in_range("track", v, 0..=TRACKS as i32 - 1).map(|n| n as usize)
 }
 
-/// A track that may be left out, also with a comma after it
+/// A track that may be omitted, also with a comma after it
 /// (`BGMSTOP ,1`).
 fn opt_track(v: Option<&Value>) -> Result<Option<usize>> {
     match v {
@@ -62,7 +62,7 @@ fn user_song(v: &Value) -> Result<i32> {
     in_range("song", v, 128..=255)
 }
 
-/// Seconds, real allowed; 0 when left out.
+/// Seconds, real allowed; 0 when omitted.
 fn seconds(v: Option<&Value>) -> Result<u32> {
     match v {
         None | Some(Value::Default) => Ok(0),
@@ -80,7 +80,7 @@ fn handle(v: &Value) -> Result<usize> {
     in_range("handle", v, 0..=HANDLES as i32 - 1).map(|n| n as usize)
 }
 
-/// An omittable argument in `range`, `default` when left out.
+/// An omittable argument in `range`, `default` when omitted.
 fn opt_in_range(
     what: &str,
     v: Option<&Value>,
@@ -113,22 +113,22 @@ fn pcm_array(args: &[Value], i: usize, dims: usize) -> Result<ArrayRef> {
     Ok(a.clone())
 }
 
-/// BGMPLAY's volume when it is left out: half of BGMVOL's 127, which
+/// BGMPLAY's volume when it is omitted: half of BGMVOL's 127, which
 /// plays twice as loud (TEST41).
 const BGM_VOLUME: i32 = 64;
 
-/// WAVSET's string with `[..]` groups, which the manual leaves out, as the
-/// 512 samples it gives; `Ok(None)` if it has no groups, and `None` for
-/// what SmileBASIC 4 refuses: text before the first group, an empty group,
-/// one left open or nested, an odd number of digits, other than digits in
-/// a group, more than 1024 digits in all, or a group of more samples than
-/// 512 over the number of groups.
+/// WAVSET's string with `[..]` groups, which the manual does not describe,
+/// as the 512 samples it gives; `Some(None)` if it has no groups, and `None`
+/// for anything SmileBASIC 4 refuses: text before the first group, an
+/// empty group, one left open or nested, an odd number of digits, anything
+/// other than digits in a group, more than 1024 digits in all, or a group
+/// of more samples than 512 divided by the number of groups.
 ///
 /// Each group is stretched to that many samples, but every group is written
 /// from the start of the buffer: the last one is all that stays, and the
-/// rest of the 512 is whatever the buffer held.
-// The rest of the buffer is left silent here, where SmileBASIC 4's is not
-// cleared: see differences.md.
+/// rest of the 512 keeps what the buffer held before.
+// The rest of the buffer is left silent here, while SmileBASIC 4 does not
+// clear its buffer: see differences.md.
 fn wave_groups(text: &str) -> Option<Option<Vec<u8>>> {
     let units: Vec<u16> = text.encode_utf16().collect();
     let (open, close) = (u16::from(b'['), u16::from(b']'));
@@ -185,7 +185,7 @@ fn wave_groups(text: &str) -> Option<Option<Vec<u8>>> {
         if bytes.len() > each {
             return None;
         }
-        // 16.16 fixed point, as SmileBASIC 4 steps.
+        // A 16.16 fixed point step, the same as SmileBASIC 4 uses.
         let step = ((bytes.len() as i32) << 16) / each as i32;
         for (i, sample) in out[..each].iter_mut().enumerate() {
             *sample = bytes[((i as i32 * step) >> 16) as usize];
@@ -194,8 +194,8 @@ fn wave_groups(text: &str) -> Option<Option<Vec<u8>>> {
     Some(Some(out))
 }
 
-/// WAVSET's waveform: 512 samples, with a second's note for BEEP whatever
-/// their length.
+/// WAVSET's waveform: 512 samples, with a one-second note for BEEP
+/// regardless of their length.
 fn wavset_wave(bytes: &[u8], base_note: i32, envelope: Envelope) -> Wave {
     Wave {
         beep_ticks: Some(BEEP_TICKS_A_SECOND),
@@ -219,8 +219,8 @@ fn wave_head(args: &[Value]) -> Result<(usize, Envelope)> {
     ))
 }
 
-/// One of WAVSETA's arguments after the array: these can be left off the
-/// end, by how many are given, but none can be left out in between.
+/// One of WAVSETA's arguments after the array: these can be omitted at the
+/// end, by passing fewer arguments, but none can be omitted in between.
 fn wave_arg(
     what: &str,
     args: &[Value],
@@ -269,7 +269,8 @@ fn text(v: &Value) -> Result<String> {
 const MML_MOST: usize = 1 << 20;
 
 /// MML for BGMPLAY, BGMSET or BGMSETD. An error in it names the first
-/// argument whichever command it is; MML that is too long names none.
+/// argument regardless of the command, even when the MML is not the first
+/// argument; MML that is too long names none.
 fn parse(mml: &str) -> Result<Song> {
     if mml.len() > MML_MOST && mml.encode_utf16().count() > MML_MOST {
         return Err(Error::new(ErrorKind::MmlTooLong));
@@ -360,8 +361,9 @@ impl Runtime {
                     }
                     // A song number with nothing set plays nothing, so
                     // BGMCHK says 0, and it stops what the track played:
-                    // BGMCHK still said 1 two frames on, and 0 five on.
-                    // UNVERIFIED: that the sound stops at once, and that
+                    // BGMCHK still said 1 two frames later, and 0 five
+                    // frames later.
+                    // UNVERIFIED: that the sound stops immediately, and that
                     // BGMCHK says 0 from the third frame.
                     128..=255 => match self.sound.songs.get(&music) {
                         Some(song) => Some(Rc::clone(song)),
@@ -443,7 +445,7 @@ impl Runtime {
                 self.sound.track(track.unwrap_or(0)).wet = Some(wet);
                 Ok(vec![])
             }
-            // Without a track, BGMPITCH sets every track's.
+            // Without a track, BGMPITCH sets the pitch of every track.
             (Command::Bgmpitch, Want::Outs(0), 1..=2) => {
                 let (track, rest) = split_track(args, 1)?;
                 let cents = in_range("pitch", &rest[0], -32768..=32767)?;
@@ -481,9 +483,9 @@ impl Runtime {
                 Ok(vec![Value::Int(at)])
             }
             // SNDSTOP holds the program until the next frame when it synced
-            // in this one (VSYNC, WAIT or SNDSTOP), and goes straight on
-            // when a frame has passed since. VSYNC then counts from where
-            // SNDSTOP left off, as from a VSYNC.
+            // in this one (VSYNC, WAIT or SNDSTOP), and continues
+            // immediately when a frame has passed since. VSYNC then counts
+            // from where SNDSTOP left off, the same as from a VSYNC.
             (Command::Sndstop, Want::Outs(0), 0) => {
                 if !self.frame_wait_over() {
                     self.sound.sndstop();
@@ -536,7 +538,7 @@ impl Runtime {
                 Ok(vec![])
             }
             // Ten arguments or more make a 16-bit sample with a loop and its
-            // own sample rate, fewer the 8-bit form, SmileBASIC 3's.
+            // own sample rate, fewer the 8-bit form of SmileBASIC 3.
             (Command::Wavseta, Want::Outs(0), 6..=12) => {
                 let (n, envelope) = wave_head(args)?;
                 let Value::Array(array) = &args[5] else {
@@ -562,7 +564,7 @@ impl Runtime {
                 }
                 let (start, end) = (start as usize, end as usize);
                 if args.len() < 10 {
-                    // Each value is cut to an integer towards zero and then
+                    // Each value is cut to an integer toward zero and then
                     // to its low 8 bits, so 256 is 0 and -1 is 255.
                     let bytes = samples(&args[5], start..=end, |x| x as i32 as u8)?;
                     // The pass is the next power of two, at most 1M samples.
@@ -579,11 +581,11 @@ impl Runtime {
                     let e = Error::with_detail(ErrorKind::OutOfRange, "offset leaves too little");
                     return Err(e.of_arg(10));
                 }
-                // Values are cut to 16 bits, reals towards zero first and
+                // Values are cut to 16 bits, reals toward zero first and
                 // held to 32 bits.
                 let samples = samples(&args[5], offset..=offset + end, |x| x as i32 as i16)?;
                 let looped = (start, end + 1);
-                // The flag repeats BEEP's note for ever, if it has one.
+                // The flag repeats BEEP's note forever, if it has one.
                 let beep_ticks = Some(beep_ticks(end + 1, rate as u32));
                 self.sound.waves.borrow_mut().define(
                     n,
@@ -662,7 +664,7 @@ impl Runtime {
                 let frequency =
                     |v: Option<&Value>| opt_in_range("frequency", v, 1..=192_000, 48_000);
                 let (source, rate) = match args {
-                    // A rate alone is the new rate of the stream there is.
+                    // A rate alone sets the new rate of the current stream.
                     [rate] if !is_array(rate) => {
                         self.sound.pcm.set_rate(f64::from(frequency(Some(rate))?));
                         return Ok(vec![]);
@@ -763,7 +765,7 @@ impl Runtime {
                 self.sound.set_sends(wet);
                 Ok(vec![])
             }
-            // The balance moves over the time in seconds, a step each frame.
+            // The balance moves over the time in seconds, one step per frame.
             (Command::Sndmsbal, Want::Outs(0), 1..=2) => {
                 let balance = in_range("balance", &args[0], 0..=127)?;
                 let seconds = opt_in_range("time", args.get(1), 0..=32767, 0)? as f32;
@@ -785,15 +787,15 @@ impl Runtime {
                 self.sound.talk.stop();
                 Ok(vec![])
             }
-            // The subprogram's RECSTART and RECSTOP do nothing, whatever
-            // they are given: its RECSAVE gets what the main program
-            // recorded last, and the main program's recording goes on.
+            // The subprogram's RECSTART and RECSTOP do nothing, regardless
+            // of their arguments: its RECSAVE gets what the main program
+            // recorded last, and the main program's recording continues.
             (Command::Recstart | Command::Recstop, Want::Outs(0), _) if self.sound.sub => {
                 Ok(vec![])
             }
             (Command::Recstart, Want::Outs(0), 0..=1) => {
                 let (len, ring) = match args.first() {
-                    // Five seconds, round and round.
+                    // Five seconds, looping.
                     None => (5 * RATE as usize, true),
                     Some(v) => {
                         let s = v.to_real()?;
@@ -825,10 +827,10 @@ impl Runtime {
                 let rec = self.sound.recorder.borrow();
                 let samples = rec.samples();
                 let len = samples.len() as i32;
-                // Recording round the buffer, positions go round it too:
-                // NK8_SOUNDVISUAL reads RECPOS()-I-1 from the start.
-                // With a time, a position outside the recording reads 0s
-                // with no error, -1 too (TEST32).
+                // When recording loops around the buffer, positions wrap
+                // around it too: NK8_SOUNDVISUAL reads RECPOS()-I-1 from
+                // the start. With a time, a position outside the recording
+                // reads 0s with no error, and so does -1 (TEST32).
                 let at = args[0].to_int()?;
                 let at = match rec.ring && len > 0 {
                     true => Some(at.rem_euclid(len)),
@@ -847,9 +849,9 @@ impl Runtime {
                 let samples = rec.samples();
                 let len = samples.len() as i32;
                 let n = opt_in_range("count", args.get(1), 0..=len, rec.pos as i32)? as usize;
-                // Recording round the buffer, positions go round it too,
-                // with no error: before 0 or past what this recording
-                // reached, they read the older recordings there.
+                // When recording loops around the buffer, positions wrap
+                // around it too, with no error: before 0 or past what this
+                // recording reached, they read the older recordings there.
                 let taken: Vec<[i16; 2]> = if rec.ring && len > 0 {
                     let from = match args.get(2) {
                         Some(v) => v.to_int()?.rem_euclid(len) as usize,
@@ -874,7 +876,7 @@ impl Runtime {
                 if elem == ElemType::Str || a.dims.len() > 2 {
                     return Err(Error::new(ErrorKind::TypeMismatch).of_arg(0));
                 }
-                // An array of the system's cannot take a new size.
+                // A system array cannot take a new size.
                 if a.system {
                     return Err(Error::new(ErrorKind::CantResizeThisArray).of_arg(0));
                 }
@@ -919,7 +921,7 @@ mod tests {
         assert_eq!((out[169], out[170]), (0xC0, 0x80));
         let one = wave_groups("[0080]").unwrap().unwrap();
         assert_eq!((one[0], one[255], one[256], one[511]), (0, 0, 0x80, 0x80));
-        // No groups: the plain form's business.
+        // No groups: the plain form handles it.
         assert_eq!(wave_groups("FF00"), Some(None));
         for bad in ["FF[00]", "[]", "[F]", "[00", "00]", "[[00]]", "[0G]"] {
             assert_eq!(wave_groups(bad), None, "{bad}");

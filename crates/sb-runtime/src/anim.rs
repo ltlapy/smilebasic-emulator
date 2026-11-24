@@ -6,7 +6,7 @@ use sb_core::value::Value;
 
 use crate::runtime::checking;
 
-/// Keyframes in one animation, at most.
+/// The maximum number of keyframes in one animation.
 pub const MAX_KEYS: usize = 32;
 /// ANIMDEF numbers 0-1023.
 pub const DEFINITIONS: usize = 1024;
@@ -15,7 +15,7 @@ pub const TARGETS: usize = 8;
 /// The variable (SPVAR, TVAR) that target "V" animates.
 pub const ANIM_VAR: i32 = 7;
 
-/// What an animation changes, in SPCHK's bit order.
+/// The property an animation changes, in SPCHK's bit order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
     Xy,
@@ -66,7 +66,7 @@ fn bad_target(detail: String) -> Error {
     Error::with_detail(ErrorKind::OutOfRange, detail)
 }
 
-/// A name that is no target, such as `"X"`.
+/// A name that is not a target, such as `"X"`.
 // UNVERIFIED: that a known name with flags it does not take (`"XY++"`)
 // is refused the same way.
 fn bad_name(detail: String) -> Error {
@@ -78,7 +78,7 @@ impl Mode {
         checking(v, || {
             match v {
                 Value::Str(s) => {
-                    // Spaces after the name are left out (`"S "`).
+                    // Spaces after the name are ignored (`"S "`).
                     let text = String::from_utf16_lossy(&s.borrow()).to_ascii_uppercase();
                     let text = text.trim_end_matches(' ');
                     let name = text.trim_end_matches(['+', '.']);
@@ -151,7 +151,7 @@ impl Anim {
                 format!("loop count {loops}"),
             ));
         }
-        // Whole-number targets are kept in 16 bits, and refuse more.
+        // Whole-number targets are kept in 16 bits, and refuse wider values.
         if whole(mode.target)
             && let Some(v) = data
                 .chunks_exact(per)
@@ -210,7 +210,7 @@ fn whole_value(v: f64) -> f64 {
     f64::from(v as i32 as i16)
 }
 
-/// `a` moved towards `b` on frame `elapsed` of `frames`, the two ends
+/// `a` moved toward `b` on frame `elapsed` of `frames`, the two ends
 /// weighted by the frames left and gone. Whole-number targets divide
 /// their sum and drop the fraction: 0 to 3 over three frames goes 1, 2, 3.
 /// Colors, rotation and scale mix in single precision, so that &HFF to
@@ -237,8 +237,8 @@ fn mix(target: Target, a: [f64; 2], b: [f64; 2], (elapsed, frames): (u32, u32)) 
     [weigh(a[0], b[0]), weigh(a[1], b[1])].map(f64::from)
 }
 
-/// A relative key's value: the start value plus the key's, or for colors
-/// the two multiplied per channel and divided by 256, rounding down
+/// A relative key's value: the start value plus the value of the key, or
+/// for colors the two multiplied per channel and divided by 256, rounding down
 /// (checked on hardware: &HFF times &HFF gives &HFE).
 fn offset(target: Target, base: [f64; 2], by: [f64; 2]) -> [f64; 2] {
     if target == Target::C {
@@ -259,7 +259,7 @@ pub struct Track {
     anim: Anim,
     /// The value when the animation was set, which relative keys add to.
     base: [f64; 2],
-    /// Where a sliding key starts: the value the previous key ended on.
+    /// The start value of a sliding key: the value the previous key ended on.
     from: [f64; 2],
     key: usize,
     /// Frames of the current key played.
@@ -492,7 +492,7 @@ mod tests {
     }
 
     /// TEST47 part 20, read back on hardware: over three frames, X goes
-    /// 0, -3, -6, -10 and the colours' alpha dips to &HFE on the second.
+    /// 0, -3, -6, -10 and the alpha of the colors dips to &HFE on the second.
     #[test]
     fn slides_round_like_hardware() {
         let anim = Anim::new(mode(Target::Xy), &[-3.0, -10.0, -10.0], 0).unwrap();

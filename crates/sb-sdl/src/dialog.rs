@@ -29,21 +29,21 @@ pub struct Dialog {
     labels: Vec<String>,
     /// Display size the dialog is centered in.
     size: (u32, u32),
-    /// Index of the chosen button; Cancel at first, so Enter does not
-    /// throw work away, except on questions that say otherwise.
+    /// Index of the chosen button. It is Cancel at first, so that Enter
+    /// does not discard work, except on questions that say otherwise.
     focus: usize,
-    /// What has been typed, for a question with a field to type in.
+    /// The typed text, for a question with a field to type in.
     field: Option<String>,
     /// The button under the mouse, which a click chooses.
     hover: Option<usize>,
 }
 
-/// Characters of a field shown.
+/// The number of characters a field shows.
 const FIELD_CHARS: usize = 40;
 
-/// `lines` wrapped to fit a display of `size`, with room for the
-/// window's padding and a margin around it, and cut to the lines that fit
-/// with `more` lines besides.
+/// `lines` wrapped to fit a display of `size`, with room for the window
+/// padding and a margin around it, and cut to the lines that still fit
+/// when `more` lines are added.
 fn wrapped(lines: &[String], (w, h): (u32, u32), more: u32) -> Vec<String> {
     let room = w.saturating_sub(8 * PAD).max(CHAR);
     // Title bar, buttons and padding, as in `frame`.
@@ -76,7 +76,7 @@ impl Dialog {
         d
     }
 
-    /// What has been typed in the field.
+    /// Returns the text typed in the field.
     pub fn field(&self) -> &str {
         self.field.as_deref().unwrap_or("")
     }
@@ -88,12 +88,12 @@ impl Dialog {
         }
     }
 
-    /// The body's lines, with a line for the field.
+    /// The number of lines in the body, with a line for the field.
     fn body_lines(&self) -> u32 {
         self.lines.len() as u32 + u32::from(self.field.is_some())
     }
 
-    /// Tells something, with OK alone, which accepts.
+    /// Shows a message with OK alone, which accepts.
     pub fn notice(title: &str, lines: Vec<String>, size: (u32, u32)) -> Dialog {
         Dialog {
             title: title.to_string(),
@@ -107,7 +107,7 @@ impl Dialog {
         }
     }
 
-    /// Asks a command's question, starting on the button it says.
+    /// Asks a command's question, starting on the button the command picks.
     pub fn ask(confirm: &Confirm, size: (u32, u32)) -> Dialog {
         Dialog {
             focus: usize::from(!confirm.accept_first),
@@ -148,7 +148,7 @@ impl Dialog {
             )
             .max()
             .unwrap_or(0);
-        // No wider than the display: a long title is cut, as is a field.
+        // No wider than the display: a long title is cut, and so is a field.
         let w = (text.max(2 * self.button_width() + PAD) + 4 * PAD).min(self.size.0);
         // Title bar, body, buttons.
         let h = LINE + self.body_lines() * LINE + LINE + 6 * PAD;
@@ -159,8 +159,8 @@ impl Dialog {
         button_rect(self.frame(), self.button_width(), self.labels.len(), i)
     }
 
-    /// The mouse shows which button a click chooses; it leaves the focus,
-    /// which Enter and A choose, where it is.
+    /// The mouse shows which button a click chooses. It does not move the
+    /// focus, which Enter and A choose.
     pub fn mouse_move(&mut self, at: (i32, i32)) {
         self.hover = (0..self.labels.len()).find(|&i| self.button(i).contains(at));
     }
@@ -172,8 +172,9 @@ impl Dialog {
     }
 
     /// Left and Right move between the buttons and stop at the ends, Tab
-    /// goes round, Enter chooses and Esc cancels, as in a program's
-    /// DIALOG. With a field, Backspace deletes from it and Enter accepts.
+    /// wraps around, Enter chooses and Esc cancels, the same as in a
+    /// program's DIALOG. With a field, Backspace deletes from it and Enter
+    /// accepts.
     pub fn key(&mut self, key: Keycode) -> Option<Answer> {
         if let Some(field) = &mut self.field {
             match key {
@@ -198,9 +199,9 @@ impl Dialog {
     }
 
     /// A controller: left and right on the pad, or the left stick, which
-    /// the loop gives as the pad's, move between the buttons and stop at
+    /// the loop passes on as the pad, move between the buttons and stop at
     /// the ends. A (the right face button) chooses and B (the bottom one)
-    /// cancels, as SmileBASIC 4's buttons are placed.
+    /// cancels, following the button layout of SmileBASIC 4.
     pub fn pad(&mut self, button: Button) -> Option<Answer> {
         match button {
             Button::DPadLeft => self.key(Keycode::Left),
@@ -335,7 +336,7 @@ mod tests {
     }
 
     /// The Simple UI can be 320x240: a dialog is cut to fit it,
-    /// however much it has to say.
+    /// regardless of how much text it has.
     #[test]
     fn a_dialog_fits_a_320x240_display() {
         let size = (320, 240);

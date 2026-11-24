@@ -20,7 +20,7 @@ Unifont JP (`fonts/unifont`) comes after it.
   glyphs by JIS code, and this one by Unicode, in GNU Unifont's .hex
   format. The glyphs are unchanged. The 25 JIS characters that Unicode
   writes as two code points, such as kana with a semi-voiced mark, are
-  left out, as a cell table has no place for them. The half-width set
+  excluded, because a cell table has no place for them. The half-width set
   (`izumi-uv16.bdf`, JIS X 0201 with `\` as the yen sign) is not used.
 - The build script (`build.rs`) makes the glyphs bold with the rule of
   Izumi Gothic 16 Bold, which grows each stroke one pixel to the left

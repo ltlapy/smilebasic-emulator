@@ -1,4 +1,4 @@
-//! SmileBASIC 4's in-game help, read from the `HelpData.idx` and
+//! SmileBASIC 4's in-game help: reading it from the `HelpData.idx` and
 //! `HelpData.dat` of the user's own copy, finding the command that the
 //! editor's cursor is on, and HELPGET and HELPINFO, which give the help
 //! to programs.
@@ -29,7 +29,7 @@ pub const INTRO: &str = "DEFAULTHELPKEY";
 /// thousand; only a damaged file asks for more.
 const MOST_RUN_VALUES: usize = 1 << 24;
 
-/// Words that are not topics of their own, and the topic that covers them.
+/// Words that are not separate topics, and the topic that covers them.
 const ALIASES: &[(&str, &str)] = &[
     ("?", "PRINT"),
     ("THEN", "IF"),
@@ -90,11 +90,11 @@ pub struct Help {
     topics: HashMap<String, Vec<u64>>,
 }
 
-/// What the help has for the cursor's place in a line.
+/// The help's result for the cursor's place in a line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Lookup {
     Topic(String),
-    /// A word that is no command of the help.
+    /// A word that is not a command in the help.
     Unknown(String),
     /// The cursor is not on a word.
     Nothing,
@@ -109,7 +109,7 @@ fn page_at(data: &[u8], reference: u64) -> Option<Page> {
     page_and_size(data, reference).map(|(page, _)| page)
 }
 
-/// A page, and how many bytes of the data file it took.
+/// Returns a page and the number of bytes of the data file it takes.
 fn page_and_size(data: &[u8], reference: u64) -> Option<(Page, usize)> {
     let start = (reference & 0xFFFF_FFFF) as usize;
     let mut at = (reference & 0xFFFF_FFFF) as usize;
@@ -162,14 +162,14 @@ fn page_and_size(data: &[u8], reference: u64) -> Option<(Page, usize)> {
 }
 
 impl Help {
-    /// Reads the index and data files, `None` if they are not the help's
-    /// or are damaged.
+    /// Reads the index and data files. Returns `None` if they are not the
+    /// help files or are damaged.
     pub fn from_bytes(index: &[u8], data: Vec<u8>) -> Option<Help> {
         let mut topics = HashMap::new();
-        // Topics share pages, and each is read once. Pages do not overlap in
-        // a real help, so they add up to the data file at most. A damaged
-        // index could have every reference read most of the file, here and
-        // again each time a topic is shown.
+        // Topics share pages, and each page is read once. Pages do not
+        // overlap in a real help, so their total size is at most the size of
+        // the data file. A damaged index could make every reference read
+        // most of the file, here and again each time a topic is shown.
         let mut sizes: HashMap<u64, usize> = HashMap::new();
         let mut read = 0usize;
         for i in 0..u32_at(index, 0)? {
@@ -224,11 +224,11 @@ impl Help {
             .collect()
     }
 
-    /// The topic for the command at the cursor, or just left of it, in a
-    /// line; `col` is the cursor's column in UTF-16 units. Elsewhere in a
-    /// command's arguments, up to the end of the line, it is the function
-    /// whose brackets the cursor is in, else the statement's command, as
-    /// SmileBASIC 4's F1 finds it.
+    /// Returns the topic for the command at the cursor, or just left of it,
+    /// in a line; `col` is the cursor's column in UTF-16 units. Elsewhere in
+    /// a command's arguments, up to the end of the line, it is the function
+    /// whose brackets the cursor is in, or else the statement's command, the
+    /// same way SmileBASIC 4's F1 finds it.
     pub fn lookup(&self, line: &[u16], col: usize) -> Lookup {
         let word = word_at(line, col);
         let around = word.iter().cloned().chain(enclosing(line, col));
@@ -246,8 +246,8 @@ impl Help {
     /// The topic a word names, if any.
     fn topic(&self, word: &str) -> Option<String> {
         let alias = ALIASES.iter().find(|(w, _)| *w == word).map(|&(_, t)| t);
-        // A name with a type suffix (`LEFT$`) is a topic of its own, as
-        // are `ARRAY%`; for others the suffix belongs to a variable of
+        // A name with a type suffix (`LEFT$`) is a separate topic, and so
+        // is `ARRAY%`; for other words the suffix belongs to a variable of
         // the same name.
         let bare = word.trim_end_matches(['$', '%', '#']);
         [Some(word), alias, Some(bare)]
@@ -344,8 +344,8 @@ fn line_counts(pages: &[Page]) -> Value {
 impl Runtime {
     /// HELPINFO OUT: the topic at the editor's cursor, for SmileBASIC 4's
     /// own help, which runs from #SYS (`system`). Other programs get the
-    /// first page's, as on hardware, unless the settings let them see the
-    /// cursor.
+    /// first page's topic, as on hardware, unless the settings let them see
+    /// the cursor.
     pub(crate) fn helpinfo_out(&self, system: bool) -> Vec<Value> {
         let allowed = system || self.settings.helpinfo_cursor;
         let topic = match self.help.as_ref().filter(|_| allowed).map(|h| {
@@ -384,11 +384,11 @@ impl Runtime {
         match (command, want, args) {
             // The lines, their types, their colored runs as position,
             // length and color, and the example.
-            // Checked on hardware: pages count from 0; the runs' array is
-            // one run wide where no line has more.
+            // Checked on hardware: pages count from 0; the array of runs is
+            // one run wide when no line has more.
             (Command::Helpget, Want::Outs(4), [name, page]) => {
                 let (_, pages) = match self.help_pages(name) {
-                    // A name the help does not have is no error.
+                    // A name the help does not have is not an error.
                     Err(e) if self.help.is_some() && e.kind == ErrorKind::IllegalFunctionCall => {
                         let none = || array(ElemType::Str, vec![0], ArrayData::Str(Vec::new()));
                         return Ok(vec![none(), none(), none(), none()]);
@@ -449,8 +449,8 @@ impl Runtime {
                     string(&page.example),
                 ])
             }
-            // The topic at the editor's cursor as it was when the program
-            // started, or for a subprogram, as it is now.
+            // The topic where the editor's cursor was when the program
+            // started, or for a subprogram, where the cursor is now.
             (Command::Helpinfo, Want::Outs(2), []) => {
                 let system = self.storage.project().eq_ignore_ascii_case("#SYS");
                 Ok(self.helpinfo_out(system))
@@ -458,7 +458,7 @@ impl Runtime {
             // Also as a function (checked on hardware).
             (Command::Helpinfo, Want::Outs(1) | Want::Value, [name]) => {
                 let pages = match self.help_pages(name) {
-                    // A name the help does not have is no error.
+                    // A name the help does not have is not an error.
                     Err(e) if self.help.is_some() && e.kind == ErrorKind::IllegalFunctionCall => {
                         Vec::new()
                     }
@@ -479,8 +479,8 @@ fn is_suffix(c: u16) -> bool {
     c < 0x80 && b"$%#".contains(&(c as u8))
 }
 
-/// The upper-cased word under the cursor, else the one ending just left
-/// of it. Labels and constants (`@NAME`, `#NAME`) are not commands.
+/// Returns the upper-cased word under the cursor, or else the word ending
+/// just left of it. Labels and constants (`@NAME`, `#NAME`) are not commands.
 pub fn word_at(line: &[u16], col: usize) -> Option<String> {
     let at = |i: usize| line.get(i).copied();
     let on = |i: usize| at(i).is_some_and(|c| is_word(c) || c == u16::from(b'?'));
@@ -588,7 +588,7 @@ mod tests {
         let (one, twice) = (index_of("A", &[0]), index_of("A", &[0; 2]));
         assert!(Help::from_bytes(&one, data.clone()).is_some());
         assert!(Help::from_bytes(&twice, data.clone()).is_none());
-        // The whole of the data file, taking pages at many places.
+        // The whole data file, read as pages at many offsets.
         let repeating: Vec<u8> = (0..1000u32)
             .flat_map(|_| [100u32, 0, 0])
             .flat_map(u32::to_le_bytes)
@@ -615,7 +615,7 @@ mod tests {
     }
 
     /// A help with the topics DEFAULTHELPKEY, IF and LEFT$, one page each;
-    /// IF's has an example and a line with an orange run.
+    /// IF's page has an example and a line with an orange run.
     fn help() -> Help {
         let mut data = Vec::new();
         let mut refs = Vec::new();
@@ -707,7 +707,7 @@ mod tests {
         assert_eq!(at("IF A THEN B", 0), Lookup::Topic("IF".into()));
         assert_eq!(at("IF A THEN B", 7), Lookup::Topic("IF".into()));
         assert_eq!(at("X=LEFT$(A$,1)", 4), Lookup::Topic("LEFT$".into()));
-        // A suffix that is no part of a topic's name is dropped.
+        // A suffix that is not part of a topic's name is dropped.
         assert_eq!(at("IF% 1", 1), Lookup::Topic("IF".into()));
         assert_eq!(at("FOO=1", 1), Lookup::Unknown("FOO".into()));
         assert_eq!(at("  ", 1), Lookup::Nothing);
@@ -727,7 +727,7 @@ mod tests {
         assert_eq!(at("IF A THEN B=1 ", 14), Lookup::Nothing);
         assert_eq!(at("IF A:B=1 ", 9), Lookup::Nothing);
         assert_eq!(at("IF A '", 6), Lookup::Nothing);
-        // A word that is no topic gives way to the command around it.
+        // For a word that is not a topic, the command around it is used.
         assert_eq!(at("IF FOO", 6), topic("IF"));
     }
 

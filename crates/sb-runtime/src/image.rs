@@ -6,7 +6,7 @@ use std::io::Cursor;
 use crate::graphics::GRP_SIZE;
 use crate::sbfile::{self, DataValues};
 
-/// An image as wide and high as given, row by row.
+/// An image of the given width and height, row by row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {
     pub width: usize,
@@ -19,7 +19,7 @@ const JPEG_MAGIC: &[u8] = &[0xFF, 0xD8];
 /// The largest image read: a whole graphic page.
 const MAX_SIDE: usize = GRP_SIZE as usize;
 
-/// Reads a GRP, JPG or 2D integer DAT file: PNG or JPEG as it is or in
+/// Reads a GRP, JPG or 2D integer DAT file: a bare PNG or JPEG, one in
 /// SmileBASIC 4's container, or a `PCBN` array. GRP images store width
 /// then height; a DAT array is `[height, width]`.
 pub fn decode(bytes: &[u8]) -> Result<Image, String> {
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn empty_images_are_refused_on_the_way_in_and_out() {
-        // What crashed import: a GRP of 0x16 pixels.
+        // The file that crashed import: a GRP of 0x16 pixels.
         let date = sbfile::Date::at(std::time::UNIX_EPOCH);
         for dims in [[0, 16], [16, 0], [0, 0]] {
             let body = array(dims, 0);

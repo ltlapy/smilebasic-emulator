@@ -9,7 +9,7 @@
 //! - the bundled glyphs. At 8 pixels: GalmuriMono7, Misaki Gothic 2nd,
 //!   M PLUS 1p Bold, then Fusion Pixel 8px. At 16 pixels, one of two sets
 //!   ([`BundledSet`], the setting `bundled_glyphs16`), each followed by the
-//!   other's fonts for what it lacks:
+//!   other's fonts for the characters it lacks:
 //!   - antialiased, the default: M PLUS 1p Bold, the face closest to
 //!     SmileBASIC 4's own 16-pixel font, then Noto Sans SC Bold (GB2312),
 //!     then the dot glyphs;
@@ -18,12 +18,12 @@
 //!
 //! The editor looks a character up in them in the order the settings give
 //! ([`Fonts`]), by default in the order above. When none has it, it draws
-//! the font's box. Every glyph takes one cell, as SmileBASIC draws every
-//! character, but keeps the size its font draws it at: ASCII takes the
-//! font's full-width forms, which are drawn for a square cell, and other
-//! narrow glyphs are centered rather than widened. Bitmap glyphs are never
-//! made larger: a font drawn for 8 pixels stays 8 pixels in a 16-pixel
-//! cell.
+//! the font's box. Every glyph takes one cell, the same as every character
+//! SmileBASIC draws, but keeps the size its font draws it at: ASCII takes
+//! the font's full-width forms, which are drawn for a square cell, and
+//! other narrow glyphs are centered rather than widened. Bitmap glyphs are
+//! never made larger: a font drawn for 8 pixels stays 8 pixels in a
+//! 16-pixel cell.
 //!
 //! Programs see these glyphs only where the settings put them on the font
 //! page (see [`crate::program_font`]); by default they never do.
@@ -41,7 +41,7 @@ use crate::font::{self, Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::text::TextScreen;
 
-/// Where a character's glyph comes from, or which source is tried first.
+/// The source of a character's glyph, or the source tried first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FontSource {
     /// SmileBASIC's font.
@@ -53,7 +53,7 @@ pub enum FontSource {
     Bundled,
 }
 
-/// Which set of bundled 16-pixel glyphs comes first. The other set's
+/// The set of bundled 16-pixel glyphs that comes first. The other set's
 /// fonts follow it, for the characters it lacks, so both sets draw the
 /// same characters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -65,7 +65,7 @@ pub enum BundledSet {
     Pixel,
 }
 
-/// Which of [`ExtraGlyphs`]' sources to look in.
+/// The sources of [`ExtraGlyphs`] to look in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Part {
     File = 1,
@@ -158,8 +158,8 @@ pub(crate) fn dot_half16(code: u32) -> Option<Vec<u8>> {
 }
 
 /// Appends the 16x16 dot glyph for `code` (Izumi Gothic 16 or Unifont
-/// JP, made bold), if there is one. ASCII takes the full-width forms, as
-/// SmileBASIC draws it as wide as kana.
+/// JP, made bold), if there is one. ASCII takes the full-width forms,
+/// because SmileBASIC draws it as wide as kana.
 pub(crate) fn dot16_cell(code: u32, out: &mut Vec<u8>) -> bool {
     let code = match code {
         0x21..=0x7E => code + 0xFEE0,
@@ -177,7 +177,7 @@ pub(crate) fn sc16_cell(code: u32, out: &mut Vec<u8>) -> bool {
 /// Appends the bundled 16-pixel glyph for `code` from `set`, or else
 /// from the other set's fonts. `outline` appends M PLUS 1p Bold's glyph,
 /// which each caller draws in its own way. A table is unpacked only when
-/// a character gets as far as it.
+/// the lookup of a character reaches it.
 pub(crate) fn bundled16(
     set: BundledSet,
     code: u32,
@@ -196,7 +196,7 @@ pub(crate) fn bundled16(
 /// Appends GalmuriMono7's 8x8 cell for `code`, if it has one.
 fn galmuri(code: u32, out: &mut Vec<u8>) -> bool {
     // SmileBASIC's ASCII is as wide as kana, so it takes the full-width
-    // forms, as the stand-in font does.
+    // forms, like the stand-in font.
     let code = match code {
         0x21..=0x7E => code + 0xFEE0,
         _ => code,
@@ -241,7 +241,7 @@ enum External {
     Outline(FontVec),
 }
 
-/// The largest font file read, as a font larger than this is not one
+/// The largest font file read, because a font larger than this is not
 /// meant for a character grid.
 const MAX_FILE: u64 = 64 << 20;
 
@@ -278,9 +278,9 @@ pub struct Glyph {
 
 #[derive(Default)]
 struct Cache {
-    /// What each code, cell size, [`Part`] and [`BundledSet`] was found
-    /// as, so that each is looked for once. Glyphs stay when the set
-    /// changes, as callers may still hold them.
+    /// The lookup result for each code, cell size, [`Part`] and
+    /// [`BundledSet`], so that each is looked for once. Glyphs stay when the
+    /// set changes, because callers may still hold them.
     found: HashMap<(u32, u8, u8, BundledSet), Option<Glyph>>,
     /// The glyphs found, one alpha byte per pixel.
     pixels: Vec<u8>,
@@ -384,7 +384,7 @@ impl ExtraGlyphs {
     }
 
     /// Writes the glyph for `code` from `part` into `out`, one alpha byte
-    /// per pixel, without keeping it. Whether there was one.
+    /// per pixel, without keeping it. Returns whether there was one.
     pub(crate) fn render(&self, code: u32, size: FontSize, part: Part, out: &mut Vec<u8>) -> bool {
         out.clear();
         wanted(code) && self.make(code, size, part, out)
@@ -413,7 +413,7 @@ impl ExtraGlyphs {
         let from_file = match (&self.external, part) {
             (_, Part::Bundled) => None,
             (Some(External::Bitmap { glyphs, layout }), _) => {
-                // ASCII takes the full-width form, as for outlines.
+                // ASCII takes the full-width form, the same as for outlines.
                 let full = (0x21..=0x7E)
                     .contains(&code)
                     .then(|| glyphs.get(&(code + 0xFEE0)));
@@ -433,17 +433,17 @@ impl ExtraGlyphs {
             return false;
         }
         match size {
-            // M+ is rough at 8 pixels, but better than the box for what
-            // the others lack. Fusion Pixel draws shared CJK characters in
-            // their Simplified Chinese forms, so it comes last and fills
-            // only what no other font has.
+            // M+ is rough at 8 pixels, but better than the box for the
+            // characters the others lack. Fusion Pixel draws shared CJK
+            // characters in their Simplified Chinese forms, so it comes
+            // last and fills only the characters no other font has.
             FontSize::Small => {
                 galmuri(code, out)
                     || misaki8().copy(code, out)
                     || take(out, outlines(ch, 8))
                     || fusion8().copy(code, out)
             }
-            // The 8-pixel fonts have no place here.
+            // The 8-pixel fonts are not used here.
             FontSize::Large => {
                 bundled16(self.set.get(), code, out, |out| take(out, outlines(ch, 16)))
             }
@@ -476,7 +476,7 @@ pub enum Shown {
     /// SmileBASIC's glyph, or its box when no source has one.
     Font,
     Extra(Glyph),
-    /// The second half of a surrogate pair, drawn on the first's cell.
+    /// The second half of a surrogate pair, drawn on the first half's cell.
     Blank,
 }
 
@@ -501,9 +501,9 @@ impl<'a> Fonts<'a> {
         }
     }
 
-    /// What to draw for `line[i]`. A character beyond U+FFFF takes two
-    /// UTF-16 units, and so two cells, as SmileBASIC counts it: its glyph
-    /// goes on the first and the second stays empty.
+    /// Chooses what to draw for `line[i]`. A character beyond U+FFFF takes
+    /// two UTF-16 units, and so two cells, as SmileBASIC counts it: its
+    /// glyph is drawn on the first and the second stays empty.
     #[inline]
     pub fn choose(&self, line: &[u16], i: usize) -> Shown {
         let prev = i.checked_sub(1).and_then(|p| line.get(p)).copied();
@@ -522,8 +522,8 @@ impl<'a> Fonts<'a> {
         let look = |part| extra_unit(extra, (c, prev, next), self.size, part);
         let font = || self.font.has_glyph(c).then_some(Shown::Font);
         let shown = match first {
-            // The default, and the fast path: one table lookup for what
-            // the font has.
+            // The default, and the fast path: one table lookup for the
+            // characters the font has.
             FontSource::SmileBasic => font().or_else(|| look(Part::Both)),
             FontSource::File => look(Part::File)
                 .or_else(font)
@@ -535,8 +535,8 @@ impl<'a> Fonts<'a> {
         shown.unwrap_or(Shown::Font)
     }
 
-    /// Draws `screen` with these sources: [`TextScreen::draw`] for what
-    /// comes from the font, then the other glyphs over their cells.
+    /// Draws `screen` with these sources: [`TextScreen::draw`] for the
+    /// characters from the font, then the other glyphs over their cells.
     /// Screens whose cells are not this size draw with the font alone.
     pub fn draw_screen(&self, screen: &mut TextScreen, fb: &mut Framebuffer) {
         let (_, size) = screen.font();
@@ -580,7 +580,8 @@ impl<'a> Fonts<'a> {
     }
 }
 
-/// What `part` of `extra` has for the unit `c`, between `prev` and `next`.
+/// The [`Shown`] that `part` of `extra` gives for the unit `c`, between
+/// `prev` and `next`.
 fn extra_unit(
     extra: &ExtraGlyphs,
     (c, prev, next): (u16, Option<u16>, Option<u16>),
@@ -696,7 +697,7 @@ mod tests {
         }
         // ASCII takes the full-width form.
         assert_eq!(Some(large('A')), from(dot16(), 'Ａ'));
-        // What the dot fonts lack comes from M PLUS 1p Bold.
+        // Characters the dot fonts lack come from M PLUS 1p Bold.
         assert_eq!(from(dot16(), '𝔸'), None);
         assert_eq!(Some(large('𝔸')), outlines(Some('𝔸'), 16));
         // The 8-pixel glyphs do not change.
@@ -727,7 +728,7 @@ mod tests {
         let dot = g.find('漢' as u32, FontSize::Large).unwrap();
         assert_eq!(Some(pixels(&g, dot)), from(dot16(), '漢'));
         assert_ne!(pixels(&g, dot), outline_px);
-        // The glyph found before still draws as it did.
+        // The glyph found before still draws the same way.
         assert_eq!(pixels(&g, outline), outline_px);
         g.set_bundled(BundledSet::Antialiased);
         assert_eq!(g.find('漢' as u32, FontSize::Large), Some(outline));
@@ -783,7 +784,7 @@ mod tests {
         // ASCII takes the full-width form.
         let a = g.find('A' as u32, FontSize::Large).unwrap();
         assert_eq!(pixels(&g, a), pixels(&g, large));
-        // What the file lacks still comes from the bundled glyphs.
+        // Characters the file lacks still come from the bundled glyphs.
         assert!(g.find('Ж' as u32, FontSize::Small).is_some());
     }
 
@@ -847,7 +848,7 @@ mod tests {
 
     #[test]
     fn popups_draw_with_the_sources() {
-        // As the completion list and the hints draw their text.
+        // The same way the completion list and the hints draw their text.
         let font = Font::blank_from(0xAC00);
         let extra = ExtraGlyphs::bundled();
         let fonts = Fonts {

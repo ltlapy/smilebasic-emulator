@@ -1,13 +1,13 @@
 //! The variables the fused code reads and writes: a view of the globals'
-//! table and the running DEF's variables, by [`Var::table`] and
+//! table and the running DEF's variables, addressed by [`Var::table`] and
 //! [`Var::index`].
 //!
-//! A default build checks each read and write against its table's length,
-//! as slice indexing does. The `unchecked-vars` feature swaps in a view that
-//! does not, for about a tenth of the interpreter's instructions on
-//! arithmetic on an in-order Arm core: the check was about four aarch64
-//! instructions of the twelve a read takes, the table's length loaded,
-//! compared and branched on. Both views have the same methods, so
+//! A default build checks each read and write against the length of its
+//! table, like slice indexing. The `unchecked-vars` feature swaps in a view
+//! that does not. On an in-order Arm core, this saves about a tenth of the
+//! instructions the interpreter runs for arithmetic: the check was about
+//! four of the twelve aarch64 instructions a read takes, to load the length
+//! of the table, compare and branch. Both views have the same methods, so
 //! `run_fused` is the same code in both builds, and this file is the only
 //! one where they differ. See docs/development/security.md before turning it on.
 
@@ -16,9 +16,9 @@ pub(crate) use checked::Vars;
 #[cfg(feature = "unchecked-vars")]
 pub(crate) use unchecked::Vars;
 
-/// Each read and write checked, as slice indexing checks it: an entry that
-/// names a place out of range panics, and the runtime stops the program
-/// with `Internal Error`.
+/// Each read and write checked, like slice indexing: an entry that names a
+/// place out of range panics, and the runtime stops the program with
+/// `Internal Error`.
 #[cfg(not(feature = "unchecked-vars"))]
 mod checked {
     use crate::fuse::{Fast, Var};
@@ -29,8 +29,8 @@ mod checked {
     }
 
     impl<'a> Vars<'a> {
-        /// Whether `globals` can be read by fused entries: always, as each
-        /// read is checked.
+        /// Whether `globals` can be read by fused entries: always, because
+        /// each read is checked.
         #[inline(always)]
         pub(crate) fn fits(_globals: &[Value], _global_places: usize) -> bool {
             true
@@ -75,8 +75,8 @@ mod checked {
             self.tables[var.table()].get(index..index.checked_add(n)?)
         }
 
-        /// Where both tables start and how long they are, for native code,
-        /// which may use them while this borrow lasts.
+        /// The start and length of both tables, for native code, which may
+        /// use them while this borrow lasts.
         #[cfg(feature = "jit")]
         #[inline(always)]
         pub(crate) fn native_tables(&mut self) -> [(*mut Value, usize); 2] {
@@ -92,30 +92,30 @@ mod checked {
 /// Reads and writes without a bounds check on each.
 ///
 /// The invariant: every [`Var`] the running entry names is within its
-/// table. It holds by three checks, each made once rather than on each
-/// read:
+/// table. Three checks keep it, each made once rather than on each read:
 ///
 /// - [`crate::fuse::check`] runs on every program the VM runs, when the VM
-///   takes it and before it is shared. It makes sure that each global place
-///   an entry or its chain names is below [`crate::fuse::global_places`],
-///   and works out [`Fast::need`], what the entry needs of the running
-///   DEF's variables. If a place is out of range, the program runs without
-///   its fused code. A program the VM holds is behind an `Rc` and never
-///   changes again.
+///   takes it and before it is shared. It checks that each global place an
+///   entry or its chain names is below [`crate::fuse::global_places`], and
+///   computes [`Fast::need`], the number of the running DEF's variables
+///   that the entry needs. If a place is out of range, the program runs
+///   without its fused code. A program the VM holds is behind an `Rc` and
+///   never changes again.
 /// - `run_fused` asks [`Vars::fits`] whether the globals' table is at least
 ///   `global_places` long before it starts, and [`Vars::new`] asserts it.
 ///   The table does not change length while it runs.
-/// - `run_fused` asks [`Vars::covers`] before each entry, and leaves an
-///   entry whose `need` is more than the running DEF's variables to `step`.
+/// - `run_fused` asks [`Vars::covers`] before each entry, and leaves to
+///   `step` any entry whose `need` is more than the number of the running
+///   DEF's variables.
 ///
-/// What would break it: an entry whose places `fuse::check` does not see
-/// (a new [`crate::fuse::FastOp`] or [`crate::fuse::Micro`] kind left out of
-/// its match, which does not compile without an arm), a program changed
-/// after the check, or a view kept across a change to the variables' lists.
-/// The view holds the borrows of both lists, so the compiler refuses the
-/// last. Every read and write also has a `debug_assert`, so the tests,
-/// which run in debug builds, catch a broken invariant as a failure rather
-/// than as memory gone wrong.
+/// Three things would break it: an entry whose places `fuse::check` does
+/// not see (a new [`crate::fuse::FastOp`] or [`crate::fuse::Micro`] kind
+/// missing from its match, which does not compile without an arm), a
+/// program changed after the check, or a view kept across a change to the
+/// variables' lists. The view holds the borrows of both lists, so the
+/// compiler refuses the last one. Every read and write also has a
+/// `debug_assert`, so the tests, which run in debug builds, catch a broken
+/// invariant as a test failure rather than as corrupted memory.
 ///
 /// A bug here is memory unsafety reachable from an untrusted program.
 #[cfg(feature = "unchecked-vars")]
@@ -169,10 +169,10 @@ mod unchecked {
             debug_assert!(index < self.lens[table], "{var:?} beyond {:?}", self.lens);
             // SAFETY: `index` is within its table, by the invariant above:
             // `fuse::check` bounds every global place by `global_places`,
-            // which `new` asserted of the globals' table, and every local
+            // which `new` asserted for the globals' table, and every local
             // place by the entry's `need`, which `covers` compared with the
-            // locals'. The pointer comes from a slice this view borrows for
-            // `'a`.
+            // length of the locals' table. The pointer comes from a slice
+            // this view borrows for `'a`.
             unsafe { &*self.tables[table].add(index) }
         }
 
@@ -199,8 +199,8 @@ mod unchecked {
             Some(unsafe { std::slice::from_raw_parts(self.tables[table].add(index), n) })
         }
 
-        /// Where both tables start and how long they are, for native code,
-        /// which may use them while this borrow lasts.
+        /// The start and length of both tables, for native code, which may
+        /// use them while this borrow lasts.
         #[cfg(feature = "jit")]
         #[inline(always)]
         pub(crate) fn native_tables(&mut self) -> [(*mut Value, usize); 2] {

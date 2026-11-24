@@ -78,17 +78,17 @@ The emulator shows this list too, in Help > Keyboard shortcuts.
 View > Fullscreen does the same as Ctrl+Shift+F11. Fullscreen covers the
 display without changing its resolution, and the screen is scaled as View >
 Screen filter says. With the editor in its own window, only the main window
-goes fullscreen. The emulator starts fullscreen if it was when it quit
-(`fullscreen=true` in `settings.txt`). Ctrl+Shift+F11 and Ctrl+Shift+F12 type
-nothing and start no tool; as with every key, a program can still see them
-held with `KEYBOARD`.
+goes fullscreen. The emulator starts fullscreen if it was fullscreen when it
+quit (`fullscreen=true` in `settings.txt`). Ctrl+Shift+F11 and Ctrl+Shift+F12
+type nothing and start no tool. As with every key, a program can still see
+them held with `KEYBOARD`.
 
 ## Buttons
 
 The keyboard presses controller 1's buttons, unless you turn off Run > *Use the
 keyboard as a controller*. A key the program reads with `KEYBOARD` or `INKEY$`
-presses no button until a second after the program stops reading it. The mouse's
-left button touches the screen.
+presses no button until a second after the program stops reading it. The left
+mouse button touches the screen.
 
 | Key | Button |
 |---|---|
@@ -133,14 +133,14 @@ The menu needs the mouse or keys.
 The right stick moves the mouse pointer while no program runs, and in a
 program that shows the mouse cursor, as on SmileBASIC 4. It also works on
 the menu bar, the emulator's windows and dialogs, Projects, and a program's
-`DIALOG` while they are open over a program; the program then does not see
-the right stick or R3.
-Holding − (Select) makes it work in any program, which then does not see the
-right stick or R3 either. File > Settings > Input > *Right stick moves the
-mouse* turns it off.
+`DIALOG` while they are open over a program. The program then does not see
+the right stick or R3. Holding − (Select) makes it work in any program, which
+then does not see the right stick or R3 either. File > Settings > Input >
+*Right stick moves the mouse* turns it off.
 
-In the Simple UI the right stick is no mouse on the game list, the pause
-menu and the other screens of the Simple UI, or in a program's `DIALOG`.
+In the Simple UI the right stick does not work as the mouse on the game list,
+the pause menu and the other screens of the Simple UI, or in a program's
+`DIALOG`.
 
 | Key | Action |
 |---|---|
@@ -152,11 +152,12 @@ menu and the other screens of the Simple UI, or in a program's `DIALOG`.
 
 ## Simple UI
 
-The Simple UI is for a gamepad without a keyboard, as on a Linux handheld:
-fullscreen, no menu bar or editor, and a list of the projects instead of
-DIRECT mode. Start it with `smilebasic --simple-ui`, or turn it on and off
-with Ctrl+Shift+F12, which keeps the choice. Turning it off goes back to a
-window, or to fullscreen if the desktop was. Programs never see − (Select).
+The Simple UI is for a gamepad without a keyboard, for example on a Linux
+handheld. It is fullscreen, has no menu bar or editor, and shows a list of the
+projects instead of DIRECT mode. Start it with `smilebasic --simple-ui`, or
+turn it on and off with Ctrl+Shift+F12, which keeps the choice. Turning it off
+goes back to a window, or to fullscreen if the desktop was fullscreen.
+Programs never see − (Select).
 
 The first time the Simple UI starts, a welcome screen asks you to press A.
 The button you press, the right or the bottom one, works as A from then on,
@@ -164,8 +165,8 @@ and the one across from it as B. Enter continues without changing this.
 
 The pause menu pauses the program. It has Resume, Restart, Return to Game
 list and Quit Emulator; over the list it has Close and Quit Emulator. Its
-top right corner shows the emulator's version, as Help > About does. Under
-Settings it has:
+top right corner shows the emulator's version, the same as Help > About does.
+Under Settings it has:
 
 - Screen filter: how the screen is scaled, described in
   [differences.md](differences.md#screen-scaling).
@@ -173,10 +174,10 @@ Settings it has:
   them at the largest whole scale that leaves 480 lines or more (1x on a
   640x480 display), Medium at 1.5 times that (24-pixel text, a 427x320 UI on
   640x480), and Large at twice that (320x240 on 640x480). Where Normal is
-  2x, as on 1920x1080, Medium is 3x. The program's screen keeps its size.
-  The notices in the bottom right corner, the keys for the buttons and a
-  program slower than real time, cover less of it: they stay at Normal's
-  size at Medium, and take Medium's at Large.
+  2x, for example on 1920x1080, Medium is 3x. The program's screen keeps its
+  size. The notices in the bottom right corner, about the keys for the
+  buttons and about a program slower than real time, cover less of it: they
+  stay at Normal's size at Medium, and take Medium's size at Large.
   In `settings.txt` this is `simple_ui_size=normal`, `medium` or `large`.
 - Swap A/B and X/Y: A and B trade places, as do X and Y, for programs too.
   The desktop has it in File > Settings > Input.
@@ -187,13 +188,13 @@ Settings it has:
   instead of slowing down"; [differences.md](differences.md#speed) compares
   both with SmileBASIC 4. When a program runs slower than real time for a
   while, a notice points here.
-- Wait for vsync: On, the default, has the window's presents wait for the
-  display's refresh. Off, each frame waits for its own time, for a game
-  where the timing of input matters on a device that leaves drawings out;
-  the picture may tear, and a slow device may run the program slower. The
-  desktop has it in View.
+- Wait for vsync: On, the default, makes the window wait for the display's
+  refresh when it presents a frame. With Off, each frame waits for its own
+  time. Off is for a game where the timing of input matters, on a device
+  where the window skips some drawings; the picture may tear, and a slow
+  device may run the program slower. The desktop has it in View.
 
-A change shows at once and is kept.
+A change shows immediately and is kept.
 
 | Key | Action |
 |---|---|

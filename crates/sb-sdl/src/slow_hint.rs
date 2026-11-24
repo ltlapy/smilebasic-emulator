@@ -1,11 +1,11 @@
-//! A notice for a program that runs slower than real time. By default a
-//! trip round a program's main loop that runs out of time keeps its frame
+//! A notice for a program that runs slower than real time. By default an
+//! iteration of a program's main loop that runs out of time keeps its frame
 //! (`Machine::keep_frames`), so a program too slow for the computer gets
-//! fewer than 60 frames a second. When that lasts, the notice says where
-//! "Skip frames instead of slowing down" is, once per program a session.
+//! fewer than 60 frames per second. When that lasts, the notice says where
+//! "Skip frames instead of slowing down" is, once per program per session.
 //!
-//! [`Detector`] decides from what each trip round the window's loop saw,
-//! with nothing of SDL, so that tests can feed it made-up trips.
+//! [`Detector`] decides from what each iteration of the window's loop saw,
+//! with no SDL code, so that tests can feed it made-up iterations.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -17,27 +17,28 @@ use sb_runtime::settings::Settings;
 use crate::corner::{self, SHOW_FRAMES};
 use crate::ui::{CHAR, DISABLED, PAD, Rect, TEXT, draw_text};
 
-/// The trips of a span, about half a second, are summed up before they
-/// are judged: 30 frames at full speed, so that one frame is 2 frames a
-/// second.
+/// The iterations of a span, about half a second, are summed up before
+/// they are judged: 30 frames at full speed, so that one frame is 2 frames
+/// per second.
 const SPAN: Duration = Duration::from_millis(500);
-/// A span slower than this, 10% short of 60, counts as slow: there the
-/// slowdown is easy to see and the sound has gaps.
+/// A span slower than this, 10% below 60, counts as slow. At that speed
+/// the slowdown is easy to see and the sound has gaps.
 const SLOW_FPS: u128 = 54;
 /// A span at least this fast ends the slow state, so that a program at
-/// about 54 frames a second does not go in and out of it.
+/// about 54 frames per second does not go in and out of it.
 const FAST_FPS: u128 = 57;
 /// Slow spans in a row before the program counts as slow: 2 seconds, much
 /// longer than a heavy moment such as a burst of sprites.
 const SLOW_SPANS: u32 = 4;
 /// Fast spans in a row that end the slow state: 1 second.
 const FAST_SPANS: u32 = 2;
-/// After the program starts, time that counts for nothing, for what it
-/// sets up and loads.
+/// The time after the program starts that is not counted, to allow for
+/// setup and loading.
 const GRACE: Duration = Duration::from_secs(3);
-/// A trip this long means the window was held up, as while it is dragged,
-/// the system suspended the emulator, or a file loaded in one go: skipping
-/// frames would not help, so the span starts again.
+/// An iteration this long means that the window's loop stalled, for
+/// example because the window is dragged, the system suspended the
+/// emulator, or a file loaded in one go. Skipping frames would not help,
+/// so the span starts again.
 const STALL: Duration = Duration::from_millis(100);
 const TITLE: &str = "Running slower than real time";
 const DESKTOP_LINES: [&str; 2] = [
@@ -51,28 +52,28 @@ const SIMPLE_UI_LINES: [&str; 2] = [
 ];
 const FOOTER: &str = "Frame-counting games may misbehave.";
 
-/// A trip round the window's loop, as the detector sees it.
+/// An iteration of the window's loop, as the detector sees it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Trip {
-    /// Since the trip before began.
+    /// The time since the previous iteration began.
     pub elapsed: Duration,
     /// Program frames that started in it: how far `MAINCNT` went.
     pub started: u32,
     /// Calls of `Machine::frame` in it that started no frame, because the
-    /// program's trip under way kept its frame.
+    /// iteration of the program's main loop under way kept its frame.
     pub kept: u32,
-    /// Whether the trip can tell anything: a program runs, not paused, not
-    /// in a dialog, the window shown, at unlimited speed, frames are kept
-    /// and the notice is wanted.
+    /// Whether the iteration counts: a program runs, it is not paused or in
+    /// a dialog, the window is shown, the speed is unlimited, frames are
+    /// kept and the notice is wanted.
     pub counts: bool,
 }
 
 /// Tells when a program has run slower than real time for a while: its
-/// frames a second below [`SLOW_FPS`] for [`SLOW_SPANS`] spans in a row,
-/// with frames kept in each, past the [`GRACE`] after it started. A trip
-/// that does not count, or a [`STALL`], starts the span and the run of
-/// slow spans again. Once slow, it stays so until [`FAST_SPANS`] spans
-/// run at [`FAST_FPS`] or more.
+/// frames per second are below [`SLOW_FPS`] for [`SLOW_SPANS`] spans in a
+/// row, with frames kept in each, after the [`GRACE`] that follows its
+/// start. An iteration that does not count, or a [`STALL`], starts the span
+/// and the run of slow spans again. Once slow, it stays slow until
+/// [`FAST_SPANS`] spans run at [`FAST_FPS`] or more.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Detector {
     /// Time counted since the program started, up to [`GRACE`].
@@ -92,7 +93,8 @@ impl Detector {
         *self = Detector::default();
     }
 
-    /// Notes a trip; true if the program has just come to count as slow.
+    /// Notes an iteration. Returns true if the program has just come to
+    /// count as slow.
     pub fn trip(&mut self, trip: Trip) -> bool {
         if !trip.counts || trip.elapsed >= STALL {
             (self.span, self.started, self.kept) = (Duration::ZERO, 0, 0);
@@ -133,21 +135,21 @@ impl Detector {
 #[derive(Debug, Default)]
 pub struct SlowHint {
     detector: Detector,
-    /// When the last trip began.
+    /// When the last iteration began.
     last: Option<Instant>,
     /// The program last seen running, by its project and file.
     program: Option<(String, String)>,
     /// The programs it was shown for in this session.
     shown: HashSet<(String, String)>,
-    /// Due, but waiting for the keys' picture to go.
+    /// Due, but waiting until the keys' picture is gone.
     pending: bool,
     frames_left: u32,
 }
 
 impl SlowHint {
-    /// Notes a trip round the loop that began at `now`. `program` is the
-    /// project and file of the program running, if any; `trip`'s elapsed
-    /// time is worked out here.
+    /// Notes an iteration of the loop that began at `now`. `program` is the
+    /// project and file of the running program, if any. The elapsed time of
+    /// `trip` is computed here.
     pub fn trip(&mut self, now: Instant, mut trip: Trip, program: Option<(&str, &str)>) {
         let elapsed = self.last.map(|last| now - last);
         self.last = Some(now);
@@ -166,10 +168,11 @@ impl SlowHint {
         }
     }
 
-    /// Counts down a frame; a notice that is due shows unless `held`, as
-    /// while the keys' picture shows in the same corner. One that shows
-    /// when the picture comes up waits for it to go, and then shows its
-    /// whole time again, so that the two never overlap.
+    /// Counts down a frame. A notice that is due is shown unless `held`,
+    /// for example while the keys' picture shows in the same corner. A
+    /// notice shown when the picture appears waits until the picture is
+    /// gone, and is then shown for its whole time again, so that the two
+    /// never overlap.
     pub fn tick(&mut self, held: bool) {
         if held && self.visible() {
             (self.pending, self.frames_left) = (true, 0);
@@ -180,13 +183,13 @@ impl SlowHint {
         self.frames_left = self.frames_left.saturating_sub(1);
     }
 
-    /// Takes the notice away, as when frames are skipped now.
+    /// Removes the notice, for example when frames are now skipped.
     pub fn dismiss(&mut self) {
         (self.pending, self.frames_left) = (false, 0);
     }
 
-    /// Takes the notice away at once when the settings no longer want it:
-    /// frames are skipped now, or the notice is turned off.
+    /// Removes the notice immediately when the settings no longer want it:
+    /// frames are now skipped, or the notice is turned off.
     pub fn follow(&mut self, settings: &Settings) {
         if settings.skip_frames || !settings.slow_hint {
             self.dismiss();
@@ -207,8 +210,8 @@ impl SlowHint {
         std::iter::once(TITLE).chain(body).chain([FOOTER])
     }
 
-    /// Where the notice goes on a frame of `size`: the bottom right
-    /// corner, as the keys' picture.
+    /// Returns the rectangle of the notice on a frame of `size`: the bottom
+    /// right corner, the same as the keys' picture.
     fn place((fw, fh): (u32, u32), simple_ui: bool) -> Rect {
         let lines = Self::lines(simple_ui);
         let widest = lines.map(crate::ui::text_width).max().unwrap_or(0);
@@ -224,8 +227,8 @@ impl SlowHint {
         let mut y = panel.y + PAD;
         for (i, line) in Self::lines(simple_ui).enumerate() {
             let color = if i < 3 { TEXT } else { DISABLED };
-            // A gap under the title and above the footer, as the keys'
-            // picture has.
+            // A gap under the title and above the footer, the same as in
+            // the keys' picture.
             if i == 1 || i == 3 {
                 y += PAD / 2;
             }
@@ -241,7 +244,7 @@ mod tests {
 
     const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
-    /// A trip of a frame's time that started `started` frames and kept
+    /// An iteration one frame long that started `started` frames and kept
     /// `kept` calls.
     fn trip(started: u32, kept: u32) -> Trip {
         Trip {
@@ -252,14 +255,14 @@ mod tests {
         }
     }
 
-    /// Feeds `seconds` of trips at `fps` program frames a second, the rest
-    /// of the window's 60 trips keeping their frames; gives whether the
-    /// detector said slow at any of them.
+    /// Feeds `seconds` of iterations at `fps` program frames per second;
+    /// the rest of the window's 60 iterations per second keep their frames.
+    /// Returns whether the detector said slow at any of them.
     fn run(d: &mut Detector, seconds: f64, fps: u32, counts: bool) -> bool {
         let trips = (seconds * 60.0).round() as u32;
         let mut became = false;
         for i in 0..trips {
-            // Spread the frames evenly over the window's trips.
+            // Spread the frames evenly over the window's iterations.
             let started = (i + 1) * fps / 60 - i * fps / 60;
             let t = Trip {
                 counts,
@@ -292,13 +295,14 @@ mod tests {
     fn a_single_spike_does_not_count() {
         let mut d = Detector::default();
         run(&mut d, 4.0, 60, true);
-        // Half a second at 10 frames a second, twice, a second apart.
+        // Half a second at 10 frames per second, twice, a second apart.
         assert!(!run(&mut d, 0.5, 10, true));
         assert!(!run(&mut d, 1.0, 60, true));
         assert!(!run(&mut d, 0.5, 10, true));
         assert!(!run(&mut d, 1.0, 60, true));
         assert!(!d.is_slow());
-        // A trip of four frames' time, kept: three calls in one trip.
+        // An iteration of four frames' time, kept: three calls in one
+        // iteration.
         for _ in 0..20 {
             assert!(!d.trip(trip(0, 3)));
             for _ in 0..60 {
@@ -316,8 +320,8 @@ mod tests {
         // Between the two limits it stays slow, and says nothing again.
         assert!(!run(&mut d, 10.0, 55, true));
         assert!(d.is_slow());
-        // Fast for a second ends it, whatever part of a span the change
-        // falls in; slow again for two says so again.
+        // Fast for a second ends it, regardless of the part of a span the
+        // change falls in. Slow again for two seconds says so again.
         assert!(!run(&mut d, 1.5, 60, true));
         assert!(!d.is_slow());
         assert!(run(&mut d, 2.5, 40, true));
@@ -332,16 +336,17 @@ mod tests {
 
     #[test]
     fn trips_that_do_not_count_start_again() {
-        // Paused, waiting for input, frames skipped: no trip counts.
+        // Paused, waiting for input, frames skipped: no iteration counts.
         let mut d = Detector::default();
         run(&mut d, 3.0, 60, true);
         assert!(!run(&mut d, 10.0, 20, false));
-        // A trip that does not count breaks a run of slow spans.
+        // An iteration that does not count breaks a run of slow spans.
         for _ in 0..10 {
             assert!(!run(&mut d, 1.5, 20, true));
             assert!(!d.trip(Trip::default()));
         }
-        // So does a trip held up, as while the window is dragged.
+        // So does a stalled iteration, for example while the window is
+        // dragged.
         for _ in 0..10 {
             assert!(!run(&mut d, 1.5, 20, true));
             let held = Trip {
@@ -404,8 +409,9 @@ mod tests {
             hint.tick(false);
         }
         assert!(!hint.visible());
-        // The picture comes up while the notice shows: the notice goes,
-        // and comes back for its whole time once the picture has gone.
+        // The picture appears while the notice is shown: the notice is
+        // hidden, and comes back for its whole time once the picture is
+        // gone.
         hint.pending = true;
         for _ in 0..100 {
             hint.tick(false);
@@ -420,7 +426,7 @@ mod tests {
         assert!(!hint.visible());
     }
 
-    /// Either setting takes a notice away at once, shown or due.
+    /// Either setting removes a notice immediately, shown or due.
     #[test]
     fn the_settings_take_it_away() {
         let mut s = Settings::default();
