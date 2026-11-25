@@ -430,7 +430,16 @@ impl FilePicker {
         }
         if self.narrows() {
             self.narrow();
-            self.choose(1);
+            self.choose(self.first_match_row());
+        }
+    }
+
+    /// The row of the first entry that the typed text leaves: below the way
+    /// up in a project, the top row among the projects.
+    fn first_match_row(&self) -> usize {
+        match self.project {
+            Some(_) => FIRST_FILE_ROW,
+            None => 0,
         }
     }
 
@@ -449,7 +458,7 @@ impl FilePicker {
                 self.field.pop();
                 if self.narrows() {
                     self.narrow();
-                    self.choose(1);
+                    self.choose(self.first_match_row());
                 }
             }
             Keycode::Backspace if self.project.is_some() => self.up(storage),
@@ -707,6 +716,30 @@ mod tests {
             p.key(Keycode::Return, &storage),
             Outcome::Tool(1, "#TOOL/GAHAKU.PRG".into())
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn typing_among_the_projects_chooses_the_first_match() {
+        let dir = std::env::temp_dir().join(format!("sb-first-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let storage = Storage::new(dir.clone());
+        for name in ["GAME1", "GAME2", "OTHER"] {
+            storage.create_project(name).unwrap();
+        }
+        let mut p = FilePicker::new((1280, 720), 0, &storage);
+        p.key(Keycode::Backspace, &storage);
+        assert_eq!(p.project, None);
+        p.text("game");
+        let names: Vec<&str> = p.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["GAME1", "GAME2"]);
+        assert_eq!(p.entries[p.chosen].name, "GAME1");
+        // Erasing a letter chooses the first match again.
+        p.key(Keycode::Down, &storage);
+        p.key(Keycode::Backspace, &storage);
+        assert_eq!(p.entries[p.chosen].name, "GAME1");
+        p.key(Keycode::Return, &storage);
+        assert_eq!(p.project.as_deref(), Some("GAME1"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
