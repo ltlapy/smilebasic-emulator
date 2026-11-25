@@ -9,8 +9,8 @@ use crate::framebuffer::Framebuffer;
 use crate::syntax::{Role, highlight, is_ident_char, is_ident_start};
 use crate::text::TextScreen;
 
-/// The maximum number of forms shown.
-const FORMS: usize = 6;
+/// The most forms of a hint that are shown.
+const MAX_FORMS: usize = 6;
 const MARK: u32 = 0xFF20_2838;
 
 /// The argument of a command that the cursor is typing.
@@ -95,23 +95,23 @@ pub fn find(line: &[u16], col: usize, library: &Library, names: &[Item]) -> Opti
             last_word = Some(word);
             continue;
         }
-        match c {
-            0x28 => stack.push(Frame {
+        match u8::try_from(c) {
+            Ok(b'(') => stack.push(Frame {
                 name: last_word.take(),
                 call: true,
                 ..Frame::default()
             }),
             // An array's index has no hint.
-            0x5B => stack.push(Frame::default()),
-            0x29 | 0x5D if stack.len() > 1 => {
+            Ok(b'[') => stack.push(Frame::default()),
+            Ok(b')' | b']') if stack.len() > 1 => {
                 stack.pop();
             }
             // PRINT and INPUT separate arguments with `;` too.
-            0x2C | 0x3B => stack.last_mut().expect("never empty").commas += 1,
-            0x3A => stack = vec![Frame::default()],
+            Ok(b',' | b';') => stack.last_mut().expect("never empty").commas += 1,
+            Ok(b':') => stack = vec![Frame::default()],
             _ => {}
         }
-        if c != 0x20 {
+        if c != u16::from(b' ') {
             last_word = None;
         }
         i += 1;
@@ -409,7 +409,7 @@ pub fn draw_band(
     cell: u32,
 ) {
     let c = i64::from(cell);
-    let hint_h = hint.map_or(0, |h| h.forms.len().min(FORMS) as i64 * c + 2);
+    let hint_h = hint.map_or(0, |h| h.forms.len().min(MAX_FORMS) as i64 * c + 2);
     let syntax_h = if syntax.is_some() { c + 2 } else { 0 };
     let mut y = band.bottom - hint_h - syntax_h;
     if band.cursor + c > y && band.cursor < band.bottom {
@@ -459,7 +459,7 @@ impl Hint {
         cell: u32,
     ) {
         let c = i64::from(cell);
-        let forms: Vec<&String> = self.forms.iter().take(FORMS).collect();
+        let forms: Vec<&String> = self.forms.iter().take(MAX_FORMS).collect();
         let longest = forms.iter().map(|f| f.chars().count()).max().unwrap_or(0);
         let cols = (longest as i64 + 2).min(i64::from(fb.width()) / c);
         let (w, h) = (cols * c, forms.len() as i64 * c);

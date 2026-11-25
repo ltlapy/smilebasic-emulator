@@ -469,6 +469,11 @@ pub fn grid_cell(x: i32, y: i32) -> i32 {
     y / 16 * 128 + x / 16
 }
 
+/// Whether `outer` contains all of `inner`.
+fn covers(outer: Area, inner: Area) -> bool {
+    outer.0 <= inner.0 && outer.1 <= inner.1 && outer.2 >= inner.2 && outer.3 >= inner.3
+}
+
 /// The GRP tab's page as a texture, for one window's renderer.
 #[derive(Default)]
 pub struct PageTexture<'a> {
@@ -578,14 +583,11 @@ impl<'a> PageTexture<'a> {
             _ => (0, 0, SIZE, SIZE),
         };
         let changes = grp.changes(page);
-        let fresh = self.copied.is_some_and(|(p, c, (a, b, c2, d))| {
-            p == page
-                && c == changes
-                && a <= needed.0
-                && b <= needed.1
-                && c2 >= needed.2
-                && d >= needed.3
-        });
+        let fresh = self
+            .copied
+            .is_some_and(|(old_page, old_changes, old_area)| {
+                old_page == page && old_changes == changes && covers(old_area, needed)
+            });
         let Some(tex) = &mut self.page else {
             return Ok(());
         };

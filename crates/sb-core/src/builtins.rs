@@ -89,9 +89,8 @@ pub struct Outs {
     /// with two forms then takes its form from the count, so arguments that
     /// only the other form takes are a `Wrong number of arguments`.
     pub first: bool,
-    /// With [`Outs::first`], a call with no arguments has its number of
-    /// arguments looked at before the count.
-    pub none_first: bool,
+    /// Overrides [`Outs::first`] for a call with no arguments.
+    pub args_first_when_none: bool,
 }
 
 impl Outs {
@@ -103,7 +102,7 @@ impl Outs {
     pub const OWN: Outs = Outs {
         counts: u16::MAX,
         first: false,
-        none_first: false,
+        args_first_when_none: false,
     };
 
     pub const fn of(counts: &[u8]) -> Outs {
@@ -116,7 +115,7 @@ impl Outs {
         Outs {
             counts: mask,
             first: false,
-            none_first: false,
+            args_first_when_none: false,
         }
     }
 
@@ -133,7 +132,7 @@ impl Outs {
     pub const fn first_unless_none(self) -> Outs {
         Outs {
             first: true,
-            none_first: true,
+            args_first_when_none: true,
             ..self
         }
     }
@@ -302,9 +301,8 @@ fn text(v: &Value) -> Result<Str> {
     }
 }
 
-/// A new string for a function to return. The memory it takes is added
-/// to the memory estimate.
-fn string(s: Str) -> Value {
+/// A new string for a function to return, charged to the memory estimate.
+fn charged_string(s: Str) -> Value {
     crate::memory::charge(crate::memory::string_bytes(s.len()));
     Value::Str(new_str(s))
 }
@@ -446,7 +444,7 @@ fn str(args: &[Value]) -> Result<Value> {
         Value::Real(x) => crate::value::format_g(*x).encode_utf16().collect(),
         number => format_number(number),
     };
-    Ok(string(pad_left(text, digits, ' ')))
+    Ok(charged_string(pad_left(text, digits, ' ')))
 }
 
 fn pad_left(mut s: Str, width: usize, fill: char) -> Str {
@@ -501,7 +499,7 @@ pub fn parse_number(text: &[u16]) -> Option<Value> {
 /// is U+FFFF, 65601 is "A" and 65536 a one-character string holding U+0000.
 fn chr(args: &[Value]) -> Result<Value> {
     let code = args[0].to_int()? as u16;
-    Ok(string(vec![code]))
+    Ok(charged_string(vec![code]))
 }
 
 /// ASC: an empty string is "Can't use empty string".
@@ -527,18 +525,18 @@ fn mid(args: &[Value]) -> Result<Value> {
     let s = text(&args[0])?;
     let start = index_arg(&args[1])?;
     let count = opt(args, 2).map_or(Ok(usize::MAX), index_arg)?;
-    Ok(string(substring(&s, start, count)))
+    Ok(charged_string(substring(&s, start, count)))
 }
 
 fn left(args: &[Value]) -> Result<Value> {
     let s = text(&args[0])?;
-    Ok(string(substring(&s, 0, index_arg(&args[1])?)))
+    Ok(charged_string(substring(&s, 0, index_arg(&args[1])?)))
 }
 
 fn right(args: &[Value]) -> Result<Value> {
     let s = text(&args[0])?;
     let count = index_arg(&args[1])?.min(s.len());
-    Ok(string(s[s.len() - count..].to_vec()))
+    Ok(charged_string(s[s.len() - count..].to_vec()))
 }
 
 fn instr(args: &[Value]) -> Result<Value> {
@@ -618,7 +616,7 @@ fn subst(args: &[Value]) -> Result<Value> {
     let mut out = s[..start].to_vec();
     out.extend_from_slice(&replacement);
     out.extend_from_slice(&s[end..]);
-    Ok(string(out))
+    Ok(charged_string(out))
 }
 
 /// HEX$ and BIN$. Negative numbers show their 32-bit two's complement.
@@ -632,7 +630,8 @@ fn radix_str(args: &[Value], radix: u32, max_digits: usize) -> Result<Value> {
         16 => format!("{n:X}"),
         _ => format!("{n:b}"),
     };
-    Ok(string(pad_left(text.encode_utf16().collect(), digits, '0')))
+    let padded = pad_left(text.encode_utf16().collect(), digits, '0');
+    Ok(charged_string(padded))
 }
 
 /// FORMAT$: `%S`, `%D`, `%X`, `%F`, `%B` and `%%`, each with C's flags
@@ -715,7 +714,7 @@ fn format(args: &[Value]) -> Result<Value> {
         };
         done.map_err(|e| e.of_arg(value_at))?;
     }
-    Ok(string(out))
+    Ok(charged_string(out))
 }
 
 /// The most characters FORMAT$ can return: it writes into a buffer of
@@ -1098,13 +1097,29 @@ fn check_1d(a: &Array) -> Result<()> {
     Ok(())
 }
 
-/// Checks memory before an element is added to `len` others of `size`
-/// bytes. The block of an array changes size every 64 bytes, and the new
+/// The block of an array changes size every this many bytes.
+const ARRAY_BLOCK_BYTES: usize = 64;
+/// The block of a string changes size every this many characters.
+const STRING_BLOCK_CHARS: usize = 64;
+
+/// The bytes of one element in SmileBASIC 4. Strings are held by pointers
+/// of 8 bytes.
+const fn elem_bytes(elem: ElemType) -> usize {
+    match elem {
+        ElemType::Int => 4,
+        ElemType::Real | ElemType::Str => 8,
+    }
+}
+
+/// Checks memory before an element is added to `len` others. The new
 /// block has to fit next to the old one. The element itself is looked at
 /// when the VM next counts memory.
 #[inline]
-fn room_for_one(len: usize, size: usize, elem: ElemType) -> Result<()> {
-    if len.wrapping_mul(size) & 63 == 0 {
+fn room_for_one(len: usize, elem: ElemType) -> Result<()> {
+    if len
+        .wrapping_mul(elem_bytes(elem))
+        .is_multiple_of(ARRAY_BLOCK_BYTES)
+    {
         return next_block(elem, len);
     }
     Ok(())
@@ -1144,17 +1159,17 @@ fn put(target: &Value, value: Value, end: End) -> Result<()> {
             match &mut a.data {
                 ArrayData::Int(v) => {
                     let n = value.to_stored_int()?;
-                    room_for_one(v.len(), 4, ElemType::Int)?;
+                    room_for_one(v.len(), ElemType::Int)?;
                     v.insert(at, n);
                 }
                 ArrayData::Real(v) => {
                     let x = value.to_real()?;
-                    room_for_one(v.len(), 8, ElemType::Real)?;
+                    room_for_one(v.len(), ElemType::Real)?;
                     v.insert(at, x);
                 }
                 ArrayData::Str(v) => {
                     let s = value.into_str()?;
-                    room_for_one(v.len(), 8, ElemType::Str)?;
+                    room_for_one(v.len(), ElemType::Str)?;
                     v.insert(at, s);
                 }
             }
@@ -1165,12 +1180,14 @@ fn put(target: &Value, value: Value, end: End) -> Result<()> {
     Ok(())
 }
 
-/// Whether the array may shrink, before one of its `len` elements of
-/// `size` bytes comes off. Its block changes size every 64 bytes, and a smaller
-/// block is a new one that has to fit next to the old one.
+/// Whether the array may shrink, before one of its `len` elements comes
+/// off. A smaller block is a new one that has to fit next to the old one.
 #[inline]
-fn can_shrink(len: usize, size: usize, elem: ElemType) -> Result<bool> {
-    if (len - 1).wrapping_mul(size) & 63 == 0 {
+fn can_shrink(len: usize, elem: ElemType) -> Result<bool> {
+    if (len - 1)
+        .wrapping_mul(elem_bytes(elem))
+        .is_multiple_of(ARRAY_BLOCK_BYTES)
+    {
         return smaller_block(elem, len);
     }
     Ok(true)
@@ -1211,14 +1228,13 @@ fn take(target: &Value, end: End) -> Result<Value> {
             if len == 0 {
                 return Err(ErrorKind::SubscriptOutOfRange.into());
             }
-            // A string's block changes size every 64 characters.
-            if (len - 1) & 63 == 0
+            if (len - 1).is_multiple_of(STRING_BLOCK_CHARS)
                 && !crate::memory::shrink(
                     crate::memory::string_bytes(len),
                     crate::memory::string_bytes(len - 1),
                 )?
             {
-                return Ok(string(vec![take_keeping_length(&mut s, end)]));
+                return Ok(charged_string(vec![take_keeping_length(&mut s, end)]));
             }
             let c = match end {
                 End::Back => s[len - 1],
@@ -1227,7 +1243,7 @@ fn take(target: &Value, end: End) -> Result<Value> {
             if let End::Back = end {
                 s.truncate(len - 1);
             }
-            Ok(string(vec![c]))
+            Ok(charged_string(vec![c]))
         }
         Value::Array(a) => {
             let mut a = a.borrow_mut();
@@ -1241,19 +1257,19 @@ fn take(target: &Value, end: End) -> Result<Value> {
             };
             let value = match &mut a.data {
                 ArrayData::Int(v) => {
-                    if !can_shrink(v.len(), 4, ElemType::Int)? {
+                    if !can_shrink(v.len(), ElemType::Int)? {
                         return Ok(Value::Int(take_keeping_length(v, end)));
                     }
                     Value::Int(v.remove(at))
                 }
                 ArrayData::Real(v) => {
-                    if !can_shrink(v.len(), 8, ElemType::Real)? {
+                    if !can_shrink(v.len(), ElemType::Real)? {
                         return Ok(Value::Real(take_keeping_length(v, end)));
                     }
                     Value::Real(v.remove(at))
                 }
                 ArrayData::Str(v) => {
-                    if !can_shrink(v.len(), 8, ElemType::Str)? {
+                    if !can_shrink(v.len(), ElemType::Str)? {
                         return Ok(Value::Str(take_keeping_length(v, end)));
                     }
                     Value::Str(v.remove(at))

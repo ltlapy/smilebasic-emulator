@@ -176,6 +176,9 @@ pub enum Tint {
     Tables(u32, [[u8; 256]; 3]),
 }
 
+/// The fewest pixels for which [`Tint::new`] makes [`Tint::Tables`].
+const SPRITE_TINT_TABLES_PIXELS: usize = 4096;
+
 impl Tint {
     /// For about `pixels` pixels.
     pub fn new(color: u32, pixels: usize) -> Tint {
@@ -185,7 +188,7 @@ impl Tint {
         };
         match color {
             0xFFFF_FFFF => Tint::White,
-            c if pixels < 4096 || c >> 24 != 0xFF => Tint::Color(c),
+            c if pixels < SPRITE_TINT_TABLES_PIXELS || c >> 24 != 0xFF => Tint::Color(c),
             c => Tint::Tables(c, [table(0), table(8), table(16)]),
         }
     }
@@ -961,10 +964,10 @@ impl Graphics {
             });
             if sector {
                 // A sector is outlined, not filled (checked on hardware).
-                let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
                 for (dx, dy) in [from, to] {
-                    let (x, y) = (i64::from(cx) + dx, i64::from(cy) + dy);
-                    sides.extend(line_points(cx, cy, near(x), near(y), Clip::PAGE));
+                    let x = saturate_i32(i64::from(cx) + dx);
+                    let y = saturate_i32(i64::from(cy) + dy);
+                    sides.extend(line_points(cx, cy, x, y, Clip::PAGE));
                 }
             }
         }
@@ -999,8 +1002,7 @@ impl Graphics {
             for (a, b) in spans {
                 (l, r) = (l.min(a), r.max(b));
             }
-            let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-            (l <= r).then(|| (near(l), near(r)))
+            (l <= r).then(|| (saturate_i32(l), saturate_i32(r)))
         };
         // An edge can take at most one step past its bottom end.
         let (l, r) = (a.0.min(b.0).min(c.0), a.0.max(b.0).max(c.0));
@@ -1256,12 +1258,11 @@ impl Graphics {
             (i64::from(low) - start).max(0)..(i64::from(high) - start + 1).min(scale)
         };
         let across = steps(left, sx, n, clip.x0, clip.x1);
-        let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
         self.mark_inside(
-            near(left),
-            near(top),
-            near(left + i64::from(n) * sx - 1),
-            near(top + i64::from(n) * sy - 1),
+            saturate_i32(left),
+            saturate_i32(top),
+            saturate_i32(left + i64::from(n) * sx - 1),
+            saturate_i32(top + i64::from(n) * sy - 1),
         );
         // Only mode 0 changes the page with a clear pixel; glyphs are
         // mostly clear, so the other modes skip them. Mode 1 looks at
@@ -1817,6 +1818,11 @@ fn edge_span_in<T: Wide>(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i
         (x0 + from, x0 + last)
     };
     Some((l.narrow(), r.narrow()))
+}
+
+/// Returns `v`, or the nearest `i32` when `v` is out of range.
+fn saturate_i32(v: i64) -> i32 {
+    v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 /// Whether GPUTCHR and GPUTCHRP draw nothing at all: mode 1 skips
@@ -3337,13 +3343,12 @@ mod tests {
 
     /// Near the clipping rectangle's edges in both directions, or far.
     fn chars_pos(next: &mut impl FnMut(u64) -> u64, low: i32, high: i32, reach: i32) -> i32 {
-        let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
         let reach = i64::from(reach);
         match next(12) {
             0 => i32::MAX - next(3) as i32,
             1 => i32::MIN + next(3) as i32,
-            2..=5 => near(i64::from(low) - next(2 * reach as u64 + 1) as i64),
-            6..=8 => near(i64::from(high) - next(2 * reach as u64 + 1) as i64 + reach / 2),
+            2..=5 => saturate_i32(i64::from(low) - next(2 * reach as u64 + 1) as i64),
+            6..=8 => saturate_i32(i64::from(high) - next(2 * reach as u64 + 1) as i64 + reach / 2),
             _ => low + next((high - low + 1) as u64) as i32,
         }
     }

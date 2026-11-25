@@ -99,6 +99,13 @@ pub const COSTLY: [&str; 15] = [
     "INSERT", "REMOVE", "UNSHIFT", "SHIFT", "FREEMEM",
 ];
 
+/// The code in [`Vm::last_chr`] for no `CHR$` call, or for a call whose
+/// argument does not convert to an integer.
+const NO_CHR: i32 = -1;
+
+/// The place of `FREEMEM` in [`COSTLY`], the last.
+const FREEMEM_COSTLY: usize = COSTLY.len() - 1;
+
 /// Builtins that cost SmileBASIC 4 about the same as reading a variable or
 /// a little more, each timed alone by TEST71, TEST72 and TEST74 on both
 /// consoles, and the rest of the list, which cost less than a call with
@@ -109,6 +116,10 @@ pub const COSTLY: [&str; 15] = [
 pub const CHEAP: [&str; 10] = [
     "SIN", "COS", "TAN", "SQR", "POW", "EXP", "LOG", "ASIN", "LEFT$", "RIGHT$",
 ];
+
+/// The number of trigonometric builtins at the start of [`CHEAP`]: `SIN`,
+/// `COS` and `TAN`.
+const CHEAP_TRIG_COUNT: u8 = 3;
 
 /// Builtins that cost SmileBASIC 4 no more than reading a variable, so
 /// that it seems to run them without a call (TEST69 to TEST71, both
@@ -262,9 +273,6 @@ pub(crate) fn is_system_call(name: &str, host: &dyn Host) -> bool {
 /// The characters of STOP's message that are shown.
 const STOP_MESSAGE: usize = 255;
 
-/// Waits a frame and runs the same instruction again.
-const RETRY: Status = Status::Retry;
-
 /// A READ place that RESTORE "PUSH" kept, with the numbers of DEF calls
 /// and GOSUBs at that time.
 struct Kept {
@@ -276,9 +284,8 @@ struct Kept {
 
 struct Frame {
     def: u32,
-    /// The slot the DEF is in, and the one to return to.
-    home: usize,
-    caller: usize,
+    def_slot: usize,
+    caller_slot: usize,
     /// The start of its variables in [`Vm::locals`]. They continue up to
     /// the variables of the next frame, or to the end.
     base: usize,
@@ -290,7 +297,7 @@ struct Frame {
     stack_base: usize,
     /// The part of [`STACK_SIZE`] that the DEF calls so far take, this one
     /// included.
-    stack_to: usize,
+    stack_taken: usize,
 }
 
 /// The arguments of a `*` DEF and the results of an `OUT *` one.
@@ -338,10 +345,7 @@ struct Unit {
 
 impl Unit {
     fn new(mut program: Compiled) -> Unit {
-        // Fused code that names a place out of range is dropped.
-        crate::fuse::check(&mut program);
-        #[cfg(feature = "jit")]
-        crate::jit::attach(&mut program);
+        prepare_program(&mut program);
         let globals = (program.globals.iter())
             .map(initial_value)
             .chain(program.constants.iter().map(constant_value))
@@ -401,7 +405,7 @@ pub struct Vm {
     memory: memory::Estimate,
     /// `executed` when memory was last counted for an instruction to run
     /// again. If the instruction asks twice, there is no room after all.
-    memory_checked: Option<u64>,
+    memory_counted_at: Option<u64>,
     program: Rc<Compiled>,
     pc: usize,
     stack: Vec<Value>,
@@ -465,7 +469,7 @@ pub struct Vm {
     element_tests: u64,
     chr_calls: u64,
     /// The codes of the last four `CHR$` counted, as a run that reports
-    /// its work sees them, -1 for none.
+    /// its work sees them, or [`NO_CHR`] for none.
     last_chr: [i32; 4],
     costly_calls: [u64; COSTLY.len()],
     cheap_calls: [u64; CHEAP.len()],
@@ -557,6 +561,14 @@ fn snapshot(value: &Value) -> Value {
     }
 }
 
+/// Drops fused code that names a place out of range, then, with the `jit`
+/// feature, compiles the loops that have native forms.
+fn prepare_program(program: &mut Compiled) {
+    crate::fuse::check(program);
+    #[cfg(feature = "jit")]
+    crate::jit::attach(program);
+}
+
 /// A variable's starting value. The suffix decides only this: variables
 /// keep any value they are given (checked on hardware: `A%=1E10`
 /// keeps the real, `A$` takes a number and `A%` a string).
@@ -568,9 +580,15 @@ fn initial_value(var: &VarInfo) -> Value {
         Some(Suffix::Int) => Value::Int(0),
         Some(Suffix::Real) => Value::Real(0.0),
         Some(Suffix::Str) => Value::Str(new_str(Vec::new())),
-        None if var.int => Value::Int(0),
+        None if var.starts_int => Value::Int(0),
         None => Value::Real(0.0),
     }
+}
+
+/// Whether `var` is a hidden variable that the compiler made, such as a
+/// FOR limit. Its name starts with a NUL, which source names cannot hold.
+fn is_hidden(var: &VarInfo) -> bool {
+    var.name.starts_with('\0')
 }
 
 /// A constant of [`Compiled::constants`] in its place after the globals.
@@ -645,6 +663,16 @@ fn slot_and_name(value: &Value) -> Result<(Option<usize>, String)> {
     Ok((slot, rest.strip_prefix('@').unwrap_or(rest).to_string()))
 }
 
+/// Whether `text` is a label after an optional slot prefix: `"@NAME"` or
+/// `"1:@NAME"`.
+fn names_label(text: &[u16]) -> bool {
+    let name_at = text
+        .iter()
+        .position(|&c| c == u16::from(b':'))
+        .map_or(0, |i| i + 1);
+    text.get(name_at) == Some(&u16::from(b'@'))
+}
+
 /// The program slots a label string may name.
 const LAST_SLOT: usize = 5;
 
@@ -697,10 +725,7 @@ impl Vm {
     /// Starts with the globals in `values`, keyed by full name (`A$`), set
     /// to those values. DIRECT mode uses it to keep variables between lines.
     pub fn with_globals(mut program: Compiled, values: &HashMap<String, Value>) -> Self {
-        // Fused code that names a place out of range is dropped.
-        crate::fuse::check(&mut program);
-        #[cfg(feature = "jit")]
-        crate::jit::attach(&mut program);
+        prepare_program(&mut program);
         // Variables from earlier lines exist already, for Op::Declare.
         let declared = (program.globals.iter())
             .map(|g| values.contains_key(&g.full_name()))
@@ -719,7 +744,7 @@ impl Vm {
         let program = Rc::new(program);
         Vm {
             memory: memory::Estimate::default(),
-            memory_checked: None,
+            memory_counted_at: None,
             data_from: Rc::clone(&program),
             program,
             pc: 0,
@@ -757,7 +782,7 @@ impl Vm {
             def_statements: 0,
             element_tests: 0,
             chr_calls: 0,
-            last_chr: [-1; 4],
+            last_chr: [NO_CHR; 4],
             costly_calls: [0; COSTLY.len()],
             cheap_calls: [0; CHEAP.len()],
             trig_reductions: 0,
@@ -804,7 +829,7 @@ impl Vm {
             .globals
             .iter()
             .zip(&self.globals)
-            .filter(|(info, _)| !info.name.starts_with('\0'))
+            .filter(|(info, _)| !is_hidden(info))
             .map(|(info, value)| (info.full_name(), value.clone()))
     }
 
@@ -1020,7 +1045,8 @@ impl Vm {
             name.strip_prefix(var.name.as_str()) == Some(suffix)
         };
         if let Some(f) = self.frames.last()
-            && let Some(def) = (self.program_in(f.home)).and_then(|p| p.defs.get(f.def as usize))
+            && let Some(def) =
+                (self.program_in(f.def_slot)).and_then(|p| p.defs.get(f.def as usize))
             && let Some(i) = def.locals.iter().position(named)
         {
             return self.locals[f.base..].get(i).cloned();
@@ -1066,13 +1092,13 @@ impl Vm {
             for &(s, r, _) in &self.gosubs[gosubs..base] {
                 self.called_from(&mut calls, s, r, CallKind::Gosub, frame);
             }
-            let name = (self.program_in(f.home))
+            let name = (self.program_in(f.def_slot))
                 .and_then(|p| p.defs.get(f.def as usize))
                 .map_or_else(String::new, |d| d.name.clone());
             frame = Some(i);
             self.called_from(
                 &mut calls,
-                f.caller,
+                f.caller_slot,
                 f.return_pc,
                 CallKind::Def(name),
                 frame,
@@ -1119,14 +1145,14 @@ impl Vm {
             return Vec::new();
         };
         let Some(def) = self
-            .program_in(f.home)
+            .program_in(f.def_slot)
             .and_then(|p| p.defs.get(f.def as usize))
         else {
             return Vec::new();
         };
         (def.locals.iter())
             .zip(self.frame_vars(frame))
-            .filter(|(info, _)| !info.name.starts_with('\0'))
+            .filter(|(info, _)| !is_hidden(info))
             .map(|(info, value)| (info.full_name(), value.clone()))
             .collect()
     }
@@ -1137,7 +1163,7 @@ impl Vm {
         let Some(f) = self.frames.get(frame) else {
             return false;
         };
-        let def = (self.program_in(f.home)).and_then(|p| p.defs.get(f.def as usize));
+        let def = (self.program_in(f.def_slot)).and_then(|p| p.defs.get(f.def as usize));
         let Some(i) = def.and_then(|d| d.locals.iter().position(|l| l.is_named(name))) else {
             return false;
         };
@@ -1190,7 +1216,7 @@ impl Vm {
         };
         (program.globals.iter())
             .zip(values)
-            .filter(|(info, _)| !info.name.starts_with('\0'))
+            .filter(|(info, _)| !is_hidden(info))
             .map(|(info, value)| (info.full_name(), value.clone()))
             .collect()
     }
@@ -1390,10 +1416,10 @@ impl Vm {
         if e.kind != ErrorKind::MemoryCheck {
             return Some(self.fail(pc, e));
         }
-        if self.memory_checked == Some(self.executed) {
+        if self.memory_counted_at == Some(self.executed) {
             return Some(self.fail(pc, ErrorKind::OutOfMemory.into()));
         }
-        self.memory_checked = Some(self.executed);
+        self.memory_counted_at = Some(self.executed);
         let tally = self.count_memory(host);
         memory::counted(&tally, true);
         None
@@ -1693,9 +1719,9 @@ impl Vm {
             ..
         } = self;
         let slot = *slot;
-        // The stack space taken, the GOSUBs and the variables of the
-        // running DEF, which GOSUB and RETURN check.
-        let (mut calls, mut gosub_base, mut base) = innermost(frames, locals);
+        // The stack space taken, and the first GOSUB and the first variable
+        // of the running DEF, which GOSUB and RETURN check.
+        let (mut stack_taken, mut gosub_base, mut base) = innermost(frames, locals);
         // The places fused entries name, which `fuse::check` bounded. Only
         // the `unchecked-vars` view tests these two; see `vars`.
         let places = crate::fuse::global_places(program);
@@ -1845,7 +1871,7 @@ impl Vm {
                             unreachable!("ON is followed by its jump table");
                         };
                         if gosub {
-                            if !gosub_fits(calls, gosubs.len(), data_kept.len()) {
+                            if !gosub_fits(stack_taken, gosubs.len(), data_kept.len()) {
                                 break;
                             }
                             gosubs.push((slot, after, data_kept.len()));
@@ -1859,7 +1885,7 @@ impl Vm {
                     }
                 }
                 FastOp::Gosub(target) => {
-                    if !gosub_fits(calls, gosubs.len(), data_kept.len()) {
+                    if !gosub_fits(stack_taken, gosubs.len(), data_kept.len()) {
                         break;
                     }
                     gosubs.push((slot, pc + 1, data_kept.len()));
@@ -1871,7 +1897,7 @@ impl Vm {
                     let Some(frame) = frames.last() else {
                         break;
                     };
-                    if frame.caller != slot || frame.home != slot {
+                    if frame.caller_slot != slot || frame.def_slot != slot {
                         break;
                     }
                     let info = &program.defs[frame.def as usize];
@@ -1900,7 +1926,7 @@ impl Vm {
                     }
                     cut(locals, frame.base);
                     next = frame.return_pc;
-                    (calls, gosub_base, base) = innermost(frames, locals);
+                    (stack_taken, gosub_base, base) = innermost(frames, locals);
                     vars = Vars::new(&mut globals[..], &mut locals[base..], places);
                 }
                 FastOp::Return => {
@@ -1924,7 +1950,7 @@ impl Vm {
                     // The same as `enter_def_on_stack`. The fuser has made
                     // sure that the call fits, except for the stack's room.
                     let cost = cost as usize;
-                    if room_for(calls, gosubs.len(), data_kept.len(), cost) > STACK_SIZE {
+                    if room_for(stack_taken, gosubs.len(), data_kept.len(), cost) > STACK_SIZE {
                         break;
                     }
                     let info = &program.defs[def as usize];
@@ -1934,17 +1960,17 @@ impl Vm {
                     start_locals(locals, base, info);
                     frames.push(Frame {
                         def,
-                        home: slot,
-                        caller: slot,
+                        def_slot: slot,
+                        caller_slot: slot,
                         base,
                         variadic: None,
                         want,
                         return_pc: next,
                         gosub_base: gosubs.len(),
                         stack_base: stack.len(),
-                        stack_to: calls + cost,
+                        stack_taken: stack_taken + cost,
                     });
-                    (calls, gosub_base) = (calls + cost, gosubs.len());
+                    (stack_taken, gosub_base) = (stack_taken + cost, gosubs.len());
                     vars = Vars::new(&mut globals[..], &mut locals[base..], places);
                     next = info.entry as usize;
                 }
@@ -1959,7 +1985,7 @@ impl Vm {
                     // they are, before the view of the caller's variables is
                     // replaced.
                     let cost = usize::from(cost);
-                    if room_for(calls, gosubs.len(), data_kept.len(), cost) > STACK_SIZE {
+                    if room_for(stack_taken, gosubs.len(), data_kept.len(), cost) > STACK_SIZE {
                         break;
                     }
                     let first = get(&vars, args[0]).clone();
@@ -1974,17 +2000,17 @@ impl Vm {
                     start_locals(locals, base, info);
                     frames.push(Frame {
                         def: u32::from(def),
-                        home: slot,
-                        caller: slot,
+                        def_slot: slot,
+                        caller_slot: slot,
                         base,
                         variadic: None,
                         want,
                         return_pc: next,
                         gosub_base: gosubs.len(),
                         stack_base: stack.len(),
-                        stack_to: calls + cost,
+                        stack_taken: stack_taken + cost,
                     });
-                    (calls, gosub_base) = (calls + cost, gosubs.len());
+                    (stack_taken, gosub_base) = (stack_taken + cost, gosubs.len());
                     vars = Vars::new(&mut globals[..], &mut locals[base..], places);
                     next = info.entry as usize;
                 }
@@ -1994,7 +2020,7 @@ impl Vm {
                     let Some(frame) = frames.last() else {
                         break;
                     };
-                    if frame.caller != slot || frame.want.count() != 1 {
+                    if frame.caller_slot != slot || frame.want.count() != 1 {
                         break;
                     }
                     let frame = frames.pop().expect("checked above");
@@ -2006,7 +2032,7 @@ impl Vm {
                         cut(stack, frame.stack_base + 1);
                     }
                     next = frame.return_pc;
-                    (calls, gosub_base, base) = innermost(frames, locals);
+                    (stack_taken, gosub_base, base) = innermost(frames, locals);
                     vars = Vars::new(&mut globals[..], &mut locals[base..], places);
                 }
                 FastOp::Host { .. } | FastOp::Call { .. } | FastOp::CallbackNext(_) => {
@@ -2236,8 +2262,12 @@ impl Vm {
                     // `enter_def_on_stack` also checks. Without it, `step`
                     // fails on them.
                     if let FastOp::CallChain { cost, .. } = fast.op
-                        && room_for(calls, gosubs.len(), data_kept.len(), usize::from(cost))
-                            > STACK_SIZE
+                        && room_for(
+                            stack_taken,
+                            gosubs.len(),
+                            data_kept.len(),
+                            usize::from(cost),
+                        ) > STACK_SIZE
                     {
                         break;
                     }
@@ -2579,7 +2609,7 @@ impl Vm {
 
     /// The DEF running in this slot, if any.
     fn own_frame(&self) -> Option<&Frame> {
-        self.frames.last().filter(|f| f.home == self.slot)
+        self.frames.last().filter(|f| f.def_slot == self.slot)
     }
 
     fn labels(&self) -> &std::collections::HashMap<String, Addr> {
@@ -2610,13 +2640,7 @@ impl Vm {
     /// CHKLABEL: whether a label exists where GOTO would look for it.
     /// In a DEF, `outer` also checks the top level.
     fn has_label(&self, value: &Value, outer: bool) -> Result<bool> {
-        let text = value.clone().into_str()?;
-        let text = text.borrow();
-        let name_at = text
-            .iter()
-            .position(|&c| c == u16::from(b':'))
-            .map_or(0, |i| i + 1);
-        if text.get(name_at) != Some(&u16::from(b'@')) {
+        if !names_label(&value.clone().into_str()?.borrow()) {
             return Ok(false);
         }
         let (slot, name) = slot_and_name(value)?;
@@ -2795,7 +2819,10 @@ impl Vm {
             let s = s as usize;
             s == self.slot
                 || self.execs.iter().any(|r| r.slot == s)
-                || self.frames.iter().any(|f| f.caller == s || f.home == s)
+                || self
+                    .frames
+                    .iter()
+                    .any(|f| f.caller_slot == s || f.def_slot == s)
                 || self.gosubs.iter().any(|g| g.0 == s)
         };
         // EXEC of a slot must not start one that is running, but the slot
@@ -2813,7 +2840,7 @@ impl Vm {
             Exec::Run(source) => source,
             Exec::Wait => {
                 self.stack.extend(args);
-                return Ok(Some(RETRY));
+                return Ok(Some(Status::Retry));
             }
         };
         let slot = slot as usize;
@@ -2954,16 +2981,7 @@ impl Vm {
         target: &Value,
         host: &mut dyn Host,
     ) -> Result<()> {
-        let text = target.clone().into_str()?;
-        let is_label = {
-            let text = text.borrow();
-            let name_at = text
-                .iter()
-                .position(|&c| c == u16::from(b':'))
-                .map_or(0, |i| i + 1);
-            text.get(name_at) == Some(&u16::from(b'@'))
-        };
-        if is_label {
+        if names_label(&target.clone().into_str()?.borrow()) {
             let (slot, label) = self.find_label(target)?;
             return self.gosub(slot, label, host);
         }
@@ -3050,15 +3068,15 @@ impl Vm {
     /// Whether `cost` more of the stack that GOSUBs, DEF calls and RESTORE
     /// "PUSH" share is free.
     fn stack_has_room(&self, cost: usize) -> bool {
-        let calls = self.frames.last().map_or(0, |f| f.stack_to);
-        room_for(calls, self.gosubs.len(), self.data_kept.len(), cost) <= STACK_SIZE
+        let stack_taken = self.frames.last().map_or(0, |f| f.stack_taken);
+        room_for(stack_taken, self.gosubs.len(), self.data_kept.len(), cost) <= STACK_SIZE
     }
 
     /// [`Vm::stack_has_room`] for GOSUB and RESTORE "PUSH", which may take
     /// the values' room too.
     fn stack_has_full_room(&self, cost: usize) -> bool {
-        let calls = self.frames.last().map_or(0, |f| f.stack_to);
-        room_for(calls, self.gosubs.len(), self.data_kept.len(), cost) <= STACK_FULL
+        let stack_taken = self.frames.last().map_or(0, |f| f.stack_taken);
+        room_for(stack_taken, self.gosubs.len(), self.data_kept.len(), cost) <= STACK_FULL
     }
 
     /// A command given arguments when GOSUBs or RESTORE "PUSH" have taken
@@ -3369,7 +3387,7 @@ impl Vm {
                         Ok(false) => {
                             self.stack.push(name_value);
                             self.stack.extend(args);
-                            return Ok(Some(RETRY));
+                            return Ok(Some(Status::Retry));
                         }
                         Err(e) => return Err(self.run_call_again(e, name_value, args)),
                     }
@@ -3436,7 +3454,7 @@ impl Vm {
                 self.stack.push(Value::Int(found.into()));
             }
             Op::FreeMem { both } => {
-                self.costly_calls[COSTLY.len() - 1] += 1;
+                self.costly_calls[FREEMEM_COSTLY] += 1;
                 let free = Value::Int(self.free_memory(host));
                 // The largest free block is all of it (checked on
                 // hardware).
@@ -3562,7 +3580,7 @@ impl Vm {
                 // Until the line is complete, run this instruction again
                 // on the next frame.
                 let Some(line) = host.input_poll()? else {
-                    return Ok(Some(RETRY));
+                    return Ok(Some(Status::Retry));
                 };
                 self.reading_input = false;
                 let mut known = Vec::with_capacity(kinds.len());
@@ -3591,7 +3609,7 @@ impl Vm {
                         host.print_newline(None)?;
                         host.input_start()?;
                         self.reading_input = true;
-                        return Ok(Some(RETRY));
+                        return Ok(Some(Status::Retry));
                     }
                 }
             }
@@ -3640,8 +3658,14 @@ impl Vm {
             }
             Op::End => return Ok(self.end(host)),
             Op::Nop => {}
-            Op::Fail(kind, None) => return Err((*kind).into()),
-            Op::Fail(kind, Some(name)) => {
+            Op::Fail {
+                kind,
+                command: None,
+            } => return Err((*kind).into()),
+            Op::Fail {
+                kind,
+                command: Some(name),
+            } => {
                 let name = String::from_utf16_lossy(&program.strings[*name as usize]);
                 return Err(Error::new(*kind).of_command(&name));
             }
@@ -3726,7 +3750,7 @@ impl Vm {
         }
         let outs = want.count();
         let outs_taken = b.outs.takes(outs);
-        if !outs_taken && b.outs.first && !(b.outs.none_first && args.is_empty()) {
+        if !outs_taken && b.outs.first && !(b.outs.args_first_when_none && args.is_empty()) {
             return Err(Error::new(ErrorKind::WrongNumberOfOutArguments).of_command(b.name));
         }
         if !b.accepts(args.len()) {
@@ -3808,7 +3832,7 @@ impl Vm {
                 if code.is_none_or(|c| !self.last_chr.contains(&c)) {
                     self.chr_calls += 1;
                     self.last_chr.rotate_right(1);
-                    self.last_chr[0] = code.unwrap_or(-1);
+                    self.last_chr[0] = code.unwrap_or(NO_CHR);
                 }
                 true
             }
@@ -3822,7 +3846,7 @@ impl Vm {
                     v.to_real()
                         .is_ok_and(|x| x.abs() > std::f64::consts::FRAC_PI_4)
                 };
-                if i < 3 && self.stack.last().is_some_and(far) {
+                if i < CHEAP_TRIG_COUNT && self.stack.last().is_some_and(far) {
                     self.trig_reductions += 1;
                 }
                 false
@@ -3885,7 +3909,7 @@ impl Vm {
         }
         if host.retry() {
             self.host_results.clear();
-            return Ok(Some(RETRY));
+            return Ok(Some(Status::Retry));
         }
         self.stack.truncate(at);
         // The same as `push_results`, without going through a list for none
@@ -4018,7 +4042,7 @@ impl Vm {
         self.def_calls += 1;
         self.def_values += (info.locals.len() + usize::from(info.is_function)) as u64;
         let at = self.stack.len() - argc;
-        let stack_to = self.frames.last().map_or(0, |f| f.stack_to) + cost;
+        let stack_taken = self.frames.last().map_or(0, |f| f.stack_taken) + cost;
         let base = self.locals.len();
         // Arguments of a `*` DEF are kept apart from its variables.
         let variadic_args = match info.params {
@@ -4042,15 +4066,15 @@ impl Vm {
         };
         self.frames.push(Frame {
             def,
-            home: self.slot,
-            caller,
+            def_slot: self.slot,
+            caller_slot: caller,
             base,
             variadic,
             want,
             return_pc: self.pc + 1,
             gosub_base: self.gosubs.len(),
             stack_base: self.stack.len(),
-            stack_to,
+            stack_taken,
         });
         self.pc = info.entry as usize;
     }
@@ -4133,7 +4157,7 @@ impl Vm {
     /// Goes back to the caller of a frame that has ended.
     #[inline]
     fn leave_frame(&mut self, frame: Frame, host: &mut dyn Host) -> Result<usize> {
-        let (caller, back) = (frame.caller, frame.return_pc);
+        let (caller, back) = (frame.caller_slot, frame.return_pc);
         self.switch_to(caller, host);
         Ok(back)
     }
@@ -4164,7 +4188,7 @@ pub(crate) fn fixed_call_cost(info: &DefInfo, argc: u8, want: Want) -> Option<u3
 #[inline(always)]
 fn innermost(frames: &[Frame], locals: &[Value]) -> (usize, usize, usize) {
     match frames.last() {
-        Some(f) => (f.stack_to, f.gosub_base, f.base),
+        Some(f) => (f.stack_taken, f.gosub_base, f.base),
         None => (0, 0, locals.len()),
     }
 }
@@ -4239,15 +4263,15 @@ fn move_values(from: &mut [Value], to: &mut Vec<Value>) {
 /// The stack in use with `cost` more, from the stack the DEF calls take and
 /// the GOSUBs and RESTORE "PUSH" places held.
 #[inline(always)]
-fn room_for(calls: usize, gosubs: usize, kept: usize, cost: usize) -> usize {
-    calls + gosubs * GOSUB_COST + kept * RESTORE_COST + cost
+fn room_for(stack_taken: usize, gosubs: usize, kept: usize, cost: usize) -> usize {
+    stack_taken + gosubs * GOSUB_COST + kept * RESTORE_COST + cost
 }
 
 /// Whether a GOSUB of [`Vm::run_fused`] fits without the values' room, which
 /// it leaves to [`Vm::gosub`].
 #[inline(always)]
-fn gosub_fits(calls: usize, gosubs: usize, kept: usize) -> bool {
-    room_for(calls, gosubs, kept, GOSUB_COST) <= STACK_SIZE
+fn gosub_fits(stack_taken: usize, gosubs: usize, kept: usize) -> bool {
+    room_for(stack_taken, gosubs, kept, GOSUB_COST) <= STACK_SIZE
 }
 
 #[inline(always)]
@@ -4402,12 +4426,17 @@ fn for_continues(var: &Value, to: &Value, step: &Value) -> Option<bool> {
     ops::binary_numbers(order, var, to).map(num_truth)
 }
 
+/// The lower bound, exclusive, of the reals that truncate into an `i32`.
+const BELOW_I32: f64 = i32::MIN as f64 - 1.0;
+/// The upper bound, exclusive, of the reals that truncate into an `i32`.
+const ABOVE_I32: f64 = i32::MAX as f64 + 1.0;
+
 /// [`Value::to_int`] on a number in range.
 #[inline(always)]
 fn index_number(value: &Value) -> Option<i32> {
     match *value {
         Value::Int(n) => Some(n),
-        Value::Real(x) if x > -2147483649.0 && x < 2147483648.0 => Some(x as i32),
+        Value::Real(x) if x > BELOW_I32 && x < ABOVE_I32 => Some(x as i32),
         _ => None,
     }
 }

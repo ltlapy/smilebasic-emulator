@@ -144,12 +144,15 @@ impl Runtime {
         (c.x0, c.y0, c.x1 - c.x0 + 1, c.y1 - c.y0 + 1)
     }
 
+    /// A color argument, or GCOLOR when it is omitted.
+    fn color_or_gcolor(&self, arg: Option<&Value>) -> Result<u32> {
+        let color = arg.map(opt_int).transpose()?.flatten();
+        Ok(color.map_or(self.grp.color, |c| c as u32))
+    }
+
     /// The optional color and drawing method that end most commands.
     fn color_and_blend(&self, rest: &[Value]) -> Result<(u32, Blend)> {
-        let color = match rest.first().map(opt_int).transpose()?.flatten() {
-            Some(c) => c as u32,
-            None => self.grp.color,
-        };
+        let color = self.color_or_gcolor(rest.first())?;
         let blend = match rest.get(1) {
             None | Some(Value::Default) => Blend::Normal,
             Some(v) => blend_arg(v)?,
@@ -242,10 +245,7 @@ impl Runtime {
             }
             (Command::Gpaint, Want::Outs(0), 2..=4) => {
                 let v = ints::<2>(args)?;
-                let color = match args.get(2).map(opt_int).transpose()?.flatten() {
-                    Some(c) => c as u32,
-                    None => self.grp.color,
-                };
+                let color = self.color_or_gcolor(args.get(2))?;
                 let border = args.get(3).map(color_arg).transpose()?;
                 let filled = self.grp.paint(v[0], v[1], color, border);
                 if let Some(meter) = &mut self.meter {
@@ -300,10 +300,7 @@ impl Runtime {
                     3..=6 => ((1, 1), args.get(4..).unwrap_or(&[])),
                     _ => return Err(no_form()),
                 };
-                let color = match rest.first().map(opt_int).transpose()?.flatten() {
-                    Some(c) => c as u32,
-                    None => self.grp.color,
-                };
+                let color = self.color_or_gcolor(rest.first())?;
                 let blend = match rest.get(1) {
                     None | Some(Value::Default) => Blend::Normal2,
                     Some(v) => blend_arg(v)?,

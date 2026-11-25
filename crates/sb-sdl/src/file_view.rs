@@ -23,6 +23,10 @@ const MOST_VALUES: usize = 100_000;
 /// The maximum width of a table cell, in characters.
 const MOST_CELL: usize = 16;
 const ERROR: u32 = 0xFFFF_8080;
+/// The numbers of values per row that a table of a one-dimensional array
+/// may have. They are round numbers, so that the row labels count up
+/// evenly.
+const ROUND_COLUMN_COUNTS: [usize; 8] = [64, 32, 16, 10, 8, 4, 2, 1];
 
 enum Body {
     Picture(Picture),
@@ -79,10 +83,8 @@ fn table(data: &Data, chars: usize) -> Table {
     let (columns, label_of): (usize, Box<dyn Fn(usize) -> String>) = match &data.dims[..] {
         [_] => {
             let label = digits(count.saturating_sub(1)) + 1;
-            // A round number of values per row, so that the labels count up
-            // evenly.
             let fit = (chars.saturating_sub(label) / cell).max(1);
-            let columns = [64, 32, 16, 10, 8, 4, 2, 1]
+            let columns = ROUND_COLUMN_COUNTS
                 .into_iter()
                 .find(|&n| n <= fit)
                 .unwrap_or(1);
@@ -92,20 +94,7 @@ fn table(data: &Data, chars: usize) -> Table {
             let columns = dims.last().copied().unwrap_or(1).max(1);
             cell = cell.max(digits(columns - 1) + 1);
             let outer = dims[..dims.len() - 1].to_vec();
-            (
-                columns,
-                Box::new(move |row| {
-                    // The row's indexes, outermost first.
-                    let mut rest = row;
-                    let mut at = vec![0; outer.len()];
-                    for (i, &d) in outer.iter().enumerate().rev() {
-                        at[i] = rest % d.max(1);
-                        rest /= d.max(1);
-                    }
-                    let at: Vec<String> = at.iter().map(usize::to_string).collect();
-                    at.join(",")
-                }),
-            )
+            (columns, Box::new(move |row| row_label(row, &outer)))
         }
     };
     let rows: Vec<(String, Vec<String>)> = cells
@@ -126,6 +115,19 @@ fn table(data: &Data, chars: usize) -> Table {
         cell,
         label,
     }
+}
+
+/// Returns the label of row `row` of an array whose dimensions before the
+/// last are `outer`: the row's indexes, outermost first.
+fn row_label(row: usize, outer: &[usize]) -> String {
+    let mut rest = row;
+    let mut at = vec![0; outer.len()];
+    for (i, &d) in outer.iter().enumerate().rev() {
+        at[i] = rest % d.max(1);
+        rest /= d.max(1);
+    }
+    let at: Vec<String> = at.iter().map(usize::to_string).collect();
+    at.join(",")
 }
 
 impl Viewer {

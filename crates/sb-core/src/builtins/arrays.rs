@@ -3,7 +3,7 @@
 
 use std::cmp::Ordering;
 
-use super::{Data, check_1d, index_arg, mismatch, opt, string};
+use super::{Data, charged_string, check_1d, index_arg, mismatch, opt};
 use crate::error::{Error, ErrorKind, Result};
 use crate::memory;
 use crate::value::{Array, ArrayData, ArrayRef, ElemType, Value};
@@ -90,7 +90,7 @@ fn grow(a: &mut Array, len: usize) -> Result<()> {
 /// Copies an element, so that the copy of a string array has its own strings.
 fn element(a: &Array, i: usize) -> Value {
     match a.get(i) {
-        Value::Str(s) => string(s.borrow().clone()),
+        Value::Str(s) => charged_string(s.borrow().clone()),
         v => v,
     }
 }
@@ -101,7 +101,7 @@ pub(super) fn copy_fn(args: &[Value]) -> Result<Value> {
         Value::Str(s) => {
             let s = s.borrow();
             let (offset, n) = copy_span(s.len(), opt(args, 1), opt(args, 2), true)?;
-            Ok(string(s[offset..offset + n].to_vec()))
+            Ok(charged_string(s[offset..offset + n].to_vec()))
         }
         Value::Array(a) => {
             let a = a.borrow();
@@ -247,6 +247,9 @@ fn compare(a: &Value, b: &Value) -> Ordering {
     }
 }
 
+/// The most arrays SORT and RSORT take.
+const MOST_SORT_ARRAYS: usize = 8;
+
 /// SORT and RSORT: `[start, count,] key [, arrays...]`. The other arrays
 /// are put in the key's new order. SORT keeps equal keys in order. RSORT
 /// is SORT reversed, so it reverses them (checked on hardware).
@@ -263,7 +266,7 @@ fn sort(args: &[Value], descending: bool) -> Result<Vec<Value>> {
         }
         (count(&args[0])?, Some(count(&args[1])?), &args[2..])
     } else {
-        if args.len() > 8 {
+        if args.len() > MOST_SORT_ARRAYS {
             return Err(ErrorKind::WrongNumberOfArguments.into());
         }
         (0, None, args)
@@ -342,12 +345,12 @@ pub(super) fn insert(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     }
     let fill = match (opt(args, 3), a.elem_type()) {
         (Some(v), _) => v.clone(),
-        (None, ElemType::Str) => string(Vec::new()),
+        (None, ElemType::Str) => charged_string(Vec::new()),
         (None, _) => Value::Int(0),
     };
     for i in 0..n {
         let v = match &fill {
-            Value::Str(s) => string(s.borrow().clone()),
+            Value::Str(s) => charged_string(s.borrow().clone()),
             v => v.clone(),
         };
         a.set(at + i, v)?;

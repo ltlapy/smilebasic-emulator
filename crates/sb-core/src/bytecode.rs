@@ -232,9 +232,12 @@ pub enum Op {
     /// Does nothing: marks where a statement starts.
     Nop,
     /// Stops with this error when it runs: a statement that SmileBASIC 4
-    /// refuses only when execution reaches it. The string, if any, is the
-    /// command the message names.
-    Fail(crate::error::ErrorKind, Option<u32>),
+    /// refuses only when execution reaches it.
+    Fail {
+        kind: crate::error::ErrorKind,
+        /// The string of the command that the message names.
+        command: Option<u32>,
+    },
     /// `[file or slot, slot?] -> []`: EXEC.
     Exec(u8),
 }
@@ -253,9 +256,9 @@ pub struct VarInfo {
     /// Declared by a DIM (or VAR) with sizes: until that runs, it holds
     /// nothing (#T_DEFAULT).
     pub array: bool,
-    /// Without a suffix, it starts as integer 0: OPTION DEFINT appears
-    /// before the variable is first seen.
-    pub int: bool,
+    /// The variable has no suffix and OPTION DEFINT appears before it is
+    /// first seen.
+    pub starts_int: bool,
 }
 
 impl VarInfo {
@@ -335,7 +338,7 @@ pub struct Compiled {
     /// DEF are its own, the same as for GOTO.
     pub def_data_labels: Vec<HashMap<String, u32>>,
     /// OPTION DEFINT appears somewhere in the program (see
-    /// [`VarInfo::int`]).
+    /// [`VarInfo::starts_int`]).
     pub default_int: bool,
     /// Native code for some of `fast`'s loops, made when the VM takes the
     /// program.

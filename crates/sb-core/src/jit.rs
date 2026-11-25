@@ -227,25 +227,12 @@ pub(crate) fn attach(program: &mut Compiled) {
     let layout = layout();
     let n = program.fast.len();
     let lowered: Vec<Option<Lowered>> = (0..n).map(|pc| lower(program, pc)).collect();
-    // A loop starts at an entry that some entry goes back to, and runs
-    // to the last entry that goes back to its start. A region that does not
-    // come back to its start saves less than entering native code costs,
-    // and the code after the loop belongs to another loop or to the
-    // interpreter. The ends are found in one pass: looking for the end of
-    // each loop from the end of the program took time proportional to the
-    // number of loops times the program length, 27 seconds for a program of
-    // 20000 short loops.
-    let mut ends: Vec<Option<usize>> = vec![None; n];
-    for (pc, l) in lowered.iter().enumerate() {
-        for &to in l.iter().flat_map(|l| &l.next) {
-            if to <= pc && lowered.get(to).is_some_and(Option::is_some) {
-                ends[to] = Some(pc);
-            }
-        }
-    }
+    let ends = loop_ends(&lowered);
     let mut regions = Vec::new();
     for (head, end) in (0..n).filter_map(|pc| Some((pc, ends[pc]?))) {
         let region = gather(head, end, &lowered);
+        // A region that does not come back to its start saves less than
+        // entering native code costs.
         let closes = (region.entries.iter())
             .any(|e| (lowered[e.pc as usize].as_ref()).is_some_and(|l| l.next.contains(&head)));
         if !closes {
@@ -279,6 +266,26 @@ pub(crate) fn attach(program: &mut Compiled) {
             regions: Some(regions.into()),
         };
     }
+}
+
+/// Returns the end of the loop that starts at each entry, `None` where no
+/// loop starts. A loop starts at an entry that some entry goes back to, and
+/// runs to the last entry that goes back to its start. The code after the
+/// loop belongs to another loop or to the interpreter.
+///
+/// The ends are found in one pass: looking for the end of each loop from the
+/// end of the program took time proportional to the number of loops times
+/// the program length, 27 seconds for a program of 20000 short loops.
+fn loop_ends(lowered: &[Option<Lowered>]) -> Vec<Option<usize>> {
+    let mut ends: Vec<Option<usize>> = vec![None; lowered.len()];
+    for (pc, l) in lowered.iter().enumerate() {
+        for &to in l.iter().flat_map(|l| &l.next) {
+            if to <= pc && lowered.get(to).is_some_and(Option::is_some) {
+                ends[to] = Some(pc);
+            }
+        }
+    }
+    ends
 }
 
 /// The region of the loop from `head` to `end`: the entries with native
@@ -324,7 +331,7 @@ impl Places<'_> {
             return Some(j::Operand::Place(place(0, index)?));
         };
         if k < crate::fuse::TEMPS {
-            return Some(j::Operand::Temp(k as u8));
+            return Some(j::Operand::Hidden(k as u8));
         }
         match self.constants.get(k)? {
             Literal::Int(n) => Some(j::Operand::Int(*n)),
@@ -336,7 +343,7 @@ impl Places<'_> {
     fn dest(&self, v: Var) -> Option<j::Dest> {
         match self.operand(v)? {
             j::Operand::Place(p) => Some(j::Dest::Place(p)),
-            j::Operand::Temp(k) => Some(j::Dest::Temp(k)),
+            j::Operand::Hidden(k) => Some(j::Dest::Hidden(k)),
             _ => None,
         }
     }
@@ -749,9 +756,8 @@ mod tests {
         v
     }
 
-    /// What native code made of a value: its kind and bits, or `None`
-    /// when it failed.
-    fn seen(v: &Value) -> Option<(u8, u64)> {
+    /// Returns the kind and bits of a number, `None` for any other value.
+    fn kind_and_bits(v: &Value) -> Option<(u8, u64)> {
         match *v {
             Value::Int(n) => Some((1, n as u32 as u64)),
             Value::Real(x) => Some((2, x.to_bits())),
@@ -826,7 +832,9 @@ mod tests {
                         let got = run_entry(steps, &mut table).ok().map(|_| table[2].clone());
                         let what = format!("{op:?} {a:?} {b:?} as {b_form:?}");
                         match (&want, &got) {
-                            (Some(w), Some(g)) => assert_eq!(seen(w), seen(g), "{what}"),
+                            (Some(w), Some(g)) => {
+                                assert_eq!(kind_and_bits(w), kind_and_bits(g), "{what}")
+                            }
                             (None, None) => {}
                             // Native code may leave more to the
                             // interpreter, never less.
@@ -893,7 +901,9 @@ mod tests {
                 }];
                 let got = run_entry(steps, &mut table).ok().map(|_| table[1].clone());
                 match (&want, &got) {
-                    (Some(w), Some(g)) => assert_eq!(seen(w), seen(g), "{op:?} {a:?}"),
+                    (Some(w), Some(g)) => {
+                        assert_eq!(kind_and_bits(w), kind_and_bits(g), "{op:?} {a:?}")
+                    }
                     (None, Some(g)) => panic!("{op:?} {a:?}: native {g:?}"),
                     _ => {}
                 }

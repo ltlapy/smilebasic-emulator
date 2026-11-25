@@ -218,7 +218,7 @@ pub fn write_regular(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// of a path, so not after a project (see [`parse_read_name`]). On
 /// Windows it may not end in `.`, which the file system drops.
 fn check_name(name: &str) -> Result<String> {
-    let ok = (name.bytes().enumerate()).all(|(i, c)| name_byte(c, i) || (c == b'#' && i == 0));
+    let ok = (name.bytes().enumerate()).all(|(i, c)| is_name_byte(c, i) || (c == b'#' && i == 0));
     if !ok
         || name.is_empty()
         || name.len() > MAX_NAME
@@ -236,7 +236,7 @@ fn check_name(name: &str) -> Result<String> {
 /// first character. A path's first character may also be `#`. Where
 /// SmileBASIC 4 calls `isalnum` for characters up to U+00FF, this takes
 /// ASCII only.
-fn name_byte(c: u8, i: usize) -> bool {
+fn is_name_byte(c: u8, i: usize) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, b'-' | b'@' | b'_') || (c == b'.' && i > 0)
 }
 
@@ -306,7 +306,7 @@ pub struct NameParts<'a> {
 /// - Only a `:` at index 3 marks a type: `TXT`, `DAT`, `GRP`, `JPG` or
 ///   `PNG`, in any case. Any other `:` fails (`TXT:A:B`, `AB:C`).
 /// - A leading `/` names the workspace.
-/// - A part has only the characters [`name_byte`] takes, and the first
+/// - A part has only the characters [`is_name_byte`] takes, and the first
 ///   part may start with `#`. A `/` after a project may end the path
 ///   (`NAME/`). A second `/`, or an empty part before a `/`, fails.
 /// - A part may not be one of the [`is_reserved_name`] names, or `#`
@@ -331,7 +331,7 @@ pub fn split_name(spec: &str) -> Option<NameParts<'_>> {
         None => (false, rest),
     };
     let first = (body.bytes().enumerate())
-        .take_while(|&(i, c)| name_byte(c, i) || (c == b'#' && i == 0))
+        .take_while(|&(i, c)| is_name_byte(c, i) || (c == b'#' && i == 0))
         .count();
     let (head, tail) = body.split_at(first);
     // `Some("")` for a `/` that ends the path.
@@ -345,7 +345,8 @@ pub fn split_name(spec: &str) -> Option<NameParts<'_>> {
         return None;
     }
     if let Some(second) = second
-        && (!(second.bytes().enumerate()).all(|(i, c)| name_byte(c, i)) || is_reserved_name(second))
+        && (!(second.bytes().enumerate()).all(|(i, c)| is_name_byte(c, i))
+            || is_reserved_name(second))
     {
         return None;
     }

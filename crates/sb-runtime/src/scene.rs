@@ -268,8 +268,6 @@ impl Scene {
         self.texts.clear();
 
         let settings: [Layer; LAYERS] = std::array::from_fn(|i| input.layers[i].fine(sample));
-        // Anything that ends up in no layer is not drawn.
-        let layer_of = |layer: i32| usize::try_from(layer).ok().filter(|&l| l < LAYERS);
 
         for id in input.sprites.maybe_used() {
             let s = &input.sprites.list()[id];
@@ -287,31 +285,7 @@ impl Scene {
             self.order.push(sort_key(layer, pose.z, true, id, at));
         }
 
-        // Where each layer's text screens are drawn: on the frame, or for a
-        // 4x4 matrix on a flat frame that covers them.
-        let mut flats = [((0, 0), (0, 0)); LAYERS];
-        let mut text_matrix: [Affine; LAYERS] = std::array::from_fn(|i| settings[i].matrix);
-        for (layer, s) in settings.iter().enumerate() {
-            let Some(m) = &s.projection else { continue };
-            let screens =
-                (input.text.iter()).filter(|t| t.visible && layer_of(t.layer) == Some(layer));
-            let mut extent = None;
-            for t in screens {
-                let (a, b, c, d) = t.extent(&s.matrix);
-                let (x0, y0, x1, y1) = extent.unwrap_or((f64::MAX, f64::MAX, f64::MIN, f64::MIN));
-                extent = Some((x0.min(a), y0.min(b), x1.max(c), y1.max(d)));
-            }
-            let Some(extent) = extent else { continue };
-            let shown = compose::source_bounds(m, sample, frame, s.clip.as_ref());
-            flats[layer] = flat_area(frame, extent, shown);
-            let (x, y) = flats[layer].0;
-            let shift = Affine {
-                tx: -f64::from(x),
-                ty: -f64::from(y),
-                ..Affine::IDENTITY
-            };
-            text_matrix[layer] = s.matrix.then(&shift);
-        }
+        let (flats, text_matrix) = text_placements(&settings, input.text, sample, frame);
         for (id, t) in input.text.iter().enumerate() {
             let Some(layer) = layer_of(t.layer).filter(|_| t.visible) else {
                 continue;
@@ -387,6 +361,50 @@ impl Scene {
     }
 }
 
+/// Returns the index of the layer numbered `layer`, or None when there is no
+/// such layer. Anything that ends up in no layer is not drawn.
+fn layer_of(layer: i32) -> Option<usize> {
+    usize::try_from(layer).ok().filter(|&l| l < LAYERS)
+}
+
+/// Returns, for each layer, where its text screens are drawn: on the frame,
+/// or for a 4x4 matrix on a flat frame that covers them. That is the flat
+/// frame of each layer, from [`flat_area`], and the matrix of its text
+/// screens.
+fn text_placements(
+    settings: &[Layer; LAYERS],
+    text: &[TextScreen],
+    sample: u32,
+    frame: (u32, u32),
+) -> ([FlatArea; LAYERS], [Affine; LAYERS]) {
+    let mut flats = [((0, 0), (0, 0)); LAYERS];
+    let mut text_matrix: [Affine; LAYERS] = std::array::from_fn(|i| settings[i].matrix);
+    for (layer, s) in settings.iter().enumerate() {
+        let Some(m) = &s.projection else { continue };
+        let screens = (text.iter()).filter(|t| t.visible && layer_of(t.layer) == Some(layer));
+        let mut extent = None;
+        for t in screens {
+            let (a, b, c, d) = t.extent(&s.matrix);
+            let (x0, y0, x1, y1) = extent.unwrap_or((f64::MAX, f64::MAX, f64::MIN, f64::MIN));
+            extent = Some((x0.min(a), y0.min(b), x1.max(c), y1.max(d)));
+        }
+        let Some(extent) = extent else { continue };
+        let shown = compose::source_bounds(m, sample, frame, s.clip.as_ref());
+        flats[layer] = flat_area(frame, extent, shown);
+        let (x, y) = flats[layer].0;
+        let shift = Affine {
+            tx: -f64::from(x),
+            ty: -f64::from(y),
+            ..Affine::IDENTITY
+        };
+        text_matrix[layer] = s.matrix.then(&shift);
+    }
+    (flats, text_matrix)
+}
+
+/// A flat frame's top left frame pixel and its size.
+type FlatArea = ((i32, i32), (u32, u32));
+
 /// The area of the flat frame that holds text screens covering `extent`,
 /// which may be beyond the screen, as its top left frame pixel and its
 /// size. The flat frame keeps only what `shown` (from
@@ -396,7 +414,7 @@ fn flat_area(
     (fw, fh): (u32, u32),
     (mut x0, mut y0, mut x1, mut y1): (f64, f64, f64, f64),
     shown: Option<(f64, f64, f64, f64)>,
-) -> ((i32, i32), (u32, u32)) {
+) -> FlatArea {
     let (fw, fh) = (f64::from(fw), f64::from(fh));
     // One spare pixel on each side, for where the edges fall.
     let Some((a, b, c, d)) = shown else {

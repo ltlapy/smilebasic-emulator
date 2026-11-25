@@ -7,6 +7,7 @@
 //! tags and takes an integer or a real path, which meet again after it.
 
 use std::collections::HashMap;
+use std::mem::{offset_of, size_of};
 
 use cranelift_codegen::control::ControlPlane;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -18,8 +19,8 @@ use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 
 use crate::{
-    BinOp, Body, Code, Cond, Dest, Entry, Layout, Operand, Place, Region, SUPPORTED, Step, UnOp,
-    exec,
+    BinOp, Body, Code, Cond, Ctx, Dest, Entry, Layout, Operand, Place, Region, SUPPORTED, Step,
+    UnOp, exec,
 };
 
 thread_local! {
@@ -128,15 +129,29 @@ struct Gen<'f, 'c> {
     exit: Block,
     fail: Block,
     need: [usize; 2],
-    temps: HashMap<u8, Val>,
+    hidden: HashMap<u8, Val>,
     /// The budget before the running entry.
     left_before: Value,
-    /// Where the interpreter continues after a failure, with how much of the
-    /// entry is charged.
-    restart: (u32, u32),
+    restart: Restart,
+}
+
+/// The point the interpreter continues from after a failure.
+#[derive(Clone, Copy)]
+struct Restart {
+    pc: u32,
+    /// The part of the entry's cost that is charged.
+    charged: u32,
 }
 
 const FLAGS: MemFlags = MemFlags::trusted();
+
+// The offsets of the fields of `Ctx` that native code reads and writes.
+const CTX_TABLES: [i32; 2] = [
+    offset_of!(Ctx, tables) as i32,
+    (offset_of!(Ctx, tables) + size_of::<*mut u8>()) as i32,
+];
+const CTX_PC: i32 = offset_of!(Ctx, pc) as i32;
+const CTX_LEFT: i32 = offset_of!(Ctx, left) as i32;
 
 fn build(
     region: &Region,
@@ -161,10 +176,10 @@ fn build(
     b.switch_to_block(start);
     let ctx = b.block_params(start)[0];
     let tables = [
-        b.ins().load(ptr, FLAGS, ctx, 0),
-        b.ins().load(ptr, FLAGS, ctx, 8),
+        b.ins().load(ptr, FLAGS, ctx, CTX_TABLES[0]),
+        b.ins().load(ptr, FLAGS, ctx, CTX_TABLES[1]),
     ];
-    let left0 = b.ins().load(types::I64, FLAGS, ctx, 24);
+    let left0 = b.ins().load(types::I64, FLAGS, ctx, CTX_LEFT);
     let left = b.declare_var(types::I64);
     b.def_var(left, left0);
     let mut blocks = HashMap::new();
@@ -193,17 +208,20 @@ fn build(
         exit: exit.0,
         fail: fail.0,
         need: [0; 2],
-        temps: HashMap::new(),
+        hidden: HashMap::new(),
         left_before: left0,
-        restart: (head.pc, 0),
+        restart: Restart {
+            pc: head.pc,
+            charged: 0,
+        },
     };
     for e in &region.entries {
         g.entry(e)?;
     }
     for (block, pc, left, status) in [exit, fail] {
         g.b.switch_to_block(block);
-        g.b.ins().store(FLAGS, pc, ctx, 16);
-        g.b.ins().store(FLAGS, left, ctx, 24);
+        g.b.ins().store(FLAGS, pc, ctx, CTX_PC);
+        g.b.ins().store(FLAGS, left, ctx, CTX_LEFT);
         let status = g.b.ins().iconst(types::I32, i64::from(status));
         g.b.ins().return_(&[status]);
     }
@@ -259,8 +277,11 @@ impl Gen<'_, '_> {
         let after = self.b.ins().isub(left, len);
         self.b.def_var(self.left, after);
         self.left_before = left;
-        self.restart = (e.pc, 0);
-        self.temps.clear();
+        self.restart = Restart {
+            pc: e.pc,
+            charged: 0,
+        };
+        self.hidden.clear();
         match &e.body {
             Body::Steps { steps, next } => {
                 for step in steps {
@@ -298,7 +319,7 @@ impl Gen<'_, '_> {
 
     /// Fails when `cond` is true, and continues in a new block when not.
     fn fail_if(&mut self, cond: Value) {
-        let (pc, charged) = self.restart;
+        let Restart { pc, charged } = self.restart;
         let pc = self.b.ins().iconst(types::I64, i64::from(pc));
         let left = self.b.ins().iadd_imm(self.left_before, -i64::from(charged));
         let on = self.b.create_block();
@@ -337,7 +358,7 @@ impl Gen<'_, '_> {
             // Cranelift takes a narrow constant's bits zero-extended.
             Operand::Int(n) => Val::Int(self.b.ins().iconst(types::I32, i64::from(n as u32))),
             Operand::Real(x) => Val::Real(self.b.ins().f64const(x)),
-            Operand::Temp(k) => *self.temps.get(&k).ok_or("hidden value read before made")?,
+            Operand::Hidden(k) => *self.hidden.get(&k).ok_or("hidden value read before made")?,
             Operand::Place(p) => {
                 let (base, at) = self.place(p)?;
                 let l = self.layout;
@@ -359,7 +380,7 @@ impl Gen<'_, '_> {
     }
 
     /// The value, failing if it is not a number.
-    fn number(&mut self, v: Val) -> Val {
+    fn expect_number(&mut self, v: Val) -> Val {
         match v {
             Val::Dyn {
                 tag,
@@ -391,7 +412,7 @@ impl Gen<'_, '_> {
     }
 
     /// The integer, failing if it is not one.
-    fn int(&mut self, v: Val) -> Value {
+    fn expect_int(&mut self, v: Val) -> Value {
         match v {
             Val::Int(x) => x,
             Val::Real(_) => {
@@ -407,7 +428,7 @@ impl Gen<'_, '_> {
     }
 
     /// A number as a real, the same as `f64::from` converts an integer. Only
-    /// for a value checked by [`Gen::number`].
+    /// for a value checked by [`Gen::expect_number`].
     fn real(&mut self, v: Val) -> Value {
         match v {
             Val::Int(x) => self.b.ins().fcvt_from_sint(types::F64, x),
@@ -458,7 +479,7 @@ impl Gen<'_, '_> {
     fn arith(&mut self, op: BinOp, a: Val, b: Val) -> Val {
         let (ka, kb) = (self.known_int(a), self.known_int(b));
         if matches!(ka, Known::No) || matches!(kb, Known::No) {
-            let (a, b) = (self.number(a), self.number(b));
+            let (a, b) = (self.expect_number(a), self.expect_number(b));
             let (x, y) = (self.real(a), self.real(b));
             return Val::Real(self.real_op(op, x, y));
         }
@@ -501,7 +522,7 @@ impl Gen<'_, '_> {
         self.jump_real(meet, r);
         if let Some(reals) = reals {
             self.b.switch_to_block(reals);
-            let (a, b) = (self.number(a), self.number(b));
+            let (a, b) = (self.expect_number(a), self.expect_number(b));
             let (fx, fy) = (self.real(a), self.real(b));
             let r = self.real_op(op, fx, fy);
             self.jump_real(meet, r);
@@ -530,7 +551,7 @@ impl Gen<'_, '_> {
                 return self.b.ins().icmp(cc, x, y);
             }
             (Known::No, _) | (_, Known::No) => {
-                let (a, b) = (self.number(a), self.number(b));
+                let (a, b) = (self.expect_number(a), self.expect_number(b));
                 let (x, y) = (self.real(a), self.real(b));
                 return self.b.ins().fcmp(fcc, x, y);
             }
@@ -550,7 +571,7 @@ impl Gen<'_, '_> {
         let c = self.b.ins().icmp(cc, x, y);
         self.b.ins().jump(meet, &[BlockArg::Value(c)]);
         self.b.switch_to_block(reals);
-        let (a, b) = (self.number(a), self.number(b));
+        let (a, b) = (self.expect_number(a), self.expect_number(b));
         let (x, y) = (self.real(a), self.real(b));
         let c = self.b.ins().fcmp(fcc, x, y);
         self.b.ins().jump(meet, &[BlockArg::Value(c)]);
@@ -560,7 +581,7 @@ impl Gen<'_, '_> {
 
     /// Whether a number is not zero, as an `i8`; a NaN is not zero.
     fn truth(&mut self, v: Val) -> Value {
-        match self.number(v) {
+        match self.expect_number(v) {
             Val::Int(x) => self.b.ins().icmp_imm(IntCC::NotEqual, x, 0),
             Val::Real(x) => {
                 let zero = self.b.ins().f64const(0.0);
@@ -585,7 +606,7 @@ impl Gen<'_, '_> {
         match op {
             B::Add | B::Sub | B::Mul => self.arith(op, a, b),
             B::Div => {
-                let (a, b) = (self.number(a), self.number(b));
+                let (a, b) = (self.expect_number(a), self.expect_number(b));
                 let (x, y) = (self.real(a), self.real(b));
                 // Dividing by zero, or by -0, is an error for the
                 // interpreter to raise.
@@ -595,12 +616,15 @@ impl Gen<'_, '_> {
                 Val::Real(self.b.ins().fdiv(x, y))
             }
             B::IntDiv | B::Mod => {
-                let (x, y) = (self.int(a), self.int(b));
+                let (x, y) = (self.expect_int(a), self.expect_int(b));
                 // Division by zero is an error, and division by -1 wraps, but
                 // Cranelift's division traps: both are left to the interpreter.
                 let zero = self.b.ins().icmp_imm(IntCC::Equal, y, 0);
                 self.fail_if(zero);
-                let minus = self.b.ins().icmp_imm(IntCC::Equal, y, i64::from(u32::MAX));
+                let minus = self
+                    .b
+                    .ins()
+                    .icmp_imm(IntCC::Equal, y, i64::from(-1i32 as u32));
                 self.fail_if(minus);
                 // Cranelift 0.124 divides by a constant -2147483648 wrongly
                 // (-2147483648 DIV it gives -1), which the operator test
@@ -608,7 +632,7 @@ impl Gen<'_, '_> {
                 let min = self
                     .b
                     .ins()
-                    .icmp_imm(IntCC::Equal, y, i64::from(1u32 << 31));
+                    .icmp_imm(IntCC::Equal, y, i64::from(i32::MIN as u32));
                 self.fail_if(min);
                 Val::Int(match op {
                     B::IntDiv => self.b.ins().sdiv(x, y),
@@ -616,7 +640,7 @@ impl Gen<'_, '_> {
                 })
             }
             B::And | B::Or | B::Xor | B::Shl | B::Shr | B::UShr => {
-                let (x, y) = (self.int(a), self.int(b));
+                let (x, y) = (self.expect_int(a), self.expect_int(b));
                 Val::Int(match op {
                     B::And => self.b.ins().band(x, y),
                     B::Or => self.b.ins().bor(x, y),
@@ -637,7 +661,7 @@ impl Gen<'_, '_> {
 
     fn unary(&mut self, op: UnOp, a: Val) -> Val {
         match op {
-            UnOp::Neg => match self.number(a) {
+            UnOp::Neg => match self.expect_number(a) {
                 Val::Int(x) => Val::Int(self.b.ins().ineg(x)),
                 Val::Real(x) => Val::Real(self.b.ins().fneg(x)),
                 Val::Dyn { tag, int, real, .. } => Val::Dyn {
@@ -648,7 +672,7 @@ impl Gen<'_, '_> {
                 },
             },
             UnOp::Not => {
-                let x = self.int(a);
+                let x = self.expect_int(a);
                 Val::Int(self.b.ins().bnot(x))
             }
             UnOp::LogicalNot => {
@@ -665,8 +689,8 @@ impl Gen<'_, '_> {
 
     fn write(&mut self, to: Dest, v: Val) -> Result<(), String> {
         let p = match to {
-            Dest::Temp(k) => {
-                self.temps.insert(k, v);
+            Dest::Hidden(k) => {
+                self.hidden.insert(k, v);
                 return Ok(());
             }
             Dest::Place(p) => p,
@@ -731,7 +755,7 @@ impl Gen<'_, '_> {
             }
             Step::Move { from, to } => {
                 let v = self.read(from)?;
-                let v = self.number(v);
+                let v = self.expect_number(v);
                 self.write(to, v)?;
             }
             Step::Jump { cond, target, when } => {
@@ -754,7 +778,7 @@ impl Gen<'_, '_> {
                 };
                 self.b.switch_to_block(on);
             }
-            Step::Commit { to, charged } => self.restart = (to, charged),
+            Step::Commit { to, charged } => self.restart = Restart { pc: to, charged },
         }
         Ok(())
     }
@@ -772,7 +796,7 @@ impl Gen<'_, '_> {
     ) -> Result<(), String> {
         let v = self.read(Operand::Place(var))?;
         let s0 = self.read(Operand::Place(step_slot))?;
-        let (v, s0) = (self.int(v), self.int(s0));
+        let (v, s0) = (self.expect_int(v), self.expect_int(s0));
         let (n, overflow) = self.b.ins().sadd_overflow(v, s0);
         self.fail_if(overflow);
         let int_operand = |g: &mut Self, op: Operand| -> Result<Value, String> {
@@ -780,7 +804,7 @@ impl Gen<'_, '_> {
                 Operand::Real(_) => Err("a real STEP or TO".into()),
                 op => {
                     let v = g.read(op)?;
-                    Ok(g.int(v))
+                    Ok(g.expect_int(v))
                 }
             }
         };

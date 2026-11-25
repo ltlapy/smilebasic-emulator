@@ -502,9 +502,9 @@ pub struct Editor {
     mode: Mode,
     /// The line number typed after Ctrl+G.
     goto: Vec<u16>,
-    /// The text to find, and the text to replace it with.
+    /// The text to find.
     find: Vec<u16>,
-    with: Vec<u16>,
+    replacement: Vec<u16>,
     /// The position the search starts from while the text to find is typed.
     search_from: Pos,
     /// Shown in the status line until the next key, such as "Not found".
@@ -635,7 +635,7 @@ impl Editor {
             mode: Mode::Edit,
             goto: Vec::new(),
             find: Vec::new(),
-            with: Vec::new(),
+            replacement: Vec::new(),
             search_from: (0, 0),
             note: None,
             scrolled: false,
@@ -672,7 +672,7 @@ impl Editor {
         (self.revision, self.slot, self.modified).hash(state);
         (self.view, self.followed, self.scrolled, self.center).hash(state);
         (self.anchor, self.mode, self.overwrite).hash(state);
-        (&self.goto, &self.find, &self.with, &self.note).hash(state);
+        (&self.goto, &self.find, &self.replacement, &self.note).hash(state);
         (&self.marks, &self.completion, self.quiet, self.complete).hash(state);
         Rc::as_ptr(&self.library).hash(state);
     }
@@ -1156,7 +1156,6 @@ impl Editor {
         }
     }
 
-    /// Returns the current mode of the keys.
     pub fn mode(&self) -> Mode {
         self.mode
     }
@@ -1275,7 +1274,7 @@ impl Editor {
         if self.on_match() {
             let (start, end) = self.selection().expect("on a match");
             self.begin(Merge::Alone);
-            let after = self.replace(start, end, vec![self.with.clone()]);
+            let after = self.replace(start, end, vec![self.replacement.clone()]);
             self.moved_to(after);
         }
         self.find_next(true);
@@ -1289,7 +1288,7 @@ impl Editor {
             // From the right, so that the columns found stay correct.
             for col in matches_in(&self.lines[line], &self.find).into_iter().rev() {
                 let end = (line, col + self.find.len());
-                self.replace((line, col), end, vec![self.with.clone()]);
+                self.replace((line, col), end, vec![self.replacement.clone()]);
                 count += 1;
             }
         }
@@ -1334,13 +1333,13 @@ impl Editor {
                 self.find_from_start();
             }
             (Mode::Replace, keys::BACKSPACE) => {
-                self.with.pop();
+                self.replacement.pop();
             }
             (Mode::Find, c) if printable => {
                 self.find.push(c);
                 self.find_from_start();
             }
-            (Mode::Replace, c) if printable => self.with.push(c),
+            (Mode::Replace, c) if printable => self.replacement.push(c),
             _ => {}
         }
     }
@@ -1429,12 +1428,12 @@ impl Editor {
         let listing = self.completion.is_some();
         self.edit_key(code);
         // Typing a name, or erasing in it, looks for words again.
-        let looks = match code {
+        let look_again = match code {
             keys::BACKSPACE => listing,
             c => is_ident_char(c) || c == 0x40 || c == 0x23,
         };
         self.completion = None;
-        if let (true, Some(options), false) = (looks, self.complete, self.quiet) {
+        if let (true, Some(options), false) = (look_again, self.complete, self.quiet) {
             self.look_for_words(options);
         }
     }
@@ -2059,17 +2058,93 @@ impl Editor {
         if map {
             self.draw_map(fb, colors, rows);
         }
-        let screen = &mut self.screen;
-
-        // The ruler numbers the visible columns, every other one, on tiles
-        // or in digits. Tiles other than the cursor's take the bar's color,
-        // with their digits recolored after drawing.
+        let ruler_digits = self.draw_ruler(fb, wrap, ruler_text.is_none());
+        let prompt = (status_text.as_ref(), ruler_text.as_deref());
+        let prompt_cursor = self.draw_status(fb, &fonts, name, prompt, note.as_deref());
         let ruler = rows;
+        let status = ruler + 1;
+
+        self.screen.draw(fb, font);
+        for &(x, y, glyph, color) in &self.extra_cells {
+            let at = ((x * cell) as u32, (grid.top + y * cell) as u32);
+            look.extra.draw(fb, glyph, at, color);
+        }
+        let halves = look.halves.unwrap_or_else(|| font.half_glyphs());
+        for &(x, y, over, color) in &self.over {
+            let at = (x as u32, (grid.top + y * cell) as u32);
+            match over {
+                Over::Half(c) => {
+                    if let Some(alpha) = halves.get(c, look.font) {
+                        draw_half_glyph(fb, alpha, cell as u32, at, color);
+                    }
+                }
+                Over::Font(c) => draw_font_glyph(fb, font, c, look.font, at, color),
+                Over::Extra(glyph) => look.extra.draw(fb, glyph, at, color),
+            }
+        }
+        for (x, color) in ruler_digits {
+            let y0 = grid.top + ruler * cell;
+            for py in y0..y0 + cell {
+                for px in x..x + cell {
+                    let (px, py) = (px as u32, py as u32);
+                    if fb.get(px, py).is_some_and(|c| c != BAR) {
+                        fb.set(px, py, color);
+                    }
+                }
+            }
+        }
+        for (x, y) in marks {
+            grid.glyph(fb, x, y, &RETURN_GLYPH, RETURN_MARK);
+        }
+        if let (Some(x), true) = (prompt_cursor, blink) {
+            for py in 0..cell {
+                for px in 0..cell / 4 {
+                    let (fx, fy) = (x * cell + px, grid.top + status * cell + py);
+                    fb.set(fx as u32, fy as u32, TEXT);
+                }
+            }
+        }
+        self.draw_hints(fb, fonts, cursor, colors);
+        if let (Some((x, y)), true) = (cursor, blink) {
+            // A bar for inserting, a block for overwriting.
+            let w = match (self.overwrite, half) {
+                (false, _) => cell / 4,
+                (true, false) => cell,
+                (true, true) => half_cell_width(&self.lines[v.line], v.col, cell),
+            };
+            for py in 0..cell {
+                for px in 0..w {
+                    let (fx, fy) = (x + px, grid.top + y * cell + py);
+                    fb.set(fx as u32, fy as u32, colors[Part::Character]);
+                }
+            }
+        }
+    }
+
+    /// Draws the ruler, which numbers the visible columns, every other one,
+    /// on tiles or in digits. Tiles other than the cursor's take the bar's
+    /// color, and their digits are recolored after drawing: the returned
+    /// pixel columns and colors are for that. Without `numbered` the row is
+    /// left empty for a prompt's text.
+    fn draw_ruler(
+        &mut self,
+        fb: &mut Framebuffer,
+        wrap: bool,
+        numbered: bool,
+    ) -> Vec<(usize, u32)> {
+        let (cols, ruler) = self.size();
+        let gutter = self.gutter();
+        let grid = self.grid;
+        let cell = grid.cell;
+        let v = self.view;
+        let (half, tiles) = (self.half, self.number_tiles);
+        let width = self.screen.size().0 as usize;
+        let screen = &mut self.screen;
         let mut ruler_digits = Vec::new();
         grid.fill(fb, ruler, 0, width, BAR);
         let first = if wrap { 0 } else { v.left };
         let cursor_col = if wrap { v.col % cols } else { v.col };
-        if half && ruler_text.is_none() {
+        if half && numbered {
             // The columns sit over the cursor's row, as wide as its
             // characters.
             let line = &self.lines[v.line];
@@ -2112,7 +2187,7 @@ impl Editor {
             }
         }
         for x in 0..cols {
-            if ruler_text.is_some() || half {
+            if !numbered || half {
                 break;
             }
             let col = first + x;
@@ -2136,9 +2211,25 @@ impl Editor {
                 screen.put_at(at, ruler as u32, u16::from(digit), color);
             }
         }
+        ruler_digits
+    }
 
-        // The status line, and the pixels below the last whole row.
+    /// Draws the status line, the text shown instead of the ruler and the
+    /// note, and fills the pixels below the last whole row. Returns the
+    /// column of the cursor while typing in the status line.
+    fn draw_status(
+        &mut self,
+        fb: &mut Framebuffer,
+        fonts: &Fonts,
+        name: &str,
+        (status_text, ruler_text): (Option<&(String, usize)>, Option<&str>),
+        note: Option<&str>,
+    ) -> Option<usize> {
+        let ruler = self.size().1;
         let status = ruler + 1;
+        let grid = self.grid;
+        let width = self.screen.size().0 as usize;
+        let screen = &mut self.screen;
         grid.fill(fb, status, 0, width, BAR);
         let below = grid.top + (status + 1) * grid.cell;
         for py in below as u32..fb.height() {
@@ -2148,66 +2239,42 @@ impl Editor {
         }
         let mut prompt_cursor = None;
         let extras = &mut self.extra_cells;
-        match &status_text {
+        match status_text {
             Some((text, field)) => {
-                put_str(screen, extras, &fonts, (0, status), text, TEXT);
+                put_str(screen, extras, fonts, (0, status), text, TEXT);
                 prompt_cursor = Some(*field);
             }
             None => {
                 let text = format!("PRG{} {name}", self.slot);
-                put_str(screen, extras, &fonts, (0, status), &text, TEXT);
+                put_str(screen, extras, fonts, (0, status), &text, TEXT);
             }
         }
-        if let Some(text) = &ruler_text {
-            put_str(screen, extras, &fonts, (0, ruler), text, TEXT);
+        if let Some(text) = ruler_text {
+            put_str(screen, extras, fonts, (0, ruler), text, TEXT);
         }
-        if let Some(note) = &note {
+        if let Some(note) = note {
             let x = width.saturating_sub(note.encode_utf16().count());
-            put_str(screen, extras, &fonts, (x, status), note, DIM);
+            put_str(screen, extras, fonts, (x, status), note, DIM);
         }
+        prompt_cursor
+    }
 
-        screen.draw(fb, font);
-        for &(x, y, glyph, color) in &self.extra_cells {
-            let at = ((x * cell) as u32, (grid.top + y * cell) as u32);
-            look.extra.draw(fb, glyph, at, color);
-        }
-        let halves = look.halves.unwrap_or_else(|| font.half_glyphs());
-        for &(x, y, over, color) in &self.over {
-            let at = (x as u32, (grid.top + y * cell) as u32);
-            match over {
-                Over::Half(c) => {
-                    if let Some(alpha) = halves.get(c, look.font) {
-                        draw_half_glyph(fb, alpha, cell as u32, at, color);
-                    }
-                }
-                Over::Font(c) => draw_font_glyph(fb, font, c, look.font, at, color),
-                Over::Extra(glyph) => look.extra.draw(fb, glyph, at, color),
-            }
-        }
-        for (x, color) in ruler_digits {
-            let y0 = grid.top + ruler * cell;
-            for py in y0..y0 + cell {
-                for px in x..x + cell {
-                    let (px, py) = (px as u32, py as u32);
-                    if fb.get(px, py).is_some_and(|c| c != BAR) {
-                        fb.set(px, py, color);
-                    }
-                }
-            }
-        }
-        for (x, y) in marks {
-            grid.glyph(fb, x, y, &RETURN_GLYPH, RETURN_MARK);
-        }
-        if let (Some(x), true) = (prompt_cursor, blink) {
-            for py in 0..cell {
-                for px in 0..cell / 4 {
-                    let (fx, fy) = (x * cell + px, grid.top + status * cell + py);
-                    fb.set(fx as u32, fy as u32, TEXT);
-                }
-            }
-        }
-        // The forms of the command being typed, above the cursor's line
-        // or at the bottom.
+    /// Draws the forms of the command being typed, above the cursor's line
+    /// or at the bottom, and the list of words to complete. `cursor` is the
+    /// pixel column and the row of the code's cursor, if it is on the screen.
+    fn draw_hints(
+        &mut self,
+        fb: &mut Framebuffer,
+        fonts: Fonts,
+        cursor: Option<(usize, usize)>,
+        colors: &Palette,
+    ) {
+        let ruler = self.size().1;
+        let gutter = self.gutter();
+        let grid = self.grid;
+        let cell = grid.cell;
+        let v = self.view;
+        let half = self.half;
         let options = self
             .complete
             .filter(|_| !self.quiet && self.mode == Mode::Edit);
@@ -2238,20 +2305,6 @@ impl Editor {
                 };
                 let at = (x.saturating_sub(back) as i64, top + cell as i64);
                 list.draw(fb, fonts, at, top, cell as u32, colors);
-            }
-        }
-        if let (Some((x, y)), true) = (cursor, blink) {
-            // A bar for inserting, a block for overwriting.
-            let w = match (self.overwrite, half) {
-                (false, _) => cell / 4,
-                (true, false) => cell,
-                (true, true) => half_cell_width(&self.lines[v.line], v.col, cell),
-            };
-            for py in 0..cell {
-                for px in 0..w {
-                    let (fx, fy) = (x + px, grid.top + y * cell + py);
-                    fb.set(fx as u32, fy as u32, colors[Part::Character]);
-                }
             }
         }
     }
@@ -2288,7 +2341,7 @@ impl Editor {
             Mode::GoTo => (field("Go to line: ", &self.goto), None),
             Mode::Find => (field("Find: ", &self.find), None),
             Mode::Replace => (
-                field("Replace with: ", &self.with),
+                field("Replace with: ", &self.replacement),
                 Some(format!("Find: {}", String::from_utf16_lossy(&self.find))),
             ),
         }

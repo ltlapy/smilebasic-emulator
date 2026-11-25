@@ -384,7 +384,7 @@ fn song_text(t: &TrackInfo) -> String {
 
 /// Quarter notes and ticks played, as `12:30`.
 fn position(t: &TrackInfo) -> String {
-    let q = u64::from(t.quarter.max(1));
+    let q = u64::from(t.ticks_per_quarter.max(1));
     format!("{}:{:02}", t.ticks / q, t.ticks % q)
 }
 
@@ -441,7 +441,7 @@ pub fn track_details(t: &TrackInfo, whole: bool) -> Vec<String> {
         t.tempo,
         position(t),
         t.ticks,
-        t.quarter
+        t.ticks_per_quarter
     ));
     lines.push(vars_text(t));
     if !whole {
@@ -526,6 +526,9 @@ const COLUMNS: [(&str, usize, bool); 9] = [
     ("@V", 4, true),
     ("INSTRUMENT", 10, true),
 ];
+/// The index of the instrument column in [`COLUMNS`]. It is last and takes
+/// the rest of the room.
+const INSTRUMENT: usize = COLUMNS.len() - 1;
 const BEEP_COLUMNS: [(&str, usize); 6] = [
     ("H", 3),
     ("BEEP", 5),
@@ -608,8 +611,7 @@ impl DebugPanel {
             columns.push((x + at as u32 * m.char, heading, chars));
             at += chars;
         }
-        // The instrument's name, last, takes the rest.
-        let before: usize = COLUMNS[..shown.min(8)].iter().map(|c| c.1).sum();
+        let before: usize = COLUMNS[..shown.min(INSTRUMENT)].iter().map(|c| c.1).sum();
         let name_chars = room.saturating_sub(before).max(1);
         if y + m.line <= bottom {
             for &(cx, heading, _) in &columns {
@@ -652,12 +654,15 @@ impl DebugPanel {
                             draw_level(fb, m, (cx, ty), chars - 1, level);
                             continue;
                         }
-                        let chars = if i == 8 { name_chars } else { chars - 1 };
-                        let color = match (c.ended, i) {
+                        let chars = match i {
+                            INSTRUMENT => name_chars,
+                            _ => chars - 1,
+                        };
+                        let color = match (c.ended, heading) {
                             (true, _) => DISABLED,
-                            (false, 2) if !c.keys.is_empty() => STRING,
-                            (false, 2) => DISABLED,
-                            (false, 1 | 4..=7) => NUMBER,
+                            (false, "NOTE") if !c.keys.is_empty() => STRING,
+                            (false, "NOTE") => DISABLED,
+                            (false, "@" | "V" | "P" | "O" | "@V") => NUMBER,
                             _ => TEXT,
                         };
                         m.draw(fb, font, cx, ty, &cut(&cells[i], chars), color);

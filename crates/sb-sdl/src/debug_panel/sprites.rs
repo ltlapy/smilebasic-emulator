@@ -17,6 +17,8 @@ use super::value_text;
 
 /// The width and height in pixels of a row's thumbnail of the sprite image.
 pub const THUMB: usize = 16;
+/// The characters that the thumbnail takes after the number column.
+pub const THUMB_CHARS: usize = 2;
 /// SPANIM's targets in SPCHK's bit order.
 const TARGETS: [&str; 8] = ["XY", "Z", "R", "S", "C", "V", "UV", "I"];
 /// The colors of the chosen sprite's outline and of its dark edge. The

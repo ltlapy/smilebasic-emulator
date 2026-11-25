@@ -35,6 +35,27 @@ const RECORD_WORK: u32 = 1 << 28;
 /// Events a recording keeps at most.
 const RECORD_EVENTS: usize = 1 << 22;
 
+/// Command bytes of the sequence code that [`Player`] runs. Bytes 0x00 to
+/// 0x7F are notes.
+mod opcode {
+    pub const WAIT: u8 = 0x80;
+    pub const PROGRAM: u8 = 0x81;
+    pub const OPEN_TRACK: u8 = 0x88;
+    pub const JUMP: u8 = 0x89;
+    pub const CALL: u8 = 0x8A;
+    pub const TIMEBASE: u8 = 0xB0;
+    pub const PAN: u8 = 0xC0;
+    pub const VOLUME: u8 = 0xC1;
+    pub const BEND: u8 = 0xC4;
+    pub const BEND_RANGE: u8 = 0xC5;
+    pub const NOTE_WAIT: u8 = 0xC7;
+    pub const MODULATION: u8 = 0xCA;
+    pub const EXPRESSION: u8 = 0xD5;
+    pub const TEMPO: u8 = 0xE1;
+    pub const RETURN: u8 = 0xFD;
+    pub const END: u8 = 0xFF;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sequence {
     /// The volume of the whole sound; 127 leaves it unchanged.
@@ -382,27 +403,27 @@ impl Player {
                     t.wait = len;
                 }
             }
-            0x80 => self.tracks[c].as_mut()?.wait = r.varlen()?,
-            0x81 => {
+            opcode::WAIT => self.tracks[c].as_mut()?.wait = r.varlen()?,
+            opcode::PROGRAM => {
                 let program = i32::try_from(r.varlen()?).ok()?;
                 self.settings[c].program = program;
                 synth.program(c, program);
             }
-            0x88 => {
+            opcode::OPEN_TRACK => {
                 let track = usize::from(r.u8()?);
                 let at = r.u24()?;
                 if track < CHANNELS && track != c {
                     self.tracks[track] = Some(SeqTrack::new(at));
                 }
             }
-            0x89 => {
+            opcode::JUMP => {
                 let to = r.u24()?;
                 if to <= self.tracks[c].as_ref()?.pc {
                     self.tracks[c].as_mut()?.looped = true;
                 }
                 next_pc = Some(to);
             }
-            0x8A => {
+            opcode::CALL => {
                 let to = r.u24()?;
                 let t = self.tracks[c].as_mut()?;
                 if t.calls.len() >= CALL_DEPTH {
@@ -411,35 +432,35 @@ impl Player {
                 t.calls.push(r.at);
                 next_pc = Some(to);
             }
-            0xFD => next_pc = Some(self.tracks[c].as_mut()?.calls.pop()?),
-            0xFF => return None,
-            0xB0 => self.timebase = u32::from(r.u8()?).max(1),
-            0xC0 => {
+            opcode::RETURN => next_pc = Some(self.tracks[c].as_mut()?.calls.pop()?),
+            opcode::END => return None,
+            opcode::TIMEBASE => self.timebase = u32::from(r.u8()?).max(1),
+            opcode::PAN => {
                 let pan = i32::from(r.u8()?);
                 self.settings[c].pan = pan;
                 synth.pan(c, pan);
             }
-            0xC1 => {
+            opcode::VOLUME => {
                 let volume = i32::from(r.u8()?);
                 self.settings[c].volume = volume;
                 synth.volume(c, volume);
             }
-            0xC4 => {
+            opcode::BEND => {
                 self.tracks[c].as_mut()?.bend = i32::from(r.u8()? as i8);
                 self.apply_bend(c, synth);
             }
-            0xC5 => {
+            opcode::BEND_RANGE => {
                 self.tracks[c].as_mut()?.bend_range = i32::from(r.u8()?);
                 self.apply_bend(c, synth);
             }
-            0xC7 => self.tracks[c].as_mut()?.note_wait = r.u8()? != 0,
-            0xCA => synth.modulation(c, i32::from(r.u8()?)),
-            0xD5 => {
+            opcode::NOTE_WAIT => self.tracks[c].as_mut()?.note_wait = r.u8()? != 0,
+            opcode::MODULATION => synth.modulation(c, i32::from(r.u8()?)),
+            opcode::EXPRESSION => {
                 let expression = i32::from(r.u8()?);
                 self.settings[c].expression = expression;
                 synth.expression(c, expression);
             }
-            0xE1 => self.tempo = u32::from(r.u16()?).max(1),
+            opcode::TEMPO => self.tempo = u32::from(r.u16()?).max(1),
             0xFE => {
                 r.u16()?;
             }

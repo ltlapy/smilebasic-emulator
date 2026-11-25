@@ -327,10 +327,9 @@ impl Source<'_> {
     }
 }
 
-/// Off the page, as an offset into it.
-const NONE: usize = usize::MAX;
-/// The number of frame pixels from which a sprite is drawn piece by piece.
-const LARGE: usize = 4096;
+const OFF_PAGE: usize = usize::MAX;
+/// In frame pixels.
+const PIECEWISE_MIN_PIXELS: usize = 4096;
 
 /// [`draw`] for a sprite neither turned nor sheared on the frame,
 /// the usual case: the page column and row that each frame column and row
@@ -356,7 +355,7 @@ fn draw_upright(
     let at = |v: i32, step: usize| match source.wrap(v) {
         Some(v) => v * step,
         None if v == -1 => 0,
-        None => NONE,
+        None => OFF_PAGE,
     };
     // A quarter turn makes frame columns go down the page, and rows
     // across it.
@@ -381,7 +380,7 @@ fn draw_upright(
     // from left to right, so the pieces of each row with nothing in them
     // (see Graphics::pieces) can be skipped.
     // Most sprites are small, and small sprites are not worth the setup.
-    let large = cols.len() * grid.ys.len() >= LARGE;
+    let large = cols.len() * grid.ys.len() >= PIECEWISE_MIN_PIXELS;
     let run = match (turned, source.white, source.page_no) {
         (false, false, Some(page)) if large => steady(cols).map(|run| (run, page)),
         _ => None,
@@ -408,13 +407,13 @@ fn draw_upright(
             if self.source.white {
                 let white = paint(0xFFFF_FFFF);
                 for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
-                    if row == NONE {
+                    if row == OFF_PAGE {
                         continue;
                     }
                     let at = fy * width + self.grid.x0 as usize;
                     let line = &mut pixels[at..at + self.cols.len()];
                     for (dst, &col) in line.iter_mut().zip(self.cols) {
-                        if col != NONE {
+                        if col != OFF_PAGE {
                             *dst = white.put(*dst);
                         }
                     }
@@ -437,7 +436,7 @@ fn draw_upright(
                 // one.
                 let (mut held, mut held_paint) = (0, paint(0));
                 for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
-                    if row == NONE {
+                    if row == OFF_PAGE {
                         continue;
                     }
                     let mut pieces = (self.grp).pieces(page_no, row / STRIDE, p0, p1);
@@ -496,7 +495,7 @@ fn draw_upright(
                 return;
             }
             for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
-                if row == NONE {
+                if row == OFF_PAGE {
                     continue;
                 }
                 let at = fy * width + self.grid.x0 as usize;
@@ -505,7 +504,7 @@ fn draw_upright(
                 // paint is computed once.
                 let (mut held, mut held_paint) = (0, paint(0));
                 for (dst, &col) in line.iter_mut().zip(self.cols) {
-                    if col == NONE {
+                    if col == OFF_PAGE {
                         continue;
                     }
                     let p = page[col + row];
@@ -548,9 +547,9 @@ struct Run {
 /// The [`Run`] that `cols` (as [`draw_upright`] computes them) form, if
 /// they form one.
 fn steady(cols: &[usize]) -> Option<Run> {
-    let at = cols.iter().position(|&c| c != NONE)?;
-    let len = cols[at..].iter().take_while(|&&c| c != NONE).count();
+    let at = cols.iter().position(|&c| c != OFF_PAGE)?;
+    let len = cols[at..].iter().take_while(|&&c| c != OFF_PAGE).count();
     let rightwards = cols[at..at + len].windows(2).all(|w| w[0] <= w[1]);
-    let rest_off = cols[at + len..].iter().all(|&c| c == NONE);
+    let rest_off = cols[at + len..].iter().all(|&c| c == OFF_PAGE);
     (rightwards && rest_off).then_some(Run { at, len })
 }

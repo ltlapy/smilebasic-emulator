@@ -113,6 +113,14 @@ impl Drop for Mem {
     }
 }
 
+/// CTR_EL0.IDC: the data cache does not need to be cleaned to the point of
+/// unification.
+#[cfg(target_arch = "aarch64")]
+const CTR_IDC: u64 = 1 << 28;
+/// CTR_EL0.DIC: the instruction cache does not need to be invalidated.
+#[cfg(target_arch = "aarch64")]
+const CTR_DIC: u64 = 1 << 29;
+
 /// Makes the instruction fetch of this core see what was written at
 /// `ptr..ptr + len`: Arm's caches for data and instructions are not kept
 /// coherent by the hardware. The same sequence as libgcc's `__clear_cache`.
@@ -129,9 +137,7 @@ fn flush_icache(ptr: *mut u8, len: usize) {
     unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr, options(nomem, nostack)) };
     let dline = 4usize << ((ctr >> 16) & 0xF);
     let iline = 4usize << (ctr & 0xF);
-    // IDC: the data cache does not need to be cleaned to the point of
-    // unification.
-    if ctr & (1 << 28) == 0 {
+    if ctr & CTR_IDC == 0 {
         let mut at = start & !(dline - 1);
         while at < end {
             // SAFETY: cleans a line of memory this process has mapped.
@@ -141,8 +147,7 @@ fn flush_icache(ptr: *mut u8, len: usize) {
     }
     // SAFETY: barriers only.
     unsafe { asm!("dsb ish", options(nostack)) };
-    // DIC: the instruction cache does not need to be invalidated.
-    if ctr & (1 << 29) == 0 {
+    if ctr & CTR_DIC == 0 {
         let mut at = start & !(iline - 1);
         while at < end {
             // SAFETY: invalidates a line of memory this process has mapped.

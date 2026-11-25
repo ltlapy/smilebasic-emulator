@@ -114,8 +114,7 @@ fn image_array(image: Image) -> Array {
     }
 }
 
-/// The bytes an array's strings take.
-fn strings_size(array: &Array) -> usize {
+fn strings_bytes(array: &Array) -> usize {
     match &array.data {
         ArrayData::Str(v) => (v.iter())
             .map(|s| memory::string_bytes(s.borrow().len()))
@@ -124,9 +123,8 @@ fn strings_size(array: &Array) -> usize {
     }
 }
 
-/// The bytes an array takes, its strings included.
-fn array_size(array: &Array) -> usize {
-    memory::array_bytes(array.elem_type(), array.len()).saturating_add(strings_size(array))
+fn array_bytes_with_strings(array: &Array) -> usize {
+    memory::array_bytes(array.elem_type(), array.len()).saturating_add(strings_bytes(array))
 }
 
 fn loadv_memory(e: Error) -> Error {
@@ -219,12 +217,14 @@ const MAX_SAVED: usize = 0x100_0000;
 /// uncompressed when the compressed body is still too large; too large both
 /// ways is Array is too large, after the questions. Uncompressed, only the
 /// values count, not the body's header. The emulator writes the body
-/// uncompressed, so this only checks, and compresses only a body that is
-/// too large uncompressed.
+/// uncompressed, so this only checks.
 fn check_saved_size(values: usize, body: impl FnOnce() -> Vec<u8>) -> Result<()> {
-    if values > MAX_SAVED
-        && miniz_oxide::deflate::compress_to_vec_zlib(&body(), 6).len() > MAX_SAVED
-    {
+    let uncompressed_fits = values <= MAX_SAVED;
+    if uncompressed_fits {
+        return Ok(());
+    }
+    let compressed_fits = miniz_oxide::deflate::compress_to_vec_zlib(&body(), 6).len() <= MAX_SAVED;
+    if !compressed_fits {
         return Err(ErrorKind::ArrayTooLarge.into());
     }
     Ok(())
@@ -327,7 +327,7 @@ impl Runtime {
                 if let Ok(value) = &outcome {
                     let bytes = match value {
                         Value::Str(s) => memory::string_bytes(s.borrow().len()),
-                        Value::Array(a) => array_size(&a.borrow()),
+                        Value::Array(a) => array_bytes_with_strings(&a.borrow()),
                         _ => 0,
                     };
                     memory::request(bytes).map_err(loadv_memory)?;
@@ -380,7 +380,7 @@ impl Runtime {
                         memory::array_bytes(elem, array.len()),
                     )
                     .map_err(loadv_memory)?;
-                    memory::charge(strings_size(array));
+                    memory::charge(strings_bytes(array));
                 }
                 if let Some(array) = self.finish("LOADV", outcome) {
                     fill(target, array)?;

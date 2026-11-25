@@ -36,7 +36,7 @@ use std::sync::OnceLock;
 
 use ab_glyph::FontVec;
 
-use crate::cell_glyph::{self, BdfGlyph, BdfLayout, Ink};
+use crate::cell_glyph::{self, BdfGlyph, BdfLayout, Ink, full_width_form};
 use crate::font::{self, Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::text::TextScreen;
@@ -158,14 +158,9 @@ pub(crate) fn dot_half16(code: u32) -> Option<Vec<u8>> {
 }
 
 /// Appends the 16x16 dot glyph for `code` (Izumi Gothic 16 or Unifont
-/// JP, made bold), if there is one. ASCII takes the full-width forms,
-/// because SmileBASIC draws it as wide as kana.
+/// JP, made bold), if there is one: the glyph of its [`full_width_form`].
 pub(crate) fn dot16_cell(code: u32, out: &mut Vec<u8>) -> bool {
-    let code = match code {
-        0x21..=0x7E => code + 0xFEE0,
-        _ => code,
-    };
-    dot16().copy(code, out)
+    dot16().copy(full_width_form(code), out)
 }
 
 /// Appends Noto Sans SC Bold's 16x16 glyph for `code`, in 16 steps of
@@ -193,37 +188,20 @@ pub(crate) fn bundled16(
     }
 }
 
-/// Appends GalmuriMono7's 8x8 cell for `code`, if it has one.
+/// Appends GalmuriMono7's 8x8 cell for `code`, if it has one: the cell of
+/// its [`full_width_form`], like the stand-in font.
 fn galmuri(code: u32, out: &mut Vec<u8>) -> bool {
-    // SmileBASIC's ASCII is as wide as kana, so it takes the full-width
-    // forms, like the stand-in font.
-    let code = match code {
-        0x21..=0x7E => code + 0xFEE0,
-        _ => code,
-    };
-    let Ok(code) = u16::try_from(code) else {
+    let Ok(code) = u16::try_from(full_width_form(code)) else {
         return false;
     };
-    let records = font::FALLBACK;
-    let count = records.len() / 10;
-    let code_at = |i: usize| u16::from_le_bytes([records[i * 10], records[i * 10 + 1]]);
-    let (mut lo, mut hi) = (0, count);
-    while lo < hi {
-        let mid = (lo + hi) / 2;
-        match code_at(mid).cmp(&code) {
-            std::cmp::Ordering::Less => lo = mid + 1,
-            std::cmp::Ordering::Greater => hi = mid,
-            std::cmp::Ordering::Equal => {
-                let rows = &records[mid * 10 + 2..mid * 10 + 10];
-                out.extend((0..64).map(|p| {
-                    let (x, y) = (p % 8, p / 8);
-                    if rows[y] & (0x80 >> x) != 0 { 255 } else { 0 }
-                }));
-                return true;
-            }
-        }
-    }
-    false
+    let Some(rows) = font::fallback_rows(code) else {
+        return false;
+    };
+    out.extend((0..64).map(|p| {
+        let (x, y) = (p % 8, p / 8);
+        if rows[y] & (0x80 >> x) != 0 { 255 } else { 0 }
+    }));
+    true
 }
 
 /// The bundled M PLUS 1p Bold's glyph for `c` in a `cell`-pixel cell.
@@ -412,15 +390,11 @@ impl ExtraGlyphs {
         }
         let from_file = match (&self.external, part) {
             (_, Part::Bundled) => None,
-            (Some(External::Bitmap { glyphs, layout }), _) => {
-                // ASCII takes the full-width form, the same as for outlines.
-                let full = (0x21..=0x7E)
-                    .contains(&code)
-                    .then(|| glyphs.get(&(code + 0xFEE0)));
-                full.flatten()
-                    .or_else(|| glyphs.get(&code))
-                    .map(|g| cell_glyph::bdf_cell(g, layout, cell))
-            }
+            // The full-width form first, the same as for outlines.
+            (Some(External::Bitmap { glyphs, layout }), _) => glyphs
+                .get(&full_width_form(code))
+                .or_else(|| glyphs.get(&code))
+                .map(|g| cell_glyph::bdf_cell(g, layout, cell)),
             (Some(External::Outline(f)), _) => {
                 ch.and_then(|c| cell_glyph::outline_cell(f, c, cell, 1.0, Ink::for_cell(cell)))
             }

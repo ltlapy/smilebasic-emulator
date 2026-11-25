@@ -21,6 +21,8 @@ const MAX_TYPED: usize = 40;
 const PICKER_WIDTH: u32 = 1000;
 const PICKER_HEIGHT: u32 = 600;
 const UP: &str = "Projects";
+/// The row of the first file in a project's list. Row 0 is the way up.
+const FIRST_FILE_ROW: usize = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -216,8 +218,9 @@ impl FilePicker {
             _ => storage.project(),
         };
         let mut picker = FilePicker::open_at(size, Purpose::Tool(n), project, storage);
-        if let Some(i) = picker.entries.iter().skip(1).position(|e| e.name == name) {
-            picker.choose(i + 1);
+        let mut files = picker.entries.iter().skip(FIRST_FILE_ROW);
+        if let Some(i) = files.position(|e| e.name == name) {
+            picker.choose(FIRST_FILE_ROW + i);
         }
         picker
     }
@@ -240,8 +243,7 @@ impl FilePicker {
             read_at: None,
         };
         picker.open(Some(project.to_string()), storage);
-        // The first file rather than the way up.
-        picker.choose(1);
+        picker.choose(FIRST_FILE_ROW);
         picker
     }
 
@@ -397,7 +399,7 @@ impl FilePicker {
                     self.field.clear();
                 }
                 self.open(Some(project), storage);
-                self.choose(1);
+                self.choose(FIRST_FILE_ROW);
             }
         }
         Outcome::Stay

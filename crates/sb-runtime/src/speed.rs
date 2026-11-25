@@ -870,6 +870,10 @@ const fn by_column(off: [u64; 5], on: [u64; 5], w32: &[(usize, u64)]) -> [[u64; 
     table
 }
 
+/// The number of sprites, sprite commands and drawing places the meter
+/// remembers. A power of two: a sprite's place is its number's low bits.
+const RECENT: usize = 64;
+
 /// The console's time a program has used, kept by the runtime.
 #[derive(Debug)]
 pub struct Meter {
@@ -877,7 +881,7 @@ pub struct Meter {
     costs: &'static Costs,
     /// The cost of host commands and printing since the meter started.
     host: u64,
-    /// The VM's counts, as last reported before a host call.
+    /// The VM's counts before the last host call.
     work: Work,
     /// The counts and `host` when the frame's time began, and the clock
     /// then.
@@ -888,19 +892,19 @@ pub struct Meter {
     /// when the last frame ended.
     frame_end: u64,
     busy_until: u64,
-    /// The last sprites changed, each in the place its number's low six
-    /// bits give.
-    sprites_seen: [Cell<i16>; 64],
-    /// The sprites of the last 64 sprite commands, in turn, and the index
-    /// of the next; the number of those commands for each sprite, and the
-    /// number of sprites they name.
-    recent_sprites: [Cell<i16>; 64],
+    /// The last sprites changed, each in the place its number's low bits
+    /// give.
+    sprites_seen: [Cell<i16>; RECENT],
+    /// The sprites of the last [`RECENT`] sprite commands, in turn, and the
+    /// index of the next; the number of those commands for each sprite, and
+    /// the number of sprites they name.
+    recent_sprites: [Cell<i16>; RECENT],
     next_sprite: Cell<usize>,
     sprite_uses: Box<[Cell<u8>]>,
     sprites_in_use: Cell<u32>,
     /// The last places misaligned or blended drawing drew at, in turn,
     /// and the index of the next.
-    places_seen: [Cell<u64>; 64],
+    places_seen: [Cell<u64>; RECENT],
     next_place: Cell<usize>,
     /// The files read since the meter started, and whether the program
     /// has run an `EXEC` of a file.
@@ -1027,7 +1031,7 @@ impl Meter {
         self.now() >= self.frame_end
     }
 
-    pub(crate) fn heard(&mut self, work: Work) {
+    pub(crate) fn report_work(&mut self, work: Work) {
         self.work = work;
         self.started &= work.executed == 0;
     }
@@ -1047,9 +1051,10 @@ impl Meter {
         self.host += cells * c.print_scroll_cell;
     }
 
-    /// Charges an `EXEC` that compiles `source`, read from a file, which
-    /// [`Meter::charge_read`] charges, or already in its slot.
-    pub(crate) fn charge_compile(&mut self, source: &str, _from_file: bool) {
+    /// Charges an `EXEC` that compiles `source`. The cost is the same
+    /// whether `source` was read from a file, which [`Meter::charge_read`]
+    /// charges, or was already in its slot.
+    pub(crate) fn charge_compile(&mut self, source: &str) {
         let (tokens, text) = source_tokens(source);
         let c = self.costs;
         self.host += c.exec + tokens * c.compile_token + text * c.compile_text_char;
@@ -1102,22 +1107,24 @@ impl Meter {
     }
 
     /// Whether a sprite command for sprite `id` is for one not among the
-    /// last 64 changed, which it now is.
+    /// last [`RECENT`] changed, which it now is.
     fn far_sprite(&self, id: i64) -> bool {
         let Ok(id) = i16::try_from(id) else {
             return false;
         };
-        id >= 0 && self.sprites_seen[id as usize & 63].replace(id) != id
+        id >= 0 && self.sprites_seen[id as usize & (RECENT - 1)].replace(id) != id
     }
 
-    /// Whether the last 64 sprite commands, with this one for sprite
-    /// `id`, are for no more than [`FEW_SPRITES`] sprites.
+    /// Whether the last [`RECENT`] sprite commands, with this one for
+    /// sprite `id`, are for no more than [`FEW_SPRITES`] sprites.
     fn few_sprites(&self, id: i64) -> bool {
         let Some(id) = i16::try_from(id).ok().filter(|&id| (id as usize) < SPRITES) else {
             return false;
         };
         let (uses, count) = (&self.sprite_uses, &self.sprites_in_use);
-        let at = self.next_sprite.replace((self.next_sprite.get() + 1) % 64);
+        let at = self
+            .next_sprite
+            .replace((self.next_sprite.get() + 1) % RECENT);
         let old = self.recent_sprites[at].replace(id);
         if let Ok(old) = usize::try_from(old) {
             uses[old].set(uses[old].get() - 1);
@@ -1129,8 +1136,8 @@ impl Meter {
     }
 
     /// Whether drawing `w` by `rows` pixels at `x`, `y` is at one of the
-    /// last 64 places misaligned or blended drawing drew at, which it now
-    /// is.
+    /// last [`RECENT`] places misaligned or blended drawing drew at, which
+    /// it now is.
     fn place_seen(&self, x: i64, y: i64, w: u64, rows: u64) -> bool {
         let key = (x as u64 & 0xFFFF) | (y as u64 & 0xFFFF) << 16 | (w & 0xFFFF) << 32 | rows << 48;
         if self.places_seen.iter().any(|p| p.get() == key) {
@@ -1239,14 +1246,15 @@ pub(crate) fn scrolling(cursor: (u32, u32), (w, h): (u32, u32), text: &[u16]) ->
     (scrolls, scrolls * u64::from(w) * u64::from(h))
 }
 
-/// The pattern a `GCOPY` that skips transparent pixels meets in its source:
-/// opaque pixels, rows with both kinds, and changes from one kind to the
-/// other along a row, `regular` where the run that ends is as long as the
+/// The pattern a `GCOPY` that skips transparent pixels meets in its source.
+/// `regular` and `irregular` count the changes from opaque to transparent
+/// or back along a row: `regular` where the run that ends is as long as the
 /// run before it in the row.
 #[derive(Default)]
 struct Pattern {
-    ink: u64,
-    mixed: u64,
+    opaque_px: u64,
+    /// Rows with both opaque and transparent pixels.
+    mixed_rows: u64,
     regular: u64,
     irregular: u64,
 }
@@ -1269,8 +1277,8 @@ fn key_pattern(page: &Page, (x, y): (i64, i64), (w, h): (u64, u64)) -> Pattern {
             run += 1;
             last = Some(opaque);
         }
-        p.ink += ink;
-        p.mixed += u64::from(ink > 0 && ink < w);
+        p.opaque_px += ink;
+        p.mixed_rows += u64::from(ink > 0 && ink < w);
     }
     p
 }
@@ -1301,9 +1309,8 @@ impl Runtime {
             return 0;
         };
         let c = meter.costs;
-        // Columns and rows inside GCLIP's rectangle.
         let clip = self.grp.clip;
-        let size = |x0: i64, y0: i64, x1: i64, y1: i64| {
+        let clipped_size = |x0: i64, y0: i64, x1: i64, y1: i64| {
             let (x0, x1) = (
                 x0.min(x1).max(clip.x0.into()),
                 x0.max(x1).min(clip.x1.into()),
@@ -1314,15 +1321,15 @@ impl Runtime {
             );
             ((x1 - x0 + 1).max(0) as u64, (y1 - y0 + 1).max(0) as u64)
         };
-        let (clip_w, clip_h) = size(
+        let (clip_w, clip_h) = clipped_size(
             clip.x0.into(),
             clip.y0.into(),
             clip.x1.into(),
             clip.y1.into(),
         );
         let page = clip_w * clip_h;
-        // Commands for one sprite, given as the first argument.
-        let sprite = match command {
+        // The sprite is the first argument.
+        let one_sprite = match command {
             Spofs | Sprot | Spscale | Spcolor | Sphome | Spchr | Spvar | Sphide | Spshow
             | Spanim | Spcol | Spcolvec | Splink | Spunlink | Spfunc | Spchk | Spstart | Spstop
             | Spused => !args.is_empty(),
@@ -1330,13 +1337,12 @@ impl Runtime {
             Spclr => args.len() == 1,
             _ => false,
         };
-        let far = sprite && meter.far_sprite(int(args, 0));
+        let far = one_sprite && meter.far_sprite(int(args, 0));
         let other = match far {
             true => c.far_sprite,
             false => 0,
         };
-        // A sprite command among others for a few sprites.
-        let near = sprite && meter.few_sprites(int(args, 0)) && !value;
+        let few_sprites = one_sprite && meter.few_sprites(int(args, 0)) && !value;
         let px = |n: u64, rate: u64| c.grp + n * rate;
         let rect = |(w, h): (u64, u64), rate: u64| c.grp + h * c.row + w * h * rate;
         other
@@ -1350,15 +1356,15 @@ impl Runtime {
                 Locate if args.len() == 2 => c.locate,
                 Locate if args.len() == 3 => c.locate_screen,
                 Spshow => c.spshow,
-                Sprot if near => c.sprot,
-                Spcolor if near => c.spcolor,
-                Sphome if near => c.sphome,
-                Splink if near => c.splink,
-                Sphide if near => c.sphide,
-                Spunlink if near => c.spunlink,
-                Spstop if near => c.spstop,
-                Spcol if near && args.len() == 1 => c.spcol,
-                Spcolvec if near => c.spcolvec,
+                Sprot if few_sprites => c.sprot,
+                Spcolor if few_sprites => c.spcolor,
+                Sphome if few_sprites => c.sphome,
+                Splink if few_sprites => c.splink,
+                Sphide if few_sprites => c.sphide,
+                Spunlink if few_sprites => c.spunlink,
+                Spstop if few_sprites => c.spstop,
+                Spcol if few_sprites && args.len() == 1 => c.spcol,
+                Spcolvec if few_sprites => c.spcolvec,
                 Trot if !value => c.trot,
                 Tscale if !value => c.tscale,
                 Thome if !value => c.thome,
@@ -1440,7 +1446,8 @@ impl Runtime {
                         true => (c.alpha_px, c.place_alpha_pct),
                         false => (c.fill_px, 100),
                     };
-                    let (w, h) = size(int(args, 0), int(args, 1), int(args, 2), int(args, 3));
+                    let (w, h) =
+                        clipped_size(int(args, 0), int(args, 1), int(args, 2), int(args, 3));
                     let x = int(args, 0).min(int(args, 2)).max(clip.x0.into());
                     let y = int(args, 1).min(int(args, 3)).max(clip.y0.into());
                     rect((w, h), rate) + meter.placed((x, y), w, h, pct, Some(blended))
@@ -1483,7 +1490,7 @@ impl Runtime {
                 Gtri => {
                     let [x0, y0, x1, y1, x2, y2] = std::array::from_fn(|i| int(args, i));
                     let n = ((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)).unsigned_abs() / 2;
-                    let (_, rows) = size(0, y0.min(y1).min(y2), 0, y0.max(y1).max(y2));
+                    let (_, rows) = clipped_size(0, y0.min(y1).min(y2), 0, y0.max(y1).max(y2));
                     // Two corners on the leftmost column make the left
                     // side one upright edge.
                     let left = x0.min(x1).min(x2);
@@ -1520,8 +1527,8 @@ impl Runtime {
                         return c.copy
                             + h * c.row
                             + w * h * rate
-                            + p.ink * c.key_ink_px
-                            + p.mixed * c.key_mixed_row
+                            + p.opaque_px * c.key_ink_px
+                            + p.mixed_rows * c.key_mixed_row
                             + p.regular * c.key_regular
                             + p.irregular * c.key_irregular;
                     }

@@ -176,9 +176,9 @@ pub struct Scene {
     pub fits: bool,
     /// Presents wait for the vsync of a display at about 60 Hz.
     pub locked: bool,
-    /// The time left of the frame that has run, and how long ago it
-    /// ended if it has.
+    /// The time left of the frame that has run.
     pub left: Duration,
+    /// How long ago the frame that has run ended, if it has.
     pub late: Duration,
     /// The time to the display's next vsync, as [`to_vsync`] gives it.
     pub to_vsync: Duration,
@@ -371,8 +371,9 @@ pub struct Late {
     /// The drawing is wanted regardless of its cost: the window is not
     /// shown, so nothing is presented anyway, or the bench saves this frame.
     pub wanted: bool,
-    /// The same as [`Scene::mid_loop`] and [`Scene::fits`].
+    /// The same as [`Scene::mid_loop`].
     pub mid_loop: bool,
+    /// The same as [`Scene::fits`].
     pub fits: bool,
     /// The estimated time of the next iteration of the program's main loop.
     pub run: Duration,
@@ -381,13 +382,15 @@ pub struct Late {
 /// An iteration that drew the window, for [`Pacer::drew`].
 #[derive(Clone, Copy, Debug)]
 pub struct Drew {
-    /// When the iteration began, and how long it took up to now.
+    /// When the iteration began.
     pub iteration_began: Instant,
+    /// How long the iteration took up to now.
     pub iteration: Duration,
-    /// The time the program's frames ran, and when they ended.
+    /// The time the program's frames ran.
     pub ran: Duration,
+    /// When the program's frames ended.
     pub drawn_from: Instant,
-    /// When the main window's present began and how long it took.
+    /// When the main window's present began.
     pub present_began: Instant,
     pub present_took: Duration,
     /// The present was made and waited for vsync.
@@ -413,8 +416,9 @@ pub struct Pacer {
     /// The last iteration showed something that every frame is drawn for.
     had_to_draw: bool,
     /// Whether the last present waited for the vsync of a display at
-    /// 60 Hz, and when such a present last came back.
+    /// 60 Hz.
     was_locked: bool,
+    /// When such a present last came back.
     vsync_at: Instant,
     /// Whether the display shows about 60 frames per second.
     at_60_hz: bool,
@@ -608,7 +612,7 @@ pub struct Presents {
     /// Vsync is on.
     vsync: bool,
     /// Presents left that a resize excuses.
-    excused: u32,
+    excused_presents: u32,
 }
 
 /// Whether a present that took `took` shows that the compositor holds the
@@ -623,7 +627,7 @@ impl Presents {
         let mut presents = Presents {
             wanted,
             vsync: false,
-            excused: 0,
+            excused_presents: 0,
         };
         if wanted {
             presents.set_vsync(canvas, true);
@@ -648,12 +652,12 @@ impl Presents {
 
     /// Whether the window's size changed in the last second or so.
     pub fn excused(&self) -> bool {
-        self.excused > 0
+        self.excused_presents > 0
     }
 
     /// The window's size has changed.
     pub fn resized(&mut self) {
-        self.excused = RESIZE_GRACE;
+        self.excused_presents = RESIZE_GRACE;
     }
 
     /// Follows View > "Wait for vsync". When it is off, presents never
@@ -692,8 +696,8 @@ impl Presents {
         if let Some(b) = bench {
             b.present(self.vsync);
         }
-        let excused = self.excused > 0;
-        self.excused = self.excused.saturating_sub(1);
+        let excused = self.excused_presents > 0;
+        self.excused_presents = self.excused_presents.saturating_sub(1);
         if self.vsync && held_back(start.elapsed(), excused) {
             // Held back while the system says the window is shown,
             // because X11 never says it is covered: pace by the clock

@@ -694,7 +694,7 @@ pub enum Stopped {
 pub const KEY_BUFFER: usize = 128;
 /// The number of keys per frame that move from the buffer where typed keys
 /// wait to the buffer that programs read.
-const KEYS_A_FRAME: usize = 32;
+const KEYS_PER_FRAME: usize = 32;
 /// Frames per half period of the editor cursor's blink: at 60 fps, a full
 /// blink takes about 833 ms.
 const CURSOR_BLINK: u32 = 25;
@@ -709,9 +709,10 @@ const SPLIT_COLOR: u32 = 0xFF30_3040;
 const SPLIT_FLASH: u32 = 0xFF58_A0FF;
 const SPLIT_FLASH_HOLD: u32 = 12;
 const SPLIT_FLASH_FADE: u32 = 30;
-/// The share of the editor frame, out of 20, that the debugger panel
-/// takes at the bottom of the frame.
+/// The share of the editor frame, `PANEL_SHARE` out of `PANEL_SHARES`,
+/// that the debugger panel takes at the bottom of the frame.
 const PANEL_SHARE: u32 = 7;
+const PANEL_SHARES: u32 = 20;
 
 /// Character codes for keys that do not produce text, as INKEY$ returns them.
 pub mod keys {
@@ -834,7 +835,7 @@ pub struct Runtime {
     /// Typed characters not yet read by INKEY$ or INPUT.
     pub(crate) keys: VecDeque<u32>,
     /// Keys on their way to [`Runtime::keys`], typed or from PUSHKEY. Each
-    /// frame moves up to [`KEYS_A_FRAME`] of them there.
+    /// frame moves up to [`KEYS_PER_FRAME`] of them there.
     pub(crate) typed: VecDeque<u32>,
     /// The keys of pasted text. When DIRECT mode starts, it drops the
     /// waiting keys, but not these.
@@ -2074,7 +2075,7 @@ impl Runtime {
         // Pasted lines go one at a time, so that when DIRECT mode starts
         // again after one line, the next pasted line is still waiting.
         if self.typed.is_empty() && !self.paste_held {
-            while self.typed.len() < KEYS_A_FRAME {
+            while self.typed.len() < KEYS_PER_FRAME {
                 let Some(code) = self.pasted.pop_front() else {
                     break;
                 };
@@ -2085,7 +2086,7 @@ impl Runtime {
                 }
             }
         }
-        for _ in 0..KEYS_A_FRAME {
+        for _ in 0..KEYS_PER_FRAME {
             match self.typed.pop_front() {
                 None | Some(0) => break,
                 Some(code) if system_key(code) => break,
@@ -2555,7 +2556,11 @@ impl Runtime {
             self.editor_halves = Some((first, Rc::new(halves)));
         }
         let (w, h) = (self.editor_fb.width(), self.editor_fb.height());
-        let reserve = if panel { h * PANEL_SHARE / 20 } else { 0 };
+        let reserve = if panel {
+            h * PANEL_SHARE / PANEL_SHARES
+        } else {
+            0
+        };
         self.panel_at = panel.then_some(h - reserve);
         let look = Look {
             wrap: s.editor_wrap,
@@ -2575,7 +2580,6 @@ impl Runtime {
         let name = |editor: &Editor| {
             let slot = editor.slot();
             let mut name = self.slot_names[slot].clone();
-            // The slot has edits that were not saved.
             if self.slot_modified[slot] || editor.is_modified() {
                 name.push_str(" *");
             }
@@ -3045,7 +3049,7 @@ impl Host for Runtime {
 
     fn work(&mut self, work: sb_core::vm::Work) {
         if let Some(meter) = &mut self.meter {
-            meter.heard(work);
+            meter.report_work(work);
         }
     }
 
@@ -3174,7 +3178,7 @@ impl Host for Runtime {
         }
         self.slot_edits.push((slot, crate::prg::SlotEdit::Compiled));
         if let Some(meter) = &mut self.meter {
-            meter.charge_compile(&self.slots[slot], file.is_some());
+            meter.charge_compile(&self.slots[slot]);
         }
         Ok(Exec::Run(self.slots[slot].clone()))
     }

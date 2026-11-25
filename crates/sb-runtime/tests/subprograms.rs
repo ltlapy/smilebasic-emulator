@@ -9,6 +9,7 @@ use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
 use sb_runtime::storage::Storage;
+use sb_runtime::text::TextScreen;
 
 struct TempDir(PathBuf);
 
@@ -38,12 +39,14 @@ fn machine(dir: &TempDir, source: &str) -> Machine {
     m
 }
 
+/// The keys the runtime moves from its typing queue per frame.
+const KEYS_PER_FRAME: usize = 32;
+
 /// Types a line in lower case (it arrives in upper case) and runs it.
 fn enter(m: &mut Machine, line: &str) {
     m.type_text(line);
     m.rt.key_press(keys::ENTER);
-    // Keys arrive at 32 per frame.
-    for _ in 0..=line.len() / 32 {
+    for _ in 0..=line.len() / KEYS_PER_FRAME {
         m.frame();
     }
     for _ in 0..100 {
@@ -62,7 +65,12 @@ fn frames(m: &mut Machine, n: usize) {
 }
 
 fn rows(m: &Machine) -> Vec<String> {
-    let console = &m.rt.text[4];
+    console_rows(&m.rt.text[4])
+}
+
+/// The rows of `console` that are not empty, each up to its first empty
+/// cell.
+fn console_rows(console: &TextScreen) -> Vec<String> {
     let (w, h) = console.size();
     (0..h)
         .map(|y| {
@@ -737,18 +745,7 @@ fn subrun_takes_lower_case_and_a_file_type() {
 /// The console of the sub interpreter, in the form [`rows`] gives for the
 /// main one.
 fn sub_rows(m: &Machine) -> Vec<String> {
-    let console = &m.sub_runtime().expect("running").0.text[4];
-    let (w, h) = console.size();
-    (0..h)
-        .map(|y| {
-            let codes: Vec<u16> = (0..w)
-                .map(|x| console.cell(x, y).code)
-                .take_while(|&c| c != 0)
-                .collect();
-            String::from_utf16(&codes).unwrap()
-        })
-        .filter(|r| !r.is_empty())
-        .collect()
+    console_rows(&m.sub_runtime().expect("running").0.text[4])
 }
 
 const THEN_WAIT: &str = "WHILE 1:VSYNC:WEND\n";
@@ -1049,7 +1046,6 @@ fn the_later_dialogs_timeout_closes_both() {
     assert_eq!(main, sub);
 }
 
-/// Whether the subprogram still runs.
 fn sub_runs(m: &Machine) -> bool {
     m.sub_runtime().is_some()
 }

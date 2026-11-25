@@ -276,7 +276,7 @@ emits, and that function records the highest index per table (`need`).
 | The tables are at least `need` long | `Native::enter` compares `need` with the `Vars` view's lengths before each call |
 | Nothing else uses the tables during the call | `Vars::native_tables` takes `&mut self` of the view that holds the borrows |
 | Native code writes only valid numbers, and never over a string or array | tags written are the integer or real tag; the write guard fails on tags from 3 |
-| `Ctx` is laid out as native code reads it | `#[repr(C)]`; a test of its offsets |
+| `Ctx` is laid out as native code reads it | `#[repr(C)]`; the offsets come from `offset_of!` |
 | Code is mapped while it runs | `Code::run` borrows the `Code`, which the program's `Rc` owns |
 | No unwinding through native frames | native code calls nothing |
 | Native code matches the calling convention | Cranelift's `CallConv::triple_default`, Rust's `extern "C"` |

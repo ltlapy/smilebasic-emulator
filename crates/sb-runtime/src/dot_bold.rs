@@ -91,12 +91,12 @@ pub fn embolden(rows: &Cell16, face: Face, edge: EdgeRule) -> Cell16 {
         let refused = added & block;
         // From column 1 to column 2 (or 14 to 13), where the pixel beyond
         // must be empty too.
-        let inner = match (inward, left) {
+        let grown_inward = match (inward, left) {
             (false, _) => 0,
             (true, true) => (refused << 2) & !(r >> 1),
             (true, false) => (refused >> 2) & !(r << 1),
         };
-        r | (added & !block) | inner
+        r | (added & !block) | grown_inward
     })
 }
 

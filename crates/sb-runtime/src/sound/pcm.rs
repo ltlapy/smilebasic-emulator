@@ -63,10 +63,10 @@ impl Level {
 
 /// Samples in the ring a stream plays from, on each side.
 const RING: usize = 4096;
-/// The feed tops the ring up once it holds fewer samples than this...
-const LOW: f32 = 1024.0;
-/// ...until it holds more than this.
-const HIGH: f32 = 3072.0;
+/// The feed tops the ring up once it holds fewer samples than this.
+const REFILL_BELOW: f32 = 1024.0;
+/// The feed tops the ring up until it holds more samples than this.
+const REFILL_UNTIL: f32 = 3072.0;
 /// Output samples between feeds: the mixer takes the stream in blocks of
 /// 5 ms.
 const BLOCK: usize = (RATE / 200) as usize;
@@ -229,7 +229,7 @@ impl Pcm {
             self.ring[self.write] = [sample(&a, i), sample(b, base + i)];
             self.write = (self.write + 1) % RING;
             self.held += 1.0;
-            self.filling = self.held <= HIGH;
+            self.filling = self.held <= REFILL_UNTIL;
             self.fed = (i + 1) % len;
         }
     }
@@ -276,7 +276,7 @@ impl Pcm {
                     if self.held < 0.0 {
                         self.held = 0.0;
                     }
-                    self.filling |= self.held < LOW;
+                    self.filling |= self.held < REFILL_BELOW;
                     s
                 } else {
                     [0, 0]

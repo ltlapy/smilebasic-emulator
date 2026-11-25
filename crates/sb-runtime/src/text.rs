@@ -699,8 +699,7 @@ impl TextScreen {
                         cell + cs as i32,
                         ((cy + 1) * cs) as i32,
                     ),
-                    // A quarter of the cell wide, on cells of any size.
-                    width: if line.overwrite { cs } else { cs >> 2 },
+                    width: if line.overwrite { cs } else { cs / 4 },
                     color: if line.composed { 0x00FF_FFFF } else { WHITE },
                 }
             }),

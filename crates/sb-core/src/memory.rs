@@ -26,7 +26,7 @@ use std::cell::Cell;
 use std::collections::HashSet;
 
 use crate::error::{ErrorKind, Result};
-use crate::value::{ArrayData, ElemType, Value};
+use crate::value::{ArrayData, ElemType, StrRef, Value};
 
 /// FREEMEM right after start-up, which the start-up screen shows too.
 pub const TOTAL: u32 = 134_216_720;
@@ -249,11 +249,7 @@ impl Tally {
         match value {
             Value::Str(s) => {
                 self.values += 1;
-                // Nothing else holds it, which is true of most strings. This
-                // test is much cheaper than the set.
-                if std::rc::Rc::strong_count(s) == 1 || self.seen.insert(s.as_ptr() as usize) {
-                    self.bytes += string_bytes(s.borrow().len());
-                }
+                self.add_string_bytes(s);
             }
             Value::Array(a) => {
                 if !self.seen.insert(a.as_ptr() as usize) {
@@ -265,15 +261,20 @@ impl Tally {
                 if let ArrayData::Str(v) = &a.data {
                     self.values += v.len();
                     for s in v {
-                        if std::rc::Rc::strong_count(s) == 1
-                            || self.seen.insert(s.as_ptr() as usize)
-                        {
-                            self.bytes += string_bytes(s.borrow().len());
-                        }
+                        self.add_string_bytes(s);
                     }
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Adds the bytes of string `s`, unless they were counted already.
+    fn add_string_bytes(&mut self, s: &StrRef) {
+        // Nothing else holds it, which is true of most strings. This
+        // test is much cheaper than the set.
+        if std::rc::Rc::strong_count(s) == 1 || self.seen.insert(s.as_ptr() as usize) {
+            self.bytes += string_bytes(s.borrow().len());
         }
     }
 

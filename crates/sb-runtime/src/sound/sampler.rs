@@ -11,9 +11,9 @@ use super::synth::{CHANNELS, Synth};
 use super::wave::Envelope as MmlEnvelope;
 
 /// Samples between envelope steps: 5 ms.
-pub(crate) const TICK: usize = RATE as usize / 200;
+pub(crate) const STEP_SAMPLES: usize = RATE as usize / 200;
 /// Milliseconds in a step: the envelope advances one millisecond at a time.
-const TICK_MS: u32 = 5;
+const STEP_MS: u32 = 5;
 /// Notes sounding at the same time. A new one stops the oldest released
 /// note, or the oldest note when none is released.
 pub(crate) const MAX_VOICES: usize = 48;
@@ -227,14 +227,14 @@ impl LfoState {
             return 0.0;
         }
         if self.waited < lfo.delay {
-            self.waited += TICK as u32;
+            self.waited += STEP_SAMPLES as u32;
             return 0.0;
         }
         // The wave starts from 0 at the step after the delay, and moves
         // from the next.
         let value = (self.phase * std::f32::consts::TAU).sin();
         let hz = lfo.speed as f32 * 0.390_625;
-        self.phase = (self.phase + hz * TICK as f32 / RATE as f32).fract();
+        self.phase = (self.phase + hz * STEP_SAMPLES as f32 / RATE as f32).fract();
         value * lfo.depth as f32 / 128.0 * lfo.range as f32
     }
 }
@@ -285,7 +285,7 @@ enum Stage {
 }
 
 /// A note's level as SmileBASIC's instruments move it, in 0.1 dB, one
-/// millisecond at a time, stepped every [`TICK`] samples. The PSG and
+/// millisecond at a time, stepped every [`STEP_SAMPLES`] samples. The PSG and
 /// user waveforms move the same way. The attack multiplies the level,
 /// which starts at -90.4 dB; the hold lasts (hold + 1)^2 / 4 ms; decay and
 /// release take the level down in a straight line, and the note ends
@@ -333,7 +333,7 @@ impl Envelope {
 
     /// Advances by one step's milliseconds.
     pub(crate) fn step(&mut self) {
-        for _ in 0..TICK_MS {
+        for _ in 0..STEP_MS {
             self.step_ms();
         }
     }
@@ -437,7 +437,7 @@ struct Voice {
     velocity: f32,
     envelope: Envelope,
     /// Samples into the current envelope step.
-    in_tick: usize,
+    in_step: usize,
     /// Whether the first step has been taken.
     begun: bool,
     gains: [f32; 2],
@@ -504,12 +504,12 @@ impl Voice {
             self.begun = true;
             self.gains = target;
         }
-        self.deltas = [0, 1].map(|i| (target[i] - self.gains[i]) / TICK as f32);
+        self.deltas = [0, 1].map(|i| (target[i] - self.gains[i]) / STEP_SAMPLES as f32);
         let cents = ch.bend as f32 + cents + self.porta;
         self.step = self.base_step * f64::from(2f32.powf(cents / 1200.0));
     }
 
-    /// A step of the envelope lasts [`TICK`] samples, which are rendered as
+    /// A step of the envelope lasts [`STEP_SAMPLES`] samples, which are rendered as
     /// one run. This is the heaviest part of a voice's work, and in a run
     /// nothing but the waveform can change.
     fn render(&mut self, bank: &Bank, ch: &Channel, left: &mut [f32], right: &mut [f32]) {
@@ -517,7 +517,7 @@ impl Voice {
         let data = &bank.data[wave.data.clone()];
         let mut at = 0;
         while at < left.len() {
-            if self.in_tick == 0 {
+            if self.in_step == 0 {
                 if self.envelope.stage == Stage::Done && self.gains == [0.0; 2] {
                     self.done = true;
                 }
@@ -526,9 +526,9 @@ impl Voice {
             if self.done {
                 return;
             }
-            let run = (TICK - self.in_tick).min(left.len() - at);
-            let ends_step = self.in_tick + run == TICK;
-            self.in_tick = (self.in_tick + run) % TICK;
+            let run = (STEP_SAMPLES - self.in_step).min(left.len() - at);
+            let ends_step = self.in_step + run == STEP_SAMPLES;
+            self.in_step = (self.in_step + run) % STEP_SAMPLES;
             let (ls, rs) = (&mut left[at..at + run], &mut right[at..at + run]);
             at += run;
             // Land exactly on the target, which may be silence: for the last
@@ -617,7 +617,7 @@ impl Voice {
     #[cfg(test)]
     fn render_by_sample(&mut self, bank: &Bank, ch: &Channel, left: &mut [f32], right: &mut [f32]) {
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-            if self.in_tick == 0 {
+            if self.in_step == 0 {
                 if self.envelope.stage == Stage::Done && self.gains == [0.0; 2] {
                     self.done = true;
                 }
@@ -626,10 +626,10 @@ impl Voice {
             if self.done {
                 return;
             }
-            self.in_tick = (self.in_tick + 1) % TICK;
+            self.in_step = (self.in_step + 1) % STEP_SAMPLES;
             let s = self.next_sample(bank);
             self.gains = [0, 1].map(|i| self.gains[i] + self.deltas[i]);
-            if self.in_tick == 0 {
+            if self.in_step == 0 {
                 // Land exactly on the target, which may be silence.
                 self.gains = self.gains.map(|g| if g.abs() < 1e-6 { 0.0 } else { g });
             }
@@ -726,7 +726,7 @@ impl Sampler {
                 },
                 None => region.envelope,
             }),
-            in_tick: 0,
+            in_step: 0,
             begun: false,
             gains: [0.0; 2],
             deltas: [0.0; 2],
@@ -1164,7 +1164,7 @@ pub(crate) mod tests {
                     assert_eq!(v.done, w.done, "round {round}");
                     if !v.done {
                         assert_eq!((v.s0, v.s1, v.frac), (w.s0, w.s1, w.frac));
-                        assert_eq!((v.gains, v.in_tick), (w.gains, w.in_tick));
+                        assert_eq!((v.gains, v.in_step), (w.gains, w.in_step));
                     }
                 }
                 let bits = |v: &[f32]| v.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
@@ -1206,7 +1206,7 @@ pub(crate) mod tests {
         peak(&mut s, 1);
         assert!((s.voices[0].step - 2.0).abs() < 1e-6);
         s.bend(0, -1200);
-        peak(&mut s, TICK);
+        peak(&mut s, STEP_SAMPLES);
         assert!((s.voices[0].step - 1.0).abs() < 1e-6);
     }
 

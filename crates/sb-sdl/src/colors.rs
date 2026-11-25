@@ -273,18 +273,14 @@ mod tests {
     use super::*;
     use sb_runtime::palette::SMILEBASIC;
 
-    fn centre(r: Rect) -> (i32, i32) {
-        ((r.x + r.w / 2) as i32, (r.y + r.h / 2) as i32)
-    }
-
     #[test]
     fn presets_and_typed_colors() {
         let mut w = ColorWindow::new((1280, 720));
         let mut p = SMILEBASIC;
-        assert_eq!(w.click(centre(w.preset_row(1)), &mut p), Outcome::Stay);
+        assert_eq!(w.click(w.preset_row(1).center(), &mut p), Outcome::Stay);
         assert_eq!(p, PRESETS[1].1);
 
-        w.click(centre(w.color_row(1)), &mut p);
+        w.click(w.color_row(1).center(), &mut p);
         w.text("#12ab", &mut p);
         assert_eq!(p, PRESETS[1].1, "not yet six digits");
         w.key(Keycode::Backspace);
@@ -312,11 +308,11 @@ mod tests {
         );
         let mut p = SMILEBASIC;
         assert_eq!(
-            w.click(centre(w.button(Button::Import)), &mut p),
+            w.click(w.button(Button::Import).center(), &mut p),
             Outcome::Import
         );
         assert_eq!(
-            w.click(centre(w.button(Button::Export)), &mut p),
+            w.click(w.button(Button::Export).center(), &mut p),
             Outcome::Export
         );
     }

@@ -86,11 +86,6 @@ impl Default for Meta {
     }
 }
 
-/// The state of the main interpreter, as ENVSTAT reports it.
-mod status {
-    pub const RUNNING: i32 = 3;
-}
-
 fn str_units(v: &Value) -> Result<Vec<u16>> {
     checking(v, || Ok(v.clone().into_str()?.borrow().clone()))
 }
@@ -129,7 +124,7 @@ impl Runtime {
     /// that asks is running on it, even when it was typed in DIRECT mode
     /// while a program is stopped. Only subprograms see the other states.
     fn status(&self) -> i32 {
-        status::RUNNING
+        crate::sub::status::RUNNING
     }
 
     /// ENVLOCATE: the position of the console's cursor on the 1280x720
@@ -482,8 +477,8 @@ pub fn meta_files(meta: &Meta) -> std::result::Result<[(&'static str, Vec<u8>); 
     ])
 }
 
-/// A title or description, cut to `max` characters.
-// A longer title or description is not an error; it is cut.
+/// A title or description, cut to `max` characters. A longer one is not
+/// an error.
 fn limited(mut text: Vec<u16>, max: usize) -> Vec<u16> {
     text.truncate(max);
     text

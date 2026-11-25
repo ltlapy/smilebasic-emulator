@@ -252,7 +252,7 @@ pub enum Stage {
 
 const STAGES: usize = 8;
 /// The number of stages that draw, which come first.
-const DRAWING: usize = Stage::Events as usize;
+const DRAWING_STAGES: usize = Stage::Events as usize;
 const NAMES: [&str; STAGES] = [
     "screen", "editor", "gather", "overlays", "present", "events", "run", "wait",
 ];
@@ -266,6 +266,9 @@ const SETTLE: u32 = 60;
 /// How much darker than both neighbors a frame is, out of 255, to count as
 /// a dip.
 const LEAST_DIP: f32 = 0.5;
+/// An iteration drew the screens again when its screen stage took at least
+/// 1/N of the longest one.
+const REDRAWN_SHARE: u32 = 4;
 
 /// The frames at least `least` darker than the frames on either side of
 /// them, with the amount.
@@ -285,9 +288,9 @@ fn single_frame_dips(lumas: &[f32], least: f32) -> Vec<(usize, f32)> {
 pub struct Bench {
     /// `SB_UI_BENCH` is set.
     on: bool,
-    /// Iterations timed, and iterations before the timing begins, as
-    /// `frames=` and `settle=` say.
+    /// Iterations timed, as `frames=` says.
     iterations: u32,
+    /// Iterations before the timing begins, as `settle=` says.
     settle: u32,
     run: Option<(String, String)>,
     load: Option<(String, String)>,
@@ -298,12 +301,14 @@ pub struct Bench {
     apart: bool,
     panel: bool,
     shot: Option<String>,
-    /// The file for the brightness of the frames, and the values so far: the
-    /// number of the iteration that drew the frame, and its mean brightness.
+    /// The file for the brightness of the frames.
     luma: Option<String>,
+    /// The brightness values so far: the number of the iteration that drew
+    /// the frame, and its mean brightness.
     lumas: Vec<(u32, f32)>,
-    /// The file for the line of each iteration, and the lines so far.
+    /// The file for the line of each iteration.
     log: Option<String>,
+    /// The lines of the iterations so far.
     lines: Vec<String>,
     /// The window's size in pixels in this iteration.
     size: (u32, u32),
@@ -327,9 +332,9 @@ pub struct Bench {
     /// The stages of each timed iteration, and the bytes it uploaded.
     timed: Vec<([Duration; STAGES], u64)>,
     current: [Duration; STAGES],
-    /// The frames the standby thread ran, and their time, in this iteration
-    /// and in the iterations timed.
+    /// The frames the standby thread ran, and their time, in this iteration.
     kept_now: Kept,
+    /// The same, in the iterations timed.
     kept: Kept,
     /// Iterations timed in which the standby thread ran frames.
     kept_iterations: u32,
@@ -338,19 +343,20 @@ pub struct Bench {
     /// The frames in which the program missed part of an iteration of its
     /// main loop, when the timing began and now.
     missed: (Missed, Missed),
-    /// The machine's count of deferred VSYNCs after the last iteration,
-    /// whether it rose in that iteration, and the number of stretches of
-    /// iterations in a row in which it rose, of the iterations timed. Once
-    /// one VSYNC that was behind has waited for the next frame, the machine
-    /// counts every VSYNC after it until two iterations of the program's
-    /// main loop fit one frame, though none of those loses a frame. Each
-    /// stretch starts with a VSYNC that did wait.
+    /// The machine's count of deferred VSYNCs after the last iteration.
     deferred_seen: u64,
+    /// Whether that count rose in the last iteration.
     deferring: bool,
+    /// The number of stretches of iterations in a row in which the count
+    /// rose, of the iterations timed. Once one VSYNC that was behind has
+    /// waited for the next frame, the machine counts every VSYNC after it
+    /// until two iterations of the program's main loop fit one frame,
+    /// though none of those loses a frame. Each stretch starts with a VSYNC
+    /// that did wait.
     deferrals: u32,
-    /// Whether this iteration skipped the drawing, and the number of
-    /// iterations timed that did.
+    /// Whether this iteration skipped the drawing.
     undrawn_now: bool,
+    /// The number of iterations timed that skipped the drawing.
     undrawn: u32,
     last: Option<Instant>,
     /// When the timing began.
@@ -360,9 +366,9 @@ pub struct Bench {
     /// The stats of the sound device's buffer when the timing began, and
     /// now.
     sound: Option<(Stats, Stats)>,
-    /// The samples waiting in that buffer as this iteration began, and as
-    /// each iteration timed began.
+    /// The samples waiting in that buffer as this iteration began.
     queued_now: usize,
+    /// The samples waiting in that buffer as each iteration timed began.
     queued: Vec<usize>,
     /// The iteration at which the notice for a program slower than real
     /// time first showed.
@@ -486,25 +492,8 @@ impl Bench {
             self.undrawn += u32::from(self.undrawn_now);
             self.queued.push(self.queued_now);
             if self.log.is_some() {
-                let stages = self.current.map(|t| t.as_micros().to_string());
-                let (drawing, rest) = stages.split_at(DRAWING);
-                let (drawing, rest) = (drawing.join(" "), rest.join(" "));
-                let made = MADE.load(Ordering::Relaxed);
-                let (iteration, (w, h)) = (self.iteration, self.size);
-                let (kept, busy) = (self.kept_now.frames, self.kept_now.busy.as_micros());
-                let count = machine.rt.main_count();
-                let Missed {
-                    cut,
-                    held,
-                    deferred,
-                } = machine.missed;
-                let ran_out = self.sound.map_or(0, |(_, now)| now.ran_out);
-                self.lines.push(format!(
-                    "{iteration} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy} \
-                     {count} {cut} {held} {deferred} {} {} {ran_out}",
-                    u8::from(!self.undrawn_now),
-                    self.queued_now
-                ));
+                let line = self.log_line(machine, uploaded);
+                self.lines.push(line);
             }
         }
         self.iteration += 1;
@@ -528,6 +517,30 @@ impl Bench {
         self.missed.1 = machine.missed;
         let ended = self.until_end && self.iteration > set_up + 10 && !machine.is_running();
         ended || self.timed.len() >= self.iterations as usize
+    }
+
+    /// Returns the `log=` line of this iteration, which uploaded `uploaded`
+    /// bytes.
+    fn log_line(&self, machine: &Machine, uploaded: u64) -> String {
+        let stages = self.current.map(|t| t.as_micros().to_string());
+        let (drawing, rest) = stages.split_at(DRAWING_STAGES);
+        let (drawing, rest) = (drawing.join(" "), rest.join(" "));
+        let made = MADE.load(Ordering::Relaxed);
+        let (iteration, (w, h)) = (self.iteration, self.size);
+        let (kept, busy) = (self.kept_now.frames, self.kept_now.busy.as_micros());
+        let count = machine.rt.main_count();
+        let Missed {
+            cut,
+            held,
+            deferred,
+        } = machine.missed;
+        let ran_out = self.sound.map_or(0, |(_, now)| now.ran_out);
+        format!(
+            "{iteration} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy} \
+             {count} {cut} {held} {deferred} {} {} {ran_out}",
+            u8::from(!self.undrawn_now),
+            self.queued_now
+        )
     }
 
     /// Notes that the notice for a program slower than real time shows.
@@ -738,7 +751,7 @@ impl Bench {
         println!("{} frames timed, renderer {renderer}", self.timed.len());
         self.report_luma();
         if let Some(path) = &self.log {
-            let (drawing, rest) = NAMES.split_at(DRAWING);
+            let (drawing, rest) = NAMES.split_at(DRAWING_STAGES);
             let (drawing, rest) = (drawing.join(" "), rest.join(" "));
             let head = format!(
                 "frame w h {drawing} uploaded made {rest} kept worker maincnt cut held deferred \
@@ -772,7 +785,7 @@ impl Bench {
         let screen = Stage::Screen as usize;
         let mut drawn: Vec<&[Duration; STAGES]> = self.timed.iter().map(|(t, _)| t).collect();
         let longest = drawn.iter().map(|t| t[screen]).max().unwrap_or_default();
-        drawn.retain(|t| t[screen] * 4 >= longest);
+        drawn.retain(|t| t[screen] * REDRAWN_SHARE >= longest);
         line("busy scr", drawn.iter().map(|t| t[screen]).collect());
         line(
             "busy pres",

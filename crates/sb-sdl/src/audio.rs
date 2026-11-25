@@ -40,7 +40,7 @@ impl AudioCallback<f32> for Pull {
 pub struct Audio {
     output: Arc<Mutex<Output>>,
     /// Kept so that the device continues calling back.
-    _stream: Option<AudioStreamWithCallback<Pull>>,
+    stream: Option<AudioStreamWithCallback<Pull>>,
 }
 
 impl Audio {
@@ -65,15 +65,12 @@ impl Audio {
             Ok(stream)
         })();
         let stream = stream.map_err(|e| eprintln!("no sound: {e}")).ok();
-        Audio {
-            output,
-            _stream: stream,
-        }
+        Audio { output, stream }
     }
 
     /// Queues a frame's samples, left and right in turn.
     pub fn play(&self, samples: &[f32]) {
-        if self._stream.is_none() || samples.is_empty() {
+        if self.stream.is_none() || samples.is_empty() {
             return;
         }
         if let Ok(mut o) = self.output.lock() {
@@ -85,14 +82,14 @@ impl Audio {
     /// same way [`Audio::play`] queues them.
     pub fn sink(&self) -> Sink {
         Sink {
-            output: self._stream.as_ref().map(|_| self.output.clone()),
+            output: self.stream.as_ref().map(|_| self.output.clone()),
         }
     }
 
     /// Returns the counters of the device buffer and the number of samples
     /// waiting in it now, if there is a device.
     pub fn stats(&self) -> Option<(Stats, usize)> {
-        self._stream.as_ref()?;
+        self.stream.as_ref()?;
         self.output.lock().ok().map(|o| (o.stats, o.queued()))
     }
 }
@@ -104,8 +101,8 @@ impl Drop for Audio {
     /// Removing the callback from the stream first prevents that, because
     /// SDL takes the stream lock both to call the callback and to change it.
     fn drop(&mut self) {
-        if let Some(stream) = &self._stream {
-            // SAFETY: the stream lives until `_stream` is dropped, after
+        if let Some(stream) = &self.stream {
+            // SAFETY: the stream lives until `self.stream` is dropped, after
             // this; SDL runs no callback once the call returns.
             unsafe {
                 SDL_SetAudioStreamGetCallback(stream.raw(), None, std::ptr::null_mut());
@@ -135,9 +132,15 @@ impl Sink {
     }
 }
 
-/// The maximum number of chunks checked in a SoundFont; real ones have
-/// about 25.
-const FONT_CHUNKS: usize = 256;
+/// Real SoundFonts have about 25 chunks.
+const MAX_FONT_CHUNKS: usize = 256;
+
+/// The bytes before a SoundFont's first chunk: "RIFF", its size and "sfbk".
+const RIFF_HEADER: u64 = 12;
+
+/// The bytes from a list's start to its first chunk: "LIST", its size and
+/// its type.
+const LIST_HEADER: u64 = 12;
 
 /// Whether the chunks in the three lists of a SoundFont fit in the file.
 /// rustysynth allocates each chunk's size (up to 4 GB) before reading it,
@@ -146,10 +149,9 @@ const FONT_CHUNKS: usize = 256;
 /// would have loaded. Any other fault is left for rustysynth to find.
 fn chunks_fit<R: Read + Seek>(reader: &mut R) -> std::io::Result<bool> {
     let len = reader.seek(SeekFrom::End(0))?;
-    // After "RIFF", its size and "sfbk".
-    let mut at = 12;
+    let mut at = RIFF_HEADER;
     let (mut end, mut lists) = (len, 0);
-    for _ in 0..FONT_CHUNKS {
+    for _ in 0..MAX_FONT_CHUNKS {
         if at + 8 > end {
             break;
         }
@@ -165,8 +167,7 @@ fn chunks_fit<R: Read + Seek>(reader: &mut R) -> std::io::Result<bool> {
             if lists == 3 {
                 end = at + 8 + size;
             }
-            // Into the list, past its type.
-            at += 12;
+            at += LIST_HEADER;
         } else {
             at += 8 + size;
         }

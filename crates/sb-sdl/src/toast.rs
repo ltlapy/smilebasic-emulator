@@ -13,7 +13,7 @@ use crate::ui::{BACKGROUND, BORDER, CHAR, PAD, Rect, TEXT, draw_text, fill, outl
 
 /// About 2.5 seconds at 60 frames per second.
 const SHOW_FRAMES: u32 = 150;
-const SHOWN_AT_ONCE: usize = 6;
+const MAX_SHOWN: usize = 6;
 /// Notices kept beyond those shown, for the "+N more" count.
 const KEPT: usize = 256;
 const HEIGHT: u32 = CHAR + 2 * PAD;
@@ -75,7 +75,7 @@ impl Toasts {
 
     /// The lines to show, top to bottom.
     fn lines(&self) -> Vec<String> {
-        let hidden = self.items.len().saturating_sub(SHOWN_AT_ONCE);
+        let hidden = self.items.len().saturating_sub(MAX_SHOWN);
         let mut lines = Vec::new();
         if hidden > 0 {
             lines.push(format!("+{hidden} more"));
@@ -139,7 +139,7 @@ mod tests {
             t.push(format!("Loading {i}"));
         }
         let lines = t.lines();
-        assert_eq!(lines.len(), SHOWN_AT_ONCE + 1);
+        assert_eq!(lines.len(), MAX_SHOWN + 1);
         assert_eq!(lines[0], "+6 more");
         assert_eq!(lines.last().unwrap(), "Loading 9");
         for _ in 0..SHOW_FRAMES - 1 {

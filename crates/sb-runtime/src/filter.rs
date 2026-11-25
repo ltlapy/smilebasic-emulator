@@ -318,12 +318,12 @@ fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: b
 }
 
 /// One texel coordinate of bilinear sampling: the two texels on either
-/// side and how much of the second, in 256ths.
+/// side and the weight of the second, in 256ths.
 #[derive(Clone, Copy)]
 struct Tap {
     first: u32,
     second: u32,
-    part: u32,
+    weight: u32,
 }
 
 /// The half-size frames that mosaic and blur work in and the lookups in
@@ -366,12 +366,16 @@ fn taps(out: &mut Vec<Tap>, size: u32, q: f64, count: usize, flip: bool) {
         // processors before SSE4.1.
         let t = at as i64;
         let t = t - i64::from((t as f64) > at);
-        let part = ((at - t as f64) * 256.0 + 0.5) as i64;
-        let (t, part) = if part == 256 { (t + 1, 0) } else { (t, part) };
+        let weight = ((at - t as f64) * 256.0 + 0.5) as i64;
+        let (t, weight) = if weight == 256 {
+            (t + 1, 0)
+        } else {
+            (t, weight)
+        };
         Tap {
             first: t.clamp(0, last) as u32,
             second: (t + 1).clamp(0, last) as u32,
-            part: part as u32,
+            weight: weight as u32,
         }
     }));
 }
@@ -385,8 +389,8 @@ fn shrink(half: &mut Half, source: &[u32], w: usize, hw: usize) {
     // Exactly between four texels, as with blocks of an even size: the
     // sum of four divided by four, for two channels of a word together.
     let mean = |sum: u32| (2 * sum + 3 * 0x0001_0001) >> 3 & LO;
-    let ties = half.across.iter().all(|t| t.part == 128);
-    let on_texels = half.across.iter().all(|t| t.part == 0);
+    let ties = half.across.iter().all(|t| t.weight == 128);
+    let on_texels = half.across.iter().all(|t| t.weight == 0);
     let Half {
         pixels,
         across,
@@ -396,11 +400,11 @@ fn shrink(half: &mut Half, source: &[u32], w: usize, hw: usize) {
     for (out, y) in pixels.chunks_mut(hw).zip(down.iter()) {
         let r0 = &source[y.first as usize * w..][..w];
         let r1 = &source[y.second as usize * w..][..w];
-        if on_texels && y.part == 0 {
+        if on_texels && y.weight == 0 {
             for (o, t) in out.iter_mut().zip(across.iter()) {
                 *o = at(t.first, r0);
             }
-        } else if ties && y.part == 128 {
+        } else if ties && y.weight == 128 {
             for (o, t) in out.iter_mut().zip(across.iter()) {
                 let (a, b) = (at(t.first, r0), at(t.second, r0));
                 let (c, d) = (at(t.first, r1), at(t.second, r1));
@@ -417,7 +421,7 @@ fn shrink(half: &mut Half, source: &[u32], w: usize, hw: usize) {
                 let (c, d) = (at(t.first, r1), at(t.second, r1));
                 *o = a;
                 if a != b || a != c || a != d {
-                    let (wx, wy) = (t.part, y.part);
+                    let (wx, wy) = (t.weight, y.weight);
                     let top = |p: u32, q: u32| p * (256 - wx) + q * wx;
                     *o = u32::from_le_bytes(std::array::from_fn(|k| {
                         let s = 8 * k as u32;

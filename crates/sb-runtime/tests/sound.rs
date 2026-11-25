@@ -1333,7 +1333,7 @@ fn the_debugger_sees_what_tracks_and_beeps_play() {
     assert_eq!((user.track, user.song, user.volume), (3, 130, 100));
     assert_eq!(user.source.as_deref(), Some(mml));
     assert_eq!(
-        (user.state, user.tempo, user.quarter),
+        (user.state, user.tempo, user.ticks_per_quarter),
         (State::Playing, 90, 48)
     );
     assert_eq!((user.ticks, user.vars[2]), (5, 7));

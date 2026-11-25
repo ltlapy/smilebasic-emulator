@@ -50,17 +50,24 @@ fn slot(code: u16) -> Option<usize> {
     match code {
         0x20..=0x7E => Some(usize::from(code - 0x20)),
         // Half-width katakana and punctuation.
-        0xFF61..=0xFF9F => Some(usize::from(code - 0xFF61) + 95),
+        0xFF61..=0xFF9F => Some(usize::from(code - 0xFF61) + FIRST_KANA_SLOT),
         // ￨, ￭, ￮ and ₩.
-        0xFFE8 => Some(158),
-        0xFFED => Some(159),
-        0xFFEE => Some(160),
-        0x20A9 => Some(161),
+        0xFFE8 => Some(FIRST_SYMBOL_SLOT),
+        0xFFED => Some(FIRST_SYMBOL_SLOT + 1),
+        0xFFEE => Some(FIRST_SYMBOL_SLOT + 2),
+        0x20A9 => Some(FIRST_SYMBOL_SLOT + 3),
         _ => None,
     }
 }
 
-const SLOTS: usize = 162;
+/// The slot of U+FF61, after the slots of ASCII (U+0020 to U+007E).
+const FIRST_KANA_SLOT: usize = 0x7F - 0x20;
+/// The slot of U+FFE8, after the slots of U+FF61 to U+FF9F.
+const FIRST_SYMBOL_SLOT: usize = FIRST_KANA_SLOT + (0xFFA0 - 0xFF61);
+const SLOTS: usize = FIRST_SYMBOL_SLOT + 4;
+/// The first column of GalmuriMono7's half-width glyphs in the fallback
+/// font's 8x8 cell: `HALF_LEFT` in build.rs, which centers them.
+const GALMURI_HALF_LEFT: usize = 2;
 const SMALL: usize = 4 * 8;
 const LARGE: usize = 8 * 16;
 
@@ -95,19 +102,17 @@ impl HalfGlyphs {
         for (code, s) in codes {
             let half = &mut small[s * SMALL..(s + 1) * SMALL];
             let mut galmuri_small = [0; SMALL];
-            if let Some(rows) = galmuri(code) {
-                // GalmuriMono7's half-width glyphs sit in columns 2 to 5
-                // of the fallback font's 8x8 cell (see build.rs).
+            if let Some(rows) = font::fallback_rows(code) {
                 for (y, row) in rows.iter().enumerate() {
                     for x in 0..4 {
-                        if row & (0x80 >> (x + 2)) != 0 {
+                        if row & (0x80 >> (x + GALMURI_HALF_LEFT)) != 0 {
                             galmuri_small[y * 4 + x] = 255;
                         }
                     }
                 }
             }
             let file_small = from_file(code, FontSize::Small as u32);
-            let bundled_small = galmuri(code).map(|_| galmuri_small.to_vec());
+            let bundled_small = font::fallback_rows(code).map(|_| galmuri_small.to_vec());
             let found = match file_first {
                 true => file_small.or(bundled_small),
                 false => bundled_small.or(file_small),
@@ -154,23 +159,6 @@ impl HalfGlyphs {
             FontSize::Large => &self.large[s * LARGE..(s + 1) * LARGE],
         })
     }
-}
-
-/// The rows of GalmuriMono7's 8x8 cell for `code`, if it has one.
-fn galmuri(code: u16) -> Option<&'static [u8]> {
-    let records = font::FALLBACK;
-    let count = records.len() / 10;
-    let code_at = |i: usize| u16::from_le_bytes([records[i * 10], records[i * 10 + 1]]);
-    let (mut lo, mut hi) = (0, count);
-    while lo < hi {
-        let mid = (lo + hi) / 2;
-        match code_at(mid).cmp(&code) {
-            std::cmp::Ordering::Less => lo = mid + 1,
-            std::cmp::Ordering::Greater => hi = mid,
-            std::cmp::Ordering::Equal => return Some(&records[mid * 10 + 2..mid * 10 + 10]),
-        }
-    }
-    None
 }
 
 #[cfg(test)]

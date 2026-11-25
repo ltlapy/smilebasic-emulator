@@ -9,17 +9,24 @@ use crate::ui::{
     text_width,
 };
 
+/// A line of the menu.
+pub struct Item<T> {
+    pub text: String,
+    /// Whether it can be chosen.
+    pub enabled: bool,
+    pub action: T,
+}
+
 pub struct Popup<T> {
-    /// Each item's text, whether it can be chosen, and what it does.
-    items: Vec<(String, bool, T)>,
+    items: Vec<Item<T>>,
     frame: Rect,
     hovered: Option<usize>,
 }
 
 impl<T: Clone> Popup<T> {
-    pub fn new(at: (i32, i32), items: Vec<(String, bool, T)>, (w, h): (u32, u32)) -> Popup<T> {
+    pub fn new(at: (i32, i32), items: Vec<Item<T>>, (w, h): (u32, u32)) -> Popup<T> {
         let width = (items.iter())
-            .map(|(t, _, _)| text_width(t))
+            .map(|item| text_width(&item.text))
             .max()
             .unwrap_or(0)
             + 2 * PAD;
@@ -52,25 +59,25 @@ impl<T: Clone> Popup<T> {
     }
 
     pub fn hover(&mut self, at: (i32, i32)) {
-        self.hovered = self.at(at).filter(|&i| self.items[i].1);
+        self.hovered = self.at(at).filter(|&i| self.items[i].enabled);
     }
 
     /// Returns the action of the item under a click, if it can be chosen.
     pub fn click(&self, at: (i32, i32)) -> Option<T> {
-        let (_, enabled, what) = &self.items[self.at(at)?];
-        enabled.then(|| what.clone())
+        let item = &self.items[self.at(at)?];
+        item.enabled.then(|| item.action.clone())
     }
 
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
         fill(fb, self.frame, BACKGROUND | 0xFF00_0000);
         outline(fb, self.frame, BORDER);
-        for (i, (text, enabled, _)) in self.items.iter().enumerate() {
+        for (i, item) in self.items.iter().enumerate() {
             let r = self.item(i);
             if self.hovered == Some(i) {
                 fill(fb, r, HIGHLIGHT);
             }
-            let color = if *enabled { TEXT } else { DISABLED };
-            draw_text(fb, font, r.x + PAD - 2, r.y + 4, text, color);
+            let color = if item.enabled { TEXT } else { DISABLED };
+            draw_text(fb, font, r.x + PAD - 2, r.y + 4, &item.text, color);
         }
     }
 }

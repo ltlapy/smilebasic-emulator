@@ -10,6 +10,12 @@ use super::{mismatch, opt};
 /// BIQUAD's and BQPARAM's coefficient array: five coefficients, then the
 /// last two inputs and outputs of each channel.
 const COEFFICIENTS: usize = 13;
+/// The index in the coefficient array where the first channel's last
+/// inputs and outputs start.
+const HISTORY_START: usize = 5;
+/// The last inputs and outputs of one channel: in[t-1], in[t-2], out[t-1],
+/// out[t-2].
+const HISTORY_LEN: usize = 4;
 
 /// An array of numbers; anything else is a `Type mismatch` naming the
 /// argument.
@@ -255,11 +261,10 @@ fn channels(a: &Array) -> Result<(usize, usize)> {
 /// BIQUAD out, in, coefficients: filters each channel, carrying the last
 /// two inputs and outputs over from the previous call in the
 /// coefficients' elements 5 to 8 (mono or left) and 9 to 12 (right).
-// Each group of four is in[t-1], in[t-2], out[t-1], out[t-2]. Output and
-// input must have the same number of channels. An output shorter than the
-// input is an error naming the input. In a longer one only the input's
-// length is filtered, and the rest is left unchanged. The number of
-// coefficients is looked at after the channels.
+// Output and input must have the same number of channels. An output
+// shorter than the input is an error naming the input. In a longer one
+// only the input's length is filtered, and the rest is left unchanged.
+// The number of coefficients is looked at after the channels.
 pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let output = number_array(&args[0])?;
     let input = number_array(&args[1])?;
@@ -288,7 +293,7 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let mut fp = reals(&params.borrow())?;
     let mut result = vec![0.0; samples.len()];
     for c in 0..ch {
-        let h = 5 + 4 * c;
+        let h = HISTORY_START + HISTORY_LEN * c;
         let [mut x1, mut x2, mut y1, mut y2] = [fp[h], fp[h + 1], fp[h + 2], fp[h + 3]];
         for t in 0..len {
             let x = samples[c * len + t];
@@ -296,7 +301,7 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
             result[c * len + t] = y;
             (x2, x1, y2, y1) = (x1, x, y1, y);
         }
-        fp[h..h + 4].copy_from_slice(&[x1, x2, y1, y2]);
+        fp[h..h + HISTORY_LEN].copy_from_slice(&[x1, x2, y1, y2]);
     }
     if out_len == len {
         store(&output, &result)?;

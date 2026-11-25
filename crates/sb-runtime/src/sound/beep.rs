@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::decoded::{Decoded, Shared};
 use super::inspect::{BeepInfo, BeepKind};
-use super::sampler::{MAX_VOICES, TICK};
+use super::sampler::{MAX_VOICES, STEP_SAMPLES};
 use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::wave::{self, Wave};
@@ -38,13 +38,13 @@ pub(crate) fn instrument_volume(volume: i32) -> i32 {
 }
 
 /// Samples from the start of a waveform's sound to the end of its note, at
-/// `ticks` of [`wave::BEEP_TICKS_A_SECOND`]. The sound engine advances one
+/// `ticks` of [`wave::BEEP_TICKS_PER_SECOND`]. The sound engine advances one
 /// step at a time, 0.96 of these ticks per step, the first step included.
 /// The note's level then takes one more step to fall.
 fn note_end(ticks: u64) -> usize {
     // A waveform WAVSETA gives 1 Hz holds its note for billions of ticks, more samples
     // than a 32-bit usize counts.
-    let samples = ((ticks * 25).div_ceil(24) - 1).saturating_mul(TICK as u64);
+    let samples = ((ticks * 25).div_ceil(24) - 1).saturating_mul(STEP_SAMPLES as u64);
     usize::try_from(samples).unwrap_or(usize::MAX)
 }
 
@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn long_notes_do_not_wrap_round() {
         let ticks = u64::from(u32::MAX);
-        let samples = ((ticks * 25).div_ceil(24) - 1) * TICK as u64;
+        let samples = ((ticks * 25).div_ceil(24) - 1) * STEP_SAMPLES as u64;
         assert_eq!(note_end(ticks) as u64, samples.min(usize::MAX as u64));
         assert!(note_end(ticks) >= note_end(ticks / 2));
     }

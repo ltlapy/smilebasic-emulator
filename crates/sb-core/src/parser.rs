@@ -116,7 +116,7 @@ pub fn parse_partial(source: &str, direct: bool) -> (Program, Option<ParseError>
         in_command_def: false,
         loops: Vec::new(),
         open: Vec::new(),
-        one_line: false,
+        in_one_line_if: false,
         depth: 0,
         failed: None,
         direct,
@@ -146,7 +146,7 @@ pub fn parse_expression(source: &str) -> Result<Expr, ParseError> {
         in_command_def: false,
         loops: Vec::new(),
         open: Vec::new(),
-        one_line: false,
+        in_one_line_if: false,
         depth: 0,
         failed: None,
         direct: false,
@@ -175,8 +175,8 @@ struct Parser {
     loops: Vec<Keyword>,
     /// The blocks being parsed, innermost last, except DEF.
     open: Vec<Open>,
-    /// In a one-line IF, where the blocks it holds end with the line.
-    one_line: bool,
+    /// The blocks that a one-line IF holds end with the line.
+    in_one_line_if: bool,
     /// The error of the statement that did not parse. The parser then
     /// moves to the end of the input, and the blocks around it close
     /// without their closing keywords.
@@ -401,7 +401,7 @@ impl Parser {
         let mut stmts = Vec::new();
         loop {
             while *self.peek() == TokenKind::Colon
-                || (*self.peek() == TokenKind::Newline && !self.one_line)
+                || (*self.peek() == TokenKind::Newline && !self.in_one_line_if)
             {
                 self.advance();
             }
@@ -427,14 +427,14 @@ impl Parser {
         let body = self.block(&[end]);
         self.open.pop();
         let mut body = body?;
-        self.close(end, block, &mut body);
+        self.close_block(end, block, &mut body);
         Ok(body)
     }
 
-    /// The keyword that closes `block`. Without it, the end of the
-    /// program or DEF cuts `body` short. A block cut short by a statement
-    /// that did not parse does not need the keyword.
-    fn close(&mut self, end: Keyword, block: Open, body: &mut Vec<Stmt>) {
+    /// `end` closes `block`. Without it, the end of the program or DEF
+    /// cuts `body` short. A block cut short by a statement that did not
+    /// parse does not need the keyword.
+    fn close_block(&mut self, end: Keyword, block: Open, body: &mut Vec<Stmt>) {
         if self.failed.is_none() && !self.eat_keyword(end) {
             self.cut(body, compile_error(block.unclosed, block.at));
         }
@@ -474,7 +474,7 @@ impl Parser {
 
     /// Statements of a one-line IF branch, up to the end of the line or ELSE.
     fn line_stmts(&mut self) -> PResult<Vec<Stmt>> {
-        let one_line = std::mem::replace(&mut self.one_line, true);
+        let outer = std::mem::replace(&mut self.in_one_line_if, true);
         let mut stmts = Vec::new();
         let stmts = loop {
             if self.eat(&TokenKind::Colon) {
@@ -488,16 +488,16 @@ impl Parser {
                 Err(e) => break Err(e),
             }
         };
-        self.one_line = one_line;
+        self.in_one_line_if = outer;
         stmts
     }
 
     /// The blocks of an IF or ELSE that continues past its line, which may
     /// be inside a one-line IF: `IF A THEN IF B THEN` ends with an ENDIF.
     fn lines<T>(&mut self, parse: impl FnOnce(&mut Self) -> PResult<T>) -> PResult<T> {
-        let one_line = std::mem::replace(&mut self.one_line, false);
+        let outer = std::mem::replace(&mut self.in_one_line_if, false);
         let parsed = parse(self);
-        self.one_line = one_line;
+        self.in_one_line_if = outer;
         parsed
     }
 
@@ -1361,7 +1361,7 @@ impl Parser {
             unclosed: ErrorKind::DefWithoutEnd,
             at,
         };
-        self.close(Keyword::End, block, &mut body);
+        self.close_block(Keyword::End, block, &mut body);
         Ok(Def {
             name,
             common,

@@ -44,6 +44,9 @@ const NAME_CHARS: usize = 10;
 /// characters per line, and lines.
 const TIP_CHARS: usize = 60;
 const TIP_LINES: usize = 14;
+/// The characters before the times in the Perf tab: a color swatch and the
+/// number.
+const PERF_ID_CHARS: usize = 4;
 
 /// The variables that the panel lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,6 +224,34 @@ impl Metrics {
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, color: u32) {
         draw_text_scaled(fb, font, x, y, text, color, self.scale);
     }
+}
+
+/// The column of calls, watches and breakpoints: the left edge of its
+/// text, the width of its rows, the characters that fit in a row, and the
+/// bottom that its rows stay above.
+#[derive(Clone, Copy)]
+struct ListColumn {
+    x: u32,
+    w: u32,
+    chars: usize,
+    bottom: u32,
+}
+
+impl ListColumn {
+    /// Returns the rectangle of the row at `y`.
+    fn row(self, m: &Metrics, y: u32) -> Rect {
+        Rect {
+            x: self.x - m.pad / 2,
+            y,
+            w: self.w,
+            h: m.line,
+        }
+    }
+}
+
+/// Returns text being typed, with the cursor after it.
+fn with_cursor(typed: &str) -> String {
+    format!("{typed}_")
 }
 
 /// A value whole, for a tip: an array's elements as INSPECT lists them,
@@ -720,189 +751,23 @@ impl DebugPanel {
         );
         self.hits.push((close, Hit::Close));
 
-        // The calls are kept innermost last. They are drawn reversed, in
-        // the order BACKTRACE lists them.
         let cx = x0 + w + 2 * m.pad;
-        let mut y = inner.y + m.pad;
-        m.draw(fb, font, cx, y + m.text, "CALLS", HEADING);
-        y += m.line;
-        let chosen = self.chosen_call(view.calls.len());
         let call_chars = (CALL_CHARS * 2 / m.scale) as usize;
-        let watch_chars = WATCH_CHARS * 2 / m.scale as usize;
-        let call_w = call_chars as u32 * m.char + m.pad;
-        let bottom = inner.y + inner.h - m.line;
-        for (n, (i, call)) in view.calls.iter().enumerate().rev().enumerate() {
-            if y + m.line > bottom {
-                break;
-            }
-            let row = Rect {
-                x: cx - m.pad / 2,
-                y,
-                w: call_w,
-                h: m.line,
-            };
-            if i == chosen {
-                fill(fb, row, HIGHLIGHT);
-            } else if n % 2 == 1 {
-                fill(fb, row, STRIPE);
-            }
-            m.draw(fb, font, cx, y + m.text, &call_text(call, call_chars), TEXT);
-            self.hits.push((row, Hit::Call(i)));
-            y += m.line;
-        }
+        let column = ListColumn {
+            x: cx,
+            w: call_chars as u32 * m.char + m.pad,
+            chars: call_chars,
+            bottom: inner.y + inner.h - m.line,
+        };
+        let bottom = column.bottom;
+        let y = self.draw_calls(fb, font, &m, column, inner.y + m.pad, &view.calls);
+        let y = self.draw_watches(fb, font, &m, column, y, view);
+        self.draw_breakpoints(fb, font, &m, column, y, &view.breakpoints);
 
-        // The watches, and a row to add one.
-        y += m.pad;
-        if y + 2 * m.line <= bottom {
-            m.draw(fb, font, cx, y + m.text, "WATCH", HEADING);
-            y += m.line;
-        }
-        let typing = self.typing.clone();
-        let cursor = |t: &str| format!("{t}_");
-        for (i, expr) in self.watches.iter().enumerate() {
-            if y + 2 * m.line > bottom {
-                break;
-            }
-            let row = Rect {
-                x: cx - m.pad / 2,
-                y,
-                w: call_w,
-                h: m.line,
-            };
-            if self.selected == Some(Hit::Watch(i)) {
-                fill(fb, row, SELECTED);
-            } else if i % 2 == 1 {
-                fill(fb, row, STRIPE);
-            }
-            if self.breaks.contains(expr) {
-                fill(
-                    fb,
-                    Rect {
-                        w: m.pad / 2,
-                        ..row
-                    },
-                    BREAKS,
-                );
-            }
-            if let Some((Target::Watch(t), typed)) = &typing
-                && *t == i
-            {
-                m.draw(fb, font, cx, y + m.text, &cursor(typed), TEXT);
-            } else {
-                m.draw(fb, font, cx, y + m.text, &cut(expr, watch_chars), TEXT);
-                let x = cx + (watch_chars as u32 + 1) * m.char;
-                let room = call_chars - watch_chars - 1;
-                let (text, color, whole) = match view.watches.get(i) {
-                    Some(Ok(v)) => {
-                        let (text, color) = value_text(v, room, self.hex);
-                        (text, color, tip_lines(v, self.hex))
-                    }
-                    Some(Err(e)) => (cut(e, room), ERROR, vec![e.clone()]),
-                    None => (String::new(), TEXT, Vec::new()),
-                };
-                let color = match view.changed.as_ref() == Some(expr) {
-                    true => CHANGED,
-                    false => color,
-                };
-                m.draw(fb, font, x, y + m.text, &text, color);
-                if expr.chars().count() > watch_chars || text.ends_with('…') {
-                    let mut lines = vec![format!("{expr} =")];
-                    lines.extend(whole);
-                    self.tips.push((row, lines));
-                }
-            }
-            self.hits.push((row, Hit::Watch(i)));
-            y += m.line;
-        }
-        if y + m.line <= bottom {
-            let row = Rect {
-                x: cx - m.pad / 2,
-                y,
-                w: call_w,
-                h: m.line,
-            };
-            match &typing {
-                Some((Target::NewWatch, typed)) => {
-                    m.draw(fb, font, cx, y + m.text, &cursor(typed), TEXT)
-                }
-                _ => m.draw(fb, font, cx, y + m.text, "+ add", DISABLED),
-            }
-            self.hits.push((row, Hit::AddWatch));
-            y += m.line;
-        }
-
-        // The breakpoints, with their conditions.
-        y += m.pad;
-        if !view.breakpoints.is_empty() && y + 2 * m.line <= bottom {
-            m.draw(fb, font, cx, y + m.text, "BREAKPOINTS", HEADING);
-            y += m.line;
-        }
-        for (i, (slot, line, condition)) in view.breakpoints.iter().enumerate() {
-            if y + m.line > bottom {
-                break;
-            }
-            let row = Rect {
-                x: cx - m.pad / 2,
-                y,
-                w: call_w,
-                h: m.line,
-            };
-            if i % 2 == 1 {
-                fill(fb, row, STRIPE);
-            }
-            fill(
-                fb,
-                Rect {
-                    w: m.pad / 2,
-                    ..row
-                },
-                BREAKS,
-            );
-            let at = format!("{slot}:{line}");
-            m.draw(fb, font, cx, y + m.text, &at, TEXT);
-            if let Some(condition) = condition {
-                let x = cx + (at.len() as u32 + 1) * m.char;
-                let room = call_chars.saturating_sub(at.len() + 1);
-                m.draw(fb, font, x, y + m.text, &cut(condition, room), CONDITION);
-                if condition.chars().count() > room {
-                    self.tips
-                        .push((row, vec![format!("{at} when {condition}")]));
-                }
-            }
-            self.hits.push((row, Hit::Breakpoint(i)));
-            y += m.line;
-        }
-
-        // The variables, under their tabs.
-        let vx = cx + call_w + 2 * m.pad;
-        let mut tx = vx;
+        let vx = cx + column.w + 2 * m.pad;
         let ty = inner.y + m.pad;
-        let tab = self
-            .tab
-            .filter(|t| view.tabs.contains(t))
-            .or(view.tabs.first().copied());
-        for &t in &view.tabs {
-            let label = match t {
-                Tab::Locals => "Locals".to_string(),
-                Tab::Globals(slot) => format!("PRG{slot}"),
-                Tab::Perf => "Perf".to_string(),
-                Tab::Sprites => "Sprites".to_string(),
-                Tab::SubSprites => "Sub sprites".to_string(),
-                Tab::Grp => "GRP".to_string(),
-                Tab::Bgm => "BGM".to_string(),
-            };
-            let r = Rect {
-                x: tx,
-                y: ty,
-                w: label.chars().count() as u32 * m.char + m.pad,
-                h: m.line - 2,
-            };
-            fill(fb, r, if Some(t) == tab { HIGHLIGHT } else { TAB });
-            m.draw(fb, font, tx + m.pad / 2, ty + m.text - 1, &label, TEXT);
-            self.hits.push((r, Hit::Tab(t)));
-            tx += r.w + m.pad / 2;
-        }
-        let mut y = ty + m.line + 2;
+        let tab = self.draw_tabs(fb, font, &m, (vx, ty), view);
+        let y = ty + m.line + 2;
         self.rows = ((bottom.saturating_sub(y)) / m.line) as usize;
         let right = inner.x + inner.w - m.pad;
         if tab == Some(Tab::Perf) {
@@ -935,63 +800,13 @@ impl DebugPanel {
         } else if view.variables.is_empty() {
             m.draw(fb, font, vx, y + m.text, "No variables", DISABLED);
         }
-        // The names and types take what they need, the values the rest.
-        let longest = |f: &dyn Fn(&(String, Value)) -> usize| {
-            view.variables.iter().map(f).max().unwrap_or(0) as u32
-        };
-        let name_chars = longest(&|(n, _)| n.chars().count()).clamp(4, NAME_CHARS as u32);
-        let type_chars = longest(&|(_, v)| type_text(v).chars().count());
-        let value_x = vx + (name_chars + 1) * m.char;
-        let type_x = (inner.x + inner.w - m.pad).saturating_sub(type_chars * m.char);
-        let value_chars = (type_x.saturating_sub(value_x) / m.char)
-            .saturating_sub(1)
-            .max(4) as usize;
         // A kept tab gone since shows the first, maybe with fewer rows.
         if matches!(tab, Some(Tab::Locals | Tab::Globals(_))) {
             self.scroll = self
                 .scroll
                 .min(view.variables.len().saturating_sub(self.rows));
         }
-        let shown = view.variables.iter().enumerate().skip(self.scroll);
-        for (i, (name, value)) in shown.take(self.rows) {
-            let row = Rect {
-                x: vx - m.pad / 2,
-                y,
-                w: inner.x + inner.w - vx,
-                h: m.line,
-            };
-            if self.selected == Some(Hit::Variable(i)) {
-                fill(fb, row, SELECTED);
-            } else if i % 2 == 1 {
-                fill(fb, row, STRIPE);
-            }
-            m.draw(
-                fb,
-                font,
-                vx,
-                y + m.text,
-                &cut(name, name_chars as usize),
-                TEXT,
-            );
-            match &typing {
-                Some((Target::Variable(n), typed)) if n == name => {
-                    m.draw(fb, font, value_x, y + m.text, &cursor(typed), TEXT)
-                }
-                _ => {
-                    let (text, color) = value_text(value, value_chars, self.hex);
-                    m.draw(fb, font, value_x, y + m.text, &text, color);
-                    m.draw(fb, font, type_x, y + m.text, &type_text(value), HEADING);
-                    let cut_name = name.chars().count() > name_chars as usize;
-                    if cut_name || text.ends_with('…') || matches!(value, Value::Array(_)) {
-                        let mut lines = vec![format!("{name} =")];
-                        lines.extend(tip_lines(value, self.hex));
-                        self.tips.push((row, lines));
-                    }
-                }
-            }
-            self.hits.push((row, Hit::Variable(i)));
-            y += m.line;
-        }
+        self.draw_variables(fb, font, &m, (vx, y), inner.x + inner.w, &view.variables);
 
         let status = Rect {
             x: cx - m.pad / 2,
@@ -1009,6 +824,275 @@ impl DebugPanel {
         } else if !view.keys.is_empty() && reason + 3 + view.keys.chars().count() <= room {
             let x = x + reason as u32 * m.char;
             m.draw(fb, font, x, y, &format!(" / {}", view.keys), DISABLED);
+        }
+    }
+
+    /// Draws the calls under their heading from `y`, and returns the `y`
+    /// below them. The calls are kept innermost last. They are drawn
+    /// reversed, in the order BACKTRACE lists them.
+    fn draw_calls(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        m: &Metrics,
+        column: ListColumn,
+        mut y: u32,
+        calls: &[Call],
+    ) -> u32 {
+        m.draw(fb, font, column.x, y + m.text, "CALLS", HEADING);
+        y += m.line;
+        let chosen = self.chosen_call(calls.len());
+        for (n, (i, call)) in calls.iter().enumerate().rev().enumerate() {
+            if y + m.line > column.bottom {
+                break;
+            }
+            let row = column.row(m, y);
+            if i == chosen {
+                fill(fb, row, HIGHLIGHT);
+            } else if n % 2 == 1 {
+                fill(fb, row, STRIPE);
+            }
+            let text = call_text(call, column.chars);
+            m.draw(fb, font, column.x, y + m.text, &text, TEXT);
+            self.hits.push((row, Hit::Call(i)));
+            y += m.line;
+        }
+        y
+    }
+
+    /// Draws the watches under their heading below `y`, and a row to add
+    /// one, and returns the `y` below them.
+    fn draw_watches(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        m: &Metrics,
+        column: ListColumn,
+        mut y: u32,
+        view: &View,
+    ) -> u32 {
+        let (cx, bottom, call_chars) = (column.x, column.bottom, column.chars);
+        let watch_chars = WATCH_CHARS * 2 / m.scale as usize;
+        y += m.pad;
+        if y + 2 * m.line <= bottom {
+            m.draw(fb, font, cx, y + m.text, "WATCH", HEADING);
+            y += m.line;
+        }
+        let typing = self.typing.clone();
+        for (i, expr) in self.watches.iter().enumerate() {
+            if y + 2 * m.line > bottom {
+                break;
+            }
+            let row = column.row(m, y);
+            if self.selected == Some(Hit::Watch(i)) {
+                fill(fb, row, SELECTED);
+            } else if i % 2 == 1 {
+                fill(fb, row, STRIPE);
+            }
+            if self.breaks.contains(expr) {
+                fill(
+                    fb,
+                    Rect {
+                        w: m.pad / 2,
+                        ..row
+                    },
+                    BREAKS,
+                );
+            }
+            if let Some((Target::Watch(t), typed)) = &typing
+                && *t == i
+            {
+                m.draw(fb, font, cx, y + m.text, &with_cursor(typed), TEXT);
+            } else {
+                m.draw(fb, font, cx, y + m.text, &cut(expr, watch_chars), TEXT);
+                let x = cx + (watch_chars as u32 + 1) * m.char;
+                let room = call_chars - watch_chars - 1;
+                let (text, color, whole) = match view.watches.get(i) {
+                    Some(Ok(v)) => {
+                        let (text, color) = value_text(v, room, self.hex);
+                        (text, color, tip_lines(v, self.hex))
+                    }
+                    Some(Err(e)) => (cut(e, room), ERROR, vec![e.clone()]),
+                    None => (String::new(), TEXT, Vec::new()),
+                };
+                let color = match view.changed.as_ref() == Some(expr) {
+                    true => CHANGED,
+                    false => color,
+                };
+                m.draw(fb, font, x, y + m.text, &text, color);
+                if expr.chars().count() > watch_chars || text.ends_with('…') {
+                    let mut lines = vec![format!("{expr} =")];
+                    lines.extend(whole);
+                    self.tips.push((row, lines));
+                }
+            }
+            self.hits.push((row, Hit::Watch(i)));
+            y += m.line;
+        }
+        if y + m.line <= bottom {
+            let row = column.row(m, y);
+            match &typing {
+                Some((Target::NewWatch, typed)) => {
+                    m.draw(fb, font, cx, y + m.text, &with_cursor(typed), TEXT)
+                }
+                _ => m.draw(fb, font, cx, y + m.text, "+ add", DISABLED),
+            }
+            self.hits.push((row, Hit::AddWatch));
+            y += m.line;
+        }
+        y
+    }
+
+    /// Draws the breakpoints, with their conditions, under their heading
+    /// below `y`.
+    fn draw_breakpoints(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        m: &Metrics,
+        column: ListColumn,
+        mut y: u32,
+        breakpoints: &[(usize, u32, Option<String>)],
+    ) {
+        let (cx, bottom, call_chars) = (column.x, column.bottom, column.chars);
+        y += m.pad;
+        if !breakpoints.is_empty() && y + 2 * m.line <= bottom {
+            m.draw(fb, font, cx, y + m.text, "BREAKPOINTS", HEADING);
+            y += m.line;
+        }
+        for (i, (slot, line, condition)) in breakpoints.iter().enumerate() {
+            if y + m.line > bottom {
+                break;
+            }
+            let row = column.row(m, y);
+            if i % 2 == 1 {
+                fill(fb, row, STRIPE);
+            }
+            fill(
+                fb,
+                Rect {
+                    w: m.pad / 2,
+                    ..row
+                },
+                BREAKS,
+            );
+            let at = format!("{slot}:{line}");
+            m.draw(fb, font, cx, y + m.text, &at, TEXT);
+            if let Some(condition) = condition {
+                let x = cx + (at.len() as u32 + 1) * m.char;
+                let room = call_chars.saturating_sub(at.len() + 1);
+                m.draw(fb, font, x, y + m.text, &cut(condition, room), CONDITION);
+                if condition.chars().count() > room {
+                    self.tips
+                        .push((row, vec![format!("{at} when {condition}")]));
+                }
+            }
+            self.hits.push((row, Hit::Breakpoint(i)));
+            y += m.line;
+        }
+    }
+
+    /// Draws the tabs of `view` at `(x, ty)`, and returns the tab shown: the
+    /// one chosen, or the first if that one is gone.
+    fn draw_tabs(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        m: &Metrics,
+        (x, ty): (u32, u32),
+        view: &View,
+    ) -> Option<Tab> {
+        let mut tx = x;
+        let tab = self
+            .tab
+            .filter(|t| view.tabs.contains(t))
+            .or(view.tabs.first().copied());
+        for &t in &view.tabs {
+            let label = match t {
+                Tab::Locals => "Locals".to_string(),
+                Tab::Globals(slot) => format!("PRG{slot}"),
+                Tab::Perf => "Perf".to_string(),
+                Tab::Sprites => "Sprites".to_string(),
+                Tab::SubSprites => "Sub sprites".to_string(),
+                Tab::Grp => "GRP".to_string(),
+                Tab::Bgm => "BGM".to_string(),
+            };
+            let r = Rect {
+                x: tx,
+                y: ty,
+                w: label.chars().count() as u32 * m.char + m.pad,
+                h: m.line - 2,
+            };
+            fill(fb, r, if Some(t) == tab { HIGHLIGHT } else { TAB });
+            m.draw(fb, font, tx + m.pad / 2, ty + m.text - 1, &label, TEXT);
+            self.hits.push((r, Hit::Tab(t)));
+            tx += r.w + m.pad / 2;
+        }
+        tab
+    }
+
+    /// Draws the rows of `variables` from `(vx, y)` to the right edge
+    /// `edge`, starting after the rows scrolled past.
+    fn draw_variables(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        m: &Metrics,
+        (vx, mut y): (u32, u32),
+        edge: u32,
+        variables: &[(String, Value)],
+    ) {
+        // The names and types take what they need, the values the rest.
+        let longest = |f: &dyn Fn(&(String, Value)) -> usize| {
+            variables.iter().map(f).max().unwrap_or(0) as u32
+        };
+        let name_chars = longest(&|(n, _)| n.chars().count()).clamp(4, NAME_CHARS as u32);
+        let type_chars = longest(&|(_, v)| type_text(v).chars().count());
+        let value_x = vx + (name_chars + 1) * m.char;
+        let type_x = (edge - m.pad).saturating_sub(type_chars * m.char);
+        let value_chars = (type_x.saturating_sub(value_x) / m.char)
+            .saturating_sub(1)
+            .max(4) as usize;
+        let typing = self.typing.clone();
+        let shown = variables.iter().enumerate().skip(self.scroll);
+        for (i, (name, value)) in shown.take(self.rows) {
+            let row = Rect {
+                x: vx - m.pad / 2,
+                y,
+                w: edge - vx,
+                h: m.line,
+            };
+            if self.selected == Some(Hit::Variable(i)) {
+                fill(fb, row, SELECTED);
+            } else if i % 2 == 1 {
+                fill(fb, row, STRIPE);
+            }
+            m.draw(
+                fb,
+                font,
+                vx,
+                y + m.text,
+                &cut(name, name_chars as usize),
+                TEXT,
+            );
+            match &typing {
+                Some((Target::Variable(n), typed)) if n == name => {
+                    m.draw(fb, font, value_x, y + m.text, &with_cursor(typed), TEXT)
+                }
+                _ => {
+                    let (text, color) = value_text(value, value_chars, self.hex);
+                    m.draw(fb, font, value_x, y + m.text, &text, color);
+                    m.draw(fb, font, type_x, y + m.text, &type_text(value), HEADING);
+                    let cut_name = name.chars().count() > name_chars as usize;
+                    if cut_name || text.ends_with('…') || matches!(value, Value::Array(_)) {
+                        let mut lines = vec![format!("{name} =")];
+                        lines.extend(tip_lines(value, self.hex));
+                        self.tips.push((row, lines));
+                    }
+                }
+            }
+            self.hits.push((row, Hit::Variable(i)));
+            y += m.line;
         }
     }
 
@@ -1044,9 +1128,8 @@ impl DebugPanel {
         let count_chars = (used.iter().map(|(_, s)| count(s).len()).max())
             .unwrap_or(0)
             .max("COUNT".len());
-        // A swatch and the number take four characters.
         let room = (right.saturating_sub(x) / m.char) as usize;
-        let time_chars = room.saturating_sub(4 + count_chars) / 3;
+        let time_chars = room.saturating_sub(PERF_ID_CHARS + count_chars) / 3;
         let widest = |ms| {
             (used.iter())
                 .flat_map(|(_, s)| perf_times(s, ms))
@@ -1056,7 +1139,7 @@ impl DebugPanel {
         };
         let ms = widest(true) <= time_chars;
         let time_chars = time_chars.max(widest(false));
-        let column = |i: usize| x + (4 + i * time_chars) as u32 * m.char;
+        let column = |i: usize| x + (PERF_ID_CHARS + i * time_chars) as u32 * m.char;
         let headings = ["LAST", "AVERAGE", "MAX", "COUNT"];
         if y + m.line <= bottom {
             m.draw(fb, font, x + 2 * m.char, y + m.text, "#", HEADING);
@@ -1128,14 +1211,13 @@ impl DebugPanel {
             self.hits.push((area, Hit::Sprites));
             return;
         }
-        // The thumbnail takes two characters after the number.
         let room = (right.saturating_sub(x) / m.char) as usize;
-        let shown = sprites::fitting(room, 2);
+        let shown = sprites::fitting(room, sprites::THUMB_CHARS);
         let mut columns = Vec::with_capacity(shown);
         let mut at = 0;
         for (i, &(heading, chars, _)) in sprites::COLUMNS[..shown].iter().enumerate() {
             columns.push((x + at as u32 * m.char, heading, chars));
-            at += chars + if i == 0 { 2 } else { 0 };
+            at += chars + if i == 0 { sprites::THUMB_CHARS } else { 0 };
         }
         if y + m.line <= bottom {
             for &(cx, heading, _) in &columns {
@@ -1159,9 +1241,9 @@ impl DebugPanel {
             }
             let cells = sprites::cells(row);
             for (i, &(cx, heading, chars)) in columns.iter().enumerate() {
-                let color = match (row.shows, i) {
+                let color = match (row.shows, heading) {
                     (false, _) => DISABLED,
-                    (true, 2..=6) => NUMBER,
+                    (true, "X" | "Y" | "Z" | "ROT" | "SCALE") => NUMBER,
                     _ => TEXT,
                 };
                 if heading == "C" {
@@ -1179,7 +1261,8 @@ impl DebugPanel {
             }
             if let Some(thumb) = &row.thumb {
                 let side = m.line - m.scale;
-                let (tx, ty) = (x + 5 * m.char, y + m.scale / 2);
+                let number_chars = sprites::COLUMNS[0].1 as u32;
+                let (tx, ty) = (x + number_chars * m.char, y + m.scale / 2);
                 draw_thumb(fb, thumb, (tx, ty), side);
             }
             self.tips.push((r, sprites::details(row, self.hex)));

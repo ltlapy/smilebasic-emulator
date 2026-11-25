@@ -448,7 +448,7 @@ pub struct Error {
     pub arg: Option<u8>,
     /// The address of the value that was wrong, until the call that it
     /// was an argument of turns it into `arg`.
-    value_at: usize,
+    wrong_value_ptr: usize,
 }
 
 impl PartialEq for Error {
@@ -482,7 +482,7 @@ impl Error {
             detail: None,
             slot: None,
             arg: None,
-            value_at: 0,
+            wrong_value_ptr: 0,
         }
     }
 
@@ -496,8 +496,8 @@ impl Error {
     /// Marks `value` as what was wrong: if it is one of a command's
     /// arguments, the error tells which.
     pub fn of_value(mut self, value: &Value) -> Self {
-        if self.value_at == 0 {
-            self.value_at = value as *const Value as usize;
+        if self.wrong_value_ptr == 0 {
+            self.wrong_value_ptr = value as *const Value as usize;
         }
         self
     }
@@ -514,13 +514,13 @@ impl Error {
         let size = std::mem::size_of::<Value>();
         let start = args.as_ptr() as usize;
         if self.arg.is_none()
-            && self.value_at >= start
-            && self.value_at < start + std::mem::size_of_val(args)
+            && self.wrong_value_ptr >= start
+            && self.wrong_value_ptr < start + std::mem::size_of_val(args)
         {
-            let arg = (self.value_at - start) / size;
+            let arg = (self.wrong_value_ptr - start) / size;
             self = self.of_arg(arg);
         }
-        self.value_at = 0;
+        self.wrong_value_ptr = 0;
         self
     }
 

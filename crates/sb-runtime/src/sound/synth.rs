@@ -98,6 +98,21 @@ const DRUM_BANK: i32 = 128;
 /// Semitones the pitch bend reaches either way.
 const BEND_RANGE: i32 = 24;
 
+/// MIDI's commands, as rustysynth takes them.
+const CONTROL_CHANGE: i32 = 0xB0;
+const PROGRAM_CHANGE: i32 = 0xC0;
+const PITCH_BEND: i32 = 0xE0;
+
+/// MIDI's controller numbers.
+const CC_BANK_SELECT: i32 = 0;
+const CC_MODULATION: i32 = 1;
+const CC_DATA_ENTRY: i32 = 0x06;
+const CC_VOLUME: i32 = 7;
+const CC_PAN: i32 = 10;
+const CC_EXPRESSION: i32 = 11;
+const CC_RPN_LSB: i32 = 0x64;
+const CC_RPN_MSB: i32 = 0x65;
+
 /// SmileBASIC 4's drum sets @128 to @148 as GS drum kits, which General
 /// MIDI SoundFonts such as GeneralUser GS have.
 // These are the nearest GS kits by name, not the sets' own sounds (see
@@ -136,21 +151,21 @@ impl FontSynth {
     fn bend_range(&mut self) {
         for c in 0..CHANNELS {
             // RPN 0, the pitch bend's range.
-            self.midi(c, 0xB0, 0x65, 0);
-            self.midi(c, 0xB0, 0x64, 0);
-            self.midi(c, 0xB0, 0x06, BEND_RANGE);
+            self.midi(c, CONTROL_CHANGE, CC_RPN_MSB, 0);
+            self.midi(c, CONTROL_CHANGE, CC_RPN_LSB, 0);
+            self.midi(c, CONTROL_CHANGE, CC_DATA_ENTRY, BEND_RANGE);
         }
     }
 
     fn controller(&mut self, channel: usize, number: i32, value: i32) {
-        self.midi(channel, 0xB0, number, value.clamp(0, 127));
+        self.midi(channel, CONTROL_CHANGE, number, value.clamp(0, 127));
     }
 
     fn send_bend(&mut self, channel: usize) {
         let (bend, porta) = self.bends[channel];
         let cents = (bend + porta.round() as i32).clamp(-BEND_RANGE * 100, BEND_RANGE * 100);
         let bend = (8192 + cents * 8192 / (BEND_RANGE * 100)).clamp(0, 16383);
-        self.midi(channel, 0xE0, bend & 0x7F, bend >> 7);
+        self.midi(channel, PITCH_BEND, bend & 0x7F, bend >> 7);
     }
 }
 
@@ -171,24 +186,24 @@ impl Synth for FontSynth {
         } else {
             bank
         };
-        self.midi(channel, 0xB0, 0, bank);
-        self.midi(channel, 0xC0, program, 0);
+        self.midi(channel, CONTROL_CHANGE, CC_BANK_SELECT, bank);
+        self.midi(channel, PROGRAM_CHANGE, program, 0);
     }
 
     fn volume(&mut self, channel: usize, value: i32) {
-        self.controller(channel, 7, value);
+        self.controller(channel, CC_VOLUME, value);
     }
 
     fn expression(&mut self, channel: usize, value: i32) {
-        self.controller(channel, 11, value);
+        self.controller(channel, CC_EXPRESSION, value);
     }
 
     fn pan(&mut self, channel: usize, value: i32) {
-        self.controller(channel, 10, value);
+        self.controller(channel, CC_PAN, value);
     }
 
     fn modulation(&mut self, channel: usize, value: i32) {
-        self.controller(channel, 1, value);
+        self.controller(channel, CC_MODULATION, value);
     }
 
     fn bend(&mut self, channel: usize, cents: i32) {

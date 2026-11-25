@@ -30,6 +30,8 @@ const MORA: f64 = 90.0;
 /// longer than one without (わたしは、 takes about 510 ms).
 // UNVERIFIED: how SmileBASIC 4 shares a mora between its sounds.
 const SHORTEST_VOWEL: f64 = 70.0;
+/// The shortest vowel without a consonant.
+const SHORTEST_BARE_VOWEL: f64 = 50.0;
 const CLOSURE: f64 = 45.0;
 const BURST: f64 = 15.0;
 const FRICATIVE: f64 = 70.0;
@@ -53,6 +55,19 @@ const TAIL: f64 = 205.0;
 /// Glides between targets.
 const TRANSITION: f64 = 25.0;
 const QUICK: f64 = 8.0;
+/// The glide into a stop's burst.
+const BURST_TRANSITION: f64 = 2.0;
+/// The glide into a fricative or a sonorant.
+const CONSONANT_TRANSITION: f64 = 15.0;
+
+/// The aspiration of a whispered vowel.
+const WHISPER_ASPIRATION: f32 = 0.35;
+/// The aspiration of a voiceless burst.
+const BURST_ASPIRATION: f32 = 0.6;
+/// The aspiration of h (`HH`).
+const H_ASPIRATION: f32 = 0.7;
+/// The gain of the speech on each side.
+const SIDE_GAIN: f32 = 0.5;
 
 /// The voice's pitch without a `<P…>`: one pitch, with no fall through a
 /// phrase or before 、 and 。.
@@ -239,23 +254,13 @@ fn kana_letters(text: &str) -> String {
                 if !(out.ends_with("sh") || out.ends_with("ch") || out.ends_with('j')) {
                     out.push('y');
                 }
-                let v = match c {
-                    'ゃ' => 'a',
-                    'ゅ' => 'u',
-                    _ => 'o',
-                };
+                let v = small_vowel(c);
                 out.push(v);
                 last_vowel = Some(v);
             }
             // Small vowels: ふぁ is fa, てぃ is ti.
             'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' => {
-                let v = match c {
-                    'ぁ' => 'a',
-                    'ぃ' => 'i',
-                    'ぅ' => 'u',
-                    'ぇ' => 'e',
-                    _ => 'o',
-                };
+                let v = small_vowel(c);
                 if out.ends_with(['a', 'i', 'u', 'e', 'o']) {
                     out.pop();
                 }
@@ -290,6 +295,17 @@ fn kana_letters(text: &str) -> String {
     out
 }
 
+/// The vowel of a small kana: ゃ, ゅ, ょ or a small vowel.
+fn small_vowel(c: char) -> char {
+    match c {
+        'ゃ' | 'ぁ' => 'a',
+        'ぃ' => 'i',
+        'ゅ' | 'ぅ' => 'u',
+        'ぇ' => 'e',
+        _ => 'o',
+    }
+}
+
 /// A consonant's phoneme in the bank.
 fn consonant(letters: &str) -> Option<&'static str> {
     Some(match letters {
@@ -315,6 +331,10 @@ fn consonant(letters: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
+
+/// The vowel of a consonant written alone: a silent u, in uppercase to
+/// tell it from a written u (the letters are lowercased first).
+const SILENT_U: char = 'U';
 
 /// SmileBASIC's phoneme letters, `<S…>` and the like as morae.
 fn morae(text: &str) -> Vec<Mora> {
@@ -416,7 +436,7 @@ fn morae(text: &str) -> Vec<Mora> {
                 out.push(Mora::Syllable {
                     consonant: Some(cons),
                     glide,
-                    vowel: 'U',
+                    vowel: SILENT_U,
                 });
                 i = j;
             }
@@ -499,7 +519,7 @@ impl Planner<'_> {
         v.f0 = Some(f0);
         if devoiced {
             v.voicing = Some(0.0);
-            v.aspiration = Some(0.35);
+            v.aspiration = Some(WHISPER_ASPIRATION);
         }
         self.target(v, TRANSITION);
         if falls {
@@ -530,9 +550,9 @@ impl Planner<'_> {
                 let mut burst = self.phoneme(stop);
                 burst.f0 = Some(f0);
                 if voiceless(Some(name)) {
-                    burst.aspiration = Some(0.6);
+                    burst.aspiration = Some(BURST_ASPIRATION);
                 }
-                self.target(burst, 2.0);
+                self.target(burst, BURST_TRANSITION);
                 self.at += self.ms(AFFRICATE_BURST);
                 let mut f = self.phoneme(fricative);
                 f.f0 = Some(f0);
@@ -545,9 +565,9 @@ impl Planner<'_> {
                 let mut burst = self.phoneme(name);
                 burst.f0 = Some(f0);
                 if voiceless(Some(name)) {
-                    burst.aspiration = Some(0.6);
+                    burst.aspiration = Some(BURST_ASPIRATION);
                 }
-                self.target(burst, 2.0);
+                self.target(burst, BURST_TRANSITION);
                 self.at += self.ms(BURST);
                 CLOSURE + BURST
             }
@@ -555,16 +575,16 @@ impl Planner<'_> {
                 let mut f = self.phoneme(name);
                 f.f0 = Some(f0);
                 if name == "HH" {
-                    f.aspiration = Some(0.7);
+                    f.aspiration = Some(H_ASPIRATION);
                 }
-                self.target(f, 15.0);
+                self.target(f, CONSONANT_TRANSITION);
                 self.at += self.ms(FRICATIVE);
                 FRICATIVE
             }
             _ => {
                 let mut s = self.phoneme(name);
                 s.f0 = Some(f0);
-                self.target(s, 15.0);
+                self.target(s, CONSONANT_TRANSITION);
                 self.at += self.ms(SONORANT);
                 SONORANT
             }
@@ -585,6 +605,31 @@ fn table() -> &'static HashMap<&'static str, PhonemeParams> {
             .filter_map(|&n| bank.lookup(n).map(|p| (n, p)))
             .collect()
     })
+}
+
+/// `text` with full-width letters, digits and brackets, as in ＜S128＞,
+/// replaced by their ASCII forms.
+fn ascii_forms(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '！'..='～' if !"，．！？～".contains(c) => {
+                char::from_u32(c as u32 - 0xFEE0).unwrap_or(c)
+            }
+            c => c,
+        })
+        .collect()
+}
+
+/// The pitch of the mora at `beat` of `spoken` sounding morae, for a
+/// voice at `pitch`. With a `<P…>` (`intoned`) and more than one mora, the
+/// first and last move by [`INTONATION`].
+fn intoned_pitch(pitch: f32, intoned: bool, beat: usize, spoken: usize) -> f32 {
+    match (intoned && spoken > 1, beat) {
+        (false, _) => pitch,
+        (true, 0) => whole_period(pitch * INTONATION.0),
+        (true, b) if b + 1 == spoken => whole_period(pitch * INTONATION.1),
+        (true, _) => pitch,
+    }
 }
 
 pub struct Talk {
@@ -610,17 +655,7 @@ impl Default for Talk {
 impl Talk {
     /// Starts saying `text`: kana, or phoneme letters after a `$`.
     pub fn say(&mut self, text: &str) {
-        // Full-width letters, digits and brackets, as in ＜S128＞, read as
-        // their ASCII forms.
-        let text: String = text
-            .chars()
-            .map(|c| match c {
-                '！'..='～' if !"，．！？～".contains(c) => {
-                    char::from_u32(c as u32 - 0xFEE0).unwrap_or(c)
-                }
-                c => c,
-            })
-            .collect();
+        let text = ascii_forms(text);
         // Phoneme letters follow a `$` that starts the text, as in
         // `$<S128>koqnichiwa`. A `$` after a control string marks nothing:
         // `<V16>$a` is read as kana, and says nothing.
@@ -651,12 +686,7 @@ impl Talk {
         for (i, m) in morae.iter().enumerate() {
             // let fall = beat as f32 / spoken as f32;
             // let f0 = plan.pitch * (PITCH_START + (PITCH_END - PITCH_START) * fall);
-            let f0 = match (intoned && spoken > 1, beat) {
-                (false, _) => plan.pitch,
-                (true, 0) => whole_period(plan.pitch * INTONATION.0),
-                (true, b) if b + 1 == spoken => whole_period(plan.pitch * INTONATION.1),
-                (true, _) => plan.pitch,
-            };
+            let f0 = intoned_pitch(plan.pitch, intoned, beat, spoken);
             if sounds(m) {
                 beat += 1;
             }
@@ -704,8 +734,7 @@ impl Talk {
                         plan.at += plan.ms(GLIDE);
                         taken += GLIDE;
                     }
-                    // A vowel of only `u`, written with a lone consonant.
-                    let silent = vowel == 'U';
+                    let silent = vowel == SILENT_U;
                     let vowel = vowel.to_ascii_lowercase();
                     // I and u between voiceless consonants, or at the end
                     // after one, are whispered.
@@ -725,7 +754,7 @@ impl Talk {
                     let shortest = if consonant.is_some() || glide {
                         SHORTEST_VOWEL
                     } else {
-                        50.0
+                        SHORTEST_BARE_VOWEL
                     };
                     plan.vowel(vowel, (MORA - taken).max(shortest), devoiced, f0, falls);
                     // beat += 1;
@@ -773,8 +802,8 @@ impl Talk {
         self.buffer.resize(n, 0.0);
         self.synth.process(&mut self.buffer);
         for i in 0..n {
-            left[i] += self.buffer[i] * 0.5;
-            right[i] += self.buffer[i] * 0.5;
+            left[i] += self.buffer[i] * SIDE_GAIN;
+            right[i] += self.buffer[i] * SIDE_GAIN;
         }
         self.left -= n as u64;
     }

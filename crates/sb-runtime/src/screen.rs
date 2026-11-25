@@ -11,6 +11,7 @@ use crate::compose::{Affine, Compose, LAYERS};
 use crate::filter::Filter as LayerFilter;
 use crate::graphics::Clip;
 use crate::runtime::{Command, Runtime, checking, no_form, opt_int, screen_id, with_screen};
+use crate::sprites::single;
 use crate::text::CONSOLE;
 
 /// XSCREEN: the screen's resolution and how it is shown.
@@ -280,8 +281,7 @@ impl Runtime {
                 Ok(reals(&[x, y]))
             }
             (Command::Trot, Want::Outs(0), 2) => {
-                // Kept in single precision, like SPROT.
-                let angle = f64::from(real(&args[1])? as f32);
+                let angle = single(real(&args[1])?);
                 self.text[screen_id(&args[0])?].rot = angle;
                 Ok(vec![])
             }
@@ -449,7 +449,7 @@ impl Runtime {
                         return Err(out_of_range("matrix", i as i32).of_arg(1));
                     }
                     // Kept as the GPU takes it.
-                    *v = f64::from(x as f32);
+                    *v = single(x);
                 }
                 let layer = &mut self.layers[id];
                 (layer.matrix, layer.projection) = (Affine::IDENTITY, Some(m));
@@ -629,7 +629,7 @@ impl Runtime {
                 out.push(Value::Int(m.filter as i32));
                 // SmileBASIC keeps it in single precision: 1.66666663 for
                 // 400x240 (checked on hardware).
-                out.push(Value::Real(f64::from(m.aspect() as f32)));
+                out.push(Value::Real(single(m.aspect())));
                 out.truncate(n.into());
                 Ok(out)
             }

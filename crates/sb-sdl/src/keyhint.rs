@@ -125,7 +125,7 @@ pub(crate) fn draw_arrow(fb: &mut Framebuffer, cap: Rect, (dx, dy): (i32, i32), 
         return;
     }
     let size = cap.w as i32 / 4;
-    let (cx, cy) = ((cap.x + cap.w / 2) as i32, (cap.y + cap.h / 2) as i32);
+    let (cx, cy) = cap.center();
     for along in -size..=size {
         // Wide at the back, a point at the front.
         let half = (size - along) / 2 + 1;

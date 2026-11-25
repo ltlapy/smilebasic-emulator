@@ -22,9 +22,9 @@ const ANSWERS: [Answer; 2] = [Answer::Accept, Answer::Cancel];
 
 pub struct Dialog {
     title: String,
-    /// The lines as given, and as shown: wrapped to fit the display.
-    text: Vec<String>,
-    lines: Vec<String>,
+    given_lines: Vec<String>,
+    /// `given_lines` wrapped to fit the display.
+    shown_lines: Vec<String>,
     /// Labels of the Accept and Cancel buttons, or of OK alone.
     labels: Vec<String>,
     /// Display size the dialog is centered in.
@@ -38,16 +38,18 @@ pub struct Dialog {
     hover: Option<usize>,
 }
 
-/// The number of characters a field shows.
-const FIELD_CHARS: usize = 40;
+const FIELD_WIDTH_CHARS: usize = 40;
+
+/// The height of a dialog outside its body: the title bar, the buttons and
+/// the padding.
+const CHROME_HEIGHT: u32 = 2 * LINE + 6 * PAD;
 
 /// `lines` wrapped to fit a display of `size`, with room for the window
 /// padding and a margin around it, and cut to the lines that still fit
 /// when `more` lines are added.
 fn wrapped(lines: &[String], (w, h): (u32, u32), more: u32) -> Vec<String> {
     let room = w.saturating_sub(8 * PAD).max(CHAR);
-    // Title bar, buttons and padding, as in `frame`.
-    let body = h.saturating_sub(2 * LINE + 6 * PAD) / LINE;
+    let body = h.saturating_sub(CHROME_HEIGHT) / LINE;
     wrap_lines(lines, room, body.saturating_sub(more) as usize)
 }
 
@@ -55,8 +57,8 @@ impl Dialog {
     pub fn new(title: &str, lines: Vec<String>, accept: &str, size: (u32, u32)) -> Dialog {
         Dialog {
             title: title.to_string(),
-            lines: wrapped(&lines, size, 0),
-            text: lines,
+            shown_lines: wrapped(&lines, size, 0),
+            given_lines: lines,
             labels: vec![accept.to_string(), "Cancel".to_string()],
             size,
             focus: 1,
@@ -72,7 +74,7 @@ impl Dialog {
             field: Some(text.to_string()),
             ..Dialog::new(title, lines, "OK", size)
         };
-        d.lines = wrapped(&d.text, size, 1);
+        d.shown_lines = wrapped(&d.given_lines, size, 1);
         d
     }
 
@@ -90,15 +92,15 @@ impl Dialog {
 
     /// The number of lines in the body, with a line for the field.
     fn body_lines(&self) -> u32 {
-        self.lines.len() as u32 + u32::from(self.field.is_some())
+        self.shown_lines.len() as u32 + u32::from(self.field.is_some())
     }
 
     /// Shows a message with OK alone, which accepts.
     pub fn notice(title: &str, lines: Vec<String>, size: (u32, u32)) -> Dialog {
         Dialog {
             title: title.to_string(),
-            lines: wrapped(&lines, size, 0),
-            text: lines,
+            shown_lines: wrapped(&lines, size, 0),
+            given_lines: lines,
             labels: vec!["OK".to_string()],
             size,
             focus: 0,
@@ -127,7 +129,7 @@ impl Dialog {
         if size != self.size {
             self.size = size;
             let more = u32::from(self.field.is_some());
-            self.lines = wrapped(&self.text, size, more);
+            self.shown_lines = wrapped(&self.given_lines, size, more);
         }
     }
 
@@ -137,21 +139,20 @@ impl Dialog {
 
     fn frame(&self) -> Rect {
         let text = self
-            .lines
+            .shown_lines
             .iter()
             .chain([&self.title])
             .map(|l| text_width(l))
             .chain(
                 self.field
                     .as_ref()
-                    .map(|_| FIELD_CHARS as u32 * CHAR + 2 * PAD),
+                    .map(|_| FIELD_WIDTH_CHARS as u32 * CHAR + 2 * PAD),
             )
             .max()
             .unwrap_or(0);
         // No wider than the display: a long title is cut, and so is a field.
         let w = (text.max(2 * self.button_width() + PAD) + 4 * PAD).min(self.size.0);
-        // Title bar, body, buttons.
-        let h = LINE + self.body_lines() * LINE + LINE + 6 * PAD;
+        let h = self.body_lines() * LINE + CHROME_HEIGHT;
         centered(self.size, w, h)
     }
 
@@ -216,11 +217,11 @@ impl Dialog {
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
         let f = self.frame();
         draw_window(fb, font, f, &self.title);
-        draw_lines(fb, font, f, &self.lines);
+        draw_lines(fb, font, f, &self.shown_lines);
         if let Some(text) = &self.field {
             let field = Rect {
                 x: f.x + 2 * PAD,
-                y: line_y(f, self.lines.len() as u32),
+                y: line_y(f, self.shown_lines.len() as u32),
                 w: f.w - 4 * PAD,
                 h: LINE,
             };
@@ -243,14 +244,10 @@ impl Dialog {
 mod tests {
     use super::*;
 
-    fn centre(r: Rect) -> (i32, i32) {
-        ((r.x + r.w / 2) as i32, (r.y + r.h / 2) as i32)
-    }
-
     #[test]
     fn names_the_slots_and_defaults_to_cancel() {
         let mut d = Dialog::quit(&[0, 2], (1280, 720));
-        assert_eq!(d.lines[2], "Slots 0, 2 have unsaved changes,");
+        assert_eq!(d.shown_lines[2], "Slots 0, 2 have unsaved changes,");
         assert_eq!(d.key(Keycode::Return), Some(Answer::Cancel));
         assert_eq!(d.key(Keycode::Left), None);
         assert_eq!(d.key(Keycode::Return), Some(Answer::Accept));
@@ -326,13 +323,13 @@ mod tests {
             path.to_string(),
         ];
         let mut d = Dialog::notice("Recovered programs", lines, (1280, 720));
-        assert_eq!(d.lines.len(), 2, "room enough on the desktop");
+        assert_eq!(d.shown_lines.len(), 2, "room enough on the desktop");
         d.set_size((320, 240));
-        assert!(d.lines.len() > 2);
+        assert!(d.shown_lines.len() > 2);
         let f = d.frame();
         assert!(f.x + f.w <= 320, "{f:?}");
         d.set_size((1280, 720));
-        assert_eq!(d.lines.len(), 2);
+        assert_eq!(d.shown_lines.len(), 2);
     }
 
     /// The Simple UI can be 320x240: a dialog is cut to fit it,
@@ -363,9 +360,9 @@ mod tests {
             }
             let room = f.w - 4 * PAD;
             assert!(
-                d.lines.iter().all(|l| text_width(l) <= room),
+                d.shown_lines.iter().all(|l| text_width(l) <= room),
                 "{:?}",
-                d.lines
+                d.shown_lines
             );
             let mut fb = Framebuffer::new(size.0, size.1);
             d.draw(&mut fb, &Font::blank());
@@ -373,7 +370,11 @@ mod tests {
         let mut lines = vec![String::new(); 2];
         lines.extend((0..20).map(|i| format!("Line {i}")));
         let d = Dialog::notice("Notice", lines, size);
-        assert!(d.lines.last().unwrap().ends_with('~'), "{:?}", d.lines);
+        assert!(
+            d.shown_lines.last().unwrap().ends_with('~'),
+            "{:?}",
+            d.shown_lines
+        );
     }
 
     #[test]
@@ -383,10 +384,10 @@ mod tests {
         let (quit, cancel) = (d.button(0), d.button(1));
         assert!(quit.x + quit.w < cancel.x, "Quit sits left of Cancel");
         assert!(cancel.x + cancel.w <= d.frame().x + d.frame().w);
-        assert_eq!(d.click(centre(quit)), Some(Answer::Accept));
-        assert_eq!(d.click(centre(cancel)), Some(Answer::Cancel));
+        assert_eq!(d.click(quit.center()), Some(Answer::Accept));
+        assert_eq!(d.click(cancel.center()), Some(Answer::Cancel));
         assert_eq!(d.click((0, 0)), None);
-        d.mouse_move(centre(quit));
+        d.mouse_move(quit.center());
         assert_eq!((d.hover, d.focus), (Some(0), 1), "hovered, not focused");
     }
 }

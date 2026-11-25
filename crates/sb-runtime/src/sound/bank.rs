@@ -8,9 +8,9 @@
 //! "SBBANK01"
 //! u32 instruments, then per instrument: u32 first region, u32 regions
 //! u32 regions, then per region REGION_BYTES as in Region::write
-//! u32 waves, then per wave WAVE_BYTES as in WaveInfo::write (a bank
-//! from before stereo waves has 0 where the right channel goes, and reads
-//! as all mono)
+//! u32 waves, then per wave WAVE_BYTES at the offsets in `wave_field` (a
+//! bank from before stereo waves has 0 where the right channel goes, and
+//! reads as all mono)
 //! the waves' data
 //! ```
 //!
@@ -23,8 +23,29 @@ use super::decoded::Cached;
 const MAGIC: &[u8; 8] = b"SBBANK01";
 const REGION_BYTES: usize = 12;
 const WAVE_BYTES: usize = 64;
-/// Samples in one DSP-ADPCM frame of eight bytes.
+/// Bytes in one DSP-ADPCM frame: a header and seven bytes of two samples.
+const FRAME_BYTES: usize = 8;
+/// Samples in one DSP-ADPCM frame of [`FRAME_BYTES`] bytes.
 pub const FRAME_SAMPLES: u32 = 14;
+
+/// The byte offsets of a wave's fields in its `WAVE_BYTES`. Each field is
+/// a little-endian u32, but `COEFS` and `LOOP_HISTORY` hold i16s.
+mod wave_field {
+    pub(super) const RATE: usize = 0;
+    pub(super) const LEN: usize = 4;
+    /// `u32::MAX` for a wave that does not loop.
+    pub(super) const LOOP_START: usize = 8;
+    /// The start of the wave's bytes in the bank's data.
+    pub(super) const DATA_START: usize = 12;
+    /// 0 for 16-bit PCM, 1 for DSP-ADPCM.
+    pub(super) const ENCODING: usize = 16;
+    /// Sixteen predictor coefficients.
+    pub(super) const COEFS: usize = 20;
+    /// The two samples before the loop start.
+    pub(super) const LOOP_HISTORY: usize = 52;
+    /// The right channel's wave plus 1, or 0 for a mono wave.
+    pub(super) const RIGHT: usize = 56;
+}
 
 /// The envelope of a note's level: SmileBASIC's attack, decay, sustain,
 /// hold and release, each 0 to 127.
@@ -126,7 +147,7 @@ impl WaveInfo {
             Encoding::Pcm16 => usize::try_from(len).ok()?.checked_mul(2),
             Encoding::Adpcm { .. } => usize::try_from(len.div_ceil(FRAME_SAMPLES))
                 .ok()?
-                .checked_mul(8),
+                .checked_mul(FRAME_BYTES),
         }
     }
 
@@ -153,19 +174,22 @@ impl WaveInfo {
     }
 
     fn read(b: &[u8]) -> Option<WaveInfo> {
-        let u = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().expect("four bytes"));
+        let u32_at = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().expect("four bytes"));
         let i16s = |from: usize, n: usize| {
             (0..n).map(move |k| i16::from_le_bytes([b[from + 2 * k], b[from + 2 * k + 1]]))
         };
-        let encoding = match u(16) {
+        let encoding = match u32_at(wave_field::ENCODING) {
             0 => Encoding::Pcm16,
             1 => {
                 let mut coefs = [0; 16];
-                coefs.iter_mut().zip(i16s(20, 16)).for_each(|(c, v)| *c = v);
+                coefs
+                    .iter_mut()
+                    .zip(i16s(wave_field::COEFS, 16))
+                    .for_each(|(c, v)| *c = v);
                 let mut loop_history = [0; 2];
                 loop_history
                     .iter_mut()
-                    .zip(i16s(52, 2))
+                    .zip(i16s(wave_field::LOOP_HISTORY, 2))
                     .for_each(|(c, v)| *c = v);
                 Encoding::Adpcm {
                     coefs,
@@ -174,19 +198,20 @@ impl WaveInfo {
             }
             _ => return None,
         };
-        let (len, start) = (u(4), usize::try_from(u(12)).ok()?);
-        let loop_start = Some(u(8)).filter(|&s| s != u32::MAX);
+        let len = u32_at(wave_field::LEN);
+        let start = usize::try_from(u32_at(wave_field::DATA_START)).ok()?;
+        let loop_start = Some(u32_at(wave_field::LOOP_START)).filter(|&s| s != u32::MAX);
         if loop_start.is_some_and(|s| s >= len) {
             return None;
         }
         let end = start.checked_add(WaveInfo::bytes_for(&encoding, len)?)?;
-        let right = match u(56) {
+        let right = match u32_at(wave_field::RIGHT) {
             0 => None,
             r => Some(u16::try_from(r - 1).ok()?),
         };
         Some(WaveInfo {
             right,
-            rate: u(0),
+            rate: u32_at(wave_field::RATE),
             len,
             loop_start,
             data: start..end,
@@ -450,12 +475,12 @@ impl Reader {
             }
             Encoding::Adpcm { coefs, .. } => {
                 let bytes = data
-                    .get(frame / FRAME_SAMPLES as usize * 8..)
+                    .get(frame / FRAME_SAMPLES as usize * FRAME_BYTES..)
                     .unwrap_or_default();
-                let bytes = &bytes[..bytes.len().min(8)];
+                let bytes = &bytes[..bytes.len().min(FRAME_BYTES)];
                 let to = to.min(bytes.len().saturating_sub(1) * 2);
-                let whole = <[u8; 8]>::try_from(bytes).unwrap_or_else(|_| {
-                    let mut short = [0u8; 8];
+                let whole = <[u8; FRAME_BYTES]>::try_from(bytes).unwrap_or_else(|_| {
+                    let mut short = [0u8; FRAME_BYTES];
                     short[..bytes.len()].copy_from_slice(bytes);
                     short
                 });
@@ -518,7 +543,7 @@ impl Reader {
         let sample = match &wave.encoding {
             Encoding::Pcm16 => i16::from_le_bytes([data[2 * pos], data[2 * pos + 1]]),
             Encoding::Adpcm { coefs, .. } => {
-                let frame = pos / FRAME_SAMPLES as usize * 8;
+                let frame = pos / FRAME_SAMPLES as usize * FRAME_BYTES;
                 let n = pos % FRAME_SAMPLES as usize;
                 let header = data[frame];
                 let byte = data[frame + 1 + n / 2];

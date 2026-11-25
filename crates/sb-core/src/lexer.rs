@@ -116,6 +116,14 @@ keywords!(
     When, While, Xor,
 );
 
+/// The most characters that SmileBASIC 4 takes in a decimal literal.
+const MAX_DECIMAL_CHARS: usize = 99;
+/// The most digits that SmileBASIC 4 takes in the exponent of a decimal
+/// literal.
+const MAX_EXPONENT_DIGITS: usize = 3;
+/// The most digits of an integer literal. A longer one is a real.
+const MAX_INT_DIGITS: usize = 10;
+
 /// Longest spellings first so that `<<<` wins over `<<` and `<`.
 const OPERATORS: &[(&str, TokenKind)] = &[
     ("<<<", TokenKind::Shl),
@@ -228,8 +236,8 @@ struct Lexer {
     line: u32,
     col: u32,
     tokens: Vec<Token>,
-    /// The error found is placed at its own token (see [`Lexer::place`]).
-    own_place: bool,
+    /// See [`Lexer::place`].
+    error_at_own_token: bool,
 }
 
 fn is_ident_start(c: char) -> bool {
@@ -248,7 +256,7 @@ impl Lexer {
             line: 1,
             col: 1,
             tokens: Vec::new(),
-            own_place: false,
+            error_at_own_token: false,
         }
     }
 
@@ -287,7 +295,8 @@ impl Lexer {
         let before = self.tokens.last();
         match before {
             Some(t)
-                if !self.own_place && !matches!(t.kind, TokenKind::Newline | TokenKind::Colon) =>
+                if !self.error_at_own_token
+                    && !matches!(t.kind, TokenKind::Newline | TokenKind::Colon) =>
             {
                 t.span
             }
@@ -462,9 +471,9 @@ impl Lexer {
         self.push(TokenKind::Str(text), start);
     }
 
-    /// A decimal number. SmileBASIC 4 takes up to 99
-    /// characters, an exponent of up to 3 digits and a finite value; an
-    /// int has up to 10 digits.
+    /// A decimal number of up to [`MAX_DECIMAL_CHARS`] characters, with an
+    /// exponent of up to [`MAX_EXPONENT_DIGITS`] digits and a finite value,
+    /// the same as SmileBASIC 4 takes.
     fn number(&mut self, start: Span) -> Result<(), LexError> {
         let from = self.pos;
         while self.peek().is_some_and(|c| c.is_ascii_digit()) {
@@ -472,7 +481,8 @@ impl Lexer {
         }
         let int_digits = self.pos - from;
         // Most numbers are whole and short: no text to build.
-        if int_digits <= 10 && !matches!(self.peek(), Some('.' | 'e' | 'E' | '_' | '#')) {
+        if int_digits <= MAX_INT_DIGITS && !matches!(self.peek(), Some('.' | 'e' | 'E' | '_' | '#'))
+        {
             let n = (self.chars[from..self.pos].iter())
                 .fold(0u64, |n, &c| n * 10 + u64::from(c as u8 - b'0'));
             let kind = match i32::try_from(n) {
@@ -505,14 +515,14 @@ impl Lexer {
                 }
                 let from = text.len();
                 self.take_digits(&mut text);
-                if text.len() - from > 3 {
+                if text.len() - from > MAX_EXPONENT_DIGITS {
                     return Err(
                         self.error(LexErrorKind::BadNumber(NumberError::LongExponent), start)
                     );
                 }
             }
         }
-        if text.len() > 99 {
+        if text.len() > MAX_DECIMAL_CHARS {
             return Err(self.error(LexErrorKind::BadNumber(NumberError::TooLong), start));
         }
         // `1_000` is a Syntax error: only `&H` and `&B` take `_`.
@@ -524,9 +534,9 @@ impl Lexer {
             is_real = true;
             self.bump();
         }
-        // Integer literals go up to 2147483647, in up to 10 digits.
-        // Any other decimal literal becomes real instead of an error.
-        let int = match is_real || int_digits > 10 {
+        // Integer literals go up to 2147483647. Any other decimal literal
+        // becomes real instead of an error.
+        let int = match is_real || int_digits > MAX_INT_DIGITS {
             true => None,
             false => text.parse::<i32>().ok(),
         };
@@ -590,7 +600,7 @@ impl Lexer {
         if digits == 0 {
             // A bare `&H` at the end of the line is placed at itself
             // (checked on hardware: `?&H`). UNVERIFIED: why.
-            self.own_place = matches!(self.peek(), None | Some('\r' | '\n'));
+            self.error_at_own_token = matches!(self.peek(), None | Some('\r' | '\n'));
             return Err(self.error(LexErrorKind::MissingDigits, start));
         }
         // `&HFFFFFFFF` is -1: the 32 bits are reinterpreted as signed.

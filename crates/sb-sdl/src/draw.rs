@@ -13,12 +13,13 @@ use crate::debug_panel::sprites::Outline;
 use crate::debug_panel::{self, DebugPanel, View};
 use crate::keyhint::KeyHint;
 use crate::menu::{Context, MenuBar};
+use crate::placement::BorderPlace;
 use crate::popup::Popup;
 use crate::program_dialog::ProgramView;
 use crate::slow_hint::SlowHint;
 use crate::toast::Toasts;
 use crate::ui::{self, Rect};
-use crate::{Beside, Choice, FileDialog, Screens, Side, corner};
+use crate::{Choice, FileDialog, Screens, Side, SidePanel, corner};
 
 /// The debugger's panel as an iteration shows it: where it is, what it
 /// shows, and the size of the screens in it, if it shows them.
@@ -50,7 +51,7 @@ pub struct Ui<'a> {
     pub notices: bool,
     pub key_hint: &'a KeyHint,
     pub slow_hint: &'a SlowHint,
-    pub side: &'a Beside,
+    pub side: &'a SidePanel,
     pub screens: &'a Screens,
     pub program_dialog: &'a Option<ProgramView>,
     /// The menu a right click opened on the editor or the panel.
@@ -175,10 +176,14 @@ impl Ui<'_> {
 /// Both are drawn at `alpha`, so that they fade out together.
 pub fn focus_border(
     canvas: &mut Canvas<Window>,
-    place: ([i32; 4], (f32, f32), (f32, f32)),
+    place: BorderPlace,
     alpha: u8,
 ) -> Result<(), sdl3::Error> {
-    let ([x, y, w, h], (ox, oy), (sx, sy)) = place;
+    let BorderPlace {
+        rect: [x, y, w, h],
+        origin: (ox, oy),
+        scale: (sx, sy),
+    } = place;
     let place = |x: i32, y: i32, w: i32, h: i32| {
         let at = |v: i32, s: f32| v as f32 * s;
         FRect::new(ox + at(x, sx), oy + at(y, sy), at(w, sx), at(h, sy))

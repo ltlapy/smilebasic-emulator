@@ -25,7 +25,7 @@ use crate::dialog::{Answer, Dialog};
 use crate::file_dialogs::FilePicker;
 use crate::inputs::Inputs;
 use crate::menu::{Action, MenuBar};
-use crate::program_dialog::ProgramView;
+use crate::program_dialog::{KeyResult, ProgramView};
 use crate::projects::{Memory, Outcome, ProjectManager, Transfer};
 use crate::settings_window::SettingsWindow;
 use crate::shortcuts::ShortcutsWindow;
@@ -33,7 +33,7 @@ use crate::simple_ui::{self, GameList, MenuSettings, PauseMenu, Welcomed};
 use crate::toast::Toasts;
 use crate::window::{self, KeepShape};
 use crate::{
-    Asking, Beside, Choice, Debugger, FileDialog, Screens, Side, about_lines, choose,
+    Asking, Choice, Debugger, FileDialog, Screens, Side, SidePanel, about_lines, choose,
     choose_extra_font, choose_sound_font, colors, condition_dialog, copy_selection, debug_action,
     debug_view, file_dialogs, help, index, load_edited, main_room, next_editor_size,
     open_file_dialog, open_folder, open_index, paste, run_from_list, save_edited, set_value,
@@ -235,6 +235,16 @@ pub fn game_list(
     }
 }
 
+/// Whether `event` is the press of a key, a mouse button or a controller
+/// button. After one, the lists of files show what other programs changed
+/// meanwhile, for the next press to act on.
+fn is_press(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::KeyDown { .. } | Event::MouseButtonDown { .. } | Event::GamepadButtonDown { .. }
+    )
+}
+
 /// The projects: they take all input except what goes to a dialog.
 /// `memory` keeps where they were when Run leaves them, for the return.
 pub fn manager(
@@ -254,12 +264,7 @@ pub fn manager(
     let Some(open) = &mut screens.manager else {
         return;
     };
-    // After a key, a click or a button, the lists show what other
-    // programs changed meanwhile, for the next one to act on.
-    let input = matches!(
-        event,
-        Event::KeyDown { .. } | Event::MouseButtonDown { .. } | Event::GamepadButtonDown { .. }
-    );
+    let input = is_press(event);
     let unsaved = machine.unsaved_slots();
     let storage = &mut machine.rt.storage;
     let outcome = match *event {
@@ -403,12 +408,7 @@ pub fn file_dialog(
     let Some(open) = &mut screens.file_dialog else {
         return;
     };
-    // After a key, a click or a button, the list shows what other
-    // programs changed meanwhile, for the next one to act on.
-    let input = matches!(
-        event,
-        Event::KeyDown { .. } | Event::MouseButtonDown { .. } | Event::GamepadButtonDown { .. }
-    );
+    let input = is_press(&event);
     let storage = &machine.rt.storage;
     let outcome = match (open, event) {
         (_, Event::Quit { .. }) => {
@@ -847,8 +847,9 @@ pub fn program_dialog(
         Event::KeyDown {
             keycode: Some(key), ..
         } => match open.key(key) {
-            Some(answer) => (true, answer),
-            None => (false, None),
+            KeyResult::Ignored => (false, None),
+            KeyResult::Taken => (true, None),
+            KeyResult::Answer(answer) => (true, Some(answer)),
         },
         Event::TextInput { ref text, .. } => (open.text(text), None),
         _ => (false, None),
@@ -864,7 +865,7 @@ pub fn program_dialog(
 /// that panel is in. Returns true if the wheel turned over it.
 pub fn side_pointer(
     event: &Event,
-    side: &mut Beside,
+    side: &mut SidePanel,
     to_display: impl Fn(f32, f32) -> (i32, i32),
 ) -> bool {
     let Some(open) = &mut side.open else {
@@ -968,7 +969,7 @@ pub fn debugger(
 
 /// The keys of the help or the index beside the editor, while it has
 /// them. Returns true if it took the event.
-pub fn side_keys(event: &Event, side: &mut Beside, machine: &mut Machine) -> bool {
+pub fn side_keys(event: &Event, side: &mut SidePanel, machine: &mut Machine) -> bool {
     let Some(open) = &mut side.open else {
         return false;
     };
@@ -1014,7 +1015,7 @@ pub struct Tools<'a> {
     pub clipboard: &'a ClipboardUtil,
     pub help: Option<&'a Help>,
     /// As About says it.
-    pub drawn_by: &'a str,
+    pub renderer_text: &'a str,
 }
 
 /// The main window, for the items of the View menu: the profile's
@@ -1031,7 +1032,7 @@ pub struct MainWindow<'a> {
 pub fn menu_action(
     action: Action,
     screens: &mut Screens,
-    side: &mut Beside,
+    side: &mut SidePanel,
     bar: &mut MenuBar,
     tools: Tools,
     main: MainWindow,
@@ -1088,7 +1089,7 @@ pub fn menu_action(
             screens.shortcuts_window = Some(ShortcutsWindow::new(size));
         }
         Action::About => {
-            let lines = about_lines(tools.drawn_by);
+            let lines = about_lines(tools.renderer_text);
             let about = Dialog::notice("About", lines, size);
             screens.dialog = Some((about, Asking::Notice));
         }

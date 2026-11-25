@@ -393,6 +393,12 @@ impl Outcome {
 
 /// The number of frames a scene is drawn for after its program is done.
 const FRAMES: u32 = 4;
+/// The most frames a scene's program may run. A program here takes few
+/// frames; one that never ends is a mistake in it.
+const MOST_PROGRAM_FRAMES: u32 = 120;
+/// The number of frames the machine is given to handle the SAVE of a
+/// subprogram.
+const SAVE_FRAMES: u32 = 30;
 
 /// Types a line and enters it, for the machine's next frames to handle.
 fn enter(m: &mut Machine, line: &str) {
@@ -435,15 +441,14 @@ pub fn run(renderer: *mut SDL_Renderer, scene: &Golden, storage: Option<PathBuf>
     if let Some(sub) = scene.sub {
         m.set_slot(1, sub.to_string());
         enter(&mut m, "SAVE \"GOLDSUB\",1");
-        for _ in 0..30 {
+        for _ in 0..SAVE_FRAMES {
             m.frame();
         }
     }
     m.set_slot(0, scene.source.to_string());
     m.run_slot(0);
     let mut frames = 0;
-    // A program here takes few frames; one that never ends is a mistake in it.
-    while m.is_running() && frames < 120 {
+    while m.is_running() && frames < MOST_PROGRAM_FRAMES {
         m.frame();
         frames += 1;
     }

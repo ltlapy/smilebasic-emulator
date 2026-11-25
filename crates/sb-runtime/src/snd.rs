@@ -17,7 +17,9 @@ use crate::sound::mml::{self, Song};
 use crate::sound::pcm::{FULL, Source};
 use crate::sound::reverb::Settings;
 use crate::sound::seq::Kind;
-use crate::sound::wave::{BEEP_TICKS_A_SECOND, Envelope, SIXTEEN_BIT, Wave, beep_ticks, eight_bit};
+use crate::sound::wave::{
+    BEEP_TICKS_PER_SECOND, Envelope, SIXTEEN_BIT, Wave, beep_ticks, eight_bit,
+};
 use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, TRACKS, frames};
 
 /// The preset songs that end rather than loop, and their lengths in
@@ -198,7 +200,7 @@ fn wave_groups(text: &str) -> Option<Option<Vec<u8>>> {
 /// regardless of their length.
 fn wavset_wave(bytes: &[u8], base_note: i32, envelope: Envelope) -> Wave {
     Wave {
-        beep_ticks: Some(BEEP_TICKS_A_SECOND),
+        beep_ticks: Some(BEEP_TICKS_PER_SECOND),
         ..eight_bit(bytes, 512, base_note, envelope)
     }
 }
@@ -327,61 +329,7 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
-            (Command::Bgmplay, Want::Outs(0), 1..=4) => {
-                let (track, music) = match args.len() {
-                    1 => (0, int(&args[0])?),
-                    _ => (opt_track(args.first())?.unwrap_or(0), int(&args[1])?),
-                };
-                let volume = match args.get(2) {
-                    None | Some(Value::Default) => BGM_VOLUME,
-                    Some(v) => in_range("volume", v, 0..=127)?,
-                };
-                let fade = match args.get(3) {
-                    None => 0,
-                    Some(v) => frames(f64::from(in_range("time", v, 0..=32767)?)),
-                };
-                let song = match music {
-                    0..=PRESET_SONGS => {
-                        let idle = self.sound.idle();
-                        match self.sound.sequence(Kind::Song, music) {
-                            Some(seq) => self.sound.track(track).play_sequence(seq, volume, fade),
-                            // Without SmileBASIC's own songs, presets play
-                            // silence, so programs waiting on BGMCHK still
-                            // wait.
-                            None => self.sound.play(track, None, volume, fade),
-                        }
-                        self.sound.track(track).number = music;
-                        if let Some(&(_, n)) = JINGLES.iter().find(|j| j.0 == music) {
-                            self.sound.track(track).end_silent_after(n);
-                        }
-                        if idle {
-                            self.sound.wake(track);
-                        }
-                        return Ok(vec![]);
-                    }
-                    // A song number with nothing set plays nothing, so
-                    // BGMCHK says 0, and it stops what the track played:
-                    // BGMCHK still said 1 two frames later, and 0 five
-                    // frames later.
-                    // UNVERIFIED: that the sound stops immediately, and that
-                    // BGMCHK says 0 from the third frame.
-                    128..=255 => match self.sound.songs.get(&music) {
-                        Some(song) => Some(Rc::clone(song)),
-                        None => {
-                            self.sound.stop_for_nothing(track);
-                            return Ok(vec![]);
-                        }
-                    },
-                    n => return Err(out_of_range("song", n)),
-                };
-                let idle = self.sound.idle();
-                self.sound.play(track, song, volume, fade);
-                self.sound.track(track).number = music;
-                if idle {
-                    self.sound.wake(track);
-                }
-                Ok(vec![])
-            }
+            (Command::Bgmplay, Want::Outs(0), 1..=4) => self.bgmplay(args),
             (Command::Bgmset, Want::Outs(0), 2) => {
                 let n = user_song(&args[0])?;
                 let song = parse(&text(&args[1])?)?;
@@ -539,71 +487,7 @@ impl Runtime {
             }
             // Ten arguments or more make a 16-bit sample with a loop and its
             // own sample rate, fewer the 8-bit form of SmileBASIC 3.
-            (Command::Wavseta, Want::Outs(0), 6..=12) => {
-                let (n, envelope) = wave_head(args)?;
-                let Value::Array(array) = &args[5] else {
-                    return Err(Error::from(ErrorKind::TypeMismatch).of_arg(5));
-                };
-                let last = array.borrow().len() as i32 - 1;
-                let base_note = wave_arg("pitch", args, 6, 0..=127, 69)?;
-                let start = wave_arg("start", args, 7, 0..=last, 0)?;
-                let end = wave_arg("end", args, 8, 0..=last, last)?;
-                let rate = wave_arg("frequency", args, 9, 1..=96000, 28160)?;
-                let offset = wave_arg("offset", args, 10, 0..=last, 0)?;
-                let beep_loop = wave_arg("flag", args, 11, i32::MIN..=i32::MAX, 0)? != 0;
-                if start > end {
-                    let detail = if last < 0 {
-                        "empty array"
-                    } else {
-                        "start past end"
-                    };
-                    return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, detail));
-                }
-                if start == end {
-                    return Ok(vec![]);
-                }
-                let (start, end) = (start as usize, end as usize);
-                if args.len() < 10 {
-                    // Each value is cut to an integer toward zero and then
-                    // to its low 8 bits, so 256 is 0 and -1 is 255.
-                    let bytes = samples(&args[5], start..=end, |x| x as i32 as u8)?;
-                    // The pass is the next power of two, at most 1M samples.
-                    let pass = bytes.len().next_power_of_two().min(1 << 20);
-                    let wave = eight_bit(&bytes, pass, base_note, envelope);
-                    self.sound.waves.borrow_mut().define(n, wave);
-                    return Ok(vec![]);
-                }
-                let offset = offset as usize;
-                // The sample is the loop's end + 1 values from the offset
-                // on, and the loop counts from the offset: what comes after
-                // the loop is dropped.
-                if end > (last as usize) - offset {
-                    let e = Error::with_detail(ErrorKind::OutOfRange, "offset leaves too little");
-                    return Err(e.of_arg(10));
-                }
-                // Values are cut to 16 bits, reals toward zero first and
-                // held to 32 bits.
-                let samples = samples(&args[5], offset..=offset + end, |x| x as i32 as i16)?;
-                let looped = (start, end + 1);
-                // The flag repeats BEEP's note forever, if it has one.
-                let beep_ticks = Some(beep_ticks(end + 1, rate as u32));
-                self.sound.waves.borrow_mut().define(
-                    n,
-                    Wave {
-                        samples,
-                        unit: SIXTEEN_BIT,
-                        base_note,
-                        rate: Some(f64::from(rate)),
-                        cycle: 0.0,
-                        looped,
-                        beep_loop,
-                        beep_ticks,
-                        beep_repeats: beep_loop,
-                        envelope,
-                    },
-                );
-                Ok(vec![])
-            }
+            (Command::Wavseta, Want::Outs(0), 6..=12) => self.wavseta(args),
             (Command::Beep, Want::Outs(0) | Want::Value, 0..=4) => {
                 let n = opt_in_range("sound", args.first(), 0..=383, 0)?;
                 let pitch = opt_in_range("pitch", args.get(1), -32768..=32767, 0)?;
@@ -790,7 +674,9 @@ impl Runtime {
             // The subprogram's RECSTART and RECSTOP do nothing, regardless
             // of their arguments: its RECSAVE gets what the main program
             // recorded last, and the main program's recording continues.
-            (Command::Recstart | Command::Recstop, Want::Outs(0), _) if self.sound.sub => {
+            (Command::Recstart | Command::Recstop, Want::Outs(0), _)
+                if self.sound.is_sub_interpreter =>
+            {
                 Ok(vec![])
             }
             (Command::Recstart, Want::Outs(0), 0..=1) => {
@@ -839,68 +725,194 @@ impl Runtime {
                 let [l, r] = at.map_or([0, 0], |at| samples[at as usize]);
                 Ok(vec![Value::Int(i32::from(l)), Value::Int(i32::from(r))])
             }
-            (Command::Recsave, Want::Outs(0), 1..=3) => {
-                // SmileBASIC 4 names the first argument when it
-                // is not an array.
-                if !matches!(args[0], Value::Array(_)) {
-                    return Err(Error::new(ErrorKind::TypeMismatch).of_arg(0));
-                }
-                let rec = self.sound.recorder.borrow();
-                let samples = rec.samples();
-                let len = samples.len() as i32;
-                let n = opt_in_range("count", args.get(1), 0..=len, rec.pos as i32)? as usize;
-                // When recording loops around the buffer, positions wrap
-                // around it too, with no error: before 0 or past what this
-                // recording reached, they read the older recordings there.
-                let taken: Vec<[i16; 2]> = if rec.ring && len > 0 {
-                    let from = match args.get(2) {
-                        Some(v) => v.to_int()?.rem_euclid(len) as usize,
-                        None => 0,
-                    };
-                    (0..n).map(|i| samples[(from + i) % len as usize]).collect()
-                } else {
-                    // UNVERIFIED: that a recording with a time refuses
-                    // positions past its end.
-                    let from = opt_in_range("position", args.get(2), 0..=len, 0)? as usize;
-                    if from + n > samples.len() {
-                        return Err(Error::with_detail(ErrorKind::OutOfRange, "count"));
-                    }
-                    samples[from..from + n].to_vec()
-                };
-                let a = args[0].clone().into_array()?;
-                let mut a = a.borrow_mut();
-                let elem = a.elem_type();
-                // SmileBASIC 4 reads the count and the position first, then
-                // refuses a string array or one of over two dimensions as
-                // the first argument's Type mismatch.
-                if elem == ElemType::Str || a.dims.len() > 2 {
-                    return Err(Error::new(ErrorKind::TypeMismatch).of_arg(0));
-                }
-                // A system array cannot take a new size.
-                if a.system {
-                    return Err(Error::new(ErrorKind::CantResizeThisArray).of_arg(0));
-                }
-                // The array takes the size of what it gets.
-                match a.dims.len() {
-                    1 => {
-                        *a = Array::new(elem, vec![n]);
-                        for (i, [l, r]) in taken.iter().enumerate() {
-                            a.set(i, Value::Int((i32::from(*l) + i32::from(*r)) / 2))?;
-                        }
-                    }
-                    2 => {
-                        *a = Array::new(elem, vec![2, n]);
-                        for (i, [l, r]) in taken.iter().enumerate() {
-                            a.set(i, Value::Int(i32::from(*l)))?;
-                            a.set(n + i, Value::Int(i32::from(*r)))?;
-                        }
-                    }
-                    _ => return Err(illegal()),
-                }
-                Ok(vec![])
-            }
+            (Command::Recsave, Want::Outs(0), 1..=3) => self.recsave(args),
             _ => Err(no_form()),
         }
+    }
+
+    /// BGMPLAY with a song number: `[track,] song [,volume [,time]]`.
+    fn bgmplay(&mut self, args: &[Value]) -> Result<Vec<Value>> {
+        let (track, music) = match args.len() {
+            1 => (0, int(&args[0])?),
+            _ => (opt_track(args.first())?.unwrap_or(0), int(&args[1])?),
+        };
+        let volume = match args.get(2) {
+            None | Some(Value::Default) => BGM_VOLUME,
+            Some(v) => in_range("volume", v, 0..=127)?,
+        };
+        let fade = match args.get(3) {
+            None => 0,
+            Some(v) => frames(f64::from(in_range("time", v, 0..=32767)?)),
+        };
+        let song = match music {
+            0..=PRESET_SONGS => {
+                let idle = self.sound.idle();
+                match self.sound.sequence(Kind::Song, music) {
+                    Some(seq) => self.sound.track(track).play_sequence(seq, volume, fade),
+                    // Without SmileBASIC's own songs, presets play
+                    // silence, so programs waiting on BGMCHK still
+                    // wait.
+                    None => self.sound.play(track, None, volume, fade),
+                }
+                self.sound.track(track).number = music;
+                if let Some(&(_, n)) = JINGLES.iter().find(|j| j.0 == music) {
+                    self.sound.track(track).end_silent_after(n);
+                }
+                if idle {
+                    self.sound.wake(track);
+                }
+                return Ok(vec![]);
+            }
+            // A song number with nothing set plays nothing, so
+            // BGMCHK says 0, and it stops what the track played:
+            // BGMCHK still said 1 two frames later, and 0 five
+            // frames later.
+            // UNVERIFIED: that the sound stops immediately, and that
+            // BGMCHK says 0 from the third frame.
+            128..=255 => match self.sound.songs.get(&music) {
+                Some(song) => Some(Rc::clone(song)),
+                None => {
+                    self.sound.stop_for_nothing(track);
+                    return Ok(vec![]);
+                }
+            },
+            n => return Err(out_of_range("song", n)),
+        };
+        let idle = self.sound.idle();
+        self.sound.play(track, song, volume, fade);
+        self.sound.track(track).number = music;
+        if idle {
+            self.sound.wake(track);
+        }
+        Ok(vec![])
+    }
+
+    /// WAVSETA: an instrument from part of an array.
+    fn wavseta(&mut self, args: &[Value]) -> Result<Vec<Value>> {
+        let (n, envelope) = wave_head(args)?;
+        let Value::Array(array) = &args[5] else {
+            return Err(Error::from(ErrorKind::TypeMismatch).of_arg(5));
+        };
+        let last = array.borrow().len() as i32 - 1;
+        let base_note = wave_arg("pitch", args, 6, 0..=127, 69)?;
+        let start = wave_arg("start", args, 7, 0..=last, 0)?;
+        let end = wave_arg("end", args, 8, 0..=last, last)?;
+        let rate = wave_arg("frequency", args, 9, 1..=96000, 28160)?;
+        let offset = wave_arg("offset", args, 10, 0..=last, 0)?;
+        let beep_loop = wave_arg("flag", args, 11, i32::MIN..=i32::MAX, 0)? != 0;
+        if start > end {
+            let detail = if last < 0 {
+                "empty array"
+            } else {
+                "start past end"
+            };
+            return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, detail));
+        }
+        if start == end {
+            return Ok(vec![]);
+        }
+        let (start, end) = (start as usize, end as usize);
+        if args.len() < 10 {
+            // Each value is cut to an integer toward zero and then
+            // to its low 8 bits, so 256 is 0 and -1 is 255.
+            let bytes = samples(&args[5], start..=end, |x| x as i32 as u8)?;
+            // The pass is the next power of two, at most 1M samples.
+            let pass = bytes.len().next_power_of_two().min(1 << 20);
+            let wave = eight_bit(&bytes, pass, base_note, envelope);
+            self.sound.waves.borrow_mut().define(n, wave);
+            return Ok(vec![]);
+        }
+        let offset = offset as usize;
+        // The sample is the loop's end + 1 values from the offset
+        // on, and the loop counts from the offset: what comes after
+        // the loop is dropped.
+        if end > (last as usize) - offset {
+            let e = Error::with_detail(ErrorKind::OutOfRange, "offset leaves too little");
+            return Err(e.of_arg(10));
+        }
+        // Values are cut to 16 bits, reals toward zero first and
+        // held to 32 bits.
+        let samples = samples(&args[5], offset..=offset + end, |x| x as i32 as i16)?;
+        let looped = (start, end + 1);
+        // The flag repeats BEEP's note forever, if it has one.
+        let beep_ticks = Some(beep_ticks(end + 1, rate as u32));
+        self.sound.waves.borrow_mut().define(
+            n,
+            Wave {
+                samples,
+                unit: SIXTEEN_BIT,
+                base_note,
+                rate: Some(f64::from(rate)),
+                cycle: 0.0,
+                looped,
+                beep_loop,
+                beep_ticks,
+                beep_repeats: beep_loop,
+                envelope,
+            },
+        );
+        Ok(vec![])
+    }
+
+    /// RECSAVE: copies the recording into an array, which takes its size.
+    fn recsave(&mut self, args: &[Value]) -> Result<Vec<Value>> {
+        // SmileBASIC 4 names the first argument when it
+        // is not an array.
+        if !matches!(args[0], Value::Array(_)) {
+            return Err(Error::new(ErrorKind::TypeMismatch).of_arg(0));
+        }
+        let rec = self.sound.recorder.borrow();
+        let samples = rec.samples();
+        let len = samples.len() as i32;
+        let n = opt_in_range("count", args.get(1), 0..=len, rec.pos as i32)? as usize;
+        // When recording loops around the buffer, positions wrap
+        // around it too, with no error: before 0 or past what this
+        // recording reached, they read the older recordings there.
+        let taken: Vec<[i16; 2]> = if rec.ring && len > 0 {
+            let from = match args.get(2) {
+                Some(v) => v.to_int()?.rem_euclid(len) as usize,
+                None => 0,
+            };
+            (0..n).map(|i| samples[(from + i) % len as usize]).collect()
+        } else {
+            // UNVERIFIED: that a recording with a time refuses
+            // positions past its end.
+            let from = opt_in_range("position", args.get(2), 0..=len, 0)? as usize;
+            if from + n > samples.len() {
+                return Err(Error::with_detail(ErrorKind::OutOfRange, "count"));
+            }
+            samples[from..from + n].to_vec()
+        };
+        let a = args[0].clone().into_array()?;
+        let mut a = a.borrow_mut();
+        let elem = a.elem_type();
+        // SmileBASIC 4 reads the count and the position first, then
+        // refuses a string array or one of over two dimensions as
+        // the first argument's Type mismatch.
+        if elem == ElemType::Str || a.dims.len() > 2 {
+            return Err(Error::new(ErrorKind::TypeMismatch).of_arg(0));
+        }
+        if a.system {
+            return Err(Error::new(ErrorKind::CantResizeThisArray).of_arg(0));
+        }
+        // The array takes the size of what it gets.
+        match a.dims.len() {
+            1 => {
+                *a = Array::new(elem, vec![n]);
+                for (i, [l, r]) in taken.iter().enumerate() {
+                    a.set(i, Value::Int((i32::from(*l) + i32::from(*r)) / 2))?;
+                }
+            }
+            2 => {
+                *a = Array::new(elem, vec![2, n]);
+                for (i, [l, r]) in taken.iter().enumerate() {
+                    a.set(i, Value::Int(i32::from(*l)))?;
+                    a.set(n + i, Value::Int(i32::from(*r)))?;
+                }
+            }
+            _ => return Err(illegal()),
+        }
+        Ok(vec![])
     }
 }
 

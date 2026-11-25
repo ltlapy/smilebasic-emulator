@@ -42,6 +42,14 @@ pub const FRAME_SAMPLES: usize = (RATE / 60) as usize;
 pub const TRACKS: usize = 16;
 /// Frames a song started on an idle sound system waits.
 const WAKE_FRAMES: u32 = 2;
+/// [`Track::linger`] for a song stopped with a fade in the frame it started
+/// in, after a VSYNC that did not wait.
+const LINGER_AFTER_SYNCED_FADE: u32 = 2;
+/// [`Track::linger`] after BGMPLAY of a user song with nothing set.
+const LINGER_AFTER_EMPTY_SONG: u32 = 3;
+/// The most mixed samples kept when nobody takes them, as in tests: one
+/// second, left and right.
+const MOST_UNTAKEN: usize = 2 * RATE as usize;
 /// The highest preset song number: 4.4.5 added 62 to 73, and 46 and up
 /// play on hardware.
 pub const PRESET_SONGS: i32 = 73;
@@ -386,11 +394,11 @@ pub struct Sound {
     reverb: Option<reverb::Reverb>,
     /// What PCMSTREAM sends to the effector this frame, and then what
     /// the effector adds to the mix.
-    aux: [Vec<f32>; 2],
+    pcm_aux: [Vec<f32>; 2],
     /// What BEEP and BGM send to the effector this frame.
-    aux_late: [Vec<f32>; 2],
-    /// PCMSTREAM and TALK this frame, which the output does not halve.
-    whole: [Vec<f32>; 2],
+    beep_bgm_aux: [Vec<f32>; 2],
+    /// PCMSTREAM and TALK this frame.
+    unhalved: [Vec<f32>; 2],
     /// One kind of sound at a time, to send part of it.
     part: [Vec<f32>; 2],
     /// PCMSTREAM's samples this frame, kept out of a recording.
@@ -398,8 +406,8 @@ pub struct Sound {
     /// RECSTART's recording, which the sub interpreter shares with the main
     /// one.
     pub(crate) recorder: Rc<RefCell<Recorder>>,
-    /// This is the sub interpreter's sound, which never records.
-    pub(crate) sub: bool,
+    /// The sub interpreter's sound never records.
+    pub(crate) is_sub_interpreter: bool,
     /// SNDMSBAL, which only subprograms set. The main and the sub
     /// interpreter share one from the sub's first frame on.
     balance: Rc<Cell<Balance>>,
@@ -436,14 +444,14 @@ impl Default for Sound {
             talk: Talk::default(),
             effector: Rc::default(),
             reverb: None,
-            aux: Default::default(),
-            aux_late: Default::default(),
-            whole: Default::default(),
+            pcm_aux: Default::default(),
+            beep_bgm_aux: Default::default(),
+            unhalved: Default::default(),
             part: Default::default(),
             pcm_part: Default::default(),
             balance: Rc::new(Cell::new(Balance::START)),
             recorder: Rc::default(),
-            sub: false,
+            is_sub_interpreter: false,
             master: Master::START,
             stops: Rc::default(),
             stops_seen: 0,
@@ -528,7 +536,7 @@ impl Sound {
                 let synced = t.fresh == Fresh::Synced;
                 t.stop();
                 if fade > 0 && synced {
-                    t.linger = 2;
+                    t.linger = LINGER_AFTER_SYNCED_FADE;
                 }
             } else {
                 t.fade.to(0.0, fade);
@@ -542,7 +550,7 @@ impl Sound {
     pub(crate) fn stop_for_nothing(&mut self, n: usize) {
         if let Some(t) = self.tracks[n].as_mut().filter(|t| t.playing) {
             t.stop();
-            t.linger = 3;
+            t.linger = LINGER_AFTER_EMPTY_SONG;
         }
     }
 
@@ -649,7 +657,7 @@ impl Sound {
 
     /// SNDMSBAL, which does nothing in the main program.
     pub(crate) fn set_balance(&mut self, balance: i32, seconds: f32) {
-        if self.sub {
+        if self.is_sub_interpreter {
             let mut b = self.balance.get();
             b.to(balance, seconds);
             self.balance.set(b);
@@ -740,12 +748,12 @@ impl Sound {
         // The sub interpreter moves the shared balance once per frame, and
         // the main interpreter moves SNDMVOL, which the sub interpreter
         // follows.
-        if self.sub {
+        if self.is_sub_interpreter {
             let mut b = self.balance.get();
             b.step_frame();
             self.balance.set(b);
         }
-        self.master.step_frame(!self.sub);
+        self.master.step_frame(!self.is_sub_interpreter);
         let n = FRAME_SAMPLES;
         let [left, right] = &mut self.mix;
         left.clear();
@@ -777,7 +785,7 @@ impl Sound {
             }
             false => (0.0, 1.0, 1.0),
         };
-        for aux in &mut self.aux {
+        for aux in &mut self.pcm_aux {
             aux.clear();
             if effect {
                 aux.resize(n, 0.0);
@@ -790,24 +798,24 @@ impl Sound {
             && self.tracks.iter().flatten().all(|t| t.wet.is_none()))
         .then(|| HALF * (1.0 + sends[BGM_SEND]));
         let bus = if passed.is_some() { 0.0 } else { HALF };
-        for aux in &mut self.aux_late {
+        for aux in &mut self.beep_bgm_aux {
             aux.clear();
             if passed.is_none() {
                 aux.resize(n, 0.0);
             }
         }
-        for aux in &mut self.whole {
+        for aux in &mut self.unhalved {
             aux.clear();
             aux.resize(n, 0.0);
         }
-        let [aux_l, aux_r] = &mut self.aux;
-        let [late_l, late_r] = &mut self.aux_late;
-        let [whole_l, whole_r] = &mut self.whole;
+        let [pcm_aux_l, pcm_aux_r] = &mut self.pcm_aux;
+        let [beep_bgm_l, beep_bgm_r] = &mut self.beep_bgm_aux;
+        let [unhalved_l, unhalved_r] = &mut self.unhalved;
         // A recording not yet begun waits with a song that waits for the
         // sound system to wake, and so begins with the song. The sub
         // interpreter's sound reaches the main one's recording through
         // `hear_sub`.
-        let record = !self.sub && {
+        let record = !self.is_sub_interpreter && {
             let waking = self.tracks.iter().flatten().any(|t| t.hold > 0);
             let mut rec = self.recorder.borrow_mut();
             rec.frame_start = rec.pos;
@@ -817,8 +825,8 @@ impl Sound {
         // RECSTART does not hear PCMSTREAM, which is mixed in after the
         // recording and still sends to the effector.
         let pcm_apart = record && self.pcm.playing;
-        // Whether PCMSTREAM or TALK may write into `whole` this frame.
-        let whole_used = self.pcm.playing && !pcm_apart || self.talk.sounding();
+        // Whether PCMSTREAM or TALK may write into `unhalved` this frame.
+        let unhalved_used = self.pcm.playing && !pcm_apart || self.talk.sounding();
         if pcm_apart {
             let [l, r] = &mut self.pcm_part;
             l.clear();
@@ -828,8 +836,8 @@ impl Sound {
             self.pcm.render(l, r);
             if pcm_send != 0.0 {
                 for i in 0..n {
-                    aux_l[i] += l[i] * pcm_send;
-                    aux_r[i] += r[i] * pcm_send;
+                    pcm_aux_l[i] += l[i] * pcm_send;
+                    pcm_aux_r[i] += r[i] * pcm_send;
                     l[i] *= pcm_keep;
                     r[i] *= pcm_keep;
                 }
@@ -840,7 +848,8 @@ impl Sound {
             // its track until the next BGMPLAY, a new EFCWET, RECSTART or
             // SNDSTOP.
             let s = t.wet.map_or(sends[BGM_SEND], |w| w as f32 / 127.0) * bus;
-            let aux = (s > 0.0).then_some((late_l.as_mut_slice(), late_r.as_mut_slice(), s));
+            let aux =
+                (s > 0.0).then_some((beep_bgm_l.as_mut_slice(), beep_bgm_r.as_mut_slice(), s));
             t.render(left, right, &mut self.scratch, aux);
         }
         let [part_l, part_r] = &mut self.part;
@@ -873,40 +882,45 @@ impl Sound {
             sends[BEEP_SEND] * bus,
             1.0,
             [&mut *left, &mut *right],
-            [&mut *late_l, &mut *late_r],
+            [&mut *beep_bgm_l, &mut *beep_bgm_r],
             &mut |l, r| self.beeps.render(l, r),
         );
         if !pcm_apart {
             mix(
                 pcm_send,
                 pcm_keep,
-                [&mut *whole_l, &mut *whole_r],
-                [&mut *aux_l, &mut *aux_r],
+                [&mut *unhalved_l, &mut *unhalved_r],
+                [&mut *pcm_aux_l, &mut *pcm_aux_r],
                 &mut |l, r| self.pcm.render(l, r),
             );
         }
         mix(
             0.0,
             talk_keep,
-            [&mut *whole_l, &mut *whole_r],
-            [&mut *aux_l, &mut *aux_r],
+            [&mut *unhalved_l, &mut *unhalved_r],
+            [&mut *pcm_aux_l, &mut *pcm_aux_r],
             &mut |l, r| self.talk.render(l, r),
         );
         // The effector adds its output in place of what was sent to it.
         // RECSTART records the sound before the effector.
         if let Some(r) = self.reverb.as_mut().filter(|_| effect) {
             // A tail keeps its input: one bad sample would keep ringing.
-            for aux in [&mut *aux_l, &mut *aux_r, &mut *late_l, &mut *late_r] {
+            for aux in [
+                &mut *pcm_aux_l,
+                &mut *pcm_aux_r,
+                &mut *beep_bgm_l,
+                &mut *beep_bgm_r,
+            ] {
                 silence_nans(aux);
                 aux.iter_mut()
                     .for_each(|s| *s = s.clamp(-MOST_SENT, MOST_SENT));
             }
-            r.process(aux_l, aux_r, [late_l, late_r]);
+            r.process(pcm_aux_l, pcm_aux_r, [beep_bgm_l, beep_bgm_r]);
         }
         // The mix, as RECSTART and the main program hear it. Without
         // PCMSTREAM or TALK this adds zeros, which leave it unchanged.
-        if whole_used {
-            for (to, from) in [(&mut *left, &*whole_l), (&mut *right, &*whole_r)] {
+        if unhalved_used {
+            for (to, from) in [(&mut *left, &*unhalved_l), (&mut *right, &*unhalved_r)] {
                 to.iter_mut().zip(from).for_each(|(t, &x)| *t += x);
             }
         }
@@ -916,20 +930,18 @@ impl Sound {
                 _ => [-1; 8],
             };
         }
-        // Nobody is taking them, as in tests: keep a second at most.
-        let most = 2 * RATE as usize;
-        if self.out.len() > most {
-            self.out.drain(..self.out.len() - most);
+        if self.out.len() > MOST_UNTAKEN {
+            self.out.drain(..self.out.len() - MOST_UNTAKEN);
         }
         self.out.reserve(2 * n);
         let start = self.out.len();
-        let [aux_l, aux_r] = &self.aux;
-        let [late_l, late_r] = &self.aux_late;
-        let [whole_l, whole_r] = &self.whole;
+        let [wet_l, wet_r] = &self.pcm_aux;
+        let [beep_bgm_l, beep_bgm_r] = &self.beep_bgm_aux;
+        let [unhalved_l, unhalved_r] = &self.unhalved;
         let [pcm_l, pcm_r] = &self.pcm_part;
         let sent = match effect {
-            true => [aux_l, aux_r],
-            false => [late_l, late_r],
+            true => [wet_l, wet_r],
+            false => [beep_bgm_l, beep_bgm_r],
         };
         // BEEP and BGM at half, or with the gain they pass; the rest
         // unchanged.
@@ -943,14 +955,14 @@ impl Sound {
             let gain = self.master.gain.value as f32;
             self.out.resize(start + 2 * n, 0.0);
             let out = &mut self.out[start..];
-            for (o, (&l, &w)) in out.iter_mut().step_by(2).zip(left.iter().zip(whole_l)) {
+            for (o, (&l, &w)) in out.iter_mut().step_by(2).zip(left.iter().zip(unhalved_l)) {
                 *o = l * gain * keep + w * gain * rest;
             }
             for (o, (&r, &w)) in out
                 .iter_mut()
                 .skip(1)
                 .step_by(2)
-                .zip(right.iter().zip(whole_r))
+                .zip(right.iter().zip(unhalved_r))
             {
                 *o = r * gain * keep + w * gain * rest;
             }
@@ -978,8 +990,8 @@ impl Sound {
                 rec.record(l.clamp(-1.0, 1.0), r.clamp(-1.0, 1.0));
             }
             let (mut l, mut r) = (
-                l * keep + whole_l[i] * gain * rest,
-                r * keep + whole_r[i] * gain * rest,
+                l * keep + unhalved_l[i] * gain * rest,
+                r * keep + unhalved_r[i] * gain * rest,
             );
             if let (Some(sl), Some(sr)) = (sent[0].get(i), sent[1].get(i)) {
                 l += sl * gain;
@@ -1004,7 +1016,7 @@ impl Sound {
     pub(crate) fn hear_sub(&mut self, sub: &mut Sound) {
         if !Rc::ptr_eq(&sub.recorder, &self.recorder) {
             sub.recorder = Rc::clone(&self.recorder);
-            sub.sub = true;
+            sub.is_sub_interpreter = true;
             self.balance.set(sub.balance.get());
             sub.balance = Rc::clone(&self.balance);
             // UNVERIFIED: that the two programs share the effector. On
@@ -1048,7 +1060,7 @@ mod tests {
     fn recording_hears_the_subprogram_as_sndmsbal_balances_it() {
         let heard = |balance: i32| {
             let (mut main, mut sub) = (Sound::default(), Sound::default());
-            sub.sub = true;
+            sub.is_sub_interpreter = true;
             sub.set_balance(balance, 0.0);
             main.recorder.borrow_mut().start(FRAME_SAMPLES, false);
             main.render_frame();
@@ -1197,7 +1209,7 @@ mod tests {
         main.render_frame();
         sub.render_frame();
         main.hear_sub(&mut sub);
-        assert!(sub.sub && Rc::ptr_eq(&sub.recorder, &main.recorder));
+        assert!(sub.is_sub_interpreter && Rc::ptr_eq(&sub.recorder, &main.recorder));
         sub.render_frame();
         assert_eq!(main.recorder.borrow().pos, FRAME_SAMPLES);
         main.render_frame();

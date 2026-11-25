@@ -7,7 +7,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
-use crate::input::{A, B, Input, LEFT, RIGHT};
+use crate::input::{A, ANY_ID, B, Input, LANY_ID, LEFT, RANY_ID, RIGHT};
 use crate::runtime::{Command, Runtime, checking, illegal, opt_int};
 use crate::storage;
 
@@ -19,8 +19,7 @@ const NAME_CHARS: usize = 32;
 const DEFAULT_CAPTION: &str = "DIALOG";
 /// DIALOG's button bit for the touch screen.
 const TOUCH_BIT: u32 = 1 << 17;
-/// #B_RANY, #B_LANY and #B_ANY.
-const ANY_BITS: u32 = 0b111 << 14;
+const ANY_BITS: u32 = 1 << RANY_ID | 1 << LANY_ID | 1 << ANY_ID;
 /// Every button DIALOG can wait for, the touch screen's bit included.
 const BUTTON_BITS: i32 = (TOUCH_BIT << 1) as i32 - 1;
 const FRAMES_PER_SECOND: i32 = 60;
@@ -106,7 +105,7 @@ impl Waiting {
     }
 
     /// The number of buttons of a choice, if it is one.
-    fn choices(&self) -> Option<usize> {
+    fn button_count(&self) -> Option<usize> {
         match &self.dialog.kind {
             DialogKind::Choice(labels) => Some(labels.len()),
             _ => None,
@@ -119,7 +118,7 @@ impl Waiting {
     // UNVERIFIED: that it stops at the ends rather than wrapping around, and
     // that Up and Down do nothing.
     fn steer(&mut self, input: &Input) {
-        let Some(n) = self.choices() else {
+        let Some(n) = self.button_count() else {
             return;
         };
         let x = input.left_stick().0;
@@ -232,7 +231,7 @@ impl Runtime {
     /// dialog with buttons to choose from.
     pub fn dialog_focus(&self) -> Option<usize> {
         let waiting = self.dialog.as_ref()?;
-        waiting.choices().map(|_| waiting.focus)
+        waiting.button_count().map(|_| waiting.focus)
     }
 
     /// Moves the focus of the program's dialog to button `i`, for the
@@ -240,7 +239,7 @@ impl Runtime {
     /// keeps no focus.
     pub fn set_dialog_focus(&mut self, i: usize) {
         if let Some(waiting) = self.dialog.as_mut()
-            && let Some(n) = waiting.choices()
+            && let Some(n) = waiting.button_count()
         {
             waiting.focus = i.min(n.saturating_sub(1));
         }

@@ -125,7 +125,7 @@ the position, scaled and then turned clockwise. The layer's matrix follows
 - For each frame pixel in the element's bounding box (`compose::span`, clipped
   to LCLIP), the pixel center `(px+0.5, py+0.5)` goes through the inverse
   matrix, moved a tiny distance right and a smaller distance up
-  (`Placement::sampling`).
+  (`Placement::frame_to_image`).
 - The pixel is drawn when the resulting image point `(lx, ly)` is in
   `[0,w) x [0,h)`. An edge exactly through a center takes the pixel if it is the
   left or the bottom edge, regardless of how the image is turned.

@@ -37,9 +37,27 @@ fn pressed(buttons: u32) -> State {
     s
 }
 
+// BUTTON's ids, named after SmileBASIC 4's constants.
+const B_RUP: u32 = 0;
+const B_RDOWN: u32 = 1;
+const B_RLEFT: u32 = 2;
+const B_RRIGHT: u32 = 3;
+const B_LUP: u32 = 4;
+const B_LDOWN: u32 = 5;
+const B_LLEFT: u32 = 6;
+const B_LRIGHT: u32 = 7;
+const B_L1: u32 = 8;
+const B_R1: u32 = 9;
+const B_L2: u32 = 10;
+const B_R2: u32 = 11;
+const B_LSTICK: u32 = 12;
+const B_RSTICK: u32 = 13;
+const B_RANY: u32 = 14;
+const B_ANY: u32 = 16;
+
 #[test]
 fn buttons() {
-    let a = 1 << 3;
+    let a = 1 << B_RRIGHT;
     let frames = [pressed(0), pressed(a)];
     assert_eq!(
         run(
@@ -47,7 +65,7 @@ fn buttons() {
             "?BUTTON(0);BUTTON(1,3);BUTTON(1,#B_RANY);BUTTON(2,3);BUTTON(1,3,2)"
         )
         .unwrap(),
-        format!("{}1101", a | 1 << 14 | 1 << 16)
+        format!("{}1101", a | 1 << B_RANY | 1 << B_ANY)
     );
     let frames = [pressed(a), pressed(0)];
     assert_eq!(run(&frames, "?BUTTON(1,3);BUTTON(1,3,3)").unwrap(), "01");
@@ -333,7 +351,7 @@ fn function_keys_and_pushkey() {
 
 /// Runs each state of `frames` as a frame, then reads with `read` and
 /// prints the code of each key with `?`.
-fn typed(frames: &[State], read: &str) -> String {
+fn inkey_codes_after(frames: &[State], read: &str) -> String {
     let mut rt = Runtime::for_tests(Font::blank());
     for state in frames {
         rt.input.live = *state;
@@ -352,46 +370,75 @@ fn typed(frames: &[State], read: &str) -> String {
 
 #[test]
 fn controllers_type_keys_for_inkey() {
-    // #B_RRIGHT, #B_RLEFT and #B_LUP to #B_LRIGHT, as the manual lists them.
+    // In the order the manual lists them.
     for (button, code) in [
-        (3, "13"),
-        (2, "8"),
-        (4, "30"),
-        (5, "31"),
-        (6, "29"),
-        (7, "28"),
+        (B_RRIGHT, "13"),
+        (B_RLEFT, "8"),
+        (B_LUP, "30"),
+        (B_LDOWN, "31"),
+        (B_LLEFT, "29"),
+        (B_LRIGHT, "28"),
     ] {
         let down = [State::default(), pressed(1 << button)];
-        assert_eq!(typed(&down, "INKEY$()"), code, "button {button}");
-        assert_eq!(typed(&down, "INKEY$(0)"), code, "button {button}");
-        assert_eq!(typed(&down, "INKEY$(1)"), "", "button {button}");
+        assert_eq!(
+            inkey_codes_after(&down, "INKEY$()"),
+            code,
+            "button {button}"
+        );
+        assert_eq!(
+            inkey_codes_after(&down, "INKEY$(0)"),
+            code,
+            "button {button}"
+        );
+        assert_eq!(inkey_codes_after(&down, "INKEY$(1)"), "", "button {button}");
     }
-    // INKEY$ has no character for B, nor for X and the others.
-    for button in [0, 1, 8, 9, 10, 11, 12, 13] {
-        assert_eq!(typed(&[pressed(1 << button)], "INKEY$()"), "");
+    // INKEY$ has no character for B, X and the other buttons.
+    for button in [B_RUP, B_RDOWN, B_L1, B_R1, B_L2, B_R2, B_LSTICK, B_RSTICK] {
+        assert_eq!(inkey_codes_after(&[pressed(1 << button)], "INKEY$()"), "");
     }
     // L or R as Ctrl.
-    assert_eq!(typed(&[pressed(1 << 8 | 1 << 6)], "INKEY$()"), "2");
-    assert_eq!(typed(&[pressed(1 << 9 | 1 << 7)], "INKEY$()"), "3");
-    assert_eq!(typed(&[pressed(1 << 8 | 1 << 4)], "INKEY$()"), "30");
+    assert_eq!(
+        inkey_codes_after(&[pressed(1 << B_L1 | 1 << B_LLEFT)], "INKEY$()"),
+        "2"
+    );
+    assert_eq!(
+        inkey_codes_after(&[pressed(1 << B_R1 | 1 << B_LRIGHT)], "INKEY$()"),
+        "3"
+    );
+    assert_eq!(
+        inkey_codes_after(&[pressed(1 << B_L1 | 1 << B_LUP)], "INKEY$()"),
+        "30"
+    );
 }
 
 #[test]
 fn a_controllers_key_repeats_after_20_frames_then_every_3() {
-    let down = vec![pressed(1 << 5); 27];
+    let down = vec![pressed(1 << B_LDOWN); 27];
     // At the press, then on frames 20, 23 and 26 after it.
     let counts: Vec<usize> = [1, 20, 21, 23, 24, 26, 27]
         .iter()
-        .map(|&n| typed(&down[..n], "INKEY$()").split_whitespace().count())
+        .map(|&n| {
+            inkey_codes_after(&down[..n], "INKEY$()")
+                .split_whitespace()
+                .count()
+        })
         .collect();
     assert_eq!(counts, [1, 1, 2, 2, 3, 3, 4]);
     // A press again after a release.
-    let again = [pressed(1 << 5), State::default(), pressed(1 << 5)];
-    assert_eq!(typed(&again, "INKEY$()"), "31 31");
+    let again = [
+        pressed(1 << B_LDOWN),
+        State::default(),
+        pressed(1 << B_LDOWN),
+    ];
+    assert_eq!(inkey_codes_after(&again, "INKEY$()"), "31 31");
     // Another button while the first is held types nothing until all are
     // released.
-    let both = [pressed(1 << 5), pressed(1 << 5 | 1 << 4), pressed(1 << 5)];
-    assert_eq!(typed(&both, "INKEY$()"), "31");
+    let both = [
+        pressed(1 << B_LDOWN),
+        pressed(1 << B_LDOWN | 1 << B_LUP),
+        pressed(1 << B_LDOWN),
+    ];
+    assert_eq!(inkey_codes_after(&both, "INKEY$()"), "31");
 }
 
 #[test]
@@ -401,18 +448,18 @@ fn a_controllers_stick_types_keys_for_inkey() {
         s.pads[0].sticks[0] = (x, y);
         s
     };
-    assert_eq!(typed(&[tilted(0.0, -0.31)], "INKEY$()"), "17");
-    assert_eq!(typed(&[tilted(0.0, 0.31)], "INKEY$()"), "18");
-    assert_eq!(typed(&[tilted(-0.31, 0.0)], "INKEY$()"), "2");
-    assert_eq!(typed(&[tilted(0.31, 0.0)], "INKEY$()"), "3");
-    assert_eq!(typed(&[tilted(0.3, -0.3)], "INKEY$()"), "");
+    assert_eq!(inkey_codes_after(&[tilted(0.0, -0.31)], "INKEY$()"), "17");
+    assert_eq!(inkey_codes_after(&[tilted(0.0, 0.31)], "INKEY$()"), "18");
+    assert_eq!(inkey_codes_after(&[tilted(-0.31, 0.0)], "INKEY$()"), "2");
+    assert_eq!(inkey_codes_after(&[tilted(0.31, 0.0)], "INKEY$()"), "3");
+    assert_eq!(inkey_codes_after(&[tilted(0.3, -0.3)], "INKEY$()"), "");
 }
 
 #[test]
 fn buttons_keys_press_type_nothing_more() {
-    let mut s = pressed(1 << 3);
-    s.key_pressed_buttons = 1 << 3;
-    assert_eq!(typed(&[s], "INKEY$()"), "");
+    let mut s = pressed(1 << B_RRIGHT);
+    s.key_pressed_buttons = 1 << B_RRIGHT;
+    assert_eq!(inkey_codes_after(&[s], "INKEY$()"), "");
     assert_eq!(run(&[s, s], "?BUTTON(1,3)").unwrap(), "1");
 }
 
@@ -552,7 +599,7 @@ fn vibration_patterns_end() {
 /// long it stays down, and a new press does.
 #[test]
 fn a_button_held_past_the_end_of_a_program_types_nothing() {
-    let a = pressed(1 << 3);
+    let a = pressed(1 << B_RRIGHT);
     let mut rt = Runtime::for_tests(Font::blank());
     rt.input.live = a;
     rt.input.forget();
@@ -569,7 +616,7 @@ fn a_button_held_past_the_end_of_a_program_types_nothing() {
 /// with no press.
 #[test]
 fn the_press_that_answers_a_dialog_types_only_its_repeats() {
-    let a = pressed(1 << 3);
+    let a = pressed(1 << B_RRIGHT);
     let mut rt = Runtime::for_tests(Font::blank());
     let source = "R=DIALOG(\"Q\",&H3FFFF):P=BUTTON(0,-1,2):H=BUTTON(0):N=0:REPEAT:VSYNC:INC N:UNTIL N==22\n\
                   K=0:WHILE INKEY$()==CHR$(13):INC K:WEND:?R;\" \";P;\" \";H;\" \";K";
@@ -601,7 +648,11 @@ fn a_wait_for_buttons_answers_with_the_any_bits_going_on() {
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
     let mut frames = 0;
     loop {
-        rt.input.live = pressed(if frames > 2 { 1 << 8 | 1 << 3 } else { 1 << 8 });
+        rt.input.live = pressed(if frames > 2 {
+            1 << B_L1 | 1 << B_RRIGHT
+        } else {
+            1 << B_L1
+        });
         rt.begin_frame();
         frames += 1;
         assert!(frames < 200, "the dialog was not answered");
@@ -619,7 +670,7 @@ fn a_wait_for_buttons_answers_with_the_any_bits_going_on() {
 /// BUTTON after it.
 #[test]
 fn the_release_that_closes_a_dialog_is_hidden() {
-    let a = pressed(1 << 3);
+    let a = pressed(1 << B_RRIGHT);
     let mut rt = Runtime::for_tests(Font::blank());
     let source = "DIALOG \"Q\":?BUTTON(0,-1,3)";
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
@@ -995,12 +1046,15 @@ fn alt_types_smilebasic_4s_own_characters() {
 /// count.
 #[test]
 fn ctrl_or_l_or_r_keep_keys_from_typing() {
-    const L_AND_R: u32 = 0b11 << 8;
+    const L_AND_R: u32 = 1 << B_L1 | 1 << B_R1;
     assert!(pressed(L_AND_R).keys_type_nothing());
-    assert!(pressed(1 << 8).keys_type_nothing(), "L");
-    assert!(pressed(1 << 9).keys_type_nothing(), "R");
-    assert!(!pressed(1 << 3).keys_type_nothing());
-    assert!(!pressed(1 << 10 | 1 << 11).keys_type_nothing(), "ZL, ZR");
+    assert!(pressed(1 << B_L1).keys_type_nothing(), "L");
+    assert!(pressed(1 << B_R1).keys_type_nothing(), "R");
+    assert!(!pressed(1 << B_RRIGHT).keys_type_nothing());
+    assert!(
+        !pressed(1 << B_L2 | 1 << B_R2).keys_type_nothing(),
+        "ZL, ZR"
+    );
     let mut by_keys = pressed(L_AND_R);
     by_keys.key_pressed_buttons = L_AND_R;
     assert!(!by_keys.keys_type_nothing());
@@ -1029,7 +1083,7 @@ fn l_held_keeps_a_held_key_from_repeating() {
         }
         let mut state = holding(&[A_KEY]);
         if (21..30).contains(&i) {
-            state.pads[0].buttons = 1 << 8;
+            state.pads[0].buttons = 1 << B_L1;
         }
         rt.input.live = state;
     });
@@ -1176,7 +1230,7 @@ fn a_key_held_in_the_editor_follows_shift_and_l() {
         };
         // L blocks 32, 35 and 38.
         if (30..40).contains(&i) {
-            held.pads[0].buttons = 1 << 8;
+            held.pads[0].buttons = 1 << B_L1;
         }
         rt.input.editor_held = held;
     });
@@ -1290,21 +1344,21 @@ fn dialog_frames(source: &str, input: impl Fn(usize) -> State) -> (String, Vec<O
 }
 
 /// Holds the buttons of `at` in the frames given with them.
-fn pad_at(frame: usize, at: &[(std::ops::Range<usize>, u32)]) -> State {
+fn buttons_held_at(frame: usize, at: &[(std::ops::Range<usize>, u32)]) -> State {
     let held = at.iter().filter(|(r, _)| r.contains(&frame));
     pressed(held.fold(0, |bits, (_, b)| bits | b))
 }
 
-const LEFT: u32 = 1 << 6;
-const RIGHT: u32 = 1 << 7;
-const A_BUTTON: u32 = 1 << 3;
-const B_BUTTON: u32 = 1 << 1;
+const LEFT: u32 = 1 << B_LLEFT;
+const RIGHT: u32 = 1 << B_LRIGHT;
+const A_BUTTON: u32 = 1 << B_RRIGHT;
+const B_BUTTON: u32 = 1 << B_RDOWN;
 
 /// The focus starts on the right button of two, and A chooses it.
 #[test]
 fn a_chooses_the_right_button_at_first() {
     let (row, focus) = dialog_frames("DIALOG \"Q\",1:?RESULT()", |f| {
-        pad_at(f, &[(3..5, A_BUTTON)])
+        buttons_held_at(f, &[(3..5, A_BUTTON)])
     });
     assert_eq!(row, "1");
     assert_eq!(focus[1], Some(1));
@@ -1321,7 +1375,7 @@ fn the_d_pad_moves_the_focus_that_a_chooses() {
         (11..13, LEFT),
         (14..16, A_BUTTON),
     ];
-    let (row, focus) = dialog_frames("DIALOG \"Q\",3:?RESULT()", |f| pad_at(f, &presses));
+    let (row, focus) = dialog_frames("DIALOG \"Q\",3:?RESULT()", |f| buttons_held_at(f, &presses));
     assert_eq!(row, "-1");
     let at = |f: usize| focus[f];
     assert_eq!(
@@ -1336,9 +1390,11 @@ fn the_d_pad_moves_the_focus_that_a_chooses() {
 #[test]
 fn b_chooses_the_left_button_whatever_the_focus() {
     let source = "DIALOG \"Q\",2:?RESULT()";
-    let (row, _) = dialog_frames(source, |f| pad_at(f, &[(3..5, B_BUTTON)]));
+    let (row, _) = dialog_frames(source, |f| buttons_held_at(f, &[(3..5, B_BUTTON)]));
     assert_eq!(row, "-1");
-    let (row, _) = dialog_frames(source, |f| pad_at(f, &[(2..3, LEFT), (5..7, B_BUTTON)]));
+    let (row, _) = dialog_frames(source, |f| {
+        buttons_held_at(f, &[(2..3, LEFT), (5..7, B_BUTTON)])
+    });
     assert_eq!(row, "-1");
 }
 
@@ -1357,7 +1413,7 @@ fn the_left_stick_moves_the_focus() {
         4..=6 => stick(-0.8),
         8..=9 => stick(0.9),
         10..=11 => stick(-0.6),
-        13..=14 => pad_at(f, &[(13..15, A_BUTTON)]),
+        13..=14 => buttons_held_at(f, &[(13..15, A_BUTTON)]),
         _ => State::default(),
     });
     assert_eq!(row, "-1");
@@ -1369,7 +1425,7 @@ fn the_left_stick_moves_the_focus() {
     // Pushed to the left from before the dialog opened, it moves nothing.
     let (row, _) = dialog_frames(source, |f| match f {
         0..=9 => stick(-1.0),
-        10..=11 => pad_at(f, &[(10..12, A_BUTTON)]),
+        10..=11 => buttons_held_at(f, &[(10..12, A_BUTTON)]),
         _ => State::default(),
     });
     assert_eq!(row, "1");
@@ -1380,13 +1436,13 @@ fn the_left_stick_moves_the_focus() {
 #[test]
 fn only_a_choice_of_two_moves_its_focus() {
     let (row, focus) = dialog_frames("DIALOG \"Q\",5:?RESULT()", |f| {
-        pad_at(f, &[(2..3, LEFT), (4..5, RIGHT), (6..8, A_BUTTON)])
+        buttons_held_at(f, &[(2..3, LEFT), (4..5, RIGHT), (6..8, A_BUTTON)])
     });
     assert_eq!(row, "1");
     let open = &focus[..focus.len() - 1];
     assert!(open.iter().all(|&f| f == Some(0)), "{focus:?}");
     let (_, focus) = dialog_frames("?DIALOG(\"Q\",8)", |f| {
-        pad_at(f, &[(2..3, LEFT), (4..6, A_BUTTON)])
+        buttons_held_at(f, &[(2..3, LEFT), (4..6, A_BUTTON)])
     });
     assert!(focus.iter().all(Option::is_none), "{focus:?}");
 }
@@ -1412,6 +1468,8 @@ fn moving_the_focus_leaves_nothing_for_the_program() {
     let source = "DIALOG \"Q\",1:P=BUTTON(0,-1,2):N=0:REPEAT:VSYNC:INC N:UNTIL N==30\n\
                   K$=INKEY$():?RESULT();\" \";P;\" \";LEN(K$)";
     // Left is still held as A closes the dialog, and released after it.
-    let (row, _) = dialog_frames(source, |f| pad_at(f, &[(2..8, LEFT), (5..7, A_BUTTON)]));
+    let (row, _) = dialog_frames(source, |f| {
+        buttons_held_at(f, &[(2..8, LEFT), (5..7, A_BUTTON)])
+    });
     assert_eq!(row, "-1 0 0");
 }

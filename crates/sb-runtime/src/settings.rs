@@ -50,7 +50,6 @@ pub enum Renderer {
 impl Renderer {
     pub const DEFAULT: Renderer = Renderer::Auto;
 
-    /// The other renderer.
     pub const fn other(self) -> Renderer {
         match self {
             Renderer::Auto => Renderer::Cpu,
@@ -456,6 +455,8 @@ const SIMPLE_UI_SIZE: [(SimpleUiSize, &str); 3] = [
     (SimpleUiSize::Large, "large"),
 ];
 
+const RENDERER: [(Renderer, &str); 2] = [(Renderer::Auto, "auto"), (Renderer::Cpu, "cpu")];
+
 const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
     (FileConfirm::Ask, "ask"),
     (FileConfirm::Notify, "notify"),
@@ -634,7 +635,7 @@ impl Settings {
                     continue;
                 }
                 "file_confirm" => {
-                    if let Some(&(mode, _)) = FILE_CONFIRM.iter().find(|(_, n)| *n == value) {
+                    if let Some(mode) = choice(&FILE_CONFIRM, value) {
                         s.file_confirm = mode;
                     }
                     continue;
@@ -692,10 +693,8 @@ impl Settings {
                     continue;
                 }
                 "renderer" => {
-                    match value {
-                        "auto" => s.renderer = Renderer::Auto,
-                        "cpu" => s.renderer = Renderer::Cpu,
-                        _ => {}
+                    if let Some(renderer) = choice(&RENDERER, value) {
+                        s.renderer = renderer;
                     }
                     continue;
                 }
@@ -718,7 +717,7 @@ impl Settings {
                     continue;
                 }
                 "screen_filter" => {
-                    if let Some(&(f, _)) = SCREEN_FILTER.iter().find(|(_, n)| *n == value) {
+                    if let Some(f) = choice(&SCREEN_FILTER, value) {
                         s.screen_filter = f;
                     }
                     continue;
@@ -733,20 +732,13 @@ impl Settings {
     }
 
     pub fn to_text(&self) -> String {
-        let mode = FILE_CONFIRM
-            .iter()
-            .find(|(m, _)| *m == self.file_confirm)
-            .map_or("ask", |(_, n)| n);
-        let filter = SCREEN_FILTER
-            .iter()
-            .find(|(f, _)| *f == self.screen_filter)
-            .map_or("nearest", |(_, n)| n);
+        let mode = choice_name(&FILE_CONFIRM, &self.file_confirm);
+        let filter = choice_name(&SCREEN_FILTER, &self.screen_filter);
         // Only a choice is kept, so that the default can change for
         // anyone who made none.
         let renderer = match self.renderer {
-            r if r == Renderer::DEFAULT => "",
-            Renderer::Auto => "renderer=auto\n",
-            Renderer::Cpu => "renderer=cpu\n",
+            Renderer::DEFAULT => String::new(),
+            r => format!("renderer={}\n", choice_name(&RENDERER, &r)),
         };
         format!(
             "# SmileBASIC emulator settings\n\

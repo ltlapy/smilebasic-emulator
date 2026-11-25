@@ -231,19 +231,27 @@ impl Ink {
     }
 }
 
-/// The glyph a font draws for `c` in a square cell: for ASCII, its
-/// full-width form (U+FF01 to U+FF5E) when it has one, because SmileBASIC
-/// draws ASCII as wide as kana and those forms are designed for that.
-/// `None` if the font has neither.
-fn cell_glyph_id(font: &impl Font, c: char) -> Option<ab_glyph::GlyphId> {
-    let full = match c {
-        '!'..='~' => char::from_u32(c as u32 + 0xFEE0).map(|f| font.glyph_id(f)),
-        _ => None,
-    };
-    match full {
-        Some(id) if id.0 != 0 => Some(id),
-        _ => Some(font.glyph_id(c)).filter(|id| id.0 != 0),
+/// The code whose glyph is drawn for `code` in a square cell: for ASCII
+/// (U+0021 to U+007E), its full-width form (U+FF01 to U+FF5E), because
+/// SmileBASIC draws ASCII as wide as kana and those forms are designed for
+/// that. Other codes are unchanged.
+pub const fn full_width_form(code: u32) -> u32 {
+    match code {
+        0x21..=0x7E => code + 0xFEE0,
+        _ => code,
     }
+}
+
+/// The glyph a font draws for `c` in a square cell: its
+/// [`full_width_form`] when the font has one, else its own glyph. `None`
+/// if the font has neither.
+fn cell_glyph_id(font: &impl Font, c: char) -> Option<ab_glyph::GlyphId> {
+    let full = char::from_u32(full_width_form(c as u32)).unwrap_or(c);
+    let id = font.glyph_id(full);
+    if id.0 != 0 {
+        return Some(id);
+    }
+    Some(font.glyph_id(c)).filter(|id| id.0 != 0)
 }
 
 /// A glyph of an outline font in a `cell`-pixel cell, `None` if the font

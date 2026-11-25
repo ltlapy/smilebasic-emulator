@@ -91,6 +91,8 @@ const DIM_BORDER: u32 = 0xFF40_4040;
 pub(crate) const SEPARATOR: u32 = 0xFF44_485A;
 /// The program that Run runs.
 const MAIN: &str = "MAIN.PRG";
+/// The length of a file's date up to the minute: `YYYY/MM/DD hh:mm`.
+const DATE_TO_MINUTE: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Button {
@@ -362,9 +364,13 @@ enum Pending {
     /// Export a project into a folder that already holds one.
     Export(String, PathBuf),
     DeleteFile(Source),
-    /// Copy a file over one of the same name: the source, the project to
-    /// copy into, and the name.
-    Copy(Source, String, String),
+    /// Copy a file over one of the same name.
+    Copy {
+        source: Source,
+        /// The project to copy into.
+        to: String,
+        name: String,
+    },
     /// Drop the metadata's edits, then continue with the event.
     Discard(Deferred),
 }
@@ -518,6 +524,14 @@ struct InfoKey {
     expanded: bool,
 }
 
+/// The modification times of the storage folder and of the selected
+/// project's folder.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FolderTimes {
+    storage: Option<SystemTime>,
+    project: Option<SystemTime>,
+}
+
 pub struct ProjectManager {
     /// Display size the window is centered in.
     size: (u32, u32),
@@ -547,9 +561,8 @@ pub struct ProjectManager {
     mode: Mode,
     mouse: Option<(i32, i32)>,
     drag: Option<Drag>,
-    /// The modification times of the storage folder and the selected
-    /// project's folder, taken when the lists were read.
-    read_at: (Option<SystemTime>, Option<SystemTime>),
+    /// The folders' modification times, taken when the lists were read.
+    read_at: FolderTimes,
     /// The lists wait to be read again until the window goes back to
     /// browsing.
     stale: bool,
@@ -638,7 +651,7 @@ impl ProjectManager {
             mode: Mode::Browse,
             mouse: None,
             drag: None,
-            read_at: (None, None),
+            read_at: FolderTimes::default(),
             stale: false,
         };
         manager.refresh(storage, None);
@@ -677,7 +690,7 @@ impl ProjectManager {
     /// Reads the projects again, selecting `select` if given.
     fn refresh(&mut self, storage: &Storage, select: Option<&str>) {
         self.current = storage.project().to_string();
-        self.read_at.0 = storage.changed_at(None);
+        self.read_at.storage = storage.changed_at(None);
         self.projects = vec![String::new()];
         match storage.projects() {
             Ok(names) => self.projects.extend(names),
@@ -707,10 +720,10 @@ impl ProjectManager {
         if !matches!(self.mode, Mode::Browse | Mode::Copy(..)) || self.drag.is_some() {
             return;
         }
-        let now = (
-            storage.changed_at(None),
-            storage.changed_at(Some(self.selected_name())),
-        );
+        let now = FolderTimes {
+            storage: storage.changed_at(None),
+            project: storage.changed_at(Some(self.selected_name())),
+        };
         if !self.stale && now == self.read_at {
             return;
         }
@@ -759,7 +772,7 @@ impl ProjectManager {
         // The files may have changed: read the info again.
         self.info_key = None;
         let project = self.selected_name().to_string();
-        self.read_at.1 = storage.changed_at(Some(&project));
+        self.read_at.project = storage.changed_at(Some(&project));
         self.files = match storage.list(None, Some(&project)) {
             Ok(files) => files
                 .into_iter()
@@ -2149,7 +2162,7 @@ impl ProjectManager {
                 "Copying replaces it.".to_string(),
             ];
             let dialog = Dialog::new("Copy file", lines, "Replace", self.size);
-            self.mode = Mode::Ask(dialog, Pending::Copy(source, to, name));
+            self.mode = Mode::Ask(dialog, Pending::Copy { source, to, name });
             return;
         }
         let from = (source.project.as_str(), source.name.as_str());
@@ -2289,7 +2302,7 @@ impl ProjectManager {
             Pending::Switch(name, then) => return self.switch(name, storage, unsaved, true, then),
             Pending::Open(open) => return self.open(open, storage, unsaved, true),
             Pending::Export(name, folder) => self.export(&name, &folder, storage),
-            Pending::Copy(source, to, name) => self.copy(source, to, name, storage, true),
+            Pending::Copy { source, to, name } => self.copy(source, to, name, storage, true),
             Pending::DeleteFile(source) => {
                 let label = format!("{}:{}", source.kind.name(), source.name);
                 let done = storage.delete_in(&source.project, source.kind, &source.name);
@@ -2412,21 +2425,7 @@ impl ProjectManager {
         window(fb, font, f, "Projects");
         let browsing = matches!(self.mode, Mode::Browse);
         let hovered = |r: Rect| browsing && self.mouse.is_some_and(|m| r.contains(m));
-        // The last message, or else the current project, left of `×`.
-        let close = self.button(Button::Close);
-        let room = close
-            .x
-            .saturating_sub(f.x + 2 * PAD + text_width("Projects") + 2 * PAD);
-        let (top, color) = match &self.status {
-            Some((status, error)) => (fit(status, room), if *error { ERROR } else { TEXT }),
-            None => (format!("Current: {}", project_label(&self.current)), TEXT),
-        };
-        let x = close.x - PAD - text_width(&top);
-        draw_text(fb, font, x, f.y + 6, &top, color);
-        if hovered(close) {
-            fill(fb, close, BORDER);
-        }
-        mark(fb, Mark::Close, close.x + 4, close.y + 4, TEXT);
+        self.draw_status(fb, font, hovered);
 
         self.draw_projects(fb, font);
         self.draw_files(fb, font);
@@ -2453,7 +2452,42 @@ impl ProjectManager {
             Button::Toggle.faces(),
         );
 
-        // The file being dragged, by the mouse.
+        self.draw_drag(fb, font);
+
+        match &self.mode {
+            Mode::Browse => {}
+            Mode::Ask(dialog, _) => dialog.draw(fb, font),
+            Mode::Name(name) => self.draw_name(fb, font, name),
+            Mode::Slot(chosen) => self.draw_slot(fb, font, *chosen),
+            Mode::Copy(picker, _) => picker.draw(fb, font, blink),
+            Mode::Menu(popup) => self.draw_menu(fb, font, popup),
+            Mode::View(viewer) => viewer.draw(fb, font),
+        }
+    }
+
+    /// Draws the last message, or else the current project, left of the
+    /// `×` button, and the button.
+    fn draw_status(&self, fb: &mut Framebuffer, font: &Font, hovered: impl Fn(Rect) -> bool) {
+        let f = self.frame();
+        let close = self.button(Button::Close);
+        let room = close
+            .x
+            .saturating_sub(f.x + 2 * PAD + text_width("Projects") + 2 * PAD);
+        let (top, color) = match &self.status {
+            Some((status, error)) => (fit(status, room), if *error { ERROR } else { TEXT }),
+            None => (format!("Current: {}", project_label(&self.current)), TEXT),
+        };
+        let x = close.x - PAD - text_width(&top);
+        draw_text(fb, font, x, f.y + 6, &top, color);
+        if hovered(close) {
+            fill(fb, close, BORDER);
+        }
+        mark(fb, Mark::Close, close.x + 4, close.y + 4, TEXT);
+    }
+
+    /// Draws the file being dragged by the mouse, and outlines the project
+    /// it would be dropped on.
+    fn draw_drag(&self, fb: &mut Framebuffer, font: &Font) {
         if let (Some(drag), Some(at)) = (self.drag, self.mouse)
             && drag.moving
             && let Some(file) = self.files.get(drag.file)
@@ -2470,16 +2504,6 @@ impl ProjectManager {
             };
             fill(fb, r, HIGHLIGHT);
             draw_text(fb, font, r.x + PAD, r.y + 4, &label, TEXT);
-        }
-
-        match &self.mode {
-            Mode::Browse => {}
-            Mode::Ask(dialog, _) => dialog.draw(fb, font),
-            Mode::Name(name) => self.draw_name(fb, font, name),
-            Mode::Slot(chosen) => self.draw_slot(fb, font, *chosen),
-            Mode::Copy(picker, _) => picker.draw(fb, font, blink),
-            Mode::Menu(popup) => self.draw_menu(fb, font, popup),
-            Mode::View(viewer) => viewer.draw(fb, font),
         }
     }
 
@@ -2548,11 +2572,11 @@ impl ProjectManager {
                 };
                 fill(fb, r, color);
             }
-            // The size and the date to the minute on the right, if the
-            // name leaves room.
+            // The size and the date on the right, if the name leaves room.
             let file = &self.files[i];
-            let info = (file.info.as_ref())
-                .map(|(size, date)| format!("{size:>7}  {}", date.get(..16).unwrap_or(date)));
+            let info = (file.info.as_ref()).map(|(size, date)| {
+                format!("{size:>7}  {}", date.get(..DATE_TO_MINUTE).unwrap_or(date))
+            });
             let info_w = info.as_ref().map_or(0, |i| text_width(i) + 2 * PAD);
             let label = fit(&file.label(), r.w - 2 * PAD - info_w);
             draw_text(fb, font, r.x + PAD, r.y + 4, &label, text);
@@ -2855,10 +2879,6 @@ mod tests {
         }
     }
 
-    fn centre(r: Rect) -> (i32, i32) {
-        ((r.x + r.w / 2) as i32, (r.y + r.h / 2) as i32)
-    }
-
     #[test]
     fn create_and_switch() {
         let tmp = TempDir::new("create");
@@ -2866,13 +2886,13 @@ mod tests {
         let mut m = ProjectManager::new(&s, (1280, 720));
         assert_eq!(m.projects, [""]);
         assert!(!m.enabled(Button::Switch), "already in the workspace");
-        m.click(centre(m.button(Button::ProjectMore)), &mut s, &[]);
+        m.click(m.button(Button::ProjectMore).center(), &mut s, &[]);
         let Mode::Menu(popup) = &m.mode else {
             panic!("a menu")
         };
         assert_eq!(popup.items, PROJECT_MORE);
         let new = popup_item(m.frame(), popup, 0);
-        assert_eq!(m.click(centre(new), &mut s, &[]), Outcome::Stay);
+        assert_eq!(m.click(new.center(), &mut s, &[]), Outcome::Stay);
         assert!(matches!(m.mode, Mode::Name(_)));
         m.text("game");
         assert_eq!(m.key(Keycode::Return, &mut s, &[]), Outcome::Stay);
@@ -3069,7 +3089,7 @@ mod tests {
         m.key(Keycode::Down, &mut s, &[]);
         assert_eq!(m.selected_name(), "GAME");
         assert!(m.enabled(Button::Run));
-        let at = centre(m.button(Button::Run));
+        let at = m.button(Button::Run).center();
         assert_eq!(
             m.click(at, &mut s, &[]),
             Outcome::Open {
@@ -3097,7 +3117,7 @@ mod tests {
         let mut m = ProjectManager::new(&s, (1280, 720));
         let rows = m.file_rows();
         assert!(rows < 60);
-        m.mouse_move(centre(m.files_rect()));
+        m.mouse_move(m.files_rect().center());
         m.wheel(3);
         assert_eq!((m.file_scroll, m.scroll), (3, 0));
         m.wheel(100);
@@ -3144,7 +3164,7 @@ mod tests {
         }
         assert_eq!(m.button(Button::View), m.button(Button::RunFile));
         let toggle = m.button(Button::Toggle);
-        assert!(info.contains(centre(toggle)));
+        assert!(info.contains(toggle.center()));
         assert_eq!(
             toggle.x + toggle.w + PAD + 2,
             info.x + info.w,
@@ -3181,10 +3201,10 @@ mod tests {
         let mut s = Storage::new(tmp.0.clone());
         s.create_project("GAME").unwrap();
         let mut m = ProjectManager::new(&s, (1280, 720));
-        let current = centre(m.row(0));
+        let current = m.row(0).center();
         assert_eq!(m.click(current, &mut s, &[]), Outcome::Stay);
         assert_eq!(m.double_click(current, &mut s, &[]), Outcome::Close);
-        let game = centre(m.row(1));
+        let game = m.row(1).center();
         assert_eq!(m.click(game, &mut s, &[]), Outcome::Stay);
         assert_eq!(
             m.double_click(game, &mut s, &[]),
@@ -3199,7 +3219,7 @@ mod tests {
         s.create_project("A").unwrap();
         s.create_project("B").unwrap();
         let mut m = ProjectManager::new(&s, (1280, 720));
-        let (a, b) = (centre(m.row(1)), centre(m.row(2)));
+        let (a, b) = (m.row(1).center(), m.row(2).center());
         // A, then B quickly: a click on B, not a double click.
         assert_eq!(m.click(a, &mut s, &[]), Outcome::Stay);
         assert_eq!(m.double_click(b, &mut s, &[]), Outcome::Stay);
@@ -3211,8 +3231,8 @@ mod tests {
         );
         // A button between the two clicks breaks them up too.
         let mut m = ProjectManager::new(&s, (1280, 720));
-        let a = centre(m.row(1));
-        m.click(centre(m.button(Button::ProjectMore)), &mut s, &[]);
+        let a = m.row(1).center();
+        m.click(m.button(Button::ProjectMore).center(), &mut s, &[]);
         m.mode = Mode::Browse;
         assert_eq!(m.double_click(a, &mut s, &[]), Outcome::Stay);
         assert_eq!(m.selected_name(), "A");
@@ -3347,20 +3367,20 @@ mod tests {
             |m: &ProjectManager| -> Vec<String> { m.files.iter().map(File::label).collect() };
 
         // Dragging a file onto a project copies it there.
-        let a = centre(m.file_row(0));
+        let a = m.file_row(0).center();
         m.click(a, &mut s, &[]);
         m.mouse_move((a.0 + 20, a.1));
-        m.release(centre(m.row(1)), &s);
+        m.release(m.row(1).center(), &s);
         assert!(s.exists_in("GAME", FileKind::Txt, "A.PRG"));
         // Again, it asks before replacing.
         m.click(a, &mut s, &[]);
         m.mouse_move((a.0 + 20, a.1));
-        m.release(centre(m.row(1)), &s);
-        assert!(matches!(m.mode, Mode::Ask(_, Pending::Copy(..))));
+        m.release(m.row(1).center(), &s);
+        assert!(matches!(m.mode, Mode::Ask(_, Pending::Copy { .. })));
         m.key(Keycode::Escape, &mut s, &[]);
         // A click without moving copies nothing.
         m.click(a, &mut s, &[]);
-        m.release(centre(m.row(1)), &s);
+        m.release(m.row(1).center(), &s);
         assert!(matches!(m.mode, Mode::Browse));
 
         // Copy to... names the copy in the file list.
@@ -3380,7 +3400,7 @@ mod tests {
         assert_eq!(label(&m), ["TXT:A.PRG", "TXT:A.PRGB.PRG", "TXT:B", "DAT:D"]);
 
         // A right click on a file opens its menu; Delete asks first.
-        let d = centre(m.file_row(3));
+        let d = m.file_row(3).center();
         m.right_click(d, &s);
         let Mode::Menu(popup) = &m.mode else {
             panic!("a menu")
@@ -3391,7 +3411,7 @@ mod tests {
             .iter()
             .position(|&b| b == Some(Button::DeleteFile));
         let delete = popup_item(m.frame(), popup, at.unwrap());
-        m.click(centre(delete), &mut s, &[]);
+        m.click(delete.center(), &mut s, &[]);
         assert!(matches!(m.mode, Mode::Ask(_, Pending::DeleteFile(_))));
         m.key(Keycode::Left, &mut s, &[]);
         m.key(Keycode::Return, &mut s, &[]);
@@ -3464,11 +3484,14 @@ mod tests {
         std::fs::create_dir(tmp.0.join("ADDED")).unwrap();
         // The folders' modification times when the lists were read: nothing
         // to read again.
-        m.read_at = (s.changed_at(None), s.changed_at(Some("GAME")));
+        m.read_at = FolderTimes {
+            storage: s.changed_at(None),
+            project: s.changed_at(Some("GAME")),
+        };
         m.reread(&s, false);
         assert_eq!((m.projects.len(), names(&m)), (3, vec!["B".to_string()]));
         // Read before the change: both lists again, B still selected.
-        m.read_at.1 = Some(SystemTime::UNIX_EPOCH);
+        m.read_at.project = Some(SystemTime::UNIX_EPOCH);
         m.reread(&s, false);
         assert_eq!(m.projects, ["", "ADDED", "GAME", "ZOO"]);
         assert_eq!(names(&m), ["A", "B"]);
@@ -3528,7 +3551,7 @@ mod tests {
             m.key(Keycode::Down, &mut s, &[]);
         }
         // View opens the viewer over the window; Esc closes it.
-        let view = centre(m.button(Button::View));
+        let view = m.button(Button::View).center();
         assert_eq!(m.click(view, &mut s, &[]), Outcome::Stay);
         assert!(matches!(m.mode, Mode::View(_)));
         let mut fb = Framebuffer::new(1280, 720);
@@ -3565,13 +3588,13 @@ mod tests {
             panic!("the project's info")
         };
         assert!(summary.starts_with("3 files, "), "{summary}");
-        m.click(centre(m.file_row(0)), &mut s, &[]);
+        m.click(m.file_row(0).center(), &mut s, &[]);
         let Info::File { about, lines, .. } = &m.info else {
             panic!("the file's info")
         };
         assert_eq!(about, "2 lines");
         assert_eq!(lines, &["OPTION STRICT", "    VAR A"]);
-        m.click(centre(m.file_row(1)), &mut s, &[]);
+        m.click(m.file_row(1).center(), &mut s, &[]);
         let Info::File { about, lines, .. } = &m.info else {
             panic!("the file's info")
         };
@@ -3579,7 +3602,7 @@ mod tests {
             (about.as_str(), &lines[..]),
             ("int 2x2", &["1 2".into(), "3 4".into()][..])
         );
-        m.click(centre(m.file_row(2)), &mut s, &[]);
+        m.click(m.file_row(2).center(), &mut s, &[]);
         let Info::File { about, picture, .. } = &m.info else {
             panic!("the file's info")
         };
@@ -3596,7 +3619,7 @@ mod tests {
         assert!(picture.as_ref().unwrap().w > small);
         m.key(Keycode::Space, &mut s, &[]);
         // A click on a project shows it again.
-        m.click(centre(m.row(0)), &mut s, &[]);
+        m.click(m.row(0).center(), &mut s, &[]);
         assert!(matches!(m.info, Info::Project { .. }));
         let mut fb = Framebuffer::new(1280, 720);
         m.draw(&mut fb, &Font::blank(), false);
@@ -3612,8 +3635,8 @@ mod tests {
         }
         s.create_project("GAME").unwrap();
         let mut m = ProjectManager::new(&s, (1280, 720));
-        let (low_file, toolbar) = (centre(m.file_row(17)), centre(m.button(Button::LoadTo)));
-        m.click(centre(m.button(Button::Toggle)), &mut s, &[]);
+        let (low_file, toolbar) = (m.file_row(17).center(), m.button(Button::LoadTo).center());
+        m.click(m.button(Button::Toggle).center(), &mut s, &[]);
         assert!(m.expanded && m.edit.is_some());
         assert_eq!(m.edit.as_ref().unwrap().focus, Some(Field::Title));
         // The files under it and beside it take no clicks, wheels or drags.
@@ -3627,7 +3650,7 @@ mod tests {
         m.right_click(low_file, &s);
         assert!(matches!(m.mode, Mode::Browse));
         // The projects still do, and the info follows.
-        m.click(centre(m.row(1)), &mut s, &[]);
+        m.click(m.row(1).center(), &mut s, &[]);
         assert_eq!(m.selected_name(), "GAME");
         assert_eq!(m.edit.as_ref().unwrap().project, "GAME");
         assert_eq!(m.edit.as_ref().unwrap().focus, None, "the keys on the list");
@@ -3636,7 +3659,7 @@ mod tests {
         assert!(!m.expanded && m.edit.is_none());
         m.click(low_file, &mut s, &[]);
         assert!(m.file_selected.is_none(), "GAME has no files");
-        m.click(centre(m.row(0)), &mut s, &[]);
+        m.click(m.row(0).center(), &mut s, &[]);
         m.click(low_file, &mut s, &[]);
         assert_eq!(m.file_selected, Some(17));
         // Expanded over a file, the file list takes no keys.
@@ -3644,7 +3667,7 @@ mod tests {
         assert!(m.expanded && m.edit.is_none());
         m.key(Keycode::Down, &mut s, &[]);
         assert_eq!(m.file_selected, Some(17));
-        m.click(centre(m.button(Button::Toggle)), &mut s, &[]);
+        m.click(m.button(Button::Toggle).center(), &mut s, &[]);
         assert!(!m.expanded);
         assert_eq!(m.key(Keycode::Escape, &mut s, &[]), Outcome::Close);
     }
@@ -3695,7 +3718,7 @@ mod tests {
         assert!(matches!(m.mode, Mode::Ask(_, Pending::Discard(_))));
         m.key(Keycode::Escape, &mut s, &[]);
         assert!(m.expanded && m.dirty());
-        m.click(centre(m.button(Button::Save)), &mut s, &[]);
+        m.click(m.button(Button::Save).center(), &mut s, &[]);
         assert!(!m.dirty());
         let meta = project_meta("GAME", |name| s.read_file_in("GAME", name).ok());
         assert_eq!(String::from_utf16_lossy(&meta.title), "Old Game!");
@@ -3707,7 +3730,7 @@ mod tests {
         assert!(!tmp.0.join("GAME").join("META").exists());
         assert_eq!(m.listed[1].title, "Old Game!");
         // Removing the icon, and dropping that change.
-        m.click(centre(m.button(Button::RemoveIcon)), &mut s, &[]);
+        m.click(m.button(Button::RemoveIcon).center(), &mut s, &[]);
         assert!(m.dirty() && !m.enabled(Button::RemoveIcon));
         m.key(Keycode::Escape, &mut s, &[]);
         m.key(Keycode::Left, &mut s, &[]);
@@ -3732,7 +3755,7 @@ mod tests {
         m.key(Keycode::Down, &mut s, &[]);
         m.key(Keycode::Space, &mut s, &[]);
         m.text("x");
-        m.click(centre(m.button(Button::Save)), &mut s, &[]);
+        m.click(m.button(Button::Save).center(), &mut s, &[]);
         assert!(m.status.as_ref().is_some_and(|(_, error)| *error));
         assert!(m.dirty());
         assert_eq!(s.read_file_in("GAME", "META").unwrap(), b"old");
@@ -3745,7 +3768,7 @@ mod tests {
         s.create_project("GAME").unwrap();
         s.write_file_in("GAME", "TMAIN.PRG", b"?1").unwrap();
         let mut m = ProjectManager::new(&s, (1280, 720));
-        let game = centre(m.row(1));
+        let game = m.row(1).center();
         m.click(game, &mut s, &[]);
         assert!(m.enabled(Button::Run));
         assert_eq!(
@@ -3802,7 +3825,7 @@ mod tests {
 
         // Renaming a file, from the files' menu.
         m.key(Keycode::Tab, &mut s, &[]);
-        m.click(centre(m.button(Button::FileMore)), &mut s, &[]);
+        m.click(m.button(Button::FileMore).center(), &mut s, &[]);
         let Mode::Menu(popup) = &m.mode else {
             panic!("a menu")
         };
@@ -3810,7 +3833,7 @@ mod tests {
             .iter()
             .position(|&b| b == Some(Button::RenameFile));
         let rename = popup_item(m.frame(), popup, at.unwrap());
-        m.click(centre(rename), &mut s, &[]);
+        m.click(rename.center(), &mut s, &[]);
         let Mode::Name(name) = &m.mode else {
             panic!("asks for a name")
         };
@@ -4058,7 +4081,7 @@ mod tests {
         };
         let before = key(&m);
         assert_eq!(key(&m), before);
-        m.click(centre(m.file_row(0)), &mut s, &[]);
+        m.click(m.file_row(0).center(), &mut s, &[]);
         let file = key(&m);
         assert_ne!(file, before);
         m.key(Keycode::Space, &mut s, &[]);

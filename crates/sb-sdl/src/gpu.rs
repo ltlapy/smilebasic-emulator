@@ -260,8 +260,17 @@ pub struct Compared {
 struct Worst {
     pixels: u64,
     frame: u64,
-    /// The position of the first such pixel, and the CPU and GPU colors there.
-    first: Option<(u32, u32, u32, u32)>,
+    /// The first such pixel.
+    first: Option<Mismatch>,
+}
+
+/// A pixel where the CPU and GPU frames differ, and the two colors there.
+#[derive(Clone, Copy)]
+struct Mismatch {
+    x: u32,
+    y: u32,
+    cpu: u32,
+    gpu: u32,
 }
 
 /// The color filter's shader, on a GPU device that can take it.
@@ -393,7 +402,6 @@ pub struct Gpu {
     sync: bool,
     /// The renderer's driver is OpenGL or OpenGL ES.
     on_gl: bool,
-    /// It is OpenGL ES.
     on_gles2: bool,
     /// Compares every so many frames drawn.
     check_every: Option<u64>,
@@ -416,6 +424,12 @@ fn fcolor(c: u32) -> SDL_FColor {
         b: ch(0),
         a: ch(24),
     }
+}
+
+/// Whether a color's alpha is zero.
+#[inline]
+fn is_clear(color: u32) -> bool {
+    color >> 24 == 0
 }
 
 /// The product of two colors, kept unrounded.
@@ -877,7 +891,7 @@ impl Gpu {
                 "{name:9} {} frames, {} pixels: same {same}, 1 off {one}, 2 off {two}, more {more}; alpha off {}; at most {} off",
                 c.frames, c.pixels, c.alpha_off, c.largest,
             );
-            if let Some((x, y, cpu, gpu)) = c.worst.first {
+            if let Some(Mismatch { x, y, cpu, gpu }) = c.worst.first {
                 println!(
                     "{name:9} worst frame {}: {} pixels more than 2 off, the first at \
                      {x},{y}: CPU {cpu:08X}, GPU {gpu:08X}",
@@ -1290,13 +1304,13 @@ impl Gpu {
             },
         );
         // A clear TCOLOR leaves only the cursor.
-        let rows = if t.tint >> 24 == 0 { 0 } else { t.height };
+        let rows = if is_clear(t.tint) { 0 } else { t.height };
         for cy in 0..rows {
             let row = &cells[(cy * t.width) as usize..][..t.width as usize];
             let y0 = f64::from(cy) * cs;
             for (cx, cell) in row.iter().enumerate() {
                 let inverted = t.may_invert && t.inverts && cell.attr & text::attr::INVERT != 0;
-                if cell.color >> 24 == 0 || (cell.code == 0 && !inverted) {
+                if is_clear(cell.color) || (cell.code == 0 && !inverted) {
                     continue;
                 }
                 let x0 = cx as f64 * cs;
@@ -1778,7 +1792,7 @@ impl Gpu {
             self.filter(scene, pass)?;
             self.compose_layer(self.layer, scene, pass)?;
         }
-        if scene.fade >> 24 != 0 || scene.dimmed {
+        if !is_clear(scene.fade) || scene.dimmed {
             self.cover(
                 null_mut(),
                 self.fade_blend,
@@ -2417,7 +2431,12 @@ impl SceneBackend for Gpu {
                         c.largest = c.largest.max(most);
                         if most > 2 {
                             more += 1;
-                            first.get_or_insert((x as u32, y as u32, cpu, gpu));
+                            first.get_or_insert(Mismatch {
+                                x: x as u32,
+                                y: y as u32,
+                                cpu,
+                                gpu,
+                            });
                         }
                     }
                 }
@@ -2771,7 +2790,7 @@ pub struct Paths {
     off: bool,
     /// The setting the paths were last started by.
     applied: Option<Renderer>,
-    pub drawn_by: String,
+    pub renderer_text: String,
 }
 
 impl Paths {
@@ -2792,12 +2811,12 @@ impl Paths {
             self.applied = Some(renderer);
             drop(self.main.take());
             (self.sub, self.off) = (None, false);
-            (self.main, self.drawn_by) = Gpu::start(canvas, renderer);
+            (self.main, self.renderer_text) = Gpu::start(canvas, renderer);
         }
         let refused = self.main.iter().chain(&self.sub).any(Gpu::given_up);
         if refused {
             eprintln!("SB_GPU: the renderer refused frames; staying on the CPU");
-            self.drawn_by = "CPU (frames refused by the driver)".to_string();
+            self.renderer_text = "CPU (frames refused by the driver)".to_string();
         }
         if self.off || refused {
             (self.main, self.sub, self.off) = (None, None, false);
@@ -2805,10 +2824,10 @@ impl Paths {
         started
     }
 
-    /// Makes the next [`Paths::follow`] drop the paths, with `drawn_by` as
-    /// the text that says who draws from then on.
-    pub fn turn_off(&mut self, drawn_by: &str) {
-        self.drawn_by = drawn_by.to_string();
+    /// Makes the next [`Paths::follow`] drop the paths, with `renderer_text`
+    /// as the text that says who draws from then on.
+    pub fn turn_off(&mut self, renderer_text: &str) {
+        self.renderer_text = renderer_text.to_string();
         self.off = true;
     }
 }

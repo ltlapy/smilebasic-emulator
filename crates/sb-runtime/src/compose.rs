@@ -434,12 +434,12 @@ fn light(src: u32) -> u64 {
 /// `light` added to `dst`, each channel held to 255.
 #[inline]
 fn add_light(dst: u32, light: u64) -> u32 {
-    held(spread(dst & 0x00FF_FFFF) + light) | dst & 0xFF00_0000
+    saturate_gather(spread(dst & 0x00FF_FFFF) + light) | dst & 0xFF00_0000
 }
 
-/// Lanes of up to 9 bits held to 255 and gathered.
+/// The lanes may hold up to 9 bits.
 #[inline]
-fn held(sum: u64) -> u32 {
+fn saturate_gather(sum: u64) -> u32 {
     gather((sum | ((sum >> 8 & ONES) * 0xFF)) & LANES)
 }
 
@@ -457,7 +457,7 @@ pub struct Placement<'a> {
 /// which gives `None` where the image is clear. `sample` gets the image
 /// point under each frame pixel's center, which falls between whole pixels
 /// when the frame is finer than the image. The point comes from
-/// [`Placement::sampling`]. Add [`Placement::texel_tie`] to it before
+/// [`Placement::frame_to_image`]. Add [`Placement::texel_tie`] to it before
 /// reading a texel with it.
 pub fn draw_image<P: Paint>(
     fb: &mut Framebuffer,
@@ -482,7 +482,7 @@ pub fn draw_image_part<P: Paint>(
     part: (i32, i32, i32, i32),
     mut sample: impl FnMut(f64, f64) -> Option<P>,
 ) {
-    let Some(inv) = place.sampling() else {
+    let Some(inv) = place.frame_to_image() else {
         return;
     };
     let Some((x0, y0, x1, y1)) = span(fb, place, w, h, part) else {
@@ -528,10 +528,12 @@ pub fn draw_texels<P: Paint>(
     (tx, ty): (f64, f64),
     mut pixel: impl FnMut(i32, i32) -> Option<P>,
 ) {
+    /// The fractional bits of the fixed point.
+    const SHIFT: u32 = 40;
     /// One texel, in fixed point.
-    const ONE: f64 = (1u64 << 40) as f64;
+    const ONE: f64 = (1u64 << SHIFT) as f64;
     /// The fraction of a fixed point number.
-    const FRACTION: i64 = (1 << 40) - 1;
+    const FRACTION: i64 = (1 << SHIFT) - 1;
     /// How near a whole number the fixed point may be off from the exact sum.
     /// This is far more than the steps of a frame's width at one unit each,
     /// and far more than the rounding of the exact sum within the limit
@@ -540,7 +542,7 @@ pub fn draw_texels<P: Paint>(
     /// Above this, for any term of a sum, the rounding of the sum is too
     /// large, or the fixed point too small.
     const LIMIT: f64 = 65536.0;
-    let Some(inv) = place.sampling() else {
+    let Some(inv) = place.frame_to_image() else {
         return;
     };
     let width = f64::from(fb.width());
@@ -578,7 +580,7 @@ pub fn draw_texels<P: Paint>(
         let (lx, ly) = inv.apply(f64::from(from) + 0.5, fy);
         let (mut gx, mut gy) = ((lx * ONE) as i64, (ly * ONE) as i64);
         for (px, dst) in (from..to).zip(&mut line[from as usize..to as usize]) {
-            let (x, y) = (gx >> 40, gy >> 40);
+            let (x, y) = (gx >> SHIFT, gy >> SHIFT);
             let exact = ((gx + near) & FRACTION) < 2 * near || ((gy + near) & FRACTION) < 2 * near;
             (gx, gy) = (gx + dx, gy + dy);
             let at = if exact {
@@ -719,9 +721,9 @@ impl Placement<'_> {
         (m.a, m.b, m.c, m.d) == (1.0, 0.0, 0.0, 1.0) && m.tx.fract() == 0.0 && m.ty.fract() == 0.0
     }
 
-    /// From the frame to the image, for the point under a frame pixel's
-    /// center moved by [`COVER_NUDGE`].
-    fn sampling(&self) -> Option<Affine> {
+    /// Returns the map from the frame to the image, with a frame point moved
+    /// by [`COVER_NUDGE`] before it is mapped.
+    fn frame_to_image(&self) -> Option<Affine> {
         let mut inv = self.matrix.inverse()?;
         let (nx, ny) = COVER_NUDGE;
         inv.tx += inv.a * nx + inv.b * ny;
@@ -729,7 +731,7 @@ impl Placement<'_> {
         Some(inv)
     }
 
-    /// The offset to add to an image point from [`Placement::sampling`] to
+    /// The offset to add to an image point from [`Placement::frame_to_image`] to
     /// get the point whose whole part is the texel it reads. It is for an
     /// image of `size` whose page coordinates run along the image as `page`
     /// says, from [`page_signs`]. An image side and a scale that are both
@@ -814,7 +816,7 @@ pub fn grid(fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> Option<Grid>
 /// this is for each sprite of a frame. False if the image shows nowhere.
 pub fn grid_in(grid: &mut Grid, fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> bool {
     debug_assert!(place.is_upright());
-    let Some(inv) = place.sampling() else {
+    let Some(inv) = place.frame_to_image() else {
         return false;
     };
     let Some((x0, y0, x1, y1)) = span(fb, place, w, h, (0, 0, w, h)) else {
@@ -1332,8 +1334,14 @@ const PERSPECTIVE_SHIFT: u32 = 4;
 const PERSPECTIVE_BLOCK: u32 = 1 << PERSPECTIVE_SHIFT;
 /// Shorter runs take the plain path: they would save less than the setup costs.
 const PERSPECTIVE_SHORTEST: u32 = 6;
+/// The fractional bits of the fixed point of [`Along`].
+const ALONG_SHIFT: u32 = 32;
 /// One texel, in the fixed point of [`Along`].
-const ALONG_ONE: f64 = (1u64 << 32) as f64;
+const ALONG_ONE: f64 = (1u64 << ALONG_SHIFT) as f64;
+/// The closeness to a whole number, in the fixed point of [`Along`], at
+/// which every pixel would get a closer look. A pixel this close all the
+/// time, or closer, is not worth stepping to.
+const ALONG_TOO_CLOSE: f64 = (1u64 << 30) as f64;
 
 /// How close to a whole number [`Along`]'s fixed point may be for a run.
 struct AlongRun {
@@ -1351,7 +1359,7 @@ struct AlongRun {
 #[inline(always)]
 fn near_whole(f: i64, near: i64) -> bool {
     /// The fraction of a fixed point number.
-    const FRACTION: i64 = (1 << 32) - 1;
+    const FRACTION: i64 = (1 << ALONG_SHIFT) - 1;
     (f.wrapping_add(near) & FRACTION) < 2 * near
 }
 
@@ -1373,9 +1381,6 @@ impl Along {
         const STEPPING: i64 = 1 << 11;
         /// The most that a point's own truncations can be off by.
         const TRUNCATION: i64 = 4;
-        /// This close to a whole number all the time, or closer, a pixel
-        /// is not worth stepping to.
-        const TOO_CLOSE: f64 = (1u64 << 30) as f64;
         let (gx, gy, q) = self.layer;
         let (dx, dy, dq) = self.step;
         let ft = f64::from(from);
@@ -1411,10 +1416,10 @@ impl Along {
             let cube = inv * inv * inv;
             let most = run.tight + run.wander * (cube * inv);
             // Otherwise every pixel of the block gets its own point.
-            let near = if most < TOO_CLOSE {
+            let near = if most < ALONG_TOO_CLOSE {
                 most as i64 + STEPPING
             } else {
-                1 << 32
+                1 << ALONG_SHIFT
             };
             // Stepped with the change of step at the side of the block that
             // bends most, so that it moves away from the true curve far less
@@ -1435,14 +1440,14 @@ impl Along {
                 fy = fy.wrapping_add(ky);
                 kx = kx.wrapping_add(bend_x);
                 ky = ky.wrapping_add(bend_y);
-                let (mut x, mut y) = (cx >> 32, cy >> 32);
+                let (mut x, mut y) = (cx >> ALONG_SHIFT, cy >> ALONG_SHIFT);
                 if near_whole(cx, near) | near_whole(cy, near) {
                     let (_, ex, ey) = self.point(p);
                     if near_whole(ex, tight) || near_whole(ey, tight) {
                         added_up(p, &mut put);
                         continue;
                     }
-                    (x, y) = (ex >> 32, ey >> 32);
+                    (x, y) = (ex >> ALONG_SHIFT, ey >> ALONG_SHIFT);
                 }
                 // Negative ones are out of range too.
                 if (x as u64) < w && (y as u64) < h {
@@ -1473,8 +1478,6 @@ impl Along {
     fn run(&self, from: u32, to: u32) -> Option<AlongRun> {
         /// Above this, the read point has too few fraction bits left.
         const LIMIT: f64 = (1u64 << 24) as f64;
-        /// At this much, every pixel would get a closer look.
-        const TOO_CLOSE: f64 = (1u64 << 30) as f64;
         let (gx, gy, q) = self.layer;
         let (dx, dy, dq) = self.step;
         let m = &self.to_read;
@@ -1528,7 +1531,7 @@ impl Along {
             && i0.1.abs() < LIMIT
             && i1.0.abs() < LIMIT
             && i1.1.abs() < LIMIT
-            && tight < TOO_CLOSE)
+            && tight < ALONG_TOO_CLOSE)
         {
             return None;
         }
@@ -1614,7 +1617,7 @@ fn over_premultiplied(dst: u32, src: u32) -> u32 {
     if a == 0xFF {
         return src;
     }
-    held(spread(src) + div255_lanes(spread(dst) * (255 - a)))
+    saturate_gather(spread(src) + div255_lanes(spread(dst) * (255 - a)))
 }
 
 /// A rectangle of a frame's pixels, `x1` and `y1` excluded.

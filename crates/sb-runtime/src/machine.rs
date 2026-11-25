@@ -50,6 +50,14 @@ pub const KEEP_MOST_CALLS: u32 = 4;
 const KEY_C: u8 = 0x06;
 /// Shown by FREEMEM on SmileBASIC 4.4.9 right after start-up.
 pub const FREE_MEMORY: u32 = sb_core::memory::TOTAL;
+/// The whole 1280x720 display, as x, y, width and height.
+const DISPLAY: [i32; 4] = [0, 0, 1280, 720];
+/// The most UTF-16 units of a file name that SUBRUN takes in DIRECT mode.
+const SUBRUN_NAME_UNITS: usize = 65;
+/// The frames the focus takes to reach the subprogram.
+const FOCUS_FRAMES_TO_SUB: u32 = 1;
+/// The frames the focus takes to reach the main interpreter.
+const FOCUS_FRAMES_TO_MAIN: u32 = 2;
 
 /// The result of [`Machine::sub_screen`].
 pub struct SubScreen<'a> {
@@ -136,7 +144,7 @@ pub struct Machine {
     pub rt: Runtime,
     vm: Option<Vm>,
     /// Frames left before the VM runs again.
-    wait: u32,
+    wait_frames: u32,
     /// Frames run so far.
     frame: u64,
     /// The frame the last VSYNC waited for, which the next one counts from.
@@ -179,7 +187,7 @@ pub struct Machine {
     pub keep_frames: bool,
     /// The last frame ran out of time part-way through a loop that
     /// [`Machine::keep_frames`] lets continue in the same frame.
-    keep_going: bool,
+    resume_kept_loop: bool,
     /// The current iteration of the program's main loop started at a VSYNC
     /// or WAIT and is short enough for [`Machine::keep_frames`] to keep in
     /// a frame.
@@ -212,7 +220,7 @@ pub struct Machine {
     program_error: Option<Error>,
     /// The program that STOP, the + button or an error stopped, kept for
     /// CONT; `rt.stopped` says which.
-    halted: Option<Vm>,
+    stopped_vm: Option<Vm>,
     /// The time a frame may run code that does not VSYNC. Programs run
     /// as fast as the computer allows rather than at SmileBASIC 4's
     /// speed, which no program needs. `None` runs [`FRAME_BUDGET`]
@@ -223,9 +231,9 @@ pub struct Machine {
     breakpoints: Vec<BTreeMap<u32, Option<Rc<Watch>>>>,
     /// The breakpoints of files no slot holds, by `PROJECT/NAME`, for
     /// when one is loaded again.
-    kept: HashMap<String, BTreeMap<u32, Option<Rc<Watch>>>>,
+    file_breakpoints: HashMap<String, BTreeMap<u32, Option<Rc<Watch>>>>,
     /// Watches that stop programs when their values change.
-    changes: Vec<Rc<Watch>>,
+    change_watches: Vec<Rc<Watch>>,
     /// The reason the stopped program stopped.
     stop_reason: Option<StopReason>,
     /// A debugger's step started from the editor, which stays shown
@@ -277,7 +285,7 @@ pub struct Machine {
     /// On the sub interpreter, the way its last program ended, for the main
     /// one to report: `Some(None)` when it ended by itself, else the error
     /// or break message the main one prints.
-    ended: Option<Option<String>>,
+    ended_with: Option<Option<String>>,
     /// Whether the program came from the project manager's Run.
     home: Home,
 }
@@ -345,6 +353,20 @@ pub enum StopReason {
     },
     /// A breakpoint's condition could not be worked out.
     ConditionFailed(String),
+}
+
+impl StopReason {
+    /// The note printed after the Break line, for reasons the screen alone
+    /// does not show.
+    fn note(&self) -> Option<String> {
+        match self {
+            StopReason::Changed { watch, from, to } => {
+                Some(format!("{watch} changed: {from} -> {to}"))
+            }
+            StopReason::ConditionFailed(e) => Some(format!("Condition failed: {e}")),
+            _ => None,
+        }
+    }
 }
 
 /// The target of a LIST typed in DIRECT mode.
@@ -490,7 +512,7 @@ fn parse_direct(line: &str) -> Result<Direct, Error> {
         // hardware).
         "SUBRUN" => match token(rest).0 {
             Token::End => return error(ErrorKind::SyntaxError, "a file name literal"),
-            Token::Str(file) if file.encode_utf16().count() > 65 => {
+            Token::Str(file) if file.encode_utf16().count() > SUBRUN_NAME_UNITS => {
                 return error(ErrorKind::StringTooLong, "file name");
             }
             Token::Str(file) => format!("{word} \"{file}\""),
@@ -559,7 +581,7 @@ impl Machine {
         Machine {
             rt,
             vm: None,
-            wait: 0,
+            wait_frames: 0,
             frame: 0,
             vsync_at: None,
             vsyncs: 0,
@@ -568,7 +590,7 @@ impl Machine {
             loop_so_far: Duration::ZERO,
             hold_at_sync: false,
             keep_frames: false,
-            keep_going: false,
+            resume_kept_loop: false,
             keepable: false,
             kept_calls: 0,
             missed: Missed::default(),
@@ -580,10 +602,10 @@ impl Machine {
             editing: false,
             running_slot: None,
             last_error: None,
-            halted: None,
+            stopped_vm: None,
             breakpoints: vec![BTreeMap::new(); SLOTS],
-            kept: HashMap::new(),
-            changes: Vec::new(),
+            file_breakpoints: HashMap::new(),
+            change_watches: Vec::new(),
             stop_reason: None,
             moved: vec![false; SLOTS],
             direct_failed: false,
@@ -602,7 +624,7 @@ impl Machine {
             sub_shown: true,
             focus_moving: None,
             focus_flash: None,
-            ended: None,
+            ended_with: None,
             home: Home::Off,
             program_error: None,
         }
@@ -665,13 +687,19 @@ impl Machine {
     /// Whether the program is part-way between VSYNCs: out of time rather
     /// than waiting. The screens are then only partly drawn.
     pub fn mid_loop(&self) -> bool {
-        self.is_running() && !self.at_sync && self.wait == 0
+        self.is_running() && !self.at_sync && self.wait_frames == 0
     }
 
     /// The time the program last took between two VSYNCs, not counting
     /// the time between frames. Known only under a time limit.
     pub fn loop_time(&self) -> Duration {
         self.loop_time
+    }
+
+    /// Whether this is the sub interpreter, which runs SUBRUN's program,
+    /// rather than the main one.
+    fn is_sub(&self) -> bool {
+        self.rt.env_type == 1
     }
 
     /// Whether a program or DIRECT mode line is executing.
@@ -792,12 +820,7 @@ impl Machine {
     fn leave_slot(&mut self) {
         let a = self.active;
         if self.mirrors() {
-            let [first, second] = &mut self.editors;
-            let (active, other) = if a == 0 {
-                (first, second)
-            } else {
-                (second, first)
-            };
+            let (active, other) = self.sides_mut();
             other.take_document(active);
             active.close();
         } else {
@@ -815,12 +838,7 @@ impl Machine {
         }
         if self.split && self.editing && self.editors[o].slot() == slot {
             let text = self.editors[o].text();
-            let [first, second] = &mut self.editors;
-            let (active, other) = if a == 0 {
-                (first, second)
-            } else {
-                (second, first)
-            };
+            let (active, other) = self.sides_mut();
             active.open(slot, &text, at);
             active.take_document(other);
         } else {
@@ -828,6 +846,16 @@ impl Machine {
         }
         self.slot_changes.clone_from(&self.rt.slot_changes);
         self.editing = true;
+    }
+
+    /// The active side of the editor and the other side.
+    fn sides_mut(&mut self) -> (&mut Editor, &mut Editor) {
+        let [first, second] = &mut self.editors;
+        if self.active == 0 {
+            (first, second)
+        } else {
+            (second, first)
+        }
     }
 
     /// Closes one side, keeping its changes in the slot.
@@ -932,14 +960,9 @@ impl Machine {
         self.edit();
         // Only the side with the keys completes and hints.
         self.editors[self.active].complete = None;
-        let (a, o) = (self.active, self.other());
+        let o = self.other();
         if self.mirrors() {
-            let [first, second] = &mut self.editors;
-            let (active, other) = if a == 0 {
-                (first, second)
-            } else {
-                (second, first)
-            };
+            let (active, other) = self.sides_mut();
             other.take_document(active);
         }
         self.active = o;
@@ -1178,7 +1201,7 @@ impl Machine {
         if let Some(vm) = &mut self.vm {
             if vm.take_break(&mut self.rt) {
                 // Anything the program waited for is canceled.
-                self.wait = 0;
+                self.wait_frames = 0;
                 self.rt.cancel_input();
                 self.rt.cancel_confirm();
             } else {
@@ -1238,7 +1261,7 @@ impl Machine {
         self.home = Home::Off;
         if let Some(sub) = &mut self.sub {
             sub.end_sub(None);
-            sub.ended = None;
+            sub.ended_with = None;
             sub.rt.focus = false;
             sub.rt.dimmed = false;
             (sub.rt.focus_busy, sub.rt.focus_wish) = (false, None);
@@ -1252,8 +1275,8 @@ impl Machine {
         (self.rt.focus_busy, self.rt.focus_wish) = (false, None);
         self.stepping = None;
         self.vm = None;
-        self.wait = 0;
-        self.forget_halted();
+        self.wait_frames = 0;
+        self.forget_stopped();
         self.running_slot = None;
         self.rt.running_slot = None;
         self.rt.take_requests();
@@ -1272,7 +1295,7 @@ impl Machine {
     fn stop_on(&mut self, line: Option<u32>, how: Halt) {
         // A subprogram has no DIRECT mode to stop in: it ends, and the
         // main interpreter prints why.
-        if self.rt.env_type == 1 {
+        if self.is_sub() {
             if let Some(vm) = &self.vm {
                 let what = match how {
                     Halt::User => "User break",
@@ -1335,32 +1358,8 @@ impl Machine {
         if let Some(message) = vm.take_stop_message() {
             self.print_line(&message);
         }
-        let reason = match (how, vm.take_debug_note()) {
-            (Halt::User, _) => StopReason::Paused,
-            (Halt::Stop, _) => StopReason::Stop,
-            (Halt::Trace, _) => StopReason::Traced,
-            (Halt::Debug, Some(DebugNote::Breakpoint(c))) => {
-                StopReason::Breakpoint(c.map(|w| w.source().to_string()))
-            }
-            (Halt::Debug, Some(DebugNote::RanTo)) => StopReason::RanTo,
-            (Halt::Debug, Some(DebugNote::Changed(i, from, to))) => StopReason::Changed {
-                watch: self.changes.get(i).map_or("", |w| w.source()).to_string(),
-                from: note_value(&from),
-                to: note_value(&to),
-            },
-            (Halt::Debug, Some(DebugNote::Condition(e))) => {
-                StopReason::ConditionFailed(e.to_string())
-            }
-            (Halt::Debug, Some(DebugNote::Step) | None) => StopReason::Stepped,
-        };
-        // Reasons the screen alone does not show are noted after the line.
-        let note = match &reason {
-            StopReason::Changed { watch, from, to } => {
-                Some(format!("{watch} changed: {from} -> {to}"))
-            }
-            StopReason::ConditionFailed(e) => Some(format!("Condition failed: {e}")),
-            _ => None,
-        };
+        let reason = self.reason_for(how, vm.take_debug_note());
+        let note = reason.note();
         self.stop_reason = program.then_some(reason);
         if let Some(note) = note.filter(|_| !quiet) {
             let note: Vec<u16> = note.encode_utf16().collect();
@@ -1394,6 +1393,33 @@ impl Machine {
         }
     }
 
+    /// The reason for a stop of kind `how`, with the VM's note on a
+    /// debugger's stop.
+    fn reason_for(&self, how: Halt, note: Option<DebugNote>) -> StopReason {
+        match (how, note) {
+            (Halt::User, _) => StopReason::Paused,
+            (Halt::Stop, _) => StopReason::Stop,
+            (Halt::Trace, _) => StopReason::Traced,
+            (Halt::Debug, Some(DebugNote::Breakpoint(c))) => {
+                StopReason::Breakpoint(c.map(|w| w.source().to_string()))
+            }
+            (Halt::Debug, Some(DebugNote::RanTo)) => StopReason::RanTo,
+            (Halt::Debug, Some(DebugNote::Changed(i, from, to))) => StopReason::Changed {
+                watch: self
+                    .change_watches
+                    .get(i)
+                    .map_or("", |w| w.source())
+                    .to_string(),
+                from: note_value(&from),
+                to: note_value(&to),
+            },
+            (Halt::Debug, Some(DebugNote::Condition(e))) => {
+                StopReason::ConditionFailed(e.to_string())
+            }
+            (Halt::Debug, Some(DebugNote::Step) | None) => StopReason::Stepped,
+        }
+    }
+
     /// Opens the editor at the line the stopped program continues from,
     /// keeping what is being edited.
     fn show_paused(&mut self) {
@@ -1423,12 +1449,12 @@ impl Machine {
             .chain(vm.call_sites().into_iter().rev())
             .collect();
         self.rt.stopped = how;
-        self.halted = Some(vm);
+        self.stopped_vm = Some(vm);
     }
 
     /// Forgets the stopped program, once another starts or CLEAR runs.
-    fn forget_halted(&mut self) {
-        self.halted = None;
+    fn forget_stopped(&mut self) {
+        self.stopped_vm = None;
         self.direct_failed = false;
         self.rt.stopped = Stopped::No;
         self.rt.backtrace.clear();
@@ -1437,11 +1463,11 @@ impl Machine {
     /// Continues the stopped program, with the variables as DIRECT mode
     /// left them.
     fn resume(&mut self, how: Resume) {
-        let Some(mut vm) = self.halted.take() else {
+        let Some(mut vm) = self.stopped_vm.take() else {
             return self.ready();
         };
         self.quiet_stop = false;
-        self.forget_halted();
+        self.forget_stopped();
         vm.set_globals(&self.vars);
         self.arm(&mut vm);
         // A line run to earlier is forgotten once something else stopped
@@ -1458,7 +1484,7 @@ impl Machine {
         self.rt.running_slot = vm.slot();
         self.rt.program = Some(vm.program());
         self.vm = Some(vm);
-        self.wait = 0;
+        self.wait_frames = 0;
         self.vsync_at = Some(self.frame + 1);
     }
 
@@ -1468,7 +1494,7 @@ impl Machine {
     /// From the editor, CONT shows the screen again, while a step leaves
     /// the editor shown until the program waits for input.
     pub fn debug(&mut self, how: Resume) -> bool {
-        if self.vm.is_some() || self.halted.is_none() || self.rt.stopped != Stopped::Paused {
+        if self.vm.is_some() || self.stopped_vm.is_none() || self.rt.stopped != Stopped::Paused {
             return false;
         }
         if let Resume::RunTo(slot, _) = how
@@ -1525,7 +1551,7 @@ impl Machine {
     /// Whether the panel has screens to show: the screens left by a
     /// stopped program or by a program that a step runs.
     pub fn panel_screens(&self) -> bool {
-        self.halted.is_some() || self.stepping.is_some()
+        self.stopped_vm.is_some() || self.stepping.is_some()
     }
 
     /// Shows the debugger's panel with the editor from now on, or hides it
@@ -1583,7 +1609,7 @@ impl Machine {
         if self.rt.stopped != Stopped::Paused || slot.is_none_or(|slot| self.lines_moved(slot)) {
             return false;
         }
-        let Some(vm) = &mut self.halted else {
+        let Some(vm) = &mut self.stopped_vm else {
             return false;
         };
         if !vm.jump_to(line) {
@@ -1599,21 +1625,21 @@ impl Machine {
 
     /// The reason the stopped program stopped, while it can continue.
     pub fn stop_reason(&self) -> Option<&StopReason> {
-        let paused = self.halted.is_some() && self.rt.stopped == Stopped::Paused;
+        let paused = self.stopped_vm.is_some() && self.rt.stopped == Stopped::Paused;
         self.stop_reason.as_ref().filter(|_| paused)
     }
 
     /// The slot and line the stopped program stopped on, as its Break
     /// message gives them.
     pub fn stopped_on(&self) -> Option<(usize, u32)> {
-        self.halted.as_ref()?;
+        self.stopped_vm.as_ref()?;
         self.rt.backtrace.first().copied()
     }
 
     /// The point the stopped program continues from: its slot and the line
     /// about to run.
     pub fn paused_at(&self) -> Option<(usize, u32)> {
-        let vm = self.halted.as_ref()?;
+        let vm = self.stopped_vm.as_ref()?;
         Some((vm.slot()?, vm.line()))
     }
 
@@ -1626,7 +1652,7 @@ impl Machine {
     /// The program the debugger's panel shows: the stopped one, else the
     /// one running.
     fn inspected(&self) -> Option<&Vm> {
-        self.halted.as_ref().or(self.vm.as_ref())
+        self.stopped_vm.as_ref().or(self.vm.as_ref())
     }
 
     /// The locals of one of the stopped or running program's DEF calls,
@@ -1654,7 +1680,7 @@ impl Machine {
             return vars;
         };
         let mut globals = vm.slot_globals(slot);
-        if self.halted.is_some() && vm.slot() == Some(slot) {
+        if self.stopped_vm.is_some() && vm.slot() == Some(slot) {
             for (name, value) in &mut globals {
                 if let Some(v) = self.vars.get(name) {
                     *value = v.clone();
@@ -1686,7 +1712,7 @@ impl Machine {
         frame: Option<usize>,
         slot: usize,
     ) -> bool {
-        let Some(vm) = &mut self.halted else {
+        let Some(vm) = &mut self.stopped_vm else {
             return false;
         };
         if frame.is_some_and(|f| vm.set_local(f, name, value.clone())) {
@@ -1770,15 +1796,15 @@ impl Machine {
     /// Expressions that do not parse are skipped. Setting the same ones
     /// again keeps the values that changes are compared against.
     pub fn set_changes(&mut self, sources: &[&str]) {
-        let same = sources.len() == self.changes.len()
+        let same = sources.len() == self.change_watches.len()
             && sources
                 .iter()
-                .zip(&self.changes)
+                .zip(&self.change_watches)
                 .all(|(s, w)| *s == w.source());
         if same {
             return;
         }
-        self.changes = (sources.iter())
+        self.change_watches = (sources.iter())
             .filter_map(|s| Watch::new(s).ok())
             .map(Rc::new)
             .collect();
@@ -1804,13 +1830,17 @@ impl Machine {
         let edits = edits
             .into_iter()
             .chain(std::mem::take(&mut self.rt.slot_edits));
-        let (lines, kept, moved) = (&mut self.breakpoints, &mut self.kept, &mut self.moved);
+        let (lines, kept, moved) = (
+            &mut self.breakpoints,
+            &mut self.file_breakpoints,
+            &mut self.moved,
+        );
         follow(lines, kept, moved, &self.rt.slots, edits.collect());
     }
 
     pub fn clear_breakpoints(&mut self) {
         self.breakpoints.iter_mut().for_each(BTreeMap::clear);
-        self.kept.clear();
+        self.file_breakpoints.clear();
         self.arm_all();
     }
 
@@ -1821,20 +1851,20 @@ impl Machine {
         give_breakpoints(&self.breakpoints, &self.moved, vm);
         // Lines typed in DIRECT mode stop at no breakpoint, and on no change.
         if vm.slot().is_some() {
-            vm.set_changes(&self.changes);
+            vm.set_changes(&self.change_watches);
         }
     }
 
     /// Gives the running and the stopped program the breakpoints.
     fn arm_all(&mut self) {
-        let mut vms = [self.vm.take(), self.halted.take()];
+        let mut vms = [self.vm.take(), self.stopped_vm.take()];
         for vm in vms.iter_mut().flatten() {
             give_breakpoints(&self.breakpoints, &self.moved, vm);
             if vm.slot().is_some() {
-                vm.set_changes(&self.changes);
+                vm.set_changes(&self.change_watches);
             }
         }
-        [self.vm, self.halted] = vms;
+        [self.vm, self.stopped_vm] = vms;
     }
 
     /// The editor, after it has taken the keys typed so far, so that its
@@ -1923,7 +1953,7 @@ impl Machine {
     /// Runs one frame: the program, the editor, or line editing in DIRECT
     /// mode, and then the subprogram, if one runs.
     pub fn frame(&mut self) {
-        if self.keeping_frames() && self.hold_at_sync && self.at_sync && self.wait <= 1 {
+        if self.keeping_frames() && self.hold_at_sync && self.at_sync && self.wait_frames <= 1 {
             // The frame would leave the program waiting at its VSYNC.
             return;
         }
@@ -1935,7 +1965,7 @@ impl Machine {
         }
         self.move_focus();
         // A frame kept for a loop that continues reads no new input.
-        if !self.keep_going {
+        if !self.resume_kept_loop {
             let beside = self.sub.as_ref().map(|sub| sub.rt.input.live);
             let editor = self.editor_has_keys();
             self.rt.repeat_held_key(beside.as_ref(), editor);
@@ -1995,7 +2025,8 @@ impl Machine {
     /// runtime when this is the sub interpreter.
     fn run_frame(&mut self, mut main: Option<&mut Runtime>) {
         // A loop kept in its frame continues without a new frame's work.
-        let resume = std::mem::take(&mut self.keep_going) && main.is_none() && self.vm.is_some();
+        let resume =
+            std::mem::take(&mut self.resume_kept_loop) && main.is_none() && self.vm.is_some();
         if resume {
             self.kept_calls += 1;
         } else {
@@ -2015,7 +2046,7 @@ impl Machine {
         self.rt.in_frame_job = false;
         self.follow_edits();
         // A console's speed misses what the console would.
-        self.rt.input.carry = self.mid_loop() && self.rt.meter.is_none();
+        self.rt.input.ended_mid_loop = self.mid_loop() && self.rt.meter.is_none();
         self.rt.begin_frame();
         // The subprogram's SNDMVOL does nothing: the main program's SNDMVOL
         // sets the level of both.
@@ -2052,8 +2083,8 @@ impl Machine {
         if self.vm.is_none() {
             return false;
         }
-        self.wait = self.wait.saturating_sub(1);
-        if self.wait > 0 {
+        self.wait_frames = self.wait_frames.saturating_sub(1);
+        if self.wait_frames > 0 {
             return false;
         }
         if self.hold_at_sync && self.at_sync {
@@ -2125,8 +2156,11 @@ impl Machine {
                     // continues with their breakpoints moved.
                     if !self.rt.slot_edits.is_empty() {
                         let edits = std::mem::take(&mut self.rt.slot_edits);
-                        let (lines, kept, moved) =
-                            (&mut self.breakpoints, &mut self.kept, &mut self.moved);
+                        let (lines, kept, moved) = (
+                            &mut self.breakpoints,
+                            &mut self.file_breakpoints,
+                            &mut self.moved,
+                        );
                         follow(lines, kept, moved, &self.rt.slots, edits);
                         give_breakpoints(&self.breakpoints, &self.moved, vm);
                     }
@@ -2134,7 +2168,7 @@ impl Machine {
                         continue;
                     }
                 }
-                Ok(Status::Retry) => self.wait = 1,
+                Ok(Status::Retry) => self.wait_frames = 1,
                 // WAIT, WAIT 0 too, restarts VSYNC's count. INPUT does not
                 // (checked on hardware).
                 Ok(Status::Wait {
@@ -2151,7 +2185,7 @@ impl Machine {
                     }
                     let frames = frames.saturating_sub(self.rt.in_frame_job.into());
                     self.rt.in_frame_job = false;
-                    self.wait = frames;
+                    self.wait_frames = frames;
                     self.vsync_at = Some(self.frame + u64::from(frames));
                     if frames == 0 && has_time(vm, &self.rt, start) {
                         continue;
@@ -2183,7 +2217,7 @@ impl Machine {
                     let (mark, wait) = vsync_wait(self.vsync_at, frames, self.frame, reached);
                     self.vsync_at = Some(mark);
                     if let Some(wait) = wait {
-                        self.wait = wait;
+                        self.wait_frames = wait;
                     } else {
                         self.rt.sound.synced();
                         // SmileBASIC 4 continues immediately, and so does a
@@ -2241,8 +2275,8 @@ impl Machine {
         if let Some(began) = began.filter(|_| !self.at_sync) {
             self.loop_so_far += began.elapsed();
         }
-        self.keep_going = main.is_none() && self.keeps_loop();
-        if self.mid_loop() && !self.keep_going {
+        self.resume_kept_loop = main.is_none() && self.keeps_loop();
+        if self.mid_loop() && !self.resume_kept_loop {
             self.missed.cut += 1;
         }
         // A step that waits for input shows the screen until it stops: an
@@ -2261,7 +2295,6 @@ impl Machine {
         }
     }
 
-    /// Whether the debugger is stepping through the program.
     pub fn is_stepping(&self) -> bool {
         self.stepping.is_some()
     }
@@ -2397,7 +2430,7 @@ impl Machine {
         let (line, col) = self.editors[self.active].cursor_line();
         self.rt.help_cursor = (line.to_vec(), col);
         if slot.is_some() {
-            self.forget_halted();
+            self.forget_stopped();
         }
         self.rt.direct = slot.is_none();
         self.running_slot = slot;
@@ -2413,7 +2446,7 @@ impl Machine {
                     self.moved.fill(false);
                     // RUN sets RESULT to 0 once the program compiles. A
                     // program with a syntax error leaves it unchanged.
-                    if self.rt.env_type == 0 {
+                    if !self.is_sub() {
                         self.rt.result = 0;
                     }
                 }
@@ -2429,14 +2462,14 @@ impl Machine {
                     self.rt.slot_programs[slot] = Some(vm.program());
                 }
                 self.vm = Some(vm);
-                self.wait = 0;
+                self.wait_frames = 0;
             }
             Err(e) => {
                 let e = e.in_slot(slot.map(|s| s as u32));
                 if slot.is_some() {
                     self.program_error = Some(e.clone());
                 }
-                if self.rt.env_type == 1 {
+                if self.is_sub() {
                     return self.end_sub(Some(e.to_string()));
                 }
                 self.running_slot = None;
@@ -2462,7 +2495,7 @@ impl Machine {
     /// Break key leaves the screens as after ACLS and the sound stopped.
     /// STOP, errors and the debugger's stops leave everything to look at.
     fn tidy_after_run(&mut self) {
-        if self.rt.settings.tidy_on_end && self.rt.env_type == 0 {
+        if self.rt.settings.tidy_on_end && !self.is_sub() {
             self.tidy();
         }
     }
@@ -2490,7 +2523,7 @@ impl Machine {
         {
             self.program_error = Some(e.clone());
         }
-        if self.rt.env_type == 1 {
+        if self.is_sub() {
             self.end_sub(error.map(|e| e.to_string()));
             return false;
         }
@@ -2519,7 +2552,7 @@ impl Machine {
             match &error {
                 Some(e) => self.halt(vm, Stopped::Error, e.line),
                 None => {
-                    self.forget_halted();
+                    self.forget_stopped();
                     self.tidy_after_run();
                 }
             }
@@ -2534,7 +2567,7 @@ impl Machine {
                 Request::Run(slot) => run = Some(slot),
                 Request::Clear => {
                     self.vars.clear();
-                    self.forget_halted();
+                    self.forget_stopped();
                 }
                 Request::Cont => cont = Some(Resume::Cont),
                 Request::Trace => cont = Some(Resume::Trace),
@@ -2712,7 +2745,7 @@ impl Machine {
                 self.sub_ended(false);
                 if let Some(sub) = &mut self.sub {
                     let message = format!("{} ({e})", ErrorKind::IllegalFormat.message());
-                    sub.ended = Some(Some(message));
+                    sub.ended_with = Some(Some(message));
                 }
             }
             Err(e) => {
@@ -2762,7 +2795,7 @@ impl Machine {
             return Err(e);
         }
         sub.end_sub(None);
-        sub.ended = None;
+        sub.ended_with = None;
         // Its variables, SPFUNC and TFUNC are cleared. The rest stays.
         for sprite in sub.rt.sprites.list_mut() {
             sprite.func = None;
@@ -2799,7 +2832,7 @@ impl Machine {
         let Some(sub) = &mut self.sub else {
             return;
         };
-        let Some(message) = sub.ended.take() else {
+        let Some(message) = sub.ended_with.take() else {
             return;
         };
         sub.rt.focus = false;
@@ -2830,14 +2863,14 @@ impl Machine {
     fn end_sub(&mut self, message: Option<String>) {
         self.stepping = None;
         self.vm = None;
-        self.halted = None;
+        self.stopped_vm = None;
         self.running_slot = None;
         self.rt.running_slot = None;
         self.rt.take_requests();
         self.rt.cancel_input();
         self.rt.cancel_confirm();
         self.rt.clear_input();
-        self.ended = Some(message);
+        self.ended_with = Some(message);
     }
 
     /// Returns what ENVSTAT gives for an error in a slot: its number, the
@@ -2899,17 +2932,19 @@ impl Machine {
         let sub_asks = sub.rt.program_dialog().is_some();
         self.rt.dialog_beside = sub_asks;
         sub.rt.dialog_beside = main_asks;
-        if !(main_asks || !sub.rt.focus) {
+        let main_reads = main_asks || !sub.rt.focus;
+        let sub_reads = sub_asks || sub.rt.focus && !main_asks;
+        if !main_reads {
             self.rt.input.live = idle;
         }
-        if !(sub_asks || sub.rt.focus && !main_asks) {
+        if !sub_reads {
             sub.rt.input.live = idle;
             return;
         }
         // The pointer, in the sub-screen's pixels.
         let mut mouse = live.mouse;
         let (fw, fh) = (sub.rt.mode.width as i32, sub.rt.mode.height as i32);
-        let area = sub.rt.sub_screen.unwrap_or([0, 0, 1280, 720]);
+        let area = sub.rt.sub_screen.unwrap_or(DISPLAY);
         let [x, y, w, h] = rounded(sub_quad(area, sub.rt.mode.aspect()));
         let (dx, dy) = (mouse.display.0 - x, mouse.display.1 - y);
         mouse.x = dx * fw / w.max(1);
@@ -2939,12 +2974,17 @@ impl Machine {
         {
             // Giving the focus away took one to three frames, and taking it
             // took one.
-            self.focus_moving = Some((to_sub, if to_sub { 1 } else { 2 }));
+            let frames = if to_sub {
+                FOCUS_FRAMES_TO_SUB
+            } else {
+                FOCUS_FRAMES_TO_MAIN
+            };
+            self.focus_moving = Some((to_sub, frames));
             sub.rt.focus_busy = true;
             self.rt.focus_busy = true;
         }
         if std::mem::take(&mut self.rt.forget_stop) {
-            self.forget_halted();
+            self.forget_stopped();
         }
         self.sub_ended(true);
         if let Some(sub) = &mut self.sub {
@@ -3014,8 +3054,8 @@ impl Machine {
             Some(_) => return None,
         };
         let rect = match sub {
-            Some(sub) if to_sub => sub.rt.sub_screen.unwrap_or([0, 0, 1280, 720]),
-            _ => [0, 0, 1280, 720],
+            Some(sub) if to_sub => sub.rt.sub_screen.unwrap_or(DISPLAY),
+            _ => DISPLAY,
         };
         Some((rect, alpha as u8))
     }
@@ -3111,7 +3151,7 @@ impl Machine {
         if let Some(vm) = &mut sub.vm
             && vm.take_break(&mut sub.rt)
         {
-            sub.wait = 0;
+            sub.wait_frames = 0;
             sub.rt.cancel_input();
             sub.rt.cancel_confirm();
             return;
@@ -3162,7 +3202,6 @@ impl Machine {
         Some((self.sub.as_mut()?.program_error.take()?, true))
     }
 
-    /// Whether a subprogram is running.
     pub fn sub_running(&self) -> bool {
         self.sub.as_ref().is_some_and(|s| s.vm.is_some())
     }

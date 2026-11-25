@@ -189,9 +189,9 @@ fn parse_args(args: &[String]) -> Option<(Option<&str>, bool)> {
     Some((program, simple_ui))
 }
 
-/// The number of panics on frames in a row after which frames stop. The
-/// machine cannot be fixed, but the window can still save the editor text.
-const MOST_PANICS: u32 = 3;
+/// Frames stop after this many panics in a row. The machine cannot be
+/// fixed, but the window can still save the editor text.
+const MAX_PANICS_IN_A_ROW: u32 = 3;
 
 /// The guard that keeps a panic in a program's frame from losing unsaved
 /// work. A failed allocation aborts and cannot be caught. A panic outside
@@ -225,7 +225,7 @@ impl FrameGuard {
         let why = panic_text(panic);
         self.panics_in_a_row += 1;
         let recovered = catch_unwind(AssertUnwindSafe(|| machine.recover_from_panic(&why)));
-        self.stopped = recovered.is_err() || self.panics_in_a_row >= MOST_PANICS;
+        self.stopped = recovered.is_err() || self.panics_in_a_row >= MAX_PANICS_IN_A_ROW;
         toasts.push(if self.stopped {
             "The emulator failed and has stopped: save your programs and restart it.".to_string()
         } else {
@@ -245,7 +245,7 @@ fn version_with_options() -> String {
 }
 
 /// Returns the text of Help > About.
-fn about_lines(drawn_by: &str) -> Vec<String> {
+fn about_lines(renderer_text: &str) -> Vec<String> {
     vec![
         format!("SmileBASIC emulator {}", version_with_options()),
         "An emulator for SmileBASIC 4 programs.".to_string(),
@@ -254,7 +254,7 @@ fn about_lines(drawn_by: &str) -> Vec<String> {
         "Bundled fonts: SIL Open Font License 1.1, or their authors' terms.".to_string(),
         "GeneralUser GS: its own license.".to_string(),
         String::new(),
-        format!("Renderer: {drawn_by}"),
+        format!("Renderer: {renderer_text}"),
     ]
 }
 
@@ -468,6 +468,10 @@ struct Start {
     restart: Option<String>,
 }
 
+/// The number of iterations that the text cursors of the emulator's
+/// screens stay shown, and then stay hidden.
+const CURSOR_BLINK_ITERATIONS: u32 = 25;
+
 /// The window and the main loop, on a machine that is already set up.
 fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Result<(), AnyError> {
     let Start {
@@ -549,11 +553,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut texture = frame_texture(&canvas, texture_creator, texture_kind)?;
     // The pixel space of mouse positions: the screen or the editor frame.
     let mut pointer_space = (mode.width, mode.height);
-    // The rectangle the editor frame was drawn in, if the editor was laid
-    // out to fill the main window (see `placement::editor_fill`). The
-    // pointer then maps through it. This is always so except in the Simple
-    // UI.
-    let mut filled_editor: Option<FRect> = None;
+    // Set when the editor was laid out to fill the main window
+    // (`placement::editor_fill`), which is always except in the Simple UI.
+    // The pointer then maps through it.
+    let mut editor_fill_rect: Option<FRect> = None;
     let mut menu = MenuBar::default();
     // Whether a program was running when the loop last checked, to notice
     // when one starts.
@@ -595,7 +598,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut raised: Option<(Which, Instant)> = None;
     let mouse = sdl.mouse();
     let mut cursor_shown = true;
-    // The emulator's own windows and dialogs.
     let mut screens = Screens::default();
     // A program's DIALOG. It takes clicks on it, Enter and typing, but
     // leaves the menu bar and the stop keys working.
@@ -627,7 +629,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // The debugger's panel below the editor, and the help or the index
     // beside it.
     let mut debugger = Debugger::default();
-    let mut side_panel = Beside::default();
+    let mut side_panel = SidePanel::default();
 
     let mut events = sdl.event_pump()?;
     let mut pacer = pacing::Pacer::new(Instant::now());
@@ -645,8 +647,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // found the failure.
     let mut renderer_failed: Option<String> = None;
     let mut watch = RendererWatch::default();
-    // Renderers to refuse, for the bench.
-    let mut refusals = 0;
+    let mut bench_refusals = 0;
     let mut suspend = SuspendWatch::new();
     // The events drained in an iteration of the loop.
     let mut polled: Vec<Event> = Vec::new();
@@ -654,7 +655,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // emulator's screens.
     macro_rules! stick_role {
         () => {
-            stick_mouse::Where {
+            stick_mouse::StickContext {
                 simple_ui,
                 running: machine.is_running(),
                 screen: screens.any()
@@ -723,11 +724,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             drop(texture);
             drop(creator);
             drop(canvas);
-            let mut waiting = Waiting {
+            let mut waiting = RendererWait {
                 events: &mut events,
                 controls: &mut inputs.controls,
-                refusals: &mut refusals,
-                quiet: headless(),
+                bench_refusals: &mut bench_refusals,
+                headless: headless(),
             };
             let made = new_renderer(
                 &window,
@@ -757,11 +758,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if bench.on() {
             bench.sound(audio.stats());
         }
-        // Frames the standby thread ran in this iteration.
-        let mut kept = standby::Kept::default();
+        let mut standby_frames = standby::Kept::default();
         if bench.step(machine) {
             bench.report(&canvas.renderer_name);
-            println!("drawn by  {}", paths.drawn_by);
+            println!("drawn by  {}", paths.renderer_text);
             if let Some(gpu) = &paths.main {
                 gpu.report("gpu");
             }
@@ -836,7 +836,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     None
                 }
                 _ if what.starts_with("refuse:") => {
-                    refusals = what[7..].parse().unwrap_or(0);
+                    bench_refusals = what[7..].parse().unwrap_or(0);
                     None
                 }
                 _ if what.starts_with("usb:") => {
@@ -886,7 +886,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 _ if what.starts_with("sleep:") => {
                     let time = Duration::from_millis(what[6..].parse().unwrap_or(0));
                     let ((), held) = standby.hold(lend!(), || std::thread::sleep(time));
-                    kept.add(held);
+                    standby_frames.add(held);
                     suspend.pretend(time);
                     None
                 }
@@ -958,7 +958,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 side_panel.open = open_help(machine, help.as_deref(), &mut toasts, size);
             }
             if bench.opens("about") {
-                let lines = about_lines(&paths.drawn_by);
+                let lines = about_lines(&paths.renderer_text);
                 screens.dialog = Some((Dialog::notice("About", lines, size), Asking::Notice));
             }
             if bench.opens("colors") {
@@ -1072,7 +1072,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             true => display_h,
             false => placement::ui_height(display, display_h, out_h),
         };
-        let (shown, _) = match (filled_editor, simple_ui) {
+        let (shown, _) = match (editor_fill_rect, simple_ui) {
             (Some(rect), _) => (rect, filter),
             (None, true) => screen_place(&mode, settings, true, out_w, screen_h),
             (None, false) => {
@@ -1085,7 +1085,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             false => placement::menu_place(display, display_w, (out_w, out_h)),
         };
         let main_map = Mapping {
-            px: out_w as f32 / win_w.max(1) as f32,
+            pixels_per_coord: out_w as f32 / win_w.max(1) as f32,
             display,
             display_w,
             shown,
@@ -1093,10 +1093,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             menu: menus_apart.map(|place| place.at),
         };
         let ui_scale = bench.ui_scale;
-        // The space that the zooms of F2 and View > Size follow: the width
-        // of the window the editor shows in, and the height of
-        // SmileBASIC 4's display there.
-        let mut editor_room = (out_w, display.h);
+        // The zooms of F2 and View > Size follow the width of the window the
+        // editor shows in, and the height of SmileBASIC 4's display there.
+        let mut editor_zoom_size = (out_w, display.h);
         // The editor window has the UI in its own pixels, and the
         // emulator's windows are laid out on the display the same way as on
         // the main window.
@@ -1107,9 +1106,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 let editor_canvas = gfx.canvas.borrow();
                 let (out_w, out_h) = drawing!(editor_canvas.output_size());
                 let (win_w, _) = editor_canvas.window().size();
-                editor_room = (out_w, (display_h * layout.ui) as f32);
+                editor_zoom_size = (out_w, (display_h * layout.ui) as f32);
                 let map = Mapping {
-                    px: out_w as f32 / win_w.max(1) as f32,
+                    pixels_per_coord: out_w as f32 / win_w.max(1) as f32,
                     display: from_corner(layout.ui_pixels()),
                     display_w: layout.ui_size.0,
                     shown: from_corner(layout.frame_pixels()),
@@ -1169,12 +1168,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 polled.push(event);
             }
         });
-        kept.add(held);
-        if kept.frames > 0 {
+        standby_frames.add(held);
+        if standby_frames.frames > 0 {
             // Frames the standby thread ran went undrawn.
-            pacer.kept(kept.frames);
+            pacer.kept(standby_frames.frames);
             machine.rt.clipboard.settle();
-            bench.kept(kept);
+            bench.kept(standby_frames);
         }
         for (repeated, mut event) in
             (repeats.into_iter().map(|e| (true, e))).chain(polled.drain(..).map(|e| (false, e)))
@@ -1355,7 +1354,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     .any_key_down(&mut machine.rt, scancode, repeat);
             }
             if matches!(event, Event::KeyDown { .. }) {
-                inputs.eat_text = screens.any()
+                inputs.drop_next_text = screens.any()
                     || program_dialog.is_some()
                     || debugger.panel.typing()
                     || (side_panel.open.is_some() && side_panel.focus);
@@ -1455,7 +1454,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     let tools = events::Tools {
                         clipboard: &clipboard,
                         help: help.as_deref(),
-                        drawn_by: &paths.drawn_by,
+                        renderer_text: &paths.renderer_text,
                     };
                     let main = events::MainWindow {
                         window: canvas.window_mut(),
@@ -1719,6 +1718,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     // In the menu pixels, which may be apart from the
                     // display pixels.
                     let room = popup_room[usize::from(apart)];
+                    let items = (items.into_iter())
+                        .map(|(text, enabled, action)| popup::Item {
+                            text,
+                            enabled,
+                            action,
+                        })
+                        .collect();
                     debugger.menu = Some(Popup::new(to_menu(x, y), items, room));
                 }
                 Event::MouseButtonDown {
@@ -1731,7 +1737,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     let open = menu.is_open().then_some(profile_display);
                     menu.click(
                         to_menu(x, y),
-                        menu_context(machine, canvas.window(), open, editor_room),
+                        menu_context(machine, canvas.window(), open, editor_zoom_size),
                     )
                 } else {
                     Click::Ignored
@@ -1832,7 +1838,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     } else {
                         machine.rt.toggle_line_popups();
                     }
-                    inputs.eat_text = true;
+                    inputs.drop_next_text = true;
                 }
                 // Editing the line typed in DIRECT mode or for INPUT.
                 Event::KeyDown {
@@ -1860,7 +1866,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     if !repeat {
                         machine.keyboard_break();
                     }
-                    inputs.eat_text = true;
+                    inputs.drop_next_text = true;
                 }
                 Event::KeyDown {
                     keycode: Some(key @ (Keycode::C | Keycode::X)),
@@ -1902,7 +1908,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     && let Some(n) = function_key(key) =>
                 {
                     machine.type_function_key(n);
-                    inputs.eat_text = true;
+                    inputs.drop_next_text = true;
                 }
                 // From the screen, F4 brings the editor's own window up.
                 Event::KeyDown {
@@ -1948,7 +1954,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 Event::KeyDown {
                     keycode: Some(Keycode::F2),
                     ..
-                } if on_editor => next_editor_size(machine, editor_room),
+                } if on_editor => next_editor_size(machine, editor_zoom_size),
                 // F1 shows the help for the command at the cursor, in the
                 // editor or on the line typed in DIRECT mode.
                 Event::KeyDown {
@@ -1991,7 +1997,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } if on_editor && ctrl(keymod) => {
                     match events::editor_ctrl_action(key, shift(keymod)) {
                         Some(action) => act!(action),
-                        None => events::editor_ctrl_key(key, editor_room, machine),
+                        None => events::editor_ctrl_key(key, editor_zoom_size, machine),
                     }
                 }
                 // Esc, which the editor's text does not use, closes a panel.
@@ -2052,7 +2058,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } => inputs
                     .typing
                     .key_down(&mut machine.rt, keymod, repeat, special_key(key)),
-                Event::TextInput { .. } if inputs.eat_text => inputs.eat_text = false,
+                Event::TextInput { .. } if inputs.drop_next_text => inputs.drop_next_text = false,
                 Event::TextInput { text, .. } => {
                     inputs.typing.text(&mut machine.rt, &text);
                 }
@@ -2376,7 +2382,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // The editor's frame, of the fill's area, fills the window at its
         // zoom.
         let rect = fill.map_or(rect, placement::Fill::rect);
-        filled_editor = fill.map(|_| rect);
+        editor_fill_rect = fill.map(|_| rect);
         // The frame the GPU path drew, which is not in `fb`.
         let on_gpu = !editing && machine.rt.frame_on_backend();
         // XSCREEN's mode 1 starts from a frame that stays sharp.
@@ -2613,9 +2619,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let font = machine.rt.font();
         ui::set_font(machine.rt.settings.ui_font);
         ui::set_bundled_glyphs(machine.rt.settings.bundled_glyphs16);
-        let cursor_on = (blink / 25).is_multiple_of(2);
+        let cursor_on = (blink / CURSOR_BLINK_ITERATIONS).is_multiple_of(2);
         let open = menu.is_open().then_some(profile_display);
-        let context = menu_context(machine, canvas.window(), open, editor_room);
+        let context = menu_context(machine, canvas.window(), open, editor_zoom_size);
         let settings = &machine.rt.settings;
         let editor_creator = editor_gfx
             .get()
@@ -2851,24 +2857,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         bench.lap(Stage::Wait);
         watch.frame_shown();
     }
-    // The editor window, if shown when quitting, opens at the same place
-    // next time.
-    let keep = machine.rt.settings.editor_window_keep_place;
-    if let Some(gfx) = editor_gfx.get().filter(|_| editor_shown && keep) {
-        let place = window_place(gfx.canvas.borrow().window());
-        machine.rt.settings.editor_window_place = Some(place);
-    }
-    // The desktop starts fullscreen next time if it is fullscreen now, no
-    // matter what made it so. The window starts at its current size, unless
-    // it is fullscreen or maximized, which keep the size it had before.
-    if !simple_ui {
-        let fullscreen = main_window.fullscreen_state() != FullscreenType::Off;
-        machine.rt.settings.fullscreen = fullscreen;
-        if !fullscreen && !main_window.is_maximized() {
-            let (w, h) = main_window.size();
-            machine.rt.settings.window_size = Some([w, h]);
-        }
-    }
+    let shown_editor = editor_gfx.get().filter(|_| editor_shown);
+    let settings = &mut machine.rt.settings;
+    keep_window_state(settings, &main_window, shown_editor, simple_ui);
     // A bench run leaves the settings unchanged, the same as it does above,
     // so that runs in one data directory start the same way.
     if machine.rt.settings != saved_settings && !bench.on() {
@@ -2877,16 +2868,44 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     Ok(())
 }
 
+/// Records in `settings` the state of the windows at quitting, for the
+/// next start. `editor` is the editor window if it is shown.
+fn keep_window_state(
+    settings: &mut Settings,
+    main_window: &Window,
+    editor: Option<&EditorWindow>,
+    simple_ui: bool,
+) {
+    // The editor window, if shown when quitting, opens at the same place
+    // next time.
+    let keep = settings.editor_window_keep_place;
+    if let Some(gfx) = editor.filter(|_| keep) {
+        let place = window_place(gfx.canvas.borrow().window());
+        settings.editor_window_place = Some(place);
+    }
+    // The desktop starts fullscreen next time if it is fullscreen now, no
+    // matter what made it so. The window starts at its current size, unless
+    // it is fullscreen or maximized, which keep the size it had before.
+    if !simple_ui {
+        let fullscreen = main_window.fullscreen_state() != FullscreenType::Off;
+        settings.fullscreen = fullscreen;
+        if !fullscreen && !main_window.is_maximized() {
+            let (w, h) = main_window.size();
+            settings.window_size = Some([w, h]);
+        }
+    }
+}
+
 /// Returns which of the emulator's screens takes the input, so that a
 /// change can be detected: the pause menu, a dialog, the manager in one of
 /// its modes, the game list in one of its modes, or none.
 fn input_screen(pause: bool, dialog: bool, manager: Option<usize>, list: Option<usize>) -> usize {
     match (pause, dialog, manager, list) {
-        (true, ..) => 20,
-        (false, true, ..) => 1,
-        (false, false, Some(mode), _) => 2 + mode,
-        (false, false, None, Some(mode)) => 21 + mode,
-        (false, false, None, None) => 0,
+        (true, ..) => inputs::PAUSE_SCREEN,
+        (false, true, ..) => inputs::DIALOG_SCREEN,
+        (false, false, Some(mode), _) => inputs::MANAGER_SCREEN + mode,
+        (false, false, None, Some(mode)) => inputs::GAME_LIST_SCREEN + mode,
+        (false, false, None, None) => inputs::NO_SCREEN,
     }
 }
 
@@ -3078,13 +3097,12 @@ fn make_canvas(window: &Window, avoid: &[String]) -> Result<Canvas<Window>, AnyE
 }
 
 /// The state of the wait while there is no renderer to draw with.
-struct Waiting<'a> {
+struct RendererWait<'a> {
     events: &'a mut sdl3::EventPump,
     controls: &'a mut Controls,
     /// The number of renderer tries that the bench still refuses.
-    refusals: &'a mut u32,
-    /// No message box, because there is no display.
-    quiet: bool,
+    bench_refusals: &'a mut u32,
+    headless: bool,
 }
 
 /// Makes a new renderer for `window`, with its creator and a frame texture. If none
@@ -3098,7 +3116,7 @@ fn new_renderer(
     watch: &RendererWatch,
     machine: &Machine,
     recovery: &mut Recovery,
-    waiting: &mut Waiting,
+    waiting: &mut RendererWait,
 ) -> Result<Option<(Canvas<Window>, OwnedCreator, Texture<'static>)>, AnyError> {
     let began = Instant::now();
     let mut told = false;
@@ -3106,10 +3124,10 @@ fn new_renderer(
     let mut window = window.clone();
     let mut avoid = watch.avoid().to_vec();
     loop {
-        let made = match *waiting.refusals {
+        let made = match *waiting.bench_refusals {
             0 => make_canvas(&window, &avoid),
             _ => {
-                *waiting.refusals -= 1;
+                *waiting.bench_refusals -= 1;
                 Err("refused by the bench".into())
             }
         };
@@ -3140,7 +3158,7 @@ fn new_renderer(
             let _ = window.set_title(&format!("{TITLE}: no renderer, trying again"));
             saved = Some(recovery.save(machine));
         }
-        if !told && !waiting.quiet && began.elapsed() >= recovery::TELL_AFTER {
+        if !told && !waiting.headless && began.elapsed() >= recovery::TELL_AFTER {
             told = true;
             let text = "Nothing can be drawn at the moment, so the program is paused. \
                         The emulator will keep trying.";
@@ -3353,7 +3371,7 @@ struct Debugger {
 
 /// The help or the index beside the editor.
 #[derive(Default)]
-struct Beside {
+struct SidePanel {
     open: Option<Side>,
     /// Whether it takes the keys.
     focus: bool,
@@ -3361,7 +3379,7 @@ struct Beside {
     direct: bool,
 }
 
-impl Beside {
+impl SidePanel {
     /// Shows the help for the command at the cursor and gives it the
     /// keys, if there is help for it; `direct` is whether it was asked for
     /// in DIRECT mode, to show over the screen. With no help to show, a
@@ -3521,8 +3539,8 @@ fn choose_extra_font(window: &Window, send: std::sync::mpsc::Sender<PathBuf>, to
 /// Returns what the menu bar's items need from the emulator and the main
 /// window. `display`, the profile's display, is given while a menu is open:
 /// View > Window size then asks the system for the window's display.
-/// `editor_room` is the window the editor shows in, in the same form that
-/// [`next_editor_size`] takes.
+/// The last argument is the window the editor shows in, in the same form
+/// that [`next_editor_size`] takes.
 fn menu_context(
     machine: &Machine,
     main: &Window,
@@ -5068,7 +5086,7 @@ mod tests {
     fn frames_stop_when_panics_keep_coming() {
         let mut m = running_machine();
         let (mut guard, mut toasts) = (FrameGuard::default(), Toasts::default());
-        for _ in 0..MOST_PANICS {
+        for _ in 0..MAX_PANICS_IN_A_ROW {
             assert!(!guard.stopped);
             guard.run(&mut m, &mut toasts, |_| panic!("again"));
         }

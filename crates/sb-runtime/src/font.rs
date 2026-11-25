@@ -24,6 +24,7 @@ use std::sync::{Mutex, OnceLock};
 
 use ab_glyph::{Font as _, FontRef, PxScale, point};
 
+use crate::cell_glyph::full_width_form;
 use crate::extra_glyphs::{self, BundledSet};
 use crate::graphics::Graphics;
 use crate::half_width::HalfGlyphs;
@@ -43,19 +44,22 @@ pub enum FontSize {
 }
 
 #[derive(Clone)]
-pub struct Font(Source, Pages);
+pub struct Font {
+    source: Source,
+    cache: Cache,
+}
 
-/// Data built from the font the first time it is needed, and then kept:
-/// the font page on GRP5 of otherwise blank pages, for text drawn with
-/// the font alone, such as the editor text (copying the page for every
-/// frame took longer than drawing), the half-width glyphs, and the
-/// [`Span`]s of fonts without font.map's metrics.
+/// Data built from the font the first time it is needed, and then kept.
 #[derive(Clone, Default)]
-struct Pages(
-    OnceCell<Rc<Graphics>>,
-    OnceCell<Rc<HalfGlyphs>>,
-    OnceCell<Rc<[Cell<u16>]>>,
-);
+struct Cache {
+    /// The font page on GRP5 of otherwise blank pages, for text drawn with
+    /// the font alone, such as the editor text (copying the page for every
+    /// frame took longer than drawing).
+    font_page: OnceCell<Rc<Graphics>>,
+    half_glyphs: OnceCell<Rc<HalfGlyphs>>,
+    /// The [`Span`]s of fonts without font.map's metrics.
+    spans: OnceCell<Rc<[Cell<u16>]>>,
+}
 
 /// GPUTCHRP's view of a character: it draws the whole cell with column
 /// `first` at the pen, and then advances `width` pixels before the
@@ -82,7 +86,7 @@ impl Span {
         }
     }
 
-    /// Packed for [`Pages`]; never 0, because a width is at least 1.
+    /// Packed for [`Cache::spans`]; never 0, because a width is at least 1.
     fn pack(self) -> u16 {
         (self.first as u16) << 8 | self.width as u16
     }
@@ -216,7 +220,18 @@ const SYMBOL: u16 = 0x8000;
 const SYMBOL_PALETTE: [u32; 5] = [0, 0xFFFF_FFFF, 0xFF00_0000, 0xFFBF_BFBF, 0xFF00_BFFF];
 /// Built by `build.rs` from `fonts/galmuri`: records of a u16 code and
 /// 8 row bytes.
-pub(crate) static FALLBACK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback_font.bin"));
+static FALLBACK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback_font.bin"));
+
+/// The 8 rows of GalmuriMono7's 8x8 cell for `code` in [`FALLBACK`], if
+/// it has one.
+pub(crate) fn fallback_rows(code: u16) -> Option<&'static [u8]> {
+    let (records, _) = FALLBACK.as_chunks::<10>();
+    let i = records
+        .binary_search_by_key(&code, |r| u16::from_le_bytes([r[0], r[1]]))
+        .ok()?;
+    Some(&records[i][2..])
+}
+
 /// Built by `build.rs` from `fonts/symbols.txt`: records of a u16 code and
 /// 64 palette indices.
 static SYMBOLS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback_symbols.bin"));
@@ -305,14 +320,10 @@ fn sb4_glyphs() -> Vec<u16> {
     glyphs
 }
 
-/// The code whose glyph the fallback font draws for `code`: SmileBASIC's
-/// font draws ASCII as wide as full-width characters, so GalmuriMono7's
-/// full-width forms are drawn for it.
+/// The code whose glyph the fallback font draws for `code`: GalmuriMono7's
+/// [`full_width_form`].
 fn drawn_as(code: u16) -> u16 {
-    match code {
-        0x21..=0x7E => code + 0xFEE0,
-        _ => code,
-    }
+    full_width_form(u32::from(code)) as u16
 }
 
 /// The top-left corner of glyph `n` on the font page.
@@ -341,7 +352,10 @@ impl Font {
             metrics,
             page,
         };
-        Ok(Font(source, Pages::default()))
+        Ok(Font {
+            source,
+            cache: Cache::default(),
+        })
     }
 
     /// The bundled GalmuriMono7 plus this emulator's drawings of
@@ -385,8 +399,8 @@ impl Font {
                 *slot = free.next().unwrap_or(NO_CELL);
             }
         }
-        Font(
-            Source::Cells {
+        Font {
+            source: Source::Cells {
                 set,
                 index,
                 cells,
@@ -394,14 +408,14 @@ impl Font {
                 missing,
                 slots,
             },
-            Pages::default(),
-        )
+            cache: Cache::default(),
+        }
     }
 
     /// The fallback font drawn with `set`'s 16-pixel glyphs, if this is
     /// a fallback font drawn with another set.
     pub fn with_bundled_set(&self, set: BundledSet) -> Option<Font> {
-        match &self.0 {
+        match &self.source {
             Source::Cells { set: now, .. } if *now != set => Some(Font::fallback_with(set)),
             _ => None,
         }
@@ -409,7 +423,7 @@ impl Font {
 
     /// Pages with only GRP5, the font page.
     pub fn pages(&self) -> &Graphics {
-        self.1.0.get_or_init(|| {
+        self.cache.font_page.get_or_init(|| {
             let mut grp = Graphics::default();
             grp.set_page(crate::text::FONT_PAGE, Page::from_rows(self.page_image()));
             Rc::new(grp)
@@ -419,12 +433,14 @@ impl Font {
     /// Half-width glyphs that go with this font, for text other than
     /// program text.
     pub fn half_glyphs(&self) -> &HalfGlyphs {
-        self.1.1.get_or_init(|| Rc::new(HalfGlyphs::new(self)))
+        self.cache
+            .half_glyphs
+            .get_or_init(|| Rc::new(HalfGlyphs::new(self)))
     }
 
     /// The font page as SmileBASIC 4 keeps it in GRP5.
     pub fn page_image(&self) -> Vec<u32> {
-        match &self.0 {
+        match &self.source {
             Source::Page { page, .. } => page.clone(),
             // Fallback fonts with the same set are the same, so the page of
             // each set is drawn once.
@@ -438,7 +454,7 @@ impl Font {
     }
 
     fn draw_page(&self) -> Vec<u32> {
-        match &self.0 {
+        match &self.source {
             Source::Page { page, .. } => page.clone(),
             Source::Cells { slots, .. } => {
                 // Codes that share a glyph number show the first of them
@@ -484,7 +500,7 @@ impl Font {
     /// for missing characters. One table lookup, because the editor calls
     /// it for every character it shows.
     pub fn has_glyph(&self, code: u16) -> bool {
-        match &self.0 {
+        match &self.source {
             Source::Page { glyphs, .. } => glyphs[usize::from(code)] != MISSING_GLYPH,
             Source::Cells { index, .. } => index[usize::from(drawn_as(code))] != NO_CELL,
         }
@@ -493,7 +509,7 @@ impl Font {
     /// The glyph number of a code that has its own place on the font
     /// page; `None` for codes drawn as the box, or with no place there.
     pub fn own_glyph(&self, code: u16) -> Option<u32> {
-        let n = match &self.0 {
+        let n = match &self.source {
             Source::Page { glyphs, .. } => glyphs[usize::from(code)],
             Source::Cells { slots, .. } => slots[usize::from(code)],
         };
@@ -502,14 +518,14 @@ impl Font {
 
     /// Whether this is SmileBASIC 4's own font, not the bundled one.
     pub fn is_smilebasic(&self) -> bool {
-        matches!(self.0, Source::Page { .. })
+        matches!(self.source, Source::Page { .. })
     }
 
     /// The glyph number font.map gives a code, which places it on the
     /// font page for every font size. `None` for fallback glyphs that did
     /// not fit on the page.
     pub fn glyph_index(&self, code: u16) -> Option<u32> {
-        let n = match &self.0 {
+        let n = match &self.source {
             Source::Page { glyphs, .. } => glyphs[usize::from(code)],
             Source::Cells { slots, .. } => slots[usize::from(code)],
         };
@@ -519,7 +535,7 @@ impl Font {
     /// Pixel `(x, y)` of a code's glyph, `0xAARRGGBB`; both coordinates
     /// must be below the font size.
     pub fn pixel(&self, code: u16, size: FontSize, x: u32, y: u32) -> u32 {
-        match &self.0 {
+        match &self.source {
             Source::Page { page, .. } => {
                 let (gx, gy) = self.origin(code, size).expect("page font");
                 page[((gy + y) * PAGE_SIZE + gx + x) as usize]
@@ -571,13 +587,13 @@ impl Font {
     pub fn span(&self, code: u16, size: FontSize) -> Span {
         if let Source::Page {
             metrics: Some(m), ..
-        } = &self.0
+        } = &self.source
         {
             return Span::from_metrics(m[usize::from(code)], size);
         }
         let known = self
-            .1
-            .2
+            .cache
+            .spans
             .get_or_init(|| (0..2 * CODES).map(|_| Cell::new(0)).collect());
         let slot = &known[usize::from(code) * 2 + usize::from(size == FontSize::Large)];
         if slot.get() == 0 {
@@ -614,7 +630,7 @@ impl Font {
     /// [`Font::pixel`] for each.
     pub fn each_pixel(&self, code: u16, size: FontSize, mut f: impl FnMut(u32, u32, u32)) {
         let n = size as u32;
-        match (&self.0, self.origin(code, size)) {
+        match (&self.source, self.origin(code, size)) {
             (Source::Page { page, .. }, Some((gx, gy))) => {
                 for y in 0..n {
                     let row = ((gy + y) * PAGE_SIZE + gx) as usize;
@@ -641,21 +657,21 @@ impl Font {
     /// A page font with every code mapped to glyph `code % 4096` on a
     /// blank page, for tests that do not have the real files.
     pub fn blank() -> Font {
-        Font(
-            Source::Page {
+        Font {
+            source: Source::Page {
                 glyphs: (0..CODES).map(|c| (c % 4096) as u16).collect(),
                 metrics: None,
                 page: vec![0; (PAGE_SIZE * PAGE_SIZE) as usize],
             },
-            Pages::default(),
-        )
+            cache: Cache::default(),
+        }
     }
 
     /// [`Font::blank`] without glyphs for codes from `first` up, as
     /// SmileBASIC 4's font lacks Hangul and surrogates.
     pub fn blank_from(first: u16) -> Font {
         let mut font = Font::blank();
-        if let Source::Page { glyphs, .. } = &mut font.0 {
+        if let Source::Page { glyphs, .. } = &mut font.source {
             glyphs[usize::from(first)..].fill(MISSING_GLYPH);
         }
         font
@@ -665,7 +681,7 @@ impl Font {
     #[cfg(test)]
     pub(crate) fn blank_with_metrics(metrics: Vec<u16>) -> Font {
         let mut font = Font::blank();
-        if let Source::Page { metrics: m, .. } = &mut font.0 {
+        if let Source::Page { metrics: m, .. } = &mut font.source {
             *m = Some(metrics);
         }
         font
@@ -673,8 +689,8 @@ impl Font {
 
     #[cfg(test)]
     pub(crate) fn page_mut(&mut self) -> &mut [u32] {
-        self.1 = Pages::default();
-        match &mut self.0 {
+        self.cache = Cache::default();
+        match &mut self.source {
             Source::Page { page, .. } => page,
             Source::Cells { .. } => unreachable!("tests draw on page fonts"),
         }
@@ -772,7 +788,7 @@ mod tests {
     #[test]
     fn glyph_origins() {
         let mut font = Font::blank();
-        if let Source::Page { glyphs, .. } = &mut font.0 {
+        if let Source::Page { glyphs, .. } = &mut font.source {
             glyphs[0x6F22] = 1432;
         }
         // FONTINFO "漢",16 returns 384,1376 on hardware.

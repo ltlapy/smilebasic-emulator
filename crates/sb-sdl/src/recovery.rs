@@ -11,9 +11,10 @@ use sb_runtime::storage::{FileKind, Storage};
 use sdl3::render::{Canvas, TextureCreator};
 use sdl3::video::{Window, WindowContext};
 
-/// Failures in a row after which a driver is skipped, and after which the emulator
-/// ends instead of trying again: enough to try every driver.
+/// Failures in a row after which a driver is skipped.
 const AVOID_AFTER: u32 = 2;
+/// Failures in a row after which the emulator ends instead of trying again:
+/// enough to try every driver.
 const MOST_FAILURES: u32 = 8;
 /// Frames shown in a row that make the drivers trusted again.
 const GOOD_FRAMES: u32 = 120;

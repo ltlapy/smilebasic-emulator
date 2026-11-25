@@ -20,9 +20,8 @@ pub struct TextField {
     /// characters in.
     max: usize,
     multiline: bool,
-    /// Pixels per line, and lines shown: the size of the field.
-    width: u32,
-    rows: usize,
+    line_width: u32,
+    visible_rows: usize,
     /// The first line shown.
     scroll: usize,
 }
@@ -45,8 +44,8 @@ impl TextField {
             cursor: 0,
             max,
             multiline,
-            width: r.w.saturating_sub(2 * PAD),
-            rows: (r.h / LINE).max(1) as usize,
+            line_width: r.w.saturating_sub(2 * PAD),
+            visible_rows: (r.h / LINE).max(1) as usize,
             scroll: 0,
         };
         field.insert(text);
@@ -133,7 +132,7 @@ impl TextField {
                 continue;
             }
             let w = char_width(c);
-            if width + w > self.width && i > start {
+            if width + w > self.line_width && i > start {
                 lines.push((start, i));
                 (start, width) = (i, 0);
             }
@@ -161,8 +160,8 @@ impl TextField {
         let line = self.line_of_cursor();
         if line < self.scroll {
             self.scroll = line;
-        } else if line >= self.scroll + self.rows {
-            self.scroll = line + 1 - self.rows;
+        } else if line >= self.scroll + self.visible_rows {
+            self.scroll = line + 1 - self.visible_rows;
         }
     }
 
@@ -171,7 +170,12 @@ impl TextField {
         outline(fb, r, if focused { HIGHLIGHT } else { BORDER });
         let lines = self.lines();
         let cursor_line = self.line_of_cursor();
-        for (row, &(start, end)) in lines.iter().enumerate().skip(self.scroll).take(self.rows) {
+        for (row, &(start, end)) in lines
+            .iter()
+            .enumerate()
+            .skip(self.scroll)
+            .take(self.visible_rows)
+        {
             let y = r.y + (row - self.scroll) as u32 * LINE;
             let text: String = self.chars[start..end].iter().collect();
             draw_text(fb, font, r.x + PAD, y + 4, &text, TEXT);

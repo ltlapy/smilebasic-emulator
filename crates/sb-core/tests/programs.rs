@@ -32,56 +32,69 @@ fn output(source: &str) -> String {
 }
 
 fn error(source: &str) -> (ErrorKind, u32) {
-    let e = run(source).unwrap_err();
+    let e = run(source).expect_err(source);
     (e.kind, e.line)
+}
+
+fn error_at(source: &str) -> (ErrorKind, u32, u32) {
+    let e = run(source).expect_err(source);
+    (e.kind, e.line, e.col)
+}
+
+/// The kind and the argument of the error `source` stops with, or `None`
+/// when it ends.
+fn error_arg(source: &str) -> Option<(ErrorKind, Option<u8>)> {
+    run(source).err().map(|e| (e.kind, e.arg))
 }
 
 #[test]
 fn bqparam_checks_the_gain_count_first() {
-    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
     let args = ErrorKind::WrongNumberOfArguments;
     let illegal = ErrorKind::IllegalFunctionCall;
     // TEST62: (BQPARAM:2) and (BQPARAM:5).
-    assert_eq!(kind("DIM F[13]:BQPARAM F,5,0,1,1"), Some((args, Some(1))));
     assert_eq!(
-        kind("DIM F[13]:BQPARAM F,0,44100,1,0"),
+        error_arg("DIM F[13]:BQPARAM F,5,0,1,1"),
+        Some((args, Some(1)))
+    );
+    assert_eq!(
+        error_arg("DIM F[13]:BQPARAM F,0,44100,1,0"),
         Some((illegal, Some(4)))
     );
     // The rate and the type's range. The types of the arguments are
     // checked before the array's length.
     assert_eq!(
-        kind("DIM F[13]:BQPARAM F,0,0,1,1"),
+        error_arg("DIM F[13]:BQPARAM F,0,0,1,1"),
         Some((illegal, Some(2)))
     );
     let range = ErrorKind::OutOfRange;
     assert_eq!(
-        kind("DIM F[13]:BQPARAM F,8,8000,1,1"),
+        error_arg("DIM F[13]:BQPARAM F,8,8000,1,1"),
         Some((range, Some(1)))
     );
     assert_eq!(
-        kind("DIM F[13]:BQPARAM F,-1,8000,1,1"),
+        error_arg("DIM F[13]:BQPARAM F,-1,8000,1,1"),
         Some((range, Some(1)))
     );
     assert_eq!(
-        kind("DIM F[12]:BQPARAM F,0,0,1,1"),
+        error_arg("DIM F[12]:BQPARAM F,0,0,1,1"),
         Some((illegal, Some(0)))
     );
     let mismatch = ErrorKind::TypeMismatch;
     assert_eq!(
-        kind("DIM F[12]:BQPARAM F,0,0,1,\"\""),
+        error_arg("DIM F[12]:BQPARAM F,0,0,1,\"\""),
         Some((mismatch, Some(4)))
     );
     // FFTWFN looks at the length before the type's range.
-    assert_eq!(kind("DIM F[8]:FFTWFN F,4"), Some((range, Some(1))));
-    assert_eq!(kind("DIM F[8]:FFTWFN F,-1"), Some((range, Some(1))));
-    assert_eq!(kind("DIM F[6]:FFTWFN F,4"), Some((illegal, None)));
+    assert_eq!(error_arg("DIM F[8]:FFTWFN F,4"), Some((range, Some(1))));
+    assert_eq!(error_arg("DIM F[8]:FFTWFN F,-1"), Some((range, Some(1))));
+    assert_eq!(error_arg("DIM F[6]:FFTWFN F,4"), Some((illegal, None)));
     // BIQUAD checks the channels before the number of coefficients.
     assert_eq!(
-        kind("DIM A[2,4],B[4],F[12]:BIQUAD A,B,F"),
+        error_arg("DIM A[2,4],B[4],F[12]:BIQUAD A,B,F"),
         Some((illegal, None))
     );
     assert_eq!(
-        kind("DIM A[4],B[4],F[12]:BIQUAD A,B,F"),
+        error_arg("DIM A[4],B[4],F[12]:BIQUAD A,B,F"),
         Some((illegal, Some(2)))
     );
 }
@@ -90,16 +103,15 @@ fn bqparam_checks_the_gain_count_first() {
 /// and 2^30 elements as soon as the sizes reach it.
 #[test]
 fn new_arrays_check_their_sizes() {
-    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
     let subscript = ErrorKind::SubscriptOutOfRange;
-    assert_eq!(kind("A=ARRAY%(2,0)"), Some((subscript, Some(1))));
-    assert_eq!(kind("A=ARRAY#(0,0,3)"), Some((subscript, Some(0))));
+    assert_eq!(error_arg("A=ARRAY%(2,0)"), Some((subscript, Some(1))));
+    assert_eq!(error_arg("A=ARRAY#(0,0,3)"), Some((subscript, Some(0))));
     assert_eq!(
-        kind("A=ARRAY$(-1,0)"),
+        error_arg("A=ARRAY$(-1,0)"),
         Some((ErrorKind::OutOfRange, Some(0)))
     );
     assert_eq!(
-        kind("A=ARRAY%(1073741824,0)"),
+        error_arg("A=ARRAY%(1073741824,0)"),
         Some((ErrorKind::OutOfMemory, None))
     );
     assert_eq!(output("A=ARRAY%(0):?LEN(A)"), "0\n");
@@ -108,10 +120,9 @@ fn new_arrays_check_their_sizes() {
 /// MIN and MAX take an array or two numbers or more.
 #[test]
 fn min_and_max_check_their_arguments() {
-    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
     let mismatch = ErrorKind::TypeMismatch;
     for f in ["MIN", "MAX"] {
-        let call = |args: &str| kind(&format!("VAR Z:DIM A[4],E[0],S$[2]:?{f}({args})"));
+        let call = |args: &str| error_arg(&format!("VAR Z:DIM A[4],E[0],S$[2]:?{f}({args})"));
         assert_eq!(call("Z"), Some((mismatch, Some(0))), "{f}");
         assert_eq!(call("\"A\""), Some((mismatch, Some(0))), "{f}");
         assert_eq!(call("1,\"A\""), Some((mismatch, Some(1))), "{f}");
@@ -133,11 +144,10 @@ fn min_and_max_check_their_arguments() {
 /// array of reals only.
 #[test]
 fn windows_and_coefficients_are_reals() {
-    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
     let mismatch = ErrorKind::TypeMismatch;
     let illegal = ErrorKind::IllegalFunctionCall;
     let arrays = "DIM W%[8],V%[6],F%[13],G%[12],A[4],B[4]:";
-    let call = |s: &str| kind(&format!("{arrays}{s}"));
+    let call = |s: &str| error_arg(&format!("{arrays}{s}"));
     assert_eq!(call("FFTWFN W%,0"), Some((mismatch, Some(0))));
     // Before the length, after the type's argument.
     assert_eq!(call("FFTWFN V%,0"), Some((mismatch, Some(0))));
@@ -151,7 +161,7 @@ fn windows_and_coefficients_are_reals() {
     assert_eq!(call("BIQUAD A,B,G%"), Some((illegal, Some(2))));
     // Int sounds are fine.
     assert_eq!(
-        kind("DIM A%[4],B%[4],F[13]:BQPARAM F,0,8000,1,1:BIQUAD A%,B%,F"),
+        error_arg("DIM A%[4],B%[4],F[13]:BQPARAM F,0,8000,1,1:BIQUAD A%,B%,F"),
         None
     );
 }
@@ -160,11 +170,10 @@ fn windows_and_coefficients_are_reals() {
 /// a different length.
 #[test]
 fn fft_names_the_array_of_another_length() {
-    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
     let illegal = ErrorKind::IllegalFunctionCall;
     let arrays = "DIM A[4],B[4],C[4],D[4],F[8],G[3],W%[4]:";
     for command in ["FFT", "IFFT"] {
-        let call = |args: &str| kind(&format!("{arrays}{command} {args}"));
+        let call = |args: &str| error_arg(&format!("{arrays}{command} {args}"));
         assert_eq!(call("A,F,C,D"), Some((illegal, Some(1))), "{command}");
         assert_eq!(call("A,B,C,F"), Some((illegal, Some(3))), "{command}");
         // A length that is not a power of two names nothing, even when the
@@ -173,10 +182,10 @@ fn fft_names_the_array_of_another_length() {
         // SmileBASIC 4 does not look at the length of the first output. The
         // emulator refuses a shorter one and names it.
         assert_eq!(call("G,B,C,D"), Some((illegal, Some(0))), "{command}");
-        assert_eq!(kind(&format!("{arrays}{command} F,B,C,D")), None);
+        assert_eq!(error_arg(&format!("{arrays}{command} F,B,C,D")), None);
     }
     assert_eq!(
-        kind(&format!("{arrays}FFT A,B,C,D,F")),
+        error_arg(&format!("{arrays}FFT A,B,C,D,F")),
         Some((illegal, Some(4)))
     );
     // An int window is no error: its bytes are read as reals, so one of
@@ -585,10 +594,6 @@ fn functions_compiled_in_place_check_their_counts() {
 #[test]
 fn def_and_chk_functions_check_their_counts() {
     use ErrorKind as E;
-    let at = |src: &str| {
-        let e = run(src).expect_err(src);
-        (e.kind, e.line)
-    };
     let compiling = |src: &str| {
         sb_core::compile(src, &TextHost::default())
             .unwrap_err()
@@ -609,7 +614,7 @@ fn def_and_chk_functions_check_their_counts() {
         E::WrongNumberOfArguments
     );
     // CALLIDX is called, and fails as it runs.
-    assert_eq!(at("?1\nQ=CALLIDX(0)"), (E::WrongNumberOfArguments, 2));
+    assert_eq!(error("?1\nQ=CALLIDX(0)"), (E::WrongNumberOfArguments, 2));
     // As commands.
     assert_eq!(output("CALLIDX OUT A:?A"), "0\n");
     assert_eq!(
@@ -622,17 +627,26 @@ fn def_and_chk_functions_check_their_counts() {
         output("DEF F *\nDEFARG 1 OUT A:DEFARGC OUT B:?A;B\nEND\nF 4,5"),
         "52\n"
     );
-    assert_eq!(at("?1\nCALLIDX OUT A,B"), (E::WrongNumberOfOutArguments, 2));
-    assert_eq!(at("CALLIDX 1 OUT A,B").0, E::WrongNumberOfArguments);
-    assert_eq!(at("CHKLABEL 1,2,3 OUT A,B").0, E::WrongNumberOfOutArguments);
-    assert_eq!(at("CHKCALL \"A\" OUT A,B").0, E::WrongNumberOfOutArguments);
-    assert_eq!(at("CHKVAR \"A\",1 OUT A,B").0, E::WrongNumberOfArguments);
-    assert_eq!(at("DEFARGC OUT A,B").0, E::WrongNumberOfOutArguments);
-    assert_eq!(at("DEFOUTC 1 OUT A").0, E::WrongNumberOfArguments);
-    // DEFARG's handler checks for a DEF first.
-    assert_eq!(at("?1\nDEFARG 0,1 OUT A,B"), (E::CantUseOutsideDef, 2));
     assert_eq!(
-        at("DEF F\nDEFARG 0 OUT A,B\nEND\nF").0,
+        error("?1\nCALLIDX OUT A,B"),
+        (E::WrongNumberOfOutArguments, 2)
+    );
+    assert_eq!(error("CALLIDX 1 OUT A,B").0, E::WrongNumberOfArguments);
+    assert_eq!(
+        error("CHKLABEL 1,2,3 OUT A,B").0,
+        E::WrongNumberOfOutArguments
+    );
+    assert_eq!(
+        error("CHKCALL \"A\" OUT A,B").0,
+        E::WrongNumberOfOutArguments
+    );
+    assert_eq!(error("CHKVAR \"A\",1 OUT A,B").0, E::WrongNumberOfArguments);
+    assert_eq!(error("DEFARGC OUT A,B").0, E::WrongNumberOfOutArguments);
+    assert_eq!(error("DEFOUTC 1 OUT A").0, E::WrongNumberOfArguments);
+    // DEFARG's handler checks for a DEF first.
+    assert_eq!(error("?1\nDEFARG 0,1 OUT A,B"), (E::CantUseOutsideDef, 2));
+    assert_eq!(
+        error("DEF F\nDEFARG 0 OUT A,B\nEND\nF").0,
         E::WrongNumberOfOutArguments
     );
     let e = run("CALLIDX OUT A,B").unwrap_err();
@@ -705,42 +719,44 @@ fn constants_and_data() {
 
 #[test]
 fn duplicate_constants() {
-    let at = |src: &str| {
-        let e = run(src).unwrap_err();
-        (e.kind, e.line, e.col)
-    };
     // As on SmileBASIC 4.4.9: #ON and #OFF are built in.
     assert_eq!(
-        at("?1\nCONST #ON=#C_YELLOW,#OFF=#C_WHITE"),
+        error_at("?1\nCONST #ON=#C_YELLOW,#OFF=#C_WHITE"),
         (ErrorKind::DuplicateConstant, 2, 7)
     );
-    assert_eq!(at("CONST #A=1,#OFF=0").2, 12);
-    assert_eq!(at("CONST #_LINE=1").0, ErrorKind::DuplicateConstant);
+    assert_eq!(error_at("CONST #A=1,#OFF=0").2, 12);
+    assert_eq!(error_at("CONST #_LINE=1").0, ErrorKind::DuplicateConstant);
     assert_eq!(
-        at("CONST #A=1\nCONST #a=2"),
+        error_at("CONST #A=1\nCONST #a=2"),
         (ErrorKind::DuplicateConstant, 2, 7)
     );
     // Inside a DEF or a branch that never runs, as the program compiles.
     assert_eq!(
-        at("CONST #A=1\nDEF F\nCONST #A=2\nEND"),
+        error_at("CONST #A=1\nDEF F\nCONST #A=2\nEND"),
         (ErrorKind::DuplicateConstant, 3, 7)
     );
     assert_eq!(
-        at("IF 0 THEN CONST #A=1\nCONST #A=2").0,
+        error_at("IF 0 THEN CONST #A=1\nCONST #A=2").0,
         ErrorKind::DuplicateConstant
     );
-    assert_eq!(at("ENUM #A,#TRUE"), (ErrorKind::DuplicateConstant, 1, 9));
-    assert_eq!(at("CONST #A=1:ENUM #B,#A").0, ErrorKind::DuplicateConstant);
+    assert_eq!(
+        error_at("ENUM #A,#TRUE"),
+        (ErrorKind::DuplicateConstant, 1, 9)
+    );
+    assert_eq!(
+        error_at("CONST #A=1:ENUM #B,#A").0,
+        ErrorKind::DuplicateConstant
+    );
     // CONST evaluates its value first, and ENUM checks its name first.
-    assert_eq!(at("CONST #ON=#NONE").0, ErrorKind::UndefinedConstant);
-    assert_eq!(at("ENUM #ON=#NONE").0, ErrorKind::DuplicateConstant);
+    assert_eq!(error_at("CONST #ON=#NONE").0, ErrorKind::UndefinedConstant);
+    assert_eq!(error_at("ENUM #ON=#NONE").0, ErrorKind::DuplicateConstant);
     // A value that cannot be evaluated as the program compiles gives its own
     // error in CONST and ENUM, and a Syntax error in DATA (SmileBASIC 4.4.8).
     let illegal = ErrorKind::IllegalConstantExpression;
-    assert_eq!(at("?1\nCONST #A=Z"), (illegal, 2, 10));
-    assert_eq!(at("CONST #A=1+LEN(Z$)").0, illegal);
-    assert_eq!(at("ENUM #A,#B=Z").0, illegal);
-    assert_eq!(at("DATA Z").0, ErrorKind::SyntaxError);
+    assert_eq!(error_at("?1\nCONST #A=Z"), (illegal, 2, 10));
+    assert_eq!(error_at("CONST #A=1+LEN(Z$)").0, illegal);
+    assert_eq!(error_at("ENUM #A,#B=Z").0, illegal);
+    assert_eq!(error_at("DATA Z").0, ErrorKind::SyntaxError);
 }
 
 /// Number literals as SmileBASIC 4.4.8 reads them.
@@ -766,18 +782,14 @@ fn number_literals() {
 /// compiles in one pass, and compiles DEFs where they are in the source.
 #[test]
 fn constants_exist_from_where_they_stand() {
-    let at = |src: &str| {
-        let e = run(src).unwrap_err();
-        (e.kind, e.line, e.col)
-    };
     let undefined = ErrorKind::UndefinedConstant;
-    assert_eq!(at("?#A\nCONST #A=1"), (undefined, 1, 1));
-    assert_eq!(at("ENUM #B=#A\nENUM #A").0, undefined);
-    assert_eq!(at("DEF F\n?#A\nEND\nCONST #A=1"), (undefined, 2, 1));
-    assert_eq!(at("CONST #A=#B,#B=1"), (undefined, 1, 10));
-    assert_eq!(at("CONST #A=#A"), (undefined, 1, 10));
-    assert_eq!(at("DATA #A\nCONST #A=1"), (undefined, 1, 6));
-    assert_eq!(at("?1:?#A:CONST #A=1").2, 4);
+    assert_eq!(error_at("?#A\nCONST #A=1"), (undefined, 1, 1));
+    assert_eq!(error_at("ENUM #B=#A\nENUM #A").0, undefined);
+    assert_eq!(error_at("DEF F\n?#A\nEND\nCONST #A=1"), (undefined, 2, 1));
+    assert_eq!(error_at("CONST #A=#B,#B=1"), (undefined, 1, 10));
+    assert_eq!(error_at("CONST #A=#A"), (undefined, 1, 10));
+    assert_eq!(error_at("DATA #A\nCONST #A=1"), (undefined, 1, 6));
+    assert_eq!(error_at("?1:?#A:CONST #A=1").2, 4);
     // A CONST in a DEF counts for the lines after it.
     assert_eq!(output("DEF F\nCONST #A=2\nEND\n?#A"), "2\n");
     assert_eq!(output("DEF F\nCONST #A=2\nEND\nDEF G\n?#A\nEND\nG"), "2\n");
@@ -841,31 +853,27 @@ fn option_strict() {
 /// variables made so far.
 #[test]
 fn option_strict_holds_from_where_it_stands() {
-    let at = |src: &str| {
-        let e = run(src).expect_err(src);
-        (e.kind, e.line, e.col)
-    };
     let undefined = ErrorKind::UndefinedVariable;
     assert_eq!(output("A=1:OPTION STRICT:?A"), "1\n");
-    assert_eq!(at("OPTION STRICT:?B"), (undefined, 1, 16));
-    assert_eq!(at("?1:OPTION STRICT:?1:B=2").2, 21);
+    assert_eq!(error_at("OPTION STRICT:?B"), (undefined, 1, 16));
+    assert_eq!(error_at("?1:OPTION STRICT:?1:B=2").2, 21);
     // A VAR further down does not count yet.
-    assert_eq!(at("OPTION STRICT\n?A\nVAR A"), (undefined, 2, 2));
+    assert_eq!(error_at("OPTION STRICT\n?A\nVAR A"), (undefined, 2, 2));
     assert_eq!(output("OPTION STRICT:VAR A=1:?A"), "1\n");
     assert_eq!(output("OPTION STRICT:VAR A=A+1:?A"), "1\n");
     // In a block, and through to the end of the program.
-    assert_eq!(at("IF 1 THEN\nOPTION STRICT\nENDIF\n?B").1, 4);
-    assert_eq!(at("IF 1 THEN OPTION STRICT ELSE ?1\nB=1").1, 2);
-    assert_eq!(at("REPEAT:OPTION STRICT:UNTIL B").0, undefined);
+    assert_eq!(error_at("IF 1 THEN\nOPTION STRICT\nENDIF\n?B").1, 4);
+    assert_eq!(error_at("IF 1 THEN OPTION STRICT ELSE ?1\nB=1").1, 2);
+    assert_eq!(error_at("REPEAT:OPTION STRICT:UNTIL B").0, undefined);
     assert_eq!(output("WHILE A:OPTION STRICT:WEND:?A"), "0\n");
     // In a DEF, for the rest of it and the lines after it.
-    assert_eq!(at("DEF F\nOPTION STRICT\nEND\n?B").1, 4);
+    assert_eq!(error_at("DEF F\nOPTION STRICT\nEND\n?B").1, 4);
     assert_eq!(
-        at("DEF F\n?A\nOPTION STRICT\n?A\n?B\nEND"),
+        error_at("DEF F\n?A\nOPTION STRICT\n?A\n?B\nEND"),
         (undefined, 5, 2)
     );
-    assert_eq!(at("DEF F\nOPTION STRICT\nEND\nDEF G\n?B\nEND").1, 5);
-    assert_eq!(at("DEF F\nOPTION STRICT\n?L\nVAR L\nEND").1, 3);
+    assert_eq!(error_at("DEF F\nOPTION STRICT\nEND\nDEF G\n?B\nEND").1, 5);
+    assert_eq!(error_at("DEF F\nOPTION STRICT\n?L\nVAR L\nEND").1, 3);
     assert_eq!(
         output("DEF F X\nOPTION STRICT\nVAR L=X\n?L\nEND\nF 5"),
         "5\n"
@@ -875,13 +883,19 @@ fn option_strict_holds_from_where_it_stands() {
     // A DEF above it is not checked, nor a global made above it.
     assert_eq!(output("DEF F\n?A\nEND\nOPTION STRICT\nF"), "0\n");
     assert_eq!(output("A=3\nOPTION STRICT\nDEF F\n?A\nEND\nF"), "3\n");
-    assert_eq!(at("OPTION STRICT\nDEF F\n?A\nEND\nVAR A").1, 3);
+    assert_eq!(error_at("OPTION STRICT\nDEF F\n?A\nEND\nVAR A").1, 3);
     // The first error in the source comes first.
-    assert_eq!(at("DEF F\n?B\nEND\nOPTION STRICT\n?C"), (undefined, 5, 2));
-    assert_eq!(at("OPTION STRICT\nDEF F\n?B\nEND\n?C").1, 3);
-    assert_eq!(at("OPTION STRICT\n?C\nDEF F\n?B\nEND").1, 2);
+    assert_eq!(
+        error_at("DEF F\n?B\nEND\nOPTION STRICT\n?C"),
+        (undefined, 5, 2)
+    );
+    assert_eq!(error_at("OPTION STRICT\nDEF F\n?B\nEND\n?C").1, 3);
+    assert_eq!(error_at("OPTION STRICT\n?C\nDEF F\n?B\nEND").1, 2);
     // A second OPTION STRICT changes nothing.
-    assert_eq!(at("OPTION STRICT:VAR A:OPTION STRICT:?A;B").0, undefined);
+    assert_eq!(
+        error_at("OPTION STRICT:VAR A:OPTION STRICT:?A;B").0,
+        undefined
+    );
     // Only VAR, DIM and a DEF's parameters and OUTs make variables; what
     // a statement stores into is a use.
     for stmt in [
@@ -894,7 +908,11 @@ fn option_strict_holds_from_where_it_stands() {
         "DEC X",
         "T OUT X:DEF T OUT Y:END",
     ] {
-        assert_eq!(at(&format!("OPTION STRICT:{stmt}")).0, undefined, "{stmt}");
+        assert_eq!(
+            error_at(&format!("OPTION STRICT:{stmt}")).0,
+            undefined,
+            "{stmt}"
+        );
     }
     let src = "OPTION STRICT:DIM A[1]:VAR B\nDEF F X OUT Y:Y=X:END\nF 1 OUT B:?A[0];B";
     assert_eq!(output(src), "01\n");
@@ -904,17 +922,13 @@ fn option_strict_holds_from_where_it_stands() {
 /// where it stands, in a DEF or a block too.
 #[test]
 fn a_bad_option_is_an_error_where_it_stands() {
-    let at = |src: &str| {
-        let e = run(src).expect_err(src);
-        (e.kind, e.line, e.col)
-    };
     let syntax = ErrorKind::SyntaxError;
-    assert_eq!(at("?1:OPTION FOO"), (syntax, 1, 4));
-    assert_eq!(at("DEF F\n?1\nOPTION FOO\nEND"), (syntax, 3, 1));
-    assert_eq!(at("IF 1 THEN\nOPTION FOO\nENDIF"), (syntax, 2, 1));
-    assert_eq!(at("DEF F\nOPTION FOO\nEND\n?#ZZ").1, 2);
-    assert_eq!(at("?#ZZ\nDEF F\nOPTION FOO\nEND").1, 1);
-    assert_eq!(at("OPTION STRICT\nDEF F\n?B\nOPTION FOO\nEND").1, 3);
+    assert_eq!(error_at("?1:OPTION FOO"), (syntax, 1, 4));
+    assert_eq!(error_at("DEF F\n?1\nOPTION FOO\nEND"), (syntax, 3, 1));
+    assert_eq!(error_at("IF 1 THEN\nOPTION FOO\nENDIF"), (syntax, 2, 1));
+    assert_eq!(error_at("DEF F\nOPTION FOO\nEND\n?#ZZ").1, 2);
+    assert_eq!(error_at("?#ZZ\nDEF F\nOPTION FOO\nEND").1, 1);
+    assert_eq!(error_at("OPTION STRICT\nDEF F\n?B\nOPTION FOO\nEND").1, 3);
 }
 
 /// OPTION DEFINT makes int the type of the variables first seen after
@@ -2508,29 +2522,34 @@ fn direct_mode_refuses_unknown_names() {
 /// too.
 #[test]
 fn compile_errors_before_a_syntax_error_come_first() {
-    let at = |src: &str| {
-        let e = run(src).expect_err(src);
-        (e.kind, e.line, e.col)
-    };
     let undefined = ErrorKind::UndefinedConstant;
-    assert_eq!(at("?#ZZ:?("), (undefined, 1, 1));
-    assert_eq!(at("?1\nCONST #A=1/0\n?("), (ErrorKind::DivideByZero, 2, 1));
-    assert_eq!(at("IF #ZZ THEN ?("), (undefined, 1, 1));
-    assert_eq!(at("FOR I=0 TO 1:?#ZZ:?(:NEXT").0, undefined);
-    assert_eq!(at("WHILE 1\n?#ZZ\nIF 1 THEN\n?(\nENDIF\nWEND").0, undefined);
-    assert_eq!(at("REPEAT:?#ZZ:?(:UNTIL 1").0, undefined);
-    assert_eq!(at("LOOP:?#ZZ:?(").0, undefined);
-    assert_eq!(at("CASE 1:WHEN 1:?#ZZ:?(:ENDCASE").0, undefined);
-    assert_eq!(at("IF 0 THEN\n?1\nELSE\n?#ZZ\n?(").0, undefined);
-    assert_eq!(at("DEF F\n?#ZZ\n?(\nEND").0, undefined);
-    assert_eq!(at("@L\n@L\n?(").0, ErrorKind::DuplicateLabel);
+    assert_eq!(error_at("?#ZZ:?("), (undefined, 1, 1));
+    assert_eq!(
+        error_at("?1\nCONST #A=1/0\n?("),
+        (ErrorKind::DivideByZero, 2, 1)
+    );
+    assert_eq!(error_at("IF #ZZ THEN ?("), (undefined, 1, 1));
+    assert_eq!(error_at("FOR I=0 TO 1:?#ZZ:?(:NEXT").0, undefined);
+    assert_eq!(
+        error_at("WHILE 1\n?#ZZ\nIF 1 THEN\n?(\nENDIF\nWEND").0,
+        undefined
+    );
+    assert_eq!(error_at("REPEAT:?#ZZ:?(:UNTIL 1").0, undefined);
+    assert_eq!(error_at("LOOP:?#ZZ:?(").0, undefined);
+    assert_eq!(error_at("CASE 1:WHEN 1:?#ZZ:?(:ENDCASE").0, undefined);
+    assert_eq!(error_at("IF 0 THEN\n?1\nELSE\n?#ZZ\n?(").0, undefined);
+    assert_eq!(error_at("DEF F\n?#ZZ\n?(\nEND").0, undefined);
+    assert_eq!(error_at("@L\n@L\n?(").0, ErrorKind::DuplicateLabel);
     // With nothing wrong before it, the syntax error, placed as before.
-    assert_eq!(at("?1:?("), (ErrorKind::SyntaxError, 1, 4));
-    assert_eq!(at("?1\nA=("), (ErrorKind::SyntaxError, 2, 2));
-    assert_eq!(at("FOR I=0 TO 1\n?1\n?(\nNEXT").1, 3);
-    assert_eq!(at("GOTO @L:?(:@L").0, ErrorKind::SyntaxError);
-    assert_eq!(at("DEF F\n?1\n?(\nEND\nF").0, ErrorKind::SyntaxError);
-    assert_eq!(at("FOR I=0 TO 1\n?1"), (ErrorKind::ForWithoutNext, 1, 1));
+    assert_eq!(error_at("?1:?("), (ErrorKind::SyntaxError, 1, 4));
+    assert_eq!(error_at("?1\nA=("), (ErrorKind::SyntaxError, 2, 2));
+    assert_eq!(error_at("FOR I=0 TO 1\n?1\n?(\nNEXT").1, 3);
+    assert_eq!(error_at("GOTO @L:?(:@L").0, ErrorKind::SyntaxError);
+    assert_eq!(error_at("DEF F\n?1\n?(\nEND\nF").0, ErrorKind::SyntaxError);
+    assert_eq!(
+        error_at("FOR I=0 TO 1\n?1"),
+        (ErrorKind::ForWithoutNext, 1, 1)
+    );
     // Cut anywhere, a program compiles or gives an error, without a panic.
     let src = "DEF F(A)\nIF A THEN\n?A:RETURN A*2\nELSEIF A<0 THEN @L ELSE\nCASE A\nWHEN 1:GOTO \"@L\"\nENDCASE\nENDIF\nEND\n@L:VAR B[]=[1,2]:FOR I=0 TO 9 STEP 2:BREAK:NEXT\nREPEAT:WHILE 1:LOOP:READ X:DATA 1:ENDLOOP:WEND:UNTIL 1:RESTORE @L";
     let host = TextHost::default();
@@ -2541,40 +2560,43 @@ fn compile_errors_before_a_syntax_error_come_first() {
     // SmileBASIC 4 reads tokens as it compiles: a token that does not
     // lex is an error after the ones before it, placed at the token
     // before it (checked on hardware).
-    assert_eq!(at("?#ZZ:?&H100000000").0, undefined);
-    assert_eq!(at("?#ZZ\n?1\n?2\n?3\nA=&H100000000"), (undefined, 1, 1));
-    assert_eq!(at("?(\nA=&H100000000").1, 1);
+    assert_eq!(error_at("?#ZZ:?&H100000000").0, undefined);
     assert_eq!(
-        at("FOR I=0 TO 1\nA=&H100000000\nNEXT"),
+        error_at("?#ZZ\n?1\n?2\n?3\nA=&H100000000"),
+        (undefined, 1, 1)
+    );
+    assert_eq!(error_at("?(\nA=&H100000000").1, 1);
+    assert_eq!(
+        error_at("FOR I=0 TO 1\nA=&H100000000\nNEXT"),
         (ErrorKind::SyntaxError, 2, 2)
     );
-    assert_eq!(at("?1:A=&H100000000"), (ErrorKind::SyntaxError, 1, 5));
-    assert_eq!(at("?1E1000"), (ErrorKind::SyntaxError, 1, 1));
-    assert_eq!(at("A=&H_"), (ErrorKind::SyntaxError, 1, 2));
+    assert_eq!(error_at("?1:A=&H100000000"), (ErrorKind::SyntaxError, 1, 5));
+    assert_eq!(error_at("?1E1000"), (ErrorKind::SyntaxError, 1, 1));
+    assert_eq!(error_at("A=&H_"), (ErrorKind::SyntaxError, 1, 2));
     // A bare `&H` at the end of the line, at itself.
-    assert_eq!(at("?&H"), (ErrorKind::SyntaxError, 1, 2));
-    assert_eq!(at("?1\n&H1000000000"), (ErrorKind::SyntaxError, 2, 1));
-    assert_eq!(at("?#ZZ\nA=1E309"), (undefined, 1, 1));
+    assert_eq!(error_at("?&H"), (ErrorKind::SyntaxError, 1, 2));
+    assert_eq!(error_at("?1\n&H1000000000"), (ErrorKind::SyntaxError, 2, 1));
+    assert_eq!(error_at("?#ZZ\nA=1E309"), (undefined, 1, 1));
     // The pre-pass's errors come where their statements stand too.
-    assert_eq!(at("?#ZZ\nCONST #A=1,#A=2"), (undefined, 1, 1));
-    assert_eq!(at("?#ZZ\nOPTION FOO"), (undefined, 1, 1));
-    assert_eq!(at("?#ZZ\nDEF F\nEND\nDEF F\nEND"), (undefined, 1, 1));
-    assert_eq!(at("?#ZZ\nDEF LAST\nEND"), (undefined, 1, 1));
-    assert_eq!(at("?#ZZ\nENUM #A=1.5"), (undefined, 1, 1));
-    assert_eq!(at("?#ZZ\nDATA A"), (undefined, 1, 1));
-    assert_eq!(at("DEF F\nCONST #A=1/0\nEND\n?#ZZ").1, 2);
+    assert_eq!(error_at("?#ZZ\nCONST #A=1,#A=2"), (undefined, 1, 1));
+    assert_eq!(error_at("?#ZZ\nOPTION FOO"), (undefined, 1, 1));
+    assert_eq!(error_at("?#ZZ\nDEF F\nEND\nDEF F\nEND"), (undefined, 1, 1));
+    assert_eq!(error_at("?#ZZ\nDEF LAST\nEND"), (undefined, 1, 1));
+    assert_eq!(error_at("?#ZZ\nENUM #A=1.5"), (undefined, 1, 1));
+    assert_eq!(error_at("?#ZZ\nDATA A"), (undefined, 1, 1));
+    assert_eq!(error_at("DEF F\nCONST #A=1/0\nEND\n?#ZZ").1, 2);
     assert_eq!(
-        at("CONST #A=1,#A=2\n?#ZZ"),
+        error_at("CONST #A=1,#A=2\n?#ZZ"),
         (ErrorKind::DuplicateConstant, 1, 12)
     );
     assert_eq!(
-        at("DEF F\nEND\nDEF F\nEND\n?#ZZ").0,
+        error_at("DEF F\nEND\nDEF F\nEND\n?#ZZ").0,
         ErrorKind::DuplicateFunction
     );
     // A DEF's body compiles where it stands, before the code after it.
-    assert_eq!(at("DEF F\n?#ZZ\nEND\n?\"A\"*-1"), (undefined, 2, 1));
-    assert_eq!(at("?\"A\"*-1\nDEF F\n?#ZZ\nEND").1, 1);
-    assert_eq!(at("DEF F\n?1\nEND\nDEF G\n?#ZZ\nEND\n?#YY").1, 5);
+    assert_eq!(error_at("DEF F\n?#ZZ\nEND\n?\"A\"*-1"), (undefined, 2, 1));
+    assert_eq!(error_at("?\"A\"*-1\nDEF F\n?#ZZ\nEND").1, 1);
+    assert_eq!(error_at("DEF F\n?1\nEND\nDEF G\n?#ZZ\nEND\n?#YY").1, 5);
 }
 
 /// A block that does not close is named by its own error and the line
@@ -2583,44 +2605,46 @@ fn compile_errors_before_a_syntax_error_come_first() {
 #[test]
 fn block_errors() {
     use ErrorKind as E;
-    let at = |src: &str| {
-        let e = run(src).expect_err(src);
-        (e.kind, e.line)
-    };
-    assert_eq!(at("?1\nFOR I=0 TO 1\n?2"), (E::ForWithoutNext, 2));
-    assert_eq!(at("?1\nWHILE 0\n?2"), (E::WhileWithoutWend, 2));
-    assert_eq!(at("REPEAT\n?2"), (E::RepeatWithoutUntil, 1));
-    assert_eq!(at("?1\nLOOP"), (E::LoopWithoutEndloop, 2));
-    assert_eq!(at("?1\nCASE 1\nWHEN 1\n?2"), (E::CaseWithoutEndcase, 2));
-    assert_eq!(at("?1\nCASE 1\nOTHERWISE"), (E::CaseWithoutEndcase, 2));
-    assert_eq!(at("?1\nIF 1 THEN\n?2"), (E::ThenWithoutEndif, 2));
-    assert_eq!(at("IF 1 THEN\nELSEIF 0 THEN\n?2"), (E::ThenWithoutEndif, 1));
-    // ELSE names the IF's line too.
-    assert_eq!(at("?1\nIF 1 THEN\nELSE\n?2"), (E::ElseWithoutEndif, 2));
-    assert_eq!(at("IF 1 THEN ?1 ELSE\n?2"), (E::ElseWithoutEndif, 1));
-    assert_eq!(at("?1\nDEF F\n?2"), (E::DefWithoutEnd, 2));
+    assert_eq!(error("?1\nFOR I=0 TO 1\n?2"), (E::ForWithoutNext, 2));
+    assert_eq!(error("?1\nWHILE 0\n?2"), (E::WhileWithoutWend, 2));
+    assert_eq!(error("REPEAT\n?2"), (E::RepeatWithoutUntil, 1));
+    assert_eq!(error("?1\nLOOP"), (E::LoopWithoutEndloop, 2));
+    assert_eq!(error("?1\nCASE 1\nWHEN 1\n?2"), (E::CaseWithoutEndcase, 2));
+    assert_eq!(error("?1\nCASE 1\nOTHERWISE"), (E::CaseWithoutEndcase, 2));
+    assert_eq!(error("?1\nIF 1 THEN\n?2"), (E::ThenWithoutEndif, 2));
     assert_eq!(
-        at("FOR I=0 TO 1\nWHILE 1\nIF 1 THEN\n?1"),
+        error("IF 1 THEN\nELSEIF 0 THEN\n?2"),
+        (E::ThenWithoutEndif, 1)
+    );
+    // ELSE names the IF's line too.
+    assert_eq!(error("?1\nIF 1 THEN\nELSE\n?2"), (E::ElseWithoutEndif, 2));
+    assert_eq!(error("IF 1 THEN ?1 ELSE\n?2"), (E::ElseWithoutEndif, 1));
+    assert_eq!(error("?1\nDEF F\n?2"), (E::DefWithoutEnd, 2));
+    assert_eq!(
+        error("FOR I=0 TO 1\nWHILE 1\nIF 1 THEN\n?1"),
         (E::ThenWithoutEndif, 3)
     );
     // A DEF ending or starting inside a block names the block.
-    assert_eq!(at("DEF F\nFOR I=0 TO 1\nEND\n?1"), (E::ForWithoutNext, 2));
-    assert_eq!(at("DEF F\nIF 1 THEN END"), (E::ThenWithoutEndif, 2));
-    assert_eq!(at("WHILE 1\nDEF F\nEND\nWEND"), (E::WhileWithoutWend, 1));
-    assert_eq!(at("IF 1 THEN DEF F"), (E::ThenWithoutEndif, 1));
-    assert_eq!(at("?1\nDEF F\nDEF G\nEND\nEND"), (E::NestedDef, 3));
+    assert_eq!(
+        error("DEF F\nFOR I=0 TO 1\nEND\n?1"),
+        (E::ForWithoutNext, 2)
+    );
+    assert_eq!(error("DEF F\nIF 1 THEN END"), (E::ThenWithoutEndif, 2));
+    assert_eq!(error("WHILE 1\nDEF F\nEND\nWEND"), (E::WhileWithoutWend, 1));
+    assert_eq!(error("IF 1 THEN DEF F"), (E::ThenWithoutEndif, 1));
+    assert_eq!(error("?1\nDEF F\nDEF G\nEND\nEND"), (E::NestedDef, 3));
     // The blocks in a one-line IF end with its line.
     assert_eq!(output("IF 1 THEN FOR I=0 TO 2:?I;:NEXT:?"), "012\n");
     assert_eq!(
-        at("?1\nIF 1 THEN FOR I=0 TO 1\nNEXT"),
+        error("?1\nIF 1 THEN FOR I=0 TO 1\nNEXT"),
         (E::ForWithoutNext, 2)
     );
     assert_eq!(
-        at("IF 0 THEN ?0 ELSE WHILE 0\nWEND"),
+        error("IF 0 THEN ?0 ELSE WHILE 0\nWEND"),
         (E::WhileWithoutWend, 1)
     );
     assert_eq!(
-        at("IF 1 THEN CASE 1\nWHEN 1\nENDCASE"),
+        error("IF 1 THEN CASE 1\nWHEN 1\nENDCASE"),
         (E::CaseWithoutEndcase, 1)
     );
     // An IF in it that continues past the line takes its blocks along.
@@ -2633,32 +2657,38 @@ fn block_errors() {
         "1\n"
     );
     // Closing keywords with nothing to close.
-    assert_eq!(at("?1\nNEXT"), (E::NextWithoutFor, 2));
-    assert_eq!(at("WHILE 1\nNEXT\nWEND"), (E::NextWithoutFor, 2));
-    assert_eq!(at("WEND"), (E::WendWithoutWhile, 1));
-    assert_eq!(at("FOR I=0 TO 1\nWEND\nNEXT"), (E::WendWithoutWhile, 2));
-    assert_eq!(at("UNTIL 1"), (E::UntilWithoutRepeat, 1));
+    assert_eq!(error("?1\nNEXT"), (E::NextWithoutFor, 2));
+    assert_eq!(error("WHILE 1\nNEXT\nWEND"), (E::NextWithoutFor, 2));
+    assert_eq!(error("WEND"), (E::WendWithoutWhile, 1));
+    assert_eq!(error("FOR I=0 TO 1\nWEND\nNEXT"), (E::WendWithoutWhile, 2));
+    assert_eq!(error("UNTIL 1"), (E::UntilWithoutRepeat, 1));
     // UNTIL closes only the innermost block.
     assert_eq!(
-        at("REPEAT\nIF 1 THEN\nUNTIL 1\nENDIF"),
+        error("REPEAT\nIF 1 THEN\nUNTIL 1\nENDIF"),
         (E::UntilWithoutRepeat, 3)
     );
-    assert_eq!(at("ENDLOOP"), (E::EndloopWithoutLoop, 1));
-    assert_eq!(at("?1\nENDIF"), (E::EndifWithoutIf, 2));
-    assert_eq!(at("IF 1 THEN\nFOR I=0 TO 1\nENDIF"), (E::EndifWithoutIf, 3));
-    assert_eq!(at("WHEN 1"), (E::WhenWithoutCase, 1));
-    assert_eq!(at("OTHERWISE"), (E::OtherwiseWithoutCase, 1));
-    assert_eq!(at("ENDCASE"), (E::EndcaseWithoutCase, 1));
+    assert_eq!(error("ENDLOOP"), (E::EndloopWithoutLoop, 1));
+    assert_eq!(error("?1\nENDIF"), (E::EndifWithoutIf, 2));
+    assert_eq!(
+        error("IF 1 THEN\nFOR I=0 TO 1\nENDIF"),
+        (E::EndifWithoutIf, 3)
+    );
+    assert_eq!(error("WHEN 1"), (E::WhenWithoutCase, 1));
+    assert_eq!(error("OTHERWISE"), (E::OtherwiseWithoutCase, 1));
+    assert_eq!(error("ENDCASE"), (E::EndcaseWithoutCase, 1));
     // A stray ELSE is a Syntax error on the line of the block it is in.
-    assert_eq!(at("ELSE"), (E::SyntaxError, 1));
-    assert_eq!(at("IF 1 THEN\nFOR I=0 TO 1\nELSE"), (E::SyntaxError, 2));
-    assert_eq!(at("IF 1 THEN\nELSE\nELSEIF 1 THEN"), (E::SyntaxError, 1));
+    assert_eq!(error("ELSE"), (E::SyntaxError, 1));
+    assert_eq!(error("IF 1 THEN\nFOR I=0 TO 1\nELSE"), (E::SyntaxError, 2));
+    assert_eq!(error("IF 1 THEN\nELSE\nELSEIF 1 THEN"), (E::SyntaxError, 1));
     // CASE takes WHEN or OTHERWISE first, named by its line.
-    assert_eq!(at("CASE 1\nENDCASE"), (E::SyntaxError, 2));
+    assert_eq!(error("CASE 1\nENDCASE"), (E::SyntaxError, 2));
     assert_eq!(output("CASE 1\n\nWHEN 1:?1\nENDCASE"), "1\n");
     // The statements before the end compile first.
-    assert_eq!(at("FOR I=0 TO 1\n?#ZZ").0, E::UndefinedConstant);
-    assert_eq!(at("DEF F\n?#ZZ\nFOR I=0 TO 1\nEND").0, E::UndefinedConstant);
+    assert_eq!(error("FOR I=0 TO 1\n?#ZZ").0, E::UndefinedConstant);
+    assert_eq!(
+        error("DEF F\n?#ZZ\nFOR I=0 TO 1\nEND").0,
+        E::UndefinedConstant
+    );
     // None of it runs: it is an error as the program compiles.
     let host = TextHost::default();
     assert!(sb_core::compile("?1\nFOR I=0 TO 1", &host).is_err());
@@ -2997,11 +3027,6 @@ fn commands_called_as_functions_check_as_they_run() {
     assert_eq!(error("DIM A[4]\nQ=ARYOP(0,A,A,A)").0, outs);
     let e = run("DIM A[0]\nQ=PUSH(A,1)").unwrap_err();
     assert_eq!(e.to_string(), "Wrong number of OUT arguments in 2(PUSH)");
-}
-
-fn error_at(source: &str) -> (ErrorKind, u32, u32) {
-    let e = run(source).expect_err(source);
-    (e.kind, e.line, e.col)
 }
 
 /// A DEF meets its variables in source order (checked on hardware).

@@ -31,7 +31,7 @@ const UI_LINES: u32 = 480;
 const SMALLEST_UI: (u32, u32) = (320, 240);
 
 /// Returns the number of half screen pixels that a UI pixel takes on an
-/// output of `out` pixels: two for every 480 lines at
+/// output of `(w, h)` pixels: two for every 480 lines at
 /// [`SimpleUiSize::Normal`], and 1.5 or 2 times that many at Medium and
 /// Large as long as the UI keeps 320x240 pixels. Normal and Large are whole
 /// scales. Medium is a whole scale plus a half where the Normal scale is
@@ -39,15 +39,15 @@ const SMALLEST_UI: (u32, u32) = (320, 240);
 fn ui_halves((w, h): (u32, u32), size: SimpleUiSize) -> u32 {
     let normal = 2 * (h / UI_LINES).max(1);
     let most = (2 * w / SMALLEST_UI.0).min(2 * h / SMALLEST_UI.1);
+    let most_whole_halves = most & !1;
     match size {
         SimpleUiSize::Normal => normal,
         SimpleUiSize::Medium => (normal * 3 / 2).min(most).max(normal),
-        // A whole scale.
-        SimpleUiSize::Large => (2 * normal).min(most & !1).max(normal),
+        SimpleUiSize::Large => (2 * normal).min(most_whole_halves).max(normal),
     }
 }
 
-/// Returns the UI size on an output of `out` pixels: the output at the
+/// Returns the UI size on an output of `(w, h)` pixels: the output at the
 /// scale that [`ui_halves`] gives, so that the 16-pixel UI font stays
 /// sharp. 640x480 gives 640x480, 427x320 at Medium or 320x240 at Large;
 /// 1920x1080 gives 960x540, 640x360 or 480x270. At a scale that is not
@@ -62,8 +62,8 @@ pub fn ui_size((w, h): (u32, u32), size: SimpleUiSize) -> (u32, u32) {
     (across(w).max(1), across(h).max(1))
 }
 
-/// Returns the place of a UI of `ui` pixels on an output of `out` pixels
-/// at `size`: at the largest whole scale that fits, centered horizontally
+/// Returns the place of a UI of `(w, h)` pixels on an output of
+/// `(out_w, out_h)` pixels at `size`: at the largest whole scale that fits, centered horizontally
 /// and at the top, the same as the desktop display. At a scale that is not
 /// whole, it starts at the top left corner of the output, on a whole pixel,
 /// and may go past the right and bottom edges by less than one UI pixel.
@@ -100,7 +100,7 @@ pub fn notice_place(out: (u32, u32), size: SimpleUiSize) -> ((u32, u32), FRect) 
 }
 
 /// Returns the filter that the Simple UI scales the screen with, by
-/// `choice`, when the frame of `mode` is drawn `shown` pixels large. The
+/// `choice`, when the frame of `mode` is drawn `(w, h)` pixels large. The
 /// screen fits the display at its aspect ratio regardless of the filter, so
 /// it is seldom a whole number of times its size, and it can be smaller
 /// than its frame: XSCREEN goes up to 1280x720.
@@ -1270,9 +1270,10 @@ impl GameList {
 // and the position of the selection, so that a new look replaces only this
 // part.
 
-/// The rows take this many twentieths of the UI's width, beside the
-/// selected project's info.
+/// The rows take `LIST_SHARE / LIST_SHARE_OF` of the UI's width, beside
+/// the selected project's info.
 const LIST_SHARE: u32 = 9;
+const LIST_SHARE_OF: u32 = 20;
 /// The top of the rows, below the top bar.
 const BODY_TOP: u32 = LINE + PAD;
 /// The scroll thumb's width, in the gap right of the rows.
@@ -1348,7 +1349,7 @@ impl ListView {
         let rows = ((body.h / LINE) as usize).max(1);
         let list_w = match programs {
             Some(_) => w.saturating_sub(PAD),
-            None => w * LIST_SHARE / 20,
+            None => w * LIST_SHARE / LIST_SHARE_OF,
         };
         let list = Rect {
             w: list_w,

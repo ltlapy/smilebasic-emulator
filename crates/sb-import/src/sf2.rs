@@ -90,6 +90,20 @@ fn timecents(seconds: f64) -> i16 {
     (1200.0 * seconds.log2()).round().clamp(-12000.0, 8000.0) as i16
 }
 
+// SoundFont generator operators.
+const PAN: u16 = 17;
+const ATTACK_VOL_ENV: u16 = 34;
+const HOLD_VOL_ENV: u16 = 35;
+const DECAY_VOL_ENV: u16 = 36;
+const SUSTAIN_VOL_ENV: u16 = 37;
+const RELEASE_VOL_ENV: u16 = 38;
+const INSTRUMENT: u16 = 41;
+const KEY_RANGE: u16 = 43;
+const INITIAL_ATTENUATION: u16 = 48;
+const SAMPLE_ID: u16 = 53;
+const SAMPLE_MODES: u16 = 54;
+const OVERRIDING_ROOT_KEY: u16 = 58;
+
 /// Generators: an operator and its amount.
 #[derive(Default)]
 struct Gens(Vec<u8>);
@@ -149,28 +163,37 @@ pub fn write(bank: &Bank, layout: Layout, out: &mut impl Write) -> io::Result<()
             bag(&mut ibag, igen.count());
             let t = times(region.envelope);
             let volume = f64::from(region.volume.max(1)) / 127.0;
-            igen.add(43, i16::from_le_bytes([region.keys.0, region.keys.1]));
-            igen.add(34, timecents(t.attack));
-            igen.add(35, timecents(t.hold));
-            igen.add(36, timecents(t.decay));
-            igen.add(37, (t.sustain_db * 10.0).round().min(1440.0) as i16);
+            igen.add(
+                KEY_RANGE,
+                i16::from_le_bytes([region.keys.0, region.keys.1]),
+            );
+            igen.add(ATTACK_VOL_ENV, timecents(t.attack));
+            igen.add(HOLD_VOL_ENV, timecents(t.hold));
+            igen.add(DECAY_VOL_ENV, timecents(t.decay));
+            igen.add(
+                SUSTAIN_VOL_ENV,
+                (t.sustain_db * 10.0).round().min(1440.0) as i16,
+            );
             // A note that ignores being released keeps decaying.
             let release = if region.ignore_note_off {
                 t.decay
             } else {
                 t.release
             };
-            igen.add(38, timecents(release));
+            igen.add(RELEASE_VOL_ENV, timecents(release));
             igen.add(
-                17,
+                PAN,
                 ((i16::from(region.pan) - 64) * 500 / 64).clamp(-500, 500),
             );
             // A region's volume is a linear gain.
-            igen.add(48, (-200.0 * volume.log10()).round() as i16);
+            igen.add(
+                INITIAL_ATTENUATION,
+                (-200.0 * volume.log10()).round() as i16,
+            );
             let looped = bank.waves[usize::from(region.wave)].loop_start.is_some();
-            igen.add(54, i16::from(looped));
-            igen.add(58, i16::from(region.original_key));
-            igen.add(53, region.wave as i16);
+            igen.add(SAMPLE_MODES, i16::from(looped));
+            igen.add(OVERRIDING_ROOT_KEY, i16::from(region.original_key));
+            igen.add(SAMPLE_ID, region.wave as i16);
         }
         phdr.extend_from_slice(&name(&format!("SmileBASIC 4 @{program}")));
         phdr.extend_from_slice(&p.to_le_bytes());
@@ -178,7 +201,7 @@ pub fn write(bank: &Bank, layout: Layout, out: &mut impl Write) -> io::Result<()
         phdr.extend_from_slice(&presets.to_le_bytes());
         phdr.resize(phdr.len() + 12, 0);
         bag(&mut pbag, pgen.count());
-        pgen.add(41, instrument);
+        pgen.add(INSTRUMENT, instrument);
         presets += 1;
     }
     phdr.extend_from_slice(&name("EOP"));

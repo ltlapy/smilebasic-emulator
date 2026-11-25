@@ -35,7 +35,7 @@ struct fits.
 | `Screens` | `main.rs` | The emulator's own windows and dialogs: the dialog, Projects, the file dialogs, settings, shortcuts, colors, the Simple UI's list, pause menu and welcome screen |
 | `Inputs` | `inputs.rs` | Controllers, typing, the pad's repeat, the drag, the + button's hold |
 | `Debugger` | `main.rs` | The debugger's panel, its menu, the stop it last showed |
-| `Beside` | `main.rs` | The help or the index beside the editor |
+| `SidePanel` | `main.rs` | The help or the index beside the editor |
 | `Overlays` | `overlays.rs` | The layers drawn over the screens, and the drawn cursor |
 | `Held` | `main.rs` | Textures kept in addition to the main frame texture, and what the frame textures hold |
 | `gpu::Paths` | `gpu.rs` | The GPU paths for the main screens and for a subprogram's screen |

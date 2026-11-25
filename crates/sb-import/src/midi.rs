@@ -23,6 +23,22 @@ use crate::sf2::Layout;
 /// Semitones the pitch bend reaches, set on every channel at the start.
 const BEND_RANGE: i32 = 24;
 
+const GM_SYSTEM_ON: [u8; 7] = [0xF0, 5, 0x7E, 0x7F, 9, 1, 0xF7];
+const GS_RESET: [u8; 12] = [
+    0xF0, 10, 0x41, 0x10, 0x42, 0x12, 0x40, 0, 0x7F, 0, 0x41, 0xF7,
+];
+
+// Control change numbers.
+const CC_BANK_MSB: u8 = 0;
+const CC_MODULATION: u8 = 1;
+const CC_DATA_ENTRY: u8 = 6;
+const CC_VOLUME: u8 = 7;
+const CC_PAN: u8 = 10;
+const CC_EXPRESSION: u8 = 11;
+const CC_BANK_LSB: u8 = 32;
+const CC_RPN_LSB: u8 = 100;
+const CC_RPN_MSB: u8 = 101;
+
 fn varlen(out: &mut Vec<u8>, mut v: u32) {
     let mut bytes = vec![(v & 0x7F) as u8];
     v >>= 7;
@@ -61,6 +77,27 @@ impl Channels {
             .entry(channel)
             .or_insert_with(|| next.min(14) + u8::from(next >= DRUM_CHANNEL))
     }
+
+    /// Returns the General MIDI channel for `event` on the sequence's
+    /// `channel`, after noting a change of drum set and the notes sounding.
+    fn gm_target(&mut self, channel: usize, event: &Event) -> u8 {
+        if let Event::Program(p) = *event {
+            self.drums[channel & 15] = (128..=148).contains(&p);
+        }
+        match *event {
+            // A note ends on the channel it began on.
+            Event::NoteOff(key) => self
+                .sounding
+                .remove(&(channel, key))
+                .unwrap_or_else(|| self.target(channel)),
+            Event::NoteOn(key, _) => {
+                let c = self.target(channel);
+                self.sounding.insert((channel, key), c);
+                c
+            }
+            _ => self.target(channel),
+        }
+    }
 }
 
 pub fn write(seq: Arc<Sequence>, layout: Layout) -> Vec<u8> {
@@ -74,24 +111,18 @@ pub fn write(seq: Arc<Sequence>, layout: Layout) -> Vec<u8> {
         track.extend_from_slice(bytes);
     };
     if layout == Layout::Gm {
-        // GM System On, then GS Reset (a GM-only device skips the latter).
-        at(&mut track, 0, &[0xF0, 5, 0x7E, 0x7F, 9, 1, 0xF7]);
-        at(
-            &mut track,
-            0,
-            &[
-                0xF0, 10, 0x41, 0x10, 0x42, 0x12, 0x40, 0, 0x7F, 0, 0x41, 0xF7,
-            ],
-        );
+        // A GM-only device skips the GS Reset.
+        at(&mut track, 0, &GM_SYSTEM_ON);
+        at(&mut track, 0, &GS_RESET);
     }
     for c in 0..16u8 {
         // RPN 0, the bend range, then no RPN.
         for (cc, v) in [
-            (101, 0),
-            (100, 0),
-            (6, BEND_RANGE as u8),
-            (101, 127),
-            (100, 127),
+            (CC_RPN_MSB, 0),
+            (CC_RPN_LSB, 0),
+            (CC_DATA_ENTRY, BEND_RANGE as u8),
+            (CC_RPN_MSB, 127),
+            (CC_RPN_LSB, 127),
         ] {
             at(&mut track, 0, &[0xB0 | c, cc, v]);
         }
@@ -101,24 +132,7 @@ pub fn write(seq: Arc<Sequence>, layout: Layout) -> Vec<u8> {
         let byte = |v: i32| v.clamp(0, 127) as u8;
         let c = match layout {
             Layout::Own => e.channel as u8 & 15,
-            Layout::Gm => {
-                if let Event::Program(p) = e.event {
-                    channels.drums[e.channel & 15] = (128..=148).contains(&p);
-                }
-                match e.event {
-                    // A note ends on the channel it began on.
-                    Event::NoteOff(key) => channels
-                        .sounding
-                        .remove(&(e.channel, key))
-                        .unwrap_or_else(|| channels.target(e.channel)),
-                    Event::NoteOn(key, _) => {
-                        let c = channels.target(e.channel);
-                        channels.sounding.insert((e.channel, key), c);
-                        c
-                    }
-                    _ => channels.target(e.channel),
-                }
-            }
+            Layout::Gm => channels.gm_target(e.channel, &e.event),
         };
         match e.event {
             Event::Program(p) => {
@@ -134,15 +148,15 @@ pub fn write(seq: Arc<Sequence>, layout: Layout) -> Vec<u8> {
                         Layout::Own => ((bank >> 7) as u8, (bank & 127) as u8),
                         Layout::Gm => (bank as u8, 0),
                     };
-                    at(&mut track, e.tick, &[0xB0 | c, 0, msb]);
-                    at(&mut track, e.tick, &[0xB0 | c, 32, lsb]);
+                    at(&mut track, e.tick, &[0xB0 | c, CC_BANK_MSB, msb]);
+                    at(&mut track, e.tick, &[0xB0 | c, CC_BANK_LSB, lsb]);
                 }
                 at(&mut track, e.tick, &[0xC0 | c, program as u8]);
             }
-            Event::Volume(v) => at(&mut track, e.tick, &[0xB0 | c, 7, byte(v)]),
-            Event::Expression(v) => at(&mut track, e.tick, &[0xB0 | c, 11, byte(v)]),
-            Event::Pan(v) => at(&mut track, e.tick, &[0xB0 | c, 10, byte(v)]),
-            Event::Modulation(v) => at(&mut track, e.tick, &[0xB0 | c, 1, byte(v)]),
+            Event::Volume(v) => at(&mut track, e.tick, &[0xB0 | c, CC_VOLUME, byte(v)]),
+            Event::Expression(v) => at(&mut track, e.tick, &[0xB0 | c, CC_EXPRESSION, byte(v)]),
+            Event::Pan(v) => at(&mut track, e.tick, &[0xB0 | c, CC_PAN, byte(v)]),
+            Event::Modulation(v) => at(&mut track, e.tick, &[0xB0 | c, CC_MODULATION, byte(v)]),
             Event::Bend(cents) => {
                 let v = (8192 + cents * 8192 / (BEND_RANGE * 100)).clamp(0, 16383);
                 at(

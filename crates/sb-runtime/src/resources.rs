@@ -113,7 +113,6 @@ pub fn load_sprites(dir: &Path) -> (Option<Vec<u32>>, Option<Vec<SpriteDef>>) {
     (page, defs)
 }
 
-/// Loads the font from the resource directory.
 pub fn load_font(dir: &Path) -> Result<Font, ResourceError> {
     let map = read(&dir.join(FONT_MAP))?;
     let page = read(&dir.join(FONT_PAGE))?;

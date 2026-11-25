@@ -37,6 +37,12 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static COUNTING: Counting = Counting;
 
+/// A graphics page that the world leaves blank.
+const BLANK_PAGE: i32 = 0;
+
+/// White with zero alpha: a sprite of this color shows nothing.
+const CLEAR_WHITE: u32 = 0x00FF_FFFF;
+
 /// A frame's state: no sprite in use, every text screen hidden.
 struct World {
     mode: ScreenMode,
@@ -173,7 +179,7 @@ fn sprites_that_show_nothing_keep_their_place() {
     let mut w = World::new();
     w.layers[1].compose = Compose::Multiply;
     w.sprite(0, 1, 0);
-    w.sprites.sprite_mut(0).page = 0; // Blank.
+    w.sprites.sprite_mut(0).page = BLANK_PAGE;
     let scene = w.scene();
     assert_eq!(scene.passes.len(), 1);
     assert_eq!(scene.passes[0].compose, Compose::Multiply);
@@ -184,7 +190,7 @@ fn sprites_that_show_nothing_keep_their_place() {
     w.layers[0].projection = Some(std::array::from_fn(|i| f64::from(i32::from(i % 5 == 0))));
     w.screen(0, 0, 10);
     w.sprite(0, 0, 5);
-    w.sprites.sprite_mut(0).color = 0x00FF_FFFF; // Clear.
+    w.sprites.sprite_mut(0).color = CLEAR_WHITE;
     w.screen(1, 0, 0);
     let scene = w.scene();
     assert_eq!(listed(&scene), vec![vec![-1, 0, -2]]);

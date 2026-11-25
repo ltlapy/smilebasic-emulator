@@ -400,13 +400,13 @@ fn a_gosub_without_room_stops_the_next_command() {
             (ErrorKind::StackOverflow, line, printed),
             "{source}"
         );
-        // The LOCATE's own place, counted from 1.
-        let locate = 1 + source
+        // The column of the LOCATE command itself, counted from 1.
+        let locate_column = 1 + source
             .lines()
             .nth(line as usize - 1)
             .unwrap()
             .find("LOCATE")
             .unwrap();
-        assert_eq!(col as usize, locate, "{source}");
+        assert_eq!(col as usize, locate_column, "{source}");
     }
 }

@@ -138,7 +138,7 @@ fn right_stick(state: &State) -> ((f64, f64), bool) {
 }
 
 /// The role of the right stick and R3, decided by what is open: see
-/// [`Where::role`].
+/// [`StickContext::role`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StickRole {
     /// Neither the program nor the emulator's screens, which is the case
@@ -166,9 +166,9 @@ impl StickRole {
     }
 }
 
-/// What is open, for [`Where::role`].
+/// What is open, for [`StickContext::role`].
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Where {
+pub struct StickContext {
     pub simple_ui: bool,
     /// A program runs.
     pub running: bool,
@@ -185,7 +185,7 @@ pub struct Where {
     pub editor_window: bool,
 }
 
-impl Where {
+impl StickContext {
     /// Returns the role of the right stick and R3. While the editor's own
     /// window has the keys, they are off, before any other case. On the
     /// desktop the emulator's screens and a program's DIALOG take them. With no
@@ -216,16 +216,30 @@ pub const STICK_MOUSE: u32 = u32::MAX - 2;
 const DOUBLE_CLICK_TIME: u64 = 500_000_000;
 const DOUBLE_CLICK_RADIUS: f32 = 32.0;
 
+/// A press of R3 that holds the left mouse button down.
+#[derive(Clone, Copy, Debug)]
+struct Press {
+    /// The controller whose R3 is pressed.
+    pad: JoystickId,
+    /// The window the press went to.
+    window: u32,
+}
+
+/// The last press of R3, for counting double clicks.
+#[derive(Clone, Copy, Debug)]
+struct LastPress {
+    time: u64,
+    at: (f32, f32),
+    clicks: u8,
+}
+
 /// R3 as the left mouse button of the emulator's own screens. Its press
 /// and release become mouse button events at the pointer, which go where
 /// the events of a mouse go.
 #[derive(Debug, Default)]
 struct StickClick {
-    /// The controller whose R3 holds the button down, and the window the
-    /// press went to.
-    down: Option<(JoystickId, u32)>,
-    /// The last press: its time, its position and its count of clicks.
-    last: Option<(u64, (f32, f32), u8)>,
+    down: Option<Press>,
+    last: Option<LastPress>,
 }
 
 impl StickClick {
@@ -236,14 +250,18 @@ impl StickClick {
             (at.0 - x).abs() <= DOUBLE_CLICK_RADIUS && (at.1 - y).abs() <= DOUBLE_CLICK_RADIUS
         };
         let clicks = match self.last {
-            Some((then, place, n))
-                if timestamp.saturating_sub(then) < DOUBLE_CLICK_TIME && near(place) =>
+            Some(last)
+                if timestamp.saturating_sub(last.time) < DOUBLE_CLICK_TIME && near(last.at) =>
             {
-                n.saturating_add(1)
+                last.clicks.saturating_add(1)
             }
             _ => 1,
         };
-        self.last = Some((timestamp, at, clicks));
+        self.last = Some(LastPress {
+            time: timestamp,
+            at,
+            clicks,
+        });
         clicks
     }
 
@@ -262,7 +280,7 @@ impl StickClick {
                 button: Button::RightStick,
             } if role == StickRole::Screens && self.down.is_none() => {
                 let clicks = self.count(timestamp, at);
-                self.down = Some((which, window));
+                self.down = Some(Press { pad: which, window });
                 *event = Event::MouseButtonDown {
                     timestamp,
                     window_id: window,
@@ -277,9 +295,9 @@ impl StickClick {
                 timestamp,
                 which,
                 button: Button::RightStick,
-            } if self.down.is_some_and(|(pad, _)| pad == which) => {
-                let window_id = self.down.take().map_or(window, |(_, window)| window);
-                let clicks = self.last.map_or(1, |(_, _, n)| n);
+            } if self.down.is_some_and(|press| press.pad == which) => {
+                let window_id = self.down.take().map_or(window, |press| press.window);
+                let clicks = self.last.map_or(1, |last| last.clicks);
                 *event = Event::MouseButtonUp {
                     timestamp,
                     window_id,
@@ -298,7 +316,7 @@ impl StickClick {
             }
             // Its release will not come.
             Event::GamepadRemoved { which, .. }
-                if self.down.is_some_and(|(pad, _)| pad == which) =>
+                if self.down.is_some_and(|press| press.pad == which) =>
             {
                 self.down = None;
             }
@@ -604,29 +622,29 @@ mod tests {
 
     #[test]
     fn the_emulators_screens_take_the_stick_on_the_desktop_and_hide_it_in_the_simple_ui() {
-        let program = Where {
+        let program = StickContext {
             running: true,
             cursor: true,
-            ..Where::default()
+            ..StickContext::default()
         };
         assert_eq!(program.role(), CURSOR);
-        let hidden = Where {
+        let hidden = StickContext {
             cursor: false,
             ..program
         };
         assert_eq!(hidden.role(), NO_CURSOR);
         // A window over the program, regardless of MOUSECURSOR, and with
         // no program running.
-        let screen = Where {
+        let screen = StickContext {
             screen: true,
             ..hidden
         };
         assert_eq!(screen.role(), StickRole::Screens);
-        let direct = Where::default();
+        let direct = StickContext::default();
         assert_eq!(direct.role(), StickRole::Screens);
         // A program's DIALOG takes them on the desktop, the same as our
         // screens do, regardless of MOUSECURSOR.
-        let dialog = Where {
+        let dialog = StickContext {
             program_dialog: true,
             cursor: false,
             ..program
@@ -634,7 +652,7 @@ mod tests {
         assert_eq!(dialog.role(), StickRole::Screens);
         // The Simple UI's screens, and a program's DIALOG there, have no
         // mouse.
-        let simple = |at: Where| Where {
+        let simple = |at: StickContext| StickContext {
             simple_ui: true,
             ..at
         };
@@ -645,7 +663,7 @@ mod tests {
         }
         assert!(!screen.role().hides_cursor());
         // The editor's own window is away from the pointer.
-        let editor = Where {
+        let editor = StickContext {
             editor_window: true,
             ..screen
         };

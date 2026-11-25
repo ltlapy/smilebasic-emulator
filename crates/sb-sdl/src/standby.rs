@@ -58,8 +58,7 @@ struct Job {
     clock: Clock,
     run_time: Duration,
     kept: Kept,
-    /// When the call began.
-    since: Instant,
+    call_began: Instant,
 }
 
 // SAFETY: the pointers come from `&mut` borrows that `Standby::hold` keeps for
@@ -75,7 +74,7 @@ unsafe impl Send for Job {}
 struct Slot {
     job: Option<Job>,
     /// The main thread wants the job back.
-    back: bool,
+    wanted_back: bool,
     /// The standby thread is running a frame of the job.
     busy: bool,
     quit: bool,
@@ -129,9 +128,9 @@ impl Standby {
                 clock: *lend.clock,
                 run_time: lend.run_time,
                 kept: Kept::default(),
-                since: Instant::now(),
+                call_began: Instant::now(),
             });
-            slot.back = false;
+            slot.wanted_back = false;
         }
         self.shared.changed.notify_all();
         // Takes the job back however `call` ends, a panic included.
@@ -172,7 +171,7 @@ impl Back<'_> {
     fn take(&mut self) -> Option<Job> {
         self.done = true;
         let mut slot = self.shared.lock();
-        slot.back = true;
+        slot.wanted_back = true;
         while slot.busy {
             slot = (self.shared.changed.wait(slot)).unwrap_or_else(|e| e.into_inner());
         }
@@ -196,7 +195,7 @@ fn serve(shared: &Shared, sink: &Sink) {
             return;
         }
         let due = match &slot.job {
-            Some(job) if !slot.back => job.clock.due().max(job.since + HELD_UP),
+            Some(job) if !slot.wanted_back => job.clock.due().max(job.call_began + HELD_UP),
             _ => {
                 slot = shared.changed.wait(slot).unwrap_or_else(|e| e.into_inner());
                 continue;

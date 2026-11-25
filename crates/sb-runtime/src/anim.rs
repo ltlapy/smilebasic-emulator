@@ -62,6 +62,12 @@ pub struct Mode {
     pub delete: bool,
 }
 
+/// The bits of a numeric target argument: the target's index in
+/// [`NAMES`], then "relative" and "delete at the end".
+const TARGET_BITS: i32 = 7;
+const RELATIVE_BIT: i32 = 8;
+const DELETE_BIT: i32 = 16;
+
 fn bad_target(detail: String) -> Error {
     Error::with_detail(ErrorKind::OutOfRange, detail)
 }
@@ -104,9 +110,9 @@ impl Mode {
                         return Err(bad_target(format!("animation target {n}")));
                     }
                     Ok(Mode {
-                        target: NAMES[(n & 7) as usize].1,
-                        relative: n & 8 != 0,
-                        delete: n & 16 != 0,
+                        target: NAMES[(n & TARGET_BITS) as usize].1,
+                        relative: n & RELATIVE_BIT != 0,
+                        delete: n & DELETE_BIT != 0,
                     })
                 }
             }

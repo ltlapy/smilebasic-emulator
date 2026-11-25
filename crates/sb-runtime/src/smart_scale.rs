@@ -13,7 +13,7 @@
 struct Step {
     first: u32,
     second: u32,
-    part: u32,
+    weight: u32,
 }
 
 /// The steps of an axis of `size` texels shown over `shown` pixels.
@@ -28,7 +28,7 @@ fn steps(size: u32, shown: u32) -> Vec<Step> {
             Step {
                 first: base.clamp(0, last) as u32,
                 second: (base + 1).clamp(0, last) as u32,
-                part: (t * 256.0 + 0.5) as u32,
+                weight: (t * 256.0 + 0.5) as u32,
             }
         })
         .collect()
@@ -42,17 +42,23 @@ pub struct SmartScale {
     to: (u32, u32),
     across: Vec<Step>,
     down: Vec<Step>,
-    /// A source row mixed across, and its row number.
-    lines: [(u32, Vec<u32>); 2],
+    lines: [Line; 2],
 }
 
-/// `a` and `b` mixed with `part` 256ths of `b`, with opaque alpha.
+/// A source row mixed across.
+#[derive(Default)]
+struct Line {
+    row: u32,
+    mixed: Vec<u32>,
+}
+
+/// `a` and `b` mixed with `weight` 256ths of `b`, with opaque alpha.
 #[inline]
-fn mix(a: u32, b: u32, part: u32) -> u32 {
+fn mix(a: u32, b: u32, weight: u32) -> u32 {
     const LO: u32 = 0x00FF_00FF;
-    let keep = 256 - part;
-    let lo = ((a & LO) * keep + (b & LO) * part + 0x0080_0080) >> 8 & LO;
-    let hi = ((a >> 8 & 0xFF) * keep + (b >> 8 & 0xFF) * part + 0x80) & 0xFF00;
+    let keep = 256 - weight;
+    let lo = ((a & LO) * keep + (b & LO) * weight + 0x0080_0080) >> 8 & LO;
+    let hi = ((a >> 8 & 0xFF) * keep + (b >> 8 & 0xFF) * weight + 0x80) & 0xFF00;
     0xFF00_0000 | lo | hi
 }
 
@@ -68,40 +74,44 @@ impl SmartScale {
             self.across = steps(size.0, to.0);
             self.down = steps(size.1, to.1);
             for line in &mut self.lines {
-                line.1.resize(shown, 0);
+                line.mixed.resize(shown, 0);
             }
         }
         for line in &mut self.lines {
-            line.0 = u32::MAX;
+            line.row = u32::MAX;
         }
         let across = &self.across;
         // Each needed row is either held already or replaces the line that
         // does not hold the other row needed with it.
-        let hold = |lines: &mut [(u32, Vec<u32>); 2], row: u32, keep: u32| {
-            if lines[0].0 == row || lines[1].0 == row {
+        let hold = |lines: &mut [Line; 2], row: u32, keep: u32| {
+            if lines[0].row == row || lines[1].row == row {
                 return;
             }
-            let line = &mut lines[usize::from(lines[0].0 == keep)];
-            line.0 = row;
+            let line = &mut lines[usize::from(lines[0].row == keep)];
+            line.row = row;
             let source = &from[row as usize * w..][..w];
-            for (o, s) in line.1.iter_mut().zip(across) {
-                *o = mix(source[s.first as usize], source[s.second as usize], s.part);
+            for (o, s) in line.mixed.iter_mut().zip(across) {
+                *o = mix(
+                    source[s.first as usize],
+                    source[s.second as usize],
+                    s.weight,
+                );
             }
         };
         for (row, s) in out.chunks_exact_mut(shown).zip(&self.down) {
             hold(&mut self.lines, s.first, s.second);
-            if s.part != 0 {
+            if s.weight != 0 {
                 hold(&mut self.lines, s.second, s.first);
             }
             let lines = &self.lines;
-            let line = |n: u32| &lines[usize::from(lines[0].0 != n)].1;
-            match s.part {
+            let line = |n: u32| &lines[usize::from(lines[0].row != n)].mixed;
+            match s.weight {
                 0 => row.copy_from_slice(line(s.first)),
                 256 => row.copy_from_slice(line(s.second)),
-                part => {
+                weight => {
                     let (top, bottom) = (line(s.first), line(s.second));
                     for ((o, &t), &b) in row.iter_mut().zip(top).zip(bottom) {
-                        *o = mix(t, b, part);
+                        *o = mix(t, b, weight);
                     }
                 }
             }
@@ -118,19 +128,19 @@ mod tests {
         // Three times larger: a third of each texel is pure nearest, and
         // the rest mixes by 5/6, 1/6.
         let s = steps(4, 12);
-        let part = |t: f64| (t * 256.0 + 0.5) as u32;
-        assert_eq!(s[0].part, part(5.0 / 6.0));
+        let weight = |t: f64| (t * 256.0 + 0.5) as u32;
+        assert_eq!(s[0].weight, weight(5.0 / 6.0));
         assert_eq!((s[0].first, s[0].second), (0, 0));
-        assert_eq!((s[1].first, s[1].second, s[1].part), (0, 1, 0));
+        assert_eq!((s[1].first, s[1].second, s[1].weight), (0, 1, 0));
         assert_eq!(
-            (s[2].first, s[2].second, s[2].part),
-            (0, 1, part(1.0 / 6.0))
+            (s[2].first, s[2].second, s[2].weight),
+            (0, 1, weight(1.0 / 6.0))
         );
         assert_eq!(
-            (s[3].first, s[3].second, s[3].part),
-            (0, 1, part(5.0 / 6.0))
+            (s[3].first, s[3].second, s[3].weight),
+            (0, 1, weight(5.0 / 6.0))
         );
-        assert_eq!((s[4].first, s[4].second, s[4].part), (1, 2, 0));
+        assert_eq!((s[4].first, s[4].second, s[4].weight), (1, 2, 0));
         assert_eq!((s[11].first, s[11].second), (3, 3));
     }
 
@@ -185,10 +195,10 @@ mod tests {
                 let (x, y) = (i % to.0 as usize, i / to.0 as usize);
                 let (sx, sy) = (across[x], down[y]);
                 let at = |c: u32, r: u32| from[(r * w + c) as usize];
-                let line = |r: u32| mix(at(sx.first, r), at(sx.second, r), sx.part);
+                let line = |r: u32| mix(at(sx.first, r), at(sx.second, r), sx.weight);
                 assert_eq!(
                     o,
-                    mix(line(sy.first), line(sy.second), sy.part),
+                    mix(line(sy.first), line(sy.second), sy.weight),
                     "{to:?} {x} {y}"
                 );
             }

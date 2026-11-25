@@ -18,6 +18,15 @@ use crate::ui::{
 const MIN_WIDTH: u32 = 320;
 const NAME_BUTTONS: [&str; 2] = ["Cancel", "OK"];
 
+/// What [`ProgramView::key`] did with a key.
+#[derive(Debug, PartialEq)]
+pub enum KeyResult {
+    Ignored,
+    /// Taken without an answer.
+    Taken,
+    Answer(DialogAnswer),
+}
+
 pub struct ProgramView {
     dialog: ProgramDialog,
     /// The message, wrapped to fit the display.
@@ -173,23 +182,23 @@ impl ProgramView {
 
     /// Left, Right and Tab move between the buttons, and Tab wraps from the
     /// last to the first. Enter chooses, Esc chooses the left of two buttons
-    /// the same as B does, and Backspace deletes from a name. Returns `None`
-    /// for keys it ignores, and `Some(None)` for keys it took without an
-    /// answer.
-    pub fn key(&mut self, key: Keycode) -> Option<Option<DialogAnswer>> {
+    /// the same as B does, and Backspace deletes from a name.
+    pub fn key(&mut self, key: Keycode) -> KeyResult {
         let n = self.labels().len();
         if let Some(focus) = moved_focus(self.focus, n, key) {
             self.focus = focus;
-            return Some(None);
+            return KeyResult::Taken;
         }
         match key {
-            Keycode::Return | Keycode::KpEnter if n > 0 => Some(Some(self.choose(self.focus))),
-            Keycode::Escape if n == 2 => Some(Some(self.choose(0))),
+            Keycode::Return | Keycode::KpEnter if n > 0 => {
+                KeyResult::Answer(self.choose(self.focus))
+            }
+            Keycode::Escape if n == 2 => KeyResult::Answer(self.choose(0)),
             Keycode::Backspace if matches!(self.dialog.kind, DialogKind::Name { .. }) => {
                 self.name.pop();
-                Some(None)
+                KeyResult::Taken
             }
-            _ => None,
+            _ => KeyResult::Ignored,
         }
     }
 
@@ -352,13 +361,7 @@ pub(crate) fn wrap(line: &str, max: u32) -> Vec<String> {
     let mut pieces = Vec::new();
     let mut rest: Vec<char> = line.chars().collect();
     loop {
-        // The number of characters that fit, at least one.
-        let mut used = 0;
-        let fit = rest.iter().take_while(|&&c| {
-            used += char_width(c);
-            used <= max
-        });
-        let fits = fit.count().max(1);
+        let fits = fitting_chars(&rest, max);
         if rest.len() <= fits {
             break;
         }
@@ -374,13 +377,20 @@ pub(crate) fn wrap(line: &str, max: u32) -> Vec<String> {
     pieces
 }
 
+/// Returns the number of the first characters of `chars` that fit in `max`
+/// pixels, at least one.
+fn fitting_chars(chars: &[char], max: u32) -> usize {
+    let mut used = 0;
+    let fit = chars.iter().take_while(|&&c| {
+        used += char_width(c);
+        used <= max
+    });
+    fit.count().max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn centre(r: Rect) -> (i32, i32) {
-        ((r.x + r.w / 2) as i32, (r.y + r.h / 2) as i32)
-    }
 
     fn dialog(kind: DialogKind) -> ProgramDialog {
         ProgramDialog {
@@ -394,13 +404,13 @@ mod tests {
     fn esc_is_the_left_of_two_buttons_and_cancels_a_name() {
         let key = |kind| ProgramView::new(&dialog(kind), (1280, 720)).key(Keycode::Escape);
         let two = key(DialogKind::Choice(vec!["No", "Yes"]));
-        assert_eq!(two, Some(Some(DialogAnswer::Choice(0))));
-        assert_eq!(key(DialogKind::Choice(vec!["OK"])), None);
+        assert_eq!(two, KeyResult::Answer(DialogAnswer::Choice(0)));
+        assert_eq!(key(DialogKind::Choice(vec!["OK"])), KeyResult::Ignored);
         let name = DialogKind::Name {
             initial: "A".to_string(),
             max: 8,
         };
-        assert_eq!(key(name), Some(Some(DialogAnswer::Name(None))));
+        assert_eq!(key(name), KeyResult::Answer(DialogAnswer::Name(None)));
     }
 
     #[test]
@@ -457,13 +467,13 @@ mod tests {
         let mut v = ProgramView::new(&dialog(DialogKind::Choice(vec!["No", "Yes"])), (1280, 720));
         let (no, yes) = (v.button(0), v.button(1));
         assert!(no.x + no.w < yes.x);
-        assert_eq!(v.click(centre(no)), Some(DialogAnswer::Choice(0)));
+        assert_eq!(v.click(no.center()), Some(DialogAnswer::Choice(0)));
         assert_eq!(
             v.key(Keycode::Return),
-            Some(Some(DialogAnswer::Choice(1))),
+            KeyResult::Answer(DialogAnswer::Choice(1)),
             "the right one is chosen at first"
         );
-        assert_eq!(v.key(Keycode::Z), None);
+        assert_eq!(v.key(Keycode::Z), KeyResult::Ignored);
         let v = ProgramView::new(&dialog(DialogKind::Buttons(1)), (1280, 720));
         assert!(v.labels().is_empty());
     }
@@ -500,7 +510,10 @@ mod tests {
         assert_eq!(v.focus(), 0);
         // The runtime's focus, as the controller moved it.
         v.follow(Some(1));
-        assert_eq!(v.key(Keycode::Return), Some(Some(DialogAnswer::Choice(1))));
+        assert_eq!(
+            v.key(Keycode::Return),
+            KeyResult::Answer(DialogAnswer::Choice(1))
+        );
         v.follow(Some(7));
         assert_eq!(v.focus(), 1);
     }
@@ -510,7 +523,7 @@ mod tests {
     fn the_mouse_hovers_without_moving_the_focus() {
         let kind = DialogKind::Choice(vec!["No", "Yes"]);
         let mut v = ProgramView::new(&dialog(kind), (1280, 720));
-        v.mouse_move(centre(v.button(0)));
+        v.mouse_move(v.button(0).center());
         assert_eq!((v.hover, v.focus()), (Some(0), 1));
         v.mouse_move((0, 0));
         assert_eq!(v.hover, None);
@@ -528,8 +541,11 @@ mod tests {
         v.key(Keycode::Backspace);
         assert_eq!(
             v.key(Keycode::Return),
-            Some(Some(DialogAnswer::Name(Some("ABC".to_string()))))
+            KeyResult::Answer(DialogAnswer::Name(Some("ABC".to_string())))
         );
-        assert_eq!(v.click(centre(v.button(0))), Some(DialogAnswer::Name(None)));
+        assert_eq!(
+            v.click(v.button(0).center()),
+            Some(DialogAnswer::Name(None))
+        );
     }
 }

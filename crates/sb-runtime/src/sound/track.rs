@@ -825,7 +825,7 @@ impl Track {
             (AfterFade::Nothing, false) => State::FadingIn,
             (AfterFade::Nothing, true) => State::Playing,
         };
-        let (tempo, quarter, channels) = match (&self.seq, &self.song) {
+        let (tempo, ticks_per_quarter, channels) = match (&self.seq, &self.song) {
             (Some(p), _) => (p.tempo, p.timebase, p.channels()),
             (None, Some(song)) => {
                 let used = song.used().map(|(c, _)| (c, &self.channels[c]));
@@ -854,7 +854,7 @@ impl Track {
             volume: self.volume,
             pitch: self.pitch,
             tempo,
-            quarter,
+            ticks_per_quarter,
             ticks: self.ticks,
             vars: self.vars,
             channels,

@@ -14,6 +14,9 @@ const BUSY: &str = "VSYNC:T=MAINCNT():WHILE MAINCNT()-T<3:INC N:WEND:?N\n";
 /// An empty FOR's time for 10000 passes.
 const TIMED: &str = "PERFBEGIN 0:FOR I=1 TO 10000:NEXT:?PERFEND(0)\n";
 
+/// The length of a frame in microseconds, the unit of PERFEND.
+const US_PER_FRAME: u64 = 16_667;
+
 /// Runs `source` at `speed` until it ends, and gives the last line it
 /// printed.
 fn run(speed: Speed, source: &str) -> String {
@@ -95,7 +98,7 @@ fn a_slow_frame_misses_vsyncs() {
         )
     };
     // The passes of the FOR in a frame, computed from the time 10000 take.
-    let per_frame = 16_667.0 * 10_000.0 / passes(Speed::Switch1, TIMED);
+    let per_frame = US_PER_FRAME as f64 * 10_000.0 / passes(Speed::Switch1, TIMED);
     let fits = passes(Speed::Switch1, &source((per_frame * 0.5) as u32));
     assert_eq!(fits, 20.0);
     let slow = passes(Speed::Switch1, &source((per_frame * 1.5) as u32));
@@ -123,7 +126,7 @@ fn host_commands_use_up_frames() {
     let line = run(Speed::Switch1, source);
     let (frames, us) = line.split_once(' ').unwrap();
     let (frames, us): (u64, u64) = (frames.parse().unwrap(), us.trim().parse().unwrap());
-    assert_eq!(frames, us / 16_667, "{line}");
+    assert_eq!(frames, us / US_PER_FRAME, "{line}");
     assert!(frames >= 2, "{line}");
 }
 

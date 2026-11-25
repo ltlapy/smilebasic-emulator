@@ -159,9 +159,10 @@ thread_local! {
     static SPEED: std::cell::Cell<Speed> = const { std::cell::Cell::new(Speed::Unlimited) };
 }
 
-/// The exit status when a program stopped on an error, and when STOP
-/// left it stopped. 1 is for the tool's own failures.
+/// The exit status when a program stopped on an error. 1 is for the tool's
+/// own failures.
 const EXIT_ERROR: u8 = 2;
+/// The exit status when STOP left a program stopped.
 const EXIT_STOP: u8 = 3;
 
 fn main() -> std::process::ExitCode {
@@ -307,12 +308,8 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
         _ => return Err(USAGE.into()),
     };
     let project = Path::new(project);
-    let name = project
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("PROJECT must be a project folder")?;
-    let scratch = std::env::temp_dir().join(format!("smilebasic-check-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&scratch);
+    let name = project_name(project)?;
+    let scratch = empty_scratch_folder();
     let outcome = copy_others(project, name, &scratch).and_then(|()| {
         parts.iter().try_for_each(|&part| {
             check_part(project, name, program, part, &scratch, screens.as_deref())
@@ -322,6 +319,22 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
     // The parts' errors show on the console, which the results compare,
     // so they leave the status unchanged.
     outcome.map(|()| 0)
+}
+
+/// Returns the name of the project folder `project`.
+fn project_name(project: &Path) -> Result<&str, AnyError> {
+    Ok(project
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("PROJECT must be a project folder")?)
+}
+
+/// Returns the folder that holds the copies a run makes, after removing
+/// anything an earlier run left in it.
+fn empty_scratch_folder() -> PathBuf {
+    let scratch = std::env::temp_dir().join(format!("smilebasic-check-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    scratch
 }
 
 /// Takes an option and the value after it out of `args`.
@@ -379,22 +392,25 @@ fn check_part(
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     let mut answer = part.map(|p| p.to_string());
     let mut frames = 0;
-    // Frames since the part's number was typed, for --screen.
-    let mut shown = part.is_none().then_some(0);
-    // Frames the program has waited at INPUT.
-    let mut asked = 0;
+    let mut frames_at_input = 0;
+    // For --screen.
+    let mut frames_since_typed = part.is_none().then_some(0);
     while m.is_running() && frames < FRAME_LIMIT {
-        asked = if m.rt.wants_line() { asked + 1 } else { 0 };
-        if asked > TYPING_FRAMES
+        frames_at_input = if m.rt.wants_line() {
+            frames_at_input + 1
+        } else {
+            0
+        };
+        if frames_at_input > TYPING_FRAMES
             && let Some(text) = answer.take()
         {
             m.type_text(&text);
             m.rt.key_press(keys::ENTER);
-            shown = Some(0);
+            frames_since_typed = Some(0);
         }
         m.frame();
         frames += 1;
-        if let (Some(dir), Some(n)) = (screens, shown.as_mut()) {
+        if let (Some(dir), Some(n)) = (screens, frames_since_typed.as_mut()) {
             *n += 1;
             if *n == SCREEN_AFTER {
                 let suffix = part.map_or(String::new(), |p| format!("-{p}"));
@@ -432,12 +448,8 @@ fn check_part(
 /// Runs [`bench`] for `--bench --fixed`, on a fresh copy of the project and
 /// those beside it, so that nothing a run saves changes the next run.
 fn bench_fixed(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, AnyError> {
-    let name = project
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("PROJECT must be a project folder")?;
-    let scratch = std::env::temp_dir().join(format!("smilebasic-check-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&scratch);
+    let name = project_name(project)?;
+    let scratch = empty_scratch_folder();
     let outcome = copy_others(project, name, &scratch)
         .and_then(|()| copy_dir(project, &scratch.join(name)))
         .and_then(|()| bench(options, &scratch.join(name), program));
@@ -506,10 +518,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
         window,
         ..
     } = options;
-    let name = project
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("PROJECT must be a project folder")?;
+    let name = project_name(project)?;
     let parent = project.parent().ok_or("PROJECT must be a project folder")?;
     let mut m = machine(parent.to_path_buf())?;
     if fixed {
@@ -530,21 +539,8 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
     if !sb_runtime::BUILD_OPTIONS.is_empty() {
         println!("build {}", sb_runtime::BUILD_OPTIONS);
     }
-    // The cost of making the program's native code.
     #[cfg(feature = "jit")]
-    {
-        let s = sb_runtime::jit::stats();
-        println!(
-            "jit regions {} entries {} bytes {} refused {} compile_us {:.1} most_us {:.1} setup_us {:.1}",
-            s.regions,
-            s.entries,
-            s.bytes,
-            s.refused,
-            s.nanos as f64 / 1000.0,
-            s.most_nanos as f64 / 1000.0,
-            s.setup_nanos as f64 / 1000.0
-        );
-    }
+    print_jit_cost();
     let mut wav = start_wav(&mut m, options.wav.as_deref())?;
     let mut outcome = Outcome::default();
     let shots = png.and_then(Path::parent).unwrap_or(Path::new("."));
@@ -725,33 +721,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
         println!("still running");
     }
     if std::env::var_os("BENCH_DEBUG").is_some() {
-        let order = m.rt.sprites.draw_order();
-        let area: f64 = order
-            .iter()
-            .map(|(i, p)| {
-                let s = &m.rt.sprites.list()[*i];
-                f64::from(s.w * s.h) * (p.scale.0 * p.scale.1).abs()
-            })
-            .sum();
-        println!("{} sprites shown, {area} pixels", order.len());
-        // The large ones, which take the time.
-        for (i, p) in &order {
-            let s = &m.rt.sprites.list()[*i];
-            let a = f64::from(s.w * s.h) * (p.scale.0 * p.scale.1).abs();
-            if a > 20000.0 {
-                println!(
-                    "sprite {i}: page {} {}x{} attr {:x} color {:08x} layer {} scale {:?} area {a}",
-                    s.page, s.w, s.h, s.attr, p.color, p.layer, p.scale
-                );
-            }
-        }
-        for (i, t) in m.rt.text.iter().enumerate() {
-            println!("text {i}: visible {} size {:?}", t.visible, t.size());
-        }
-        for l in 0..8 {
-            println!("layer {l}: {:?} {:?}", m.rt.layers[l], m.rt.filters[l]);
-        }
-        println!("mode {:?}", m.rt.screen_mode());
+        print_debug_state(&m);
     }
     print_rows(&console_rows(&m));
     if let Some(wav) = wav {
@@ -761,6 +731,57 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
         save_screen(&mut m, file)?;
     }
     Ok(outcome.status(&mut m))
+}
+
+/// Prints the cost of making the program's native code.
+#[cfg(feature = "jit")]
+fn print_jit_cost() {
+    let s = sb_runtime::jit::stats();
+    println!(
+        "jit regions {} entries {} bytes {} refused {} compile_us {:.1} most_us {:.1} setup_us {:.1}",
+        s.regions,
+        s.entries,
+        s.bytes,
+        s.refused,
+        s.nanos as f64 / 1000.0,
+        s.most_nanos as f64 / 1000.0,
+        s.setup_nanos as f64 / 1000.0
+    );
+}
+
+/// The drawn area, in pixels, above which `BENCH_DEBUG` lists a sprite:
+/// the large sprites take the time.
+const LARGE_SPRITE_AREA: f64 = 20000.0;
+
+/// Prints the sprites, text screens, layers and screen mode at the end of a
+/// `BENCH_DEBUG` run.
+fn print_debug_state(m: &Machine) {
+    let order = m.rt.sprites.draw_order();
+    let area: f64 = order
+        .iter()
+        .map(|(i, p)| {
+            let s = &m.rt.sprites.list()[*i];
+            f64::from(s.w * s.h) * (p.scale.0 * p.scale.1).abs()
+        })
+        .sum();
+    println!("{} sprites shown, {area} pixels", order.len());
+    for (i, p) in &order {
+        let s = &m.rt.sprites.list()[*i];
+        let a = f64::from(s.w * s.h) * (p.scale.0 * p.scale.1).abs();
+        if a > LARGE_SPRITE_AREA {
+            println!(
+                "sprite {i}: page {} {}x{} attr {:x} color {:08x} layer {} scale {:?} area {a}",
+                s.page, s.w, s.h, s.attr, p.color, p.layer, p.scale
+            );
+        }
+    }
+    for (i, t) in m.rt.text.iter().enumerate() {
+        println!("text {i}: visible {} size {:?}", t.visible, t.size());
+    }
+    for l in 0..8 {
+        println!("layer {l}: {:?} {:?}", m.rt.layers[l], m.rt.filters[l]);
+    }
+    println!("mode {:?}", m.rt.screen_mode());
 }
 
 /// One action of a --play script, at a frame.
@@ -1036,10 +1057,7 @@ fn play(
 ) -> Result<u8, AnyError> {
     let steps = read_script((script != "-").then_some(script))?;
     std::fs::create_dir_all(dir)?;
-    let name = project
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("PROJECT must be a project folder")?;
+    let name = project_name(project)?;
     let parent = project.parent().ok_or("PROJECT must be a project folder")?;
     let mut m = machine(parent.to_path_buf())?;
     // The script's text is typed as written, without the case swap that
@@ -1100,14 +1118,23 @@ fn write_wav(wav: &mut Option<Wav>, samples: &[f32]) -> Result<(), AnyError> {
     Ok(())
 }
 
-/// KEYBOARD's bit for a modifier key's USB usage: Windows key, Shift,
-/// Ctrl and Alt, left (0xE0-0xE3) or right (0xE4-0xE7).
+/// KEYBOARD's bit for the Windows key.
+const MODIFIER_WINDOWS: u32 = 1;
+/// KEYBOARD's bit for Shift.
+const MODIFIER_SHIFT: u32 = 1 << 1;
+/// KEYBOARD's bit for Ctrl.
+const MODIFIER_CTRL: u32 = 1 << 2;
+/// KEYBOARD's bit for Alt.
+const MODIFIER_ALT: u32 = 1 << 3;
+
+/// KEYBOARD's bit for a modifier key's USB usage, left (0xE0-0xE3) or right
+/// (0xE4-0xE7).
 fn modifier(usage: u8) -> u32 {
     match usage {
-        0xE0 | 0xE4 => 1 << 2,
-        0xE1 | 0xE5 => 1 << 1,
-        0xE2 | 0xE6 => 1 << 3,
-        0xE3 | 0xE7 => 1,
+        0xE0 | 0xE4 => MODIFIER_CTRL,
+        0xE1 | 0xE5 => MODIFIER_SHIFT,
+        0xE2 | 0xE6 => MODIFIER_ALT,
+        0xE3 | 0xE7 => MODIFIER_WINDOWS,
         _ => 0,
     }
 }

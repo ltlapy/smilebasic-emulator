@@ -34,7 +34,7 @@ pub fn compile(
         host,
         direct,
         unparsed,
-        first: program.stmts.first().map(|s| (s.line, s.col)),
+        first_stmt_at: program.stmts.first().map(|s| (s.line, s.col)),
         slot,
         out: Compiled::default(),
         global_slots: HashMap::new(),
@@ -42,7 +42,7 @@ pub fn compile(
         global_used: HashSet::new(),
         global_made: Vec::new(),
         global_first: HashMap::new(),
-        def_at: 0,
+        def_stmt_index: 0,
         strict_at: None,
         constants: HashMap::new(),
         pending: Vec::new(),
@@ -59,7 +59,7 @@ pub fn compile(
         constant_bytes: Cell::new(0),
         string_words: Cell::new(0),
     };
-    c.prepare(program);
+    c.pre_pass(program);
     // The first error in top-level code, and the statement it is in.
     let mut failed = None;
     for (i, stmt) in program.stmts.iter().enumerate() {
@@ -89,7 +89,7 @@ pub fn compile(
                 return Err(e);
             }
             c.line = stmt.line;
-            c.def_at = i;
+            c.def_stmt_index = i;
             c.def(def, (stmt.line, stmt.col))?;
         }
     }
@@ -144,13 +144,13 @@ struct Compiler<'h> {
     /// only those from before it: SmileBASIC compiles in one pass.
     global_first: HashMap<Key, usize>,
     /// The index of the DEF being compiled in the top-level statements.
-    def_at: usize,
+    def_stmt_index: usize,
     direct: bool,
     /// The error the program's [`StmtKind::Unparsed`] gives.
     unparsed: Option<Error>,
-    /// The start of the first statement: in DIRECT mode, the commands of
-    /// DIRECT mode work only there, at the start of the line.
-    first: Option<(u32, u32)>,
+    /// In DIRECT mode, the commands of DIRECT mode work only at this
+    /// statement, at the start of the line.
+    first_stmt_at: Option<(u32, u32)>,
     /// The program slot compiled for, `#_SLOT`.
     slot: i32,
     /// The position of the first OPTION STRICT. From there on, inside and
@@ -301,7 +301,7 @@ impl Compiler<'_> {
 
     /// The errors it finds wait in [`Compiler::pending`]: the first of the
     /// DEF lines, and the first of [`Self::walk_source_order`].
-    fn prepare(&mut self, program: &Program) {
+    fn pre_pass(&mut self, program: &Program) {
         let mut failed = None;
         for stmt in &program.stmts {
             (self.line, self.col) = (stmt.line, stmt.col);
@@ -359,7 +359,7 @@ impl Compiler<'_> {
                 .iter()
                 .filter(|s| !matches!(s.kind, StmtKind::Def(_)));
             for stmt in top {
-                first_seen(std::slice::from_ref(stmt), &mut self.first_seen);
+                collect_first_seen(std::slice::from_ref(stmt), &mut self.first_seen);
             }
         }
 
@@ -630,6 +630,14 @@ impl Compiler<'_> {
         self.out.code.len() - 1
     }
 
+    /// Removes the code emitted from `start` on.
+    fn truncate_code(&mut self, start: usize) {
+        self.out.code.truncate(start);
+        self.out.lines.truncate(start);
+        self.out.cols.truncate(start);
+        self.out.starts.truncate(start);
+    }
+
     /// Marks `at` as the start of a statement, if anything was emitted
     /// there.
     fn mark_start(&mut self, at: usize) {
@@ -693,10 +701,7 @@ impl Compiler<'_> {
         let (Some(&first), Some(&last)) = (constant.first(), constant.last()) else {
             return false;
         };
-        self.out.code.truncate(start);
-        self.out.lines.truncate(start);
-        self.out.cols.truncate(start);
-        self.out.starts.truncate(start);
+        self.truncate_code(start);
         let op = if shift {
             Op::ShiftConstant {
                 first: self.string_const(vec![first]),
@@ -789,12 +794,12 @@ impl Compiler<'_> {
         if self.strict_at.is_some() {
             self.global_made.push(false);
         }
-        let int = self.starts_int(&k);
+        let starts_int = self.starts_int(&k);
         self.out.globals.push(VarInfo {
             name: k.0.clone(),
             suffix: k.1,
             array: false,
-            int,
+            starts_int,
         });
         self.global_slots.insert(k, slot);
         slot
@@ -804,7 +809,7 @@ impl Compiler<'_> {
         if let Some(&slot) = self.def.as_ref().expect("inside a DEF").locals.get(&k) {
             return slot;
         }
-        let int = self.starts_int(&k);
+        let starts_int = self.starts_int(&k);
         let def = self.def.as_mut().expect("inside a DEF");
         let info = &mut self.out.defs[def.index as usize];
         let slot = info.locals.len() as u32;
@@ -812,7 +817,7 @@ impl Compiler<'_> {
             name: k.0.clone(),
             suffix: k.1,
             array: false,
-            int,
+            starts_int,
         });
         def.locals.insert(k, slot);
         slot
@@ -831,7 +836,11 @@ impl Compiler<'_> {
             }
             if let Some(&slot) = self.global_slots.get(&k) {
                 // A DEF sees the globals that top-level code above it made.
-                if self.global_first.get(&k).is_some_and(|&i| i < self.def_at) {
+                if self
+                    .global_first
+                    .get(&k)
+                    .is_some_and(|&i| i < self.def_stmt_index)
+                {
                     return Ok(Slot::Global(slot));
                 }
             }
@@ -861,7 +870,7 @@ impl Compiler<'_> {
                 // A DEF sees the globals that top-level code above it
                 // made. By now that code is compiled past this DEF.
                 None => match self.global_first.get(&k) {
-                    Some(&i) if i < self.def_at => {
+                    Some(&i) if i < self.def_stmt_index => {
                         self.global_slots.get(&k).map(|&n| Slot::Global(n))
                     }
                     _ => None,
@@ -877,7 +886,7 @@ impl Compiler<'_> {
                 // A DEF makes no global.
                 if self.def.is_none() {
                     self.global_used.insert(k);
-                    self.made(slot);
+                    self.mark_exists(slot);
                 }
                 return Ok(slot);
             }
@@ -893,7 +902,7 @@ impl Compiler<'_> {
                 Slot::Global(n)
             }
         };
-        self.made(slot);
+        self.mark_exists(slot);
         Ok(slot)
     }
 
@@ -906,8 +915,7 @@ impl Compiler<'_> {
         }
     }
 
-    /// Records that `slot` exists from here on (see [`Self::exists`]).
-    fn made(&mut self, slot: Slot) {
+    fn mark_exists(&mut self, slot: Slot) {
         if let Slot::Global(n) = slot {
             self.global_made[n as usize] = true;
         }
@@ -1000,9 +1008,7 @@ impl Compiler<'_> {
                 // The arguments before the name (checked on hardware).
                 self.args(args)?;
                 self.expr(name)?;
-                // [args.., name] -> [name, args..]
-                self.reorder(args.len() + 1);
-                self.reorder(args.len());
+                self.move_top_below(args.len());
                 let want = Want::Outs(outs.len() as u8);
                 self.emit(Op::CallDyn {
                     argc: args.len() as u8,
@@ -1330,7 +1336,7 @@ impl Compiler<'_> {
             None => Slot::Global(self.global_slot(k)),
         };
         if self.strict_at.is_some() {
-            self.made(slot);
+            self.mark_exists(slot);
         }
         if d.dims.is_some() {
             let info = match slot {
@@ -1346,7 +1352,7 @@ impl Compiler<'_> {
             let array = d.dims.is_some();
             self.emit(Op::Declare { slot, array });
         }
-        let elem = elem_type(d.var.suffix, self.var_info(slot).int);
+        let elem = elem_type(d.var.suffix, self.var_info(slot).starts_int);
         match (&d.dims, &d.init) {
             // With sizes, they decide the array's shape and the values
             // fill it from the start (as in the reference's
@@ -1411,7 +1417,7 @@ impl Compiler<'_> {
     fn declaring_ref(&mut self, v: &Var) -> Result<()> {
         let k = key(v);
         let global = match (&self.def, self.global_first.get(&k)) {
-            (Some(_), Some(&i)) if i < self.def_at => self.global_slots.get(&k).copied(),
+            (Some(_), Some(&i)) if i < self.def_stmt_index => self.global_slots.get(&k).copied(),
             _ => None,
         };
         if let Some(n) =
@@ -1491,7 +1497,7 @@ impl Compiler<'_> {
         // error, and nothing on the line runs.
         if self.direct
             && DIRECT_COMMANDS.contains(&full.as_str())
-            && (self.col != 1 || self.first != Some((self.line, self.col)))
+            && (self.col != 1 || self.first_stmt_at != Some((self.line, self.col)))
         {
             return Err(err(ErrorKind::SyntaxError, "only at the start of the line"));
         }
@@ -1642,7 +1648,10 @@ impl Compiler<'_> {
     fn fail_after(&mut self, kind: ErrorKind, name: &str, args: &[Option<Expr>]) -> Result<()> {
         self.args(args)?;
         let name = self.string_const(name.encode_utf16().collect());
-        self.emit(Op::Fail(kind, Some(name)));
+        self.emit(Op::Fail {
+            kind,
+            command: Some(name),
+        });
         Ok(())
     }
 
@@ -1748,6 +1757,13 @@ impl Compiler<'_> {
             2 => _ = self.emit(Op::Swap),
             n => _ = self.emit(Op::Reverse(n as u32)),
         }
+    }
+
+    /// Moves the top value below the `n` values under it:
+    /// `[a.., top]` becomes `[top, a..]`.
+    fn move_top_below(&mut self, n: usize) {
+        self.reorder(n + 1);
+        self.reorder(n);
     }
 
     // ---- lvalues ----
@@ -1927,8 +1943,10 @@ impl Compiler<'_> {
             true => Vec::new(),
             false => self.check_chain(&links, first),
         };
-        // The code address where each link's right operand starts, and
-        // whether constants were checked outside the link.
+        struct SavedLink {
+            rhs_at: usize,
+            outer_checked: bool,
+        }
         let mut down = Vec::with_capacity(links.len());
         for (i, link) in links.iter().enumerate() {
             let outer = self.constant_checked;
@@ -1955,13 +1973,16 @@ impl Compiler<'_> {
                 }
                 _ => unreachable!("chain links are operators and indexing"),
             }
-            down.push((at, outer));
+            down.push(SavedLink {
+                rhs_at: at,
+                outer_checked: outer,
+            });
         }
         self.expr(first)?;
-        for (link, (at, outer)) in links.iter().zip(down).rev() {
+        for (link, start) in links.iter().zip(down).rev() {
             match link {
                 Expr::Index { indices, .. } => {
-                    self.constant_checked = outer;
+                    self.constant_checked = start.outer_checked;
                     self.indices(indices)?;
                     self.emit(Op::Index(indices.len() as u8));
                 }
@@ -1971,7 +1992,7 @@ impl Compiler<'_> {
                     rhs,
                     ..
                 } => {
-                    self.constant_checked = outer;
+                    self.constant_checked = start.outer_checked;
                     let (jump, otherwise) = match op {
                         BinaryOp::LogicalAnd => (Op::JumpIfFalse(0), 0),
                         _ => (Op::JumpIfTrue(0), 1),
@@ -1987,7 +2008,7 @@ impl Compiler<'_> {
                     self.patch(end, here);
                 }
                 Expr::Binary { op, .. } => {
-                    self.put_back_two(at);
+                    self.put_back_two(start.rhs_at);
                     self.emit(Op::Binary(*op));
                 }
                 _ => unreachable!("chain links are operators and indexing"),
@@ -2089,7 +2110,7 @@ impl Compiler<'_> {
 
     /// A constant string in the code takes its characters and its length.
     fn take_string_words(&self, chars: usize) {
-        let length = if chars >> 15 == 0 { 1 } else { 2 };
+        let length = if chars < ONE_WORD_LENGTH_LIMIT { 1 } else { 2 };
         self.string_words
             .set(self.string_words.get() + chars + length);
     }
@@ -2171,7 +2192,10 @@ impl Compiler<'_> {
             ("FREEMEM", _) => {
                 self.args(args)?;
                 let name = self.string_const(full.encode_utf16().collect());
-                self.emit(Op::Fail(ErrorKind::WrongNumberOfArguments, Some(name)));
+                self.emit(Op::Fail {
+                    kind: ErrorKind::WrongNumberOfArguments,
+                    command: Some(name),
+                });
                 return Ok(());
             }
             // `Wrong number of OUT arguments (VSYNC)` (TEST62).
@@ -2213,10 +2237,7 @@ impl Compiler<'_> {
                     _ => None,
                 };
                 if let Some(op) = op {
-                    self.out.code.truncate(start);
-                    self.out.lines.truncate(start);
-                    self.out.cols.truncate(start);
-                    self.out.starts.truncate(start);
+                    self.truncate_code(start);
                     self.emit(op);
                     return Ok(());
                 }
@@ -2275,7 +2296,7 @@ impl Compiler<'_> {
             for v in params.iter().chain(outs) {
                 self.first_seen.entry(key(v)).or_insert(at);
             }
-            first_seen(&def.body, &mut self.first_seen);
+            collect_first_seen(&def.body, &mut self.first_seen);
         }
         for v in params.iter().chain(outs) {
             let k = key(v);
@@ -2346,6 +2367,9 @@ const CONSTANT_BYTES: usize = 4 << 20;
 /// The bytes each constant takes, besides the characters of a computed
 /// string.
 const CONSTANT_NODE_BYTES: usize = 24;
+/// A constant string shorter than this stores its length in one word of
+/// code, and a longer one in two.
+const ONE_WORD_LENGTH_LIMIT: usize = 1 << 15;
 /// The code memory of a program slot, in 16-bit words.
 const SLOT_CODE_WORDS: usize = 4 << 20;
 /// The code memory of DIRECT mode, in 16-bit words.
@@ -2401,7 +2425,7 @@ fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
 
 /// Records where each variable in `stmts` is first seen: the statement
 /// it is in, innermost, not descending into DEFs.
-fn first_seen(stmts: &[Stmt], seen: &mut HashMap<Key, (u32, u32)>) {
+fn collect_first_seen(stmts: &[Stmt], seen: &mut HashMap<Key, (u32, u32)>) {
     let (mut used, mut declared) = (Vec::new(), Vec::new());
     for stmt in stmts {
         stmt_vars(stmt, &mut used, &mut declared);
@@ -2410,7 +2434,7 @@ fn first_seen(stmts: &[Stmt], seen: &mut HashMap<Key, (u32, u32)>) {
         }
         if !matches!(stmt.kind, StmtKind::Def(_)) {
             for body in child_blocks(&stmt.kind) {
-                first_seen(body, seen);
+                collect_first_seen(body, seen);
             }
         }
     }

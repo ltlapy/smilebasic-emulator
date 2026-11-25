@@ -33,7 +33,7 @@ pub struct Wave {
     pub looped: (usize, usize),
     /// Whether BEEP's note loops it.
     pub beep_loop: bool,
-    /// The length of BEEP's note, in [`BEEP_TICKS_A_SECOND`]; `None` for
+    /// The length of BEEP's note, in [`BEEP_TICKS_PER_SECOND`]; `None` for
     /// as long as nothing stops it. 0 plays nothing.
     pub beep_ticks: Option<u32>,
     /// Whether BEEP plays one such note after another until stopped.
@@ -90,12 +90,12 @@ pub const EIGHT_BIT_RATE: f64 = 28160.0;
 
 /// BEEP counts its notes of a user waveform in ticks; this many make a
 /// second.
-pub const BEEP_TICKS_A_SECOND: u32 = 192;
+pub const BEEP_TICKS_PER_SECOND: u32 = 192;
 
 /// BEEP's note for a waveform of `samples` at `rate`: as long as a pass of
 /// it, cut to whole ticks, so too short a waveform has no note.
 pub fn beep_ticks(samples: usize, rate: u32) -> u32 {
-    (samples as u64 * u64::from(BEEP_TICKS_A_SECOND) / u64::from(rate.max(1)))
+    (samples as u64 * u64::from(BEEP_TICKS_PER_SECOND) / u64::from(rate.max(1)))
         .min(u64::from(u32::MAX)) as u32
 }
 
@@ -207,7 +207,7 @@ pub fn unset(bank: &Bank) -> Option<Wave> {
         cycle: 0.0,
         looped: (info.loop_start.map_or(0, |s| s as usize), end),
         beep_loop: info.loop_start.is_some(),
-        beep_ticks: Some(BEEP_TICKS_A_SECOND),
+        beep_ticks: Some(BEEP_TICKS_PER_SECOND),
         beep_repeats: false,
         envelope: Envelope {
             attack: v(e.attack),
@@ -336,7 +336,7 @@ pub struct Voice {
     steps: [f32; 2],
     targets: [f32; 2],
     /// Samples into the envelope's step.
-    in_tick: usize,
+    in_step: usize,
     /// The position has gone around the loop: the sample before its start
     /// is the last sample of the loop.
     wrapped: bool,
@@ -381,7 +381,7 @@ impl Voice {
             levels: [0.0; 2],
             steps: [0.0; 2],
             targets: [0.0; 2],
-            in_tick: 0,
+            in_step: 0,
             wrapped: false,
             done: false,
         };
@@ -484,8 +484,8 @@ impl Voice {
             // sample (TEST40).
             self.levels = self.targets;
         }
-        let tick = sampler::TICK as f32;
-        self.steps = [0, 1].map(|i| (self.targets[i] - self.levels[i]) / tick);
+        let step_samples = sampler::STEP_SAMPLES as f32;
+        self.steps = [0, 1].map(|i| (self.targets[i] - self.levels[i]) / step_samples);
         self.step = match cents + self.porta {
             0.0 => self.base_step,
             cents => self.base_step * f64::from(2f32.powf(cents / 1200.0)),
@@ -507,10 +507,10 @@ impl Voice {
         let n = left.len().min(right.len());
         let mut at = 0;
         while at < n {
-            if self.in_tick == 0 {
+            if self.in_step == 0 {
                 self.tick();
             }
-            let run = (sampler::TICK - self.in_tick).min(n - at);
+            let run = (sampler::STEP_SAMPLES - self.in_step).min(n - at);
             let (mut pos, mut levels, mut wrapped) = (self.pos, self.levels, self.wrapped);
             let (step, steps, loops) = (self.step, self.steps, self.loops);
             let outs = left[at..at + run].iter_mut().zip(&mut right[at..at + run]);
@@ -521,7 +521,7 @@ impl Voice {
                         wrapped = true;
                     } else {
                         (self.pos, self.levels, self.wrapped) = (pos, levels, wrapped);
-                        self.in_tick = (self.in_tick + k + 1) % sampler::TICK;
+                        self.in_step = (self.in_step + k + 1) % sampler::STEP_SAMPLES;
                         self.done = true;
                         return;
                     }
@@ -534,9 +534,9 @@ impl Voice {
                 levels[1] += steps[1];
             }
             (self.pos, self.levels, self.wrapped) = (pos, levels, wrapped);
-            self.in_tick = (self.in_tick + run) % sampler::TICK;
+            self.in_step = (self.in_step + run) % sampler::STEP_SAMPLES;
             at += run;
-            if self.in_tick == 0 {
+            if self.in_step == 0 {
                 // Land exactly on the step's level, which may be silence.
                 self.levels = self.targets;
                 if self.envelope.done() && self.levels == [0.0; 2] {
@@ -559,10 +559,10 @@ impl Voice {
         }
         let (start, end) = self.looped;
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-            if self.in_tick == 0 {
+            if self.in_step == 0 {
                 self.tick();
             }
-            self.in_tick = (self.in_tick + 1) % sampler::TICK;
+            self.in_step = (self.in_step + 1) % sampler::STEP_SAMPLES;
             if self.pos >= end as f64 {
                 if self.loops {
                     self.pos = start as f64 + (self.pos - end as f64) % (end - start) as f64;
@@ -578,7 +578,7 @@ impl Voice {
             self.pos += self.step;
             self.levels[0] += self.steps[0];
             self.levels[1] += self.steps[1];
-            if self.in_tick == 0 {
+            if self.in_step == 0 {
                 // Land exactly on the step's level, which may be silence.
                 self.levels = self.targets;
                 if self.envelope.done() && self.levels == [0.0; 2] {
@@ -690,7 +690,7 @@ pub(crate) mod tests {
                 let bits = |v: &[f32]| v.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
                 assert_eq!(bits(&l), bits(&lw), "round {round} block {block}");
                 assert_eq!(bits(&r), bits(&rw), "round {round} block {block}");
-                assert_eq!((a.pos, a.in_tick, a.done), (b.pos, b.in_tick, b.done));
+                assert_eq!((a.pos, a.in_step, a.done), (b.pos, b.in_step, b.done));
                 assert_eq!((a.levels, a.wrapped), (b.levels, b.wrapped));
                 for v in [&mut a, &mut b] {
                     match block {
@@ -799,14 +799,14 @@ pub(crate) mod tests {
         };
         let mut cents = Vec::new();
         for _ in 0..26 {
-            peak(&mut v, sampler::TICK);
+            peak(&mut v, sampler::STEP_SAMPLES);
             cents.push(1200.0 * (v.step / steady).log2());
         }
         let top = cents.iter().cloned().fold(f64::MIN, f64::max);
         let bottom = cents.iter().cloned().fold(f64::MAX, f64::min);
         assert!((top - 25.0).abs() < 0.5 && (bottom + 25.0).abs() < 0.5);
         v.lfo[0] = sampler::Lfo::default();
-        peak(&mut v, sampler::TICK);
+        peak(&mut v, sampler::STEP_SAMPLES);
         assert_eq!(v.step, steady);
     }
 
@@ -859,9 +859,9 @@ pub(crate) mod tests {
             speed: 127,
             delay: 4800,
         };
-        peak(&mut v, 4800 - sampler::TICK);
+        peak(&mut v, 4800 - sampler::STEP_SAMPLES);
         assert_eq!(v.step, steady);
-        peak(&mut v, 4 * sampler::TICK);
+        peak(&mut v, 4 * sampler::STEP_SAMPLES);
         assert_ne!(v.step, steady);
     }
 
@@ -929,7 +929,7 @@ pub(crate) mod tests {
         assert_eq!(w.base_note, 57);
         assert_eq!(w.rate, Some(28160.0));
         assert_eq!(w.looped, (0, 4));
-        assert_eq!(w.beep_ticks, Some(BEEP_TICKS_A_SECOND));
+        assert_eq!(w.beep_ticks, Some(BEEP_TICKS_PER_SECOND));
         assert!(w.beep_loop && !w.beep_repeats);
         let none = Bank {
             instruments: Vec::new(),

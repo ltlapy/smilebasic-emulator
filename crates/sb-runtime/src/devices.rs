@@ -42,8 +42,8 @@ fn zeros(elem: ElemType, dims: Vec<usize>) -> Value {
     Value::Array(Rc::new(RefCell::new(Array::new(elem, dims))))
 }
 
-/// The camera and Toy-Con take controller 1 or 2, as an index.
-fn pad(v: &Value) -> Result<usize> {
+/// The camera and Toy-Con take controller 1 or 2.
+fn controller_index(v: &Value) -> Result<usize> {
     Ok(in_range("controller", v, 1..=2)? as usize - 1)
 }
 
@@ -59,6 +59,12 @@ fn unrecognized(outs: usize, allowed: &[usize]) -> Result<Vec<Value>> {
 }
 
 impl Runtime {
+    /// Whether the operation style holds the controllers sideways or
+    /// upright, so that each one has one side.
+    fn controller_has_one_side(&self) -> bool {
+        matches!(self.input.style.1, 2 | 3)
+    }
+
     /// The Toy-Con that XCTRLSTYLE set up for a controller must be one of
     /// `types` on either side: Illegal control style otherwise (checked
     /// on hardware without any Toy-Con set up). SmileBASIC 4 names the
@@ -89,7 +95,7 @@ impl Runtime {
             // six, image transfer (1, on controller 1 only) four, moment (2)
             // three.
             (Command::Irstart, Want::Outs(0), 2..) => {
-                let pad = pad(&args[0])?;
+                let pad = controller_index(&args[0])?;
                 if !self.input.ir_allowed {
                     return Err(ErrorKind::IrCameraNotAvailable.into());
                 }
@@ -115,14 +121,14 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Irstop, Want::Outs(0), 1) => {
-                let pad = pad(&args[0])?;
+                let pad = controller_index(&args[0])?;
                 if self.input.ir_state[pad] != 0 {
                     self.input.ir_state[pad] = 1;
                 }
                 Ok(vec![])
             }
             (Command::Irstate, Want::Value, 1) => {
-                let pad = pad(&args[0])?;
+                let pad = controller_index(&args[0])?;
                 Ok(ints(&[self.input.ir_state[pad]]))
             }
             // A camera that was never started is not available, and mode 1
@@ -130,7 +136,7 @@ impl Runtime {
             // 48-row array. A camera stopped by IRSTOP returns no entries,
             // without an error.
             (Command::Irread, Want::Outs(4), 1) => {
-                let pad = pad(&args[0])?;
+                let pad = controller_index(&args[0])?;
                 let count = match self.input.ir_state[pad] {
                     0 => return Err(ErrorKind::IrCameraNotAvailable.into()),
                     3 => return Err(ErrorKind::IllegalIrCameraMode.into()),
@@ -186,8 +192,7 @@ impl Runtime {
                     }
                     _ => return Err(no_form()),
                 };
-                // Held sideways or upright, a controller has one side.
-                let one_side = matches!(self.input.style.1, 2 | 3);
+                let one_side = self.controller_has_one_side();
                 let v = &mut self.input.vibration[id];
                 let set = (state, frames.filter(|_| state != 0));
                 match (side, one_side) {
@@ -200,7 +205,7 @@ impl Runtime {
             (Command::Vibrate, Want::Value, 1..=2) => {
                 let id = in_range("controller", &args[0], 1..=4)? as usize - 1;
                 let [(left, _), (right, _)] = self.input.vibration[id];
-                let one_side = matches!(self.input.style.1, 2 | 3);
+                let one_side = self.controller_has_one_side();
                 let state = match args
                     .get(1)
                     .map(|s| in_range("side", s, 0..=1))
@@ -218,28 +223,28 @@ impl Runtime {
             }
             // Toy-Con are set up but never recognized.
             (Command::Tcpiano, Want::Outs(_), 1) => {
-                self.toycon_set(pad(&args[0])?, &[1])?;
+                self.toycon_set(controller_index(&args[0])?, &[1])?;
                 unrecognized(outs, &[1, 2, 3, 4])
             }
             // TCHOUSE and TCROBOT check the Toy-Con before the OUT count;
             // TCVISOR after it.
             (Command::Tchouse, Want::Outs(_), 1) => {
-                self.toycon_set(pad(&args[0])?, &[2])?;
+                self.toycon_set(controller_index(&args[0])?, &[2])?;
                 if outs != 2 {
                     return Err(no_form());
                 }
                 Ok(vec![Value::Int(0), zeros(ElemType::Real, vec![3, 4])])
             }
             (Command::Tcbike, Want::Outs(_), 1) => {
-                self.toycon_set(pad(&args[0])?, &[3])?;
+                self.toycon_set(controller_index(&args[0])?, &[3])?;
                 unrecognized(outs, &[1, 5])
             }
             (Command::Tcfishing, Want::Outs(_), 1) => {
-                self.toycon_set(pad(&args[0])?, &[4])?;
+                self.toycon_set(controller_index(&args[0])?, &[4])?;
                 unrecognized(outs, &[1, 6])
             }
             (Command::Tcrobot, Want::Outs(_), 1) => {
-                self.toycon_set(pad(&args[0])?, &[5])?;
+                self.toycon_set(controller_index(&args[0])?, &[5])?;
                 if outs != 2 && outs != 5 {
                     return Err(no_form());
                 }
@@ -248,23 +253,23 @@ impl Runtime {
                 Ok(out)
             }
             (Command::Tcvisor, Want::Outs(4), 1) => {
-                self.toycon_set(pad(&args[0])?, &[6])?;
+                self.toycon_set(controller_index(&args[0])?, &[6])?;
                 unrecognized(outs, &[4])
             }
             (Command::Tccar, Want::Outs(_), 1) => {
-                self.toycon_set(pad(&args[0])?, &[7, 10])?;
+                self.toycon_set(controller_index(&args[0])?, &[7, 10])?;
                 unrecognized(outs, &[1, 3, 10])
             }
             (Command::Tcplane, Want::Outs(_), 1) => {
-                self.toycon_set(pad(&args[0])?, &[8, 10])?;
+                self.toycon_set(controller_index(&args[0])?, &[8, 10])?;
                 unrecognized(outs, &[1, 4])
             }
             (Command::Tcsubm, Want::Outs(_), 1) => {
-                self.toycon_set(pad(&args[0])?, &[9, 10])?;
+                self.toycon_set(controller_index(&args[0])?, &[9, 10])?;
                 unrecognized(outs, &[1, 4])
             }
             (Command::Tcvehicle, Want::Value, 1) => {
-                let pad = pad(&args[0])?;
+                let pad = controller_index(&args[0])?;
                 if self.input.style.1 != TOYCON_STYLE {
                     self.toycon_set(pad, &[])?;
                 }

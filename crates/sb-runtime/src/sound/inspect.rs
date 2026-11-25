@@ -37,9 +37,9 @@ pub struct TrackInfo {
     /// BGMVOL, and BGMPITCH in cents.
     pub volume: i32,
     pub pitch: i32,
-    /// Quarter notes per minute, and ticks per quarter note.
+    /// Quarter notes per minute.
     pub tempo: u32,
-    pub quarter: u32,
+    pub ticks_per_quarter: u32,
     /// Ticks played since the song started.
     pub ticks: u64,
     /// The MML variables $0 to $7, as the song has them now.

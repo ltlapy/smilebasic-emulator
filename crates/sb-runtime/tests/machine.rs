@@ -1497,7 +1497,7 @@ fn debug_machine() -> Machine {
 
 /// Continues the stopped program from the debugger and runs until it
 /// stops or ends.
-fn debug(m: &mut Machine, how: sb_runtime::machine::Resume) {
+fn resume_until_stop(m: &mut Machine, how: sb_runtime::machine::Resume) {
     assert!(m.debug(how));
     for _ in 0..100 {
         m.frame();
@@ -1537,11 +1537,11 @@ fn breakpoints_stop_before_their_line() {
     assert_eq!(global(&m, "A"), Some("Int(1)".to_string()));
     assert_eq!(global(&m, "B"), Some("Real(0.0)".to_string()));
     // A loop within the line stops there once; one over lines, each time.
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 4)));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 4)));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 9)));
     let calls = m.calls();
     assert_eq!(calls.len(), 2);
@@ -1568,12 +1568,12 @@ fn debugger_steps() {
     enter(&mut m, "RUN");
     assert_eq!(m.paused_at(), Some((0, 2)));
     // Over the call; the line it stops before is named.
-    debug(&mut m, Resume::Step(Step::Over));
+    resume_until_stop(&mut m, Resume::Step(Step::Over));
     assert_eq!(m.paused_at(), Some((0, 3)));
     assert_eq!(rows(&m)[rows(&m).len() - 2], "Break on 0:3");
 
     enter(&mut m, "RUN");
-    debug(&mut m, Resume::Step(Step::Into));
+    resume_until_stop(&mut m, Resume::Step(Step::Into));
     assert_eq!(m.paused_at(), Some((0, 6)));
     let calls = m.calls();
     assert_eq!(calls.len(), 2);
@@ -1583,12 +1583,12 @@ fn debugger_steps() {
     let locals = m.frame_locals(0);
     assert_eq!(locals[0].0, "N");
     assert_eq!(format!("{:?}", locals[0].1), "Int(1)");
-    debug(&mut m, Resume::Step(Step::Over));
+    resume_until_stop(&mut m, Resume::Step(Step::Over));
     assert_eq!(m.paused_at(), Some((0, 7)));
-    debug(&mut m, Resume::Step(Step::Out));
+    resume_until_stop(&mut m, Resume::Step(Step::Out));
     assert_eq!(m.paused_at(), Some((0, 3)));
     // Out of the top level, the program runs on to its end.
-    debug(&mut m, Resume::Step(Step::Out));
+    resume_until_stop(&mut m, Resume::Step(Step::Out));
     assert_eq!(m.paused_at(), None);
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
@@ -1601,17 +1601,17 @@ fn run_to_a_line_once() {
     m.set_slot(0, src.to_string());
     enter(&mut m, "RUN");
     assert_eq!(m.stop_reason(), Some(&StopReason::Stop));
-    debug(&mut m, Resume::RunTo(0, 7));
+    resume_until_stop(&mut m, Resume::RunTo(0, 7));
     assert_eq!(m.paused_at(), Some((0, 7)));
     assert_eq!(m.stop_reason(), Some(&StopReason::RanTo));
     // The line is forgotten once reached.
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 4)));
     // ...or once something else stops the program first.
     enter(&mut m, "RUN");
-    debug(&mut m, Resume::RunTo(0, 5));
+    resume_until_stop(&mut m, Resume::RunTo(0, 5));
     assert_eq!(m.paused_at(), Some((0, 4)));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), None);
 }
 
@@ -1630,20 +1630,20 @@ fn conditional_breakpoints_stop_when_true() {
     assert_eq!(global(&m, "I"), Some("Int(4)".to_string()));
     let condition = Some("I==4 || I==8".to_string());
     assert_eq!(m.stop_reason(), Some(&StopReason::Breakpoint(condition)));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(global(&m, "I"), Some("Int(8)".to_string()));
     // A DEF's local, in a condition on one of its lines.
     m.toggle_breakpoint(0, 2);
     m.set_condition(0, 8, "N>5").unwrap();
     m.toggle_breakpoint(0, 4);
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 4)));
     // A step over a call whose breakpoint does not stop continues as a step.
     assert_eq!(m.stop_reason(), Some(&StopReason::Breakpoint(None)));
-    debug(&mut m, Resume::Step(Step::Over));
+    resume_until_stop(&mut m, Resume::Step(Step::Over));
     assert_eq!(m.paused_at(), Some((0, 5)));
     assert_eq!(m.stop_reason(), Some(&StopReason::Stepped));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 8)));
     assert_eq!(format!("{:?}", m.frame_locals(0)[0].1), "Int(7)");
     // An empty condition stops always; a failing one stops and says why.
@@ -1667,7 +1667,7 @@ fn conditional_breakpoints_stop_when_true() {
     assert!(m.jump_to(8));
     assert_eq!(m.stop_reason(), None);
     m.clear_breakpoints();
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.stop_reason(), None);
 }
 
@@ -1692,9 +1692,9 @@ fn watches_stop_where_their_value_changed() {
         to: "1".to_string(),
     };
     assert_eq!(m.stop_reason(), Some(&changed));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(global(&m, "I"), Some("Int(8)".to_string()));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 5)));
     let r = rows(&m);
     assert_eq!(r[r.len() - 2], "D[1] changed: 0 -> 5");
@@ -1704,7 +1704,7 @@ fn watches_stop_where_their_value_changed() {
     assert!(!rows(&m).iter().any(|r| r == "Break on 0:1"));
     // Removing the watches lets the program run to its end.
     m.set_changes(&[]);
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), None);
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
@@ -1718,9 +1718,9 @@ fn steps_from_the_editor_leave_the_console_to_the_program() {
     enter(&mut m, "RUN");
     assert_eq!(&rows(&m)[rows(&m).len() - 2..], ["Break on 0:1", "OK"]);
     m.toggle_editor();
-    debug(&mut m, Resume::Step(Step::Over));
+    resume_until_stop(&mut m, Resume::Step(Step::Over));
     assert_eq!(m.paused_at(), Some((0, 3)));
-    debug(&mut m, Resume::Step(Step::Over));
+    resume_until_stop(&mut m, Resume::Step(Step::Over));
     assert_eq!(m.paused_at(), Some((0, 4)));
     // No Break line or OK between what the program printed.
     assert_eq!(rows(&m).last().unwrap(), "AB");
@@ -1839,18 +1839,18 @@ fn jump_to_a_line_in_the_same_def() {
     enter(&mut m, "RUN");
     assert!(m.jump_to(3));
     assert_eq!(m.paused_at(), Some((0, 3)));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     let r = rows(&m);
     assert_eq!(&r[r.len() - 4..], ["B", "C", "Break on 0:8", "OK"]);
     // Not out of the DEF, nor onto a line without code.
     assert!(!m.jump_to(3));
     assert!(!m.jump_to(6));
     assert!(m.jump_to(7));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     let r = rows(&m);
     assert_eq!(&r[r.len() - 3..], ["C", "Break on 0:8", "OK"]);
     // Nor once the program has ended.
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert!(!m.jump_to(2));
 }
 
@@ -1871,13 +1871,13 @@ fn stopped_program_keeps_its_lines_after_edits() {
     assert!(m.lines_moved(0));
     assert!(!m.jump_to(3));
     assert!(!m.debug(Resume::RunTo(0, 3)));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 4)));
     // A new run takes the lines and the breakpoint of the text.
     enter(&mut m, "CONT");
     enter(&mut m, "RUN");
     assert!(!m.lines_moved(0));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 5)));
 }
 
@@ -1891,13 +1891,13 @@ fn steps_stop_at_the_next_line_from_anywhere() {
     m.toggle_breakpoint(0, 1);
     enter(&mut m, "RUN");
     assert_eq!(m.paused_at(), Some((0, 1)));
-    debug(&mut m, Resume::Step(Step::Into));
+    resume_until_stop(&mut m, Resume::Step(Step::Into));
     assert_eq!(m.paused_at(), Some((0, 2)));
     // From a STOP within an IF.
     m.clear_breakpoints();
     m.set_slot(0, "IF 1 THEN STOP\nA=1\nB=2".to_string());
     enter(&mut m, "RUN");
-    debug(&mut m, Resume::Step(Step::Into));
+    resume_until_stop(&mut m, Resume::Step(Step::Into));
     assert_eq!(m.paused_at(), Some((0, 2)));
 }
 
@@ -1909,14 +1909,14 @@ fn breakpoints_where_the_program_goes_on_are_passed() {
     m.toggle_breakpoint(0, 3);
     enter(&mut m, "RUN");
     assert!(m.jump_to(3));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     let r = rows(&m);
     assert_eq!(&r[r.len() - 2..], ["X", "OK"]);
     // STOP just before one.
     m.set_slot(0, "STOP\n?\"Y\"".to_string());
     m.toggle_breakpoint(0, 2);
     enter(&mut m, "RUN");
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     let r = rows(&m);
     assert_eq!(&r[r.len() - 2..], ["Y", "OK"]);
     // TRACE names the line it ran, as without breakpoints.
@@ -1959,11 +1959,11 @@ fn debugger_stops_open_the_editor() {
     let h = m.render().height();
     assert!(m.panel_at().is_some_and(|at| at < h));
     // A step keeps the editor, which follows it.
-    debug(&mut m, Resume::Step(Step::Over));
+    resume_until_stop(&mut m, Resume::Step(Step::Over));
     assert!(m.is_editing());
     assert_eq!((m.paused_at(), m.editor().cursor().0), (Some((0, 3)), 3));
     // CONT shows the screen again.
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert!(!m.is_editing());
     assert_eq!(rows(&m).last().unwrap(), "OK");
     assert_eq!(m.panel_at(), None);
@@ -2006,7 +2006,7 @@ fn steps_waiting_for_input_show_the_screen() {
     }
     assert!(m.is_editing());
     assert_eq!(m.paused_at(), Some((0, 3)));
-    debug(&mut m, Resume::Step(Step::Into));
+    resume_until_stop(&mut m, Resume::Step(Step::Into));
     assert_eq!(m.paused_at(), Some((0, 4)));
     // Over a DEF that waits for a button, once a frame has gone by.
     assert!(m.debug(Resume::Step(Step::Over)));
@@ -2053,13 +2053,13 @@ fn watches_and_changed_variables() {
     assert_eq!(shown(m.watch("A*3", None, 0)), "Int(3)");
     assert!(m.set_variable("A", Value::Int(7), None, 0));
     assert!(!m.set_variable("NOPE", Value::Int(7), None, 0));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert!(rows(&m).contains(&"7".to_string()));
     // In the DEF, its locals come before the globals.
     let frame = m.calls().last().unwrap().frame;
     assert_eq!(shown(m.watch("N+A", frame, 0)), "Int(9)");
     assert!(m.set_variable("N", Value::Int(5), frame, 0));
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     assert!(rows(&m).contains(&"50".to_string()));
 }
 
@@ -2077,7 +2077,7 @@ fn the_panel_closes_until_the_next_stop() {
     m.render();
     assert_eq!((m.panel_at(), m.editor().marks.stopped), (None, None));
     // The program is still stopped, and the next stop shows them again.
-    debug(&mut m, Resume::Step(Step::Into));
+    resume_until_stop(&mut m, Resume::Step(Step::Into));
     m.render();
     assert!(m.panel_at().is_some());
     assert_eq!(m.editor().marks.stopped, Some(1));
@@ -2107,25 +2107,26 @@ fn detached_editor_fills_the_area_it_is_given() {
         m.edit().key(keys::PAGE_DOWN);
         m.editor().cursor().0
     };
+    const MENU_BAR_HEIGHT: u32 = 12;
+    const ROW_HEIGHT: u32 = 16;
+    const RULER_AND_STATUS_ROWS: u32 = 2;
+    let rows_shown =
+        |height: u32| ((height - MENU_BAR_HEIGHT) / ROW_HEIGHT - RULER_AND_STATUS_ROWS) as usize;
     let small = page(
         &mut m,
         Area {
             size: (400, 300),
-            top: 12,
+            top: MENU_BAR_HEIGHT,
         },
     );
     let tall = page(
         &mut m,
         Area {
             size: (400, 600),
-            top: 12,
+            top: MENU_BAR_HEIGHT,
         },
     );
-    // 16-pixel rows, less the menu bar and the ruler and status line.
-    assert_eq!(
-        (small, tall),
-        (1 + (300 - 12) / 16 - 2, 1 + (600 - 12) / 16 - 2)
-    );
+    assert_eq!((small, tall), (1 + rows_shown(300), 1 + rows_shown(600)));
     // A frame too small for any row draws nothing, split or not.
     m.toggle_split();
     for size in [(1, 1), (3, 40), (40, 3)] {
@@ -2207,7 +2208,7 @@ fn detached_editor_stays_open_on_cont() {
     m.set_slot(0, "STOP\n?\"GO\"".to_string());
     enter(&mut m, "RUN");
     m.edit_slot(0);
-    debug(&mut m, Resume::Cont);
+    resume_until_stop(&mut m, Resume::Cont);
     let r = rows(&m);
     assert_eq!(&r[r.len() - 2..], ["GO", "OK"]);
     assert!(m.is_editing());
@@ -2236,7 +2237,7 @@ fn detached_editor_stays_open_while_a_step_waits_for_input() {
     assert_eq!(m.paused_at(), Some((0, 3)));
     assert!(!m.step_wants_keys());
     // The next step does not wait.
-    debug(&mut m, Resume::Step(Step::Into));
+    resume_until_stop(&mut m, Resume::Step(Step::Into));
     assert!(!m.step_wants_keys());
 }
 
@@ -2409,9 +2410,17 @@ fn maincnt_reads_inside_the_frame_job() {
     }
 }
 
-/// The number of times the screens were drawn again over `frames` frames of
-/// the program, and whether the last frame given matches a full redraw.
-fn redraws(program: &str, frames: u32) -> (u32, bool) {
+/// The screen drawing over some frames of a program.
+#[derive(Debug, PartialEq)]
+struct Redraws {
+    /// The number of frames on which the screens were drawn again.
+    redraw_count: u32,
+    /// Whether the last frame matches a full redraw.
+    matches_full_redraw: bool,
+}
+
+/// Runs `program` for `frames` frames and counts its redraws.
+fn redraws(program: &str, frames: u32) -> Redraws {
     let mut m = machine();
     m.set_slot(0, program.to_string());
     m.run_slot(0);
@@ -2431,22 +2440,29 @@ fn redraws(program: &str, frames: u32) -> (u32, bool) {
     let kept = m.screen_frame().pixels().to_vec();
     m.rt.touch();
     m.render();
-    (drawn, m.screen_frame().pixels() == &kept[..])
+    Redraws {
+        redraw_count: drawn,
+        matches_full_redraw: m.screen_frame().pixels() == &kept[..],
+    }
 }
 
 #[test]
 fn screens_are_drawn_again_only_when_changed() {
+    let matching_full_redraw = |redraw_count| Redraws {
+        redraw_count,
+        matches_full_redraw: true,
+    };
     // Writing what is already there changes nothing.
     let same = "SPSET 0,1:SPOFS 0,10,10\n\
                 @L:CLS:LOCATE 2,3:COLOR 7:PRINT \"SAME\"\n\
                 SPOFS 0,10,10:SPCOLOR 0,-1:X=SPROT(0):VSYNC:GOTO @L";
-    assert_eq!(redraws(same, 10), (0, true));
+    assert_eq!(redraws(same, 10), matching_full_redraw(0));
     let moving = "SPSET 0,1\n@L:SPOFS 0,MAINCNT() MOD 100,10:VSYNC:GOTO @L";
-    assert_eq!(redraws(moving, 10), (10, true));
+    assert_eq!(redraws(moving, 10), matching_full_redraw(10));
     let printing = "@L:LOCATE 0,0:PRINT MAINCNT():VSYNC:GOTO @L";
-    assert_eq!(redraws(printing, 10), (10, true));
+    assert_eq!(redraws(printing, 10), matching_full_redraw(10));
     let drawing = "@L:GPSET MAINCNT() MOD 100,0:VSYNC:GOTO @L";
-    assert_eq!(redraws(drawing, 10), (10, true));
+    assert_eq!(redraws(drawing, 10), matching_full_redraw(10));
 }
 
 /// The output of a fixed run, a few frames in.

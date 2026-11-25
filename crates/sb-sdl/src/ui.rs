@@ -46,6 +46,11 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// The pixel in the middle, rounded toward the top left.
+    pub fn center(self) -> (i32, i32) {
+        ((self.x + self.w / 2) as i32, (self.y + self.h / 2) as i32)
+    }
+
     pub fn contains(self, (x, y): (i32, i32)) -> bool {
         let (x, y) = (i64::from(x), i64::from(y));
         x >= i64::from(self.x)
@@ -378,11 +383,10 @@ fn draw_glyphs(
     };
     let mut left = x;
     let mut units = text.encode_utf16().peekable();
-    // The second unit of a pair drawn on the first one's cell.
-    let mut blank = false;
+    let mut skip_low_surrogate = false;
     while let Some(c) = units.next() {
         let w = width(c);
-        if std::mem::take(&mut blank) {
+        if std::mem::take(&mut skip_low_surrogate) {
             left += w;
             continue;
         }
@@ -410,7 +414,7 @@ fn draw_glyphs(
                 size as u32
             };
             draw(fb, &glyph, side, (left, w), true);
-            blank = pair.is_some();
+            skip_low_surrogate = pair.is_some();
             left += w;
             continue;
         }
@@ -444,10 +448,9 @@ pub fn side_rect((w, h): (u32, u32), left: bool, min_w: u32) -> Rect {
     let pw = (w / 2).max(min_w).min(w);
     Rect {
         x: if left { 0 } else { w - pw },
-        // The menu bar's height.
-        y: LINE,
+        y: crate::menu::MenuBar::HEIGHT,
         w: pw,
-        h: h.saturating_sub(LINE),
+        h: h.saturating_sub(crate::menu::MenuBar::HEIGHT),
     }
 }
 

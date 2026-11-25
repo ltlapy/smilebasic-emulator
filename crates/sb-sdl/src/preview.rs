@@ -190,13 +190,11 @@ pub fn data_lines(data: &Data, cols: usize, rows: usize) -> Vec<String> {
         let ends_row = (i + 1) % row_len == 0;
         let fits = line.is_empty() || line.chars().count() + 1 + text.chars().count() <= cols;
         if !fits {
+            lines.push(std::mem::take(&mut line));
             if data.dims.len() > 1 {
                 // The rest of the row does not fit: go to the next row.
-                lines.push(std::mem::take(&mut line));
                 i = (i / row_len + 1) * row_len;
-                continue;
             }
-            lines.push(std::mem::take(&mut line));
             continue;
         }
         if !line.is_empty() {

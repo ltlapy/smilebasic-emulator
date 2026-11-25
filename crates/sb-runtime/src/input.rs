@@ -24,6 +24,9 @@ pub const LEFT: u32 = 6;
 pub const RIGHT: u32 = 7;
 /// #B_RANY, #B_LANY and #B_ANY come after the buttons themselves.
 const BUTTON_IDS: usize = 17;
+pub(crate) const RANY_ID: u32 = 14;
+pub(crate) const LANY_ID: u32 = 15;
+pub(crate) const ANY_ID: u32 = 16;
 const RANY: u32 = 0b1111;
 const LANY: u32 = 0b1111 << 4;
 /// Every button except the stick pushes.
@@ -211,7 +214,17 @@ const PAD_KEYS: [(PadInput, bool, u32); 17] = {
     ]
 };
 /// The buttons [`PAD_KEYS`] checks, to skip it when none is held.
-const PAD_KEY_BUTTONS: u32 = 0b1111_1110;
+const PAD_KEY_BUTTONS: u32 = {
+    let mut bits = 0;
+    let mut i = 0;
+    while i < PAD_KEYS.len() {
+        if let PadInput::Button(id) = PAD_KEYS[i].0 {
+            bits |= 1 << id;
+        }
+        i += 1;
+    }
+    bits
+};
 
 /// The key a held controller input repeats, and how long it has been held.
 #[derive(Clone, Copy, Default)]
@@ -344,7 +357,7 @@ impl State {
 
     /// The first of [`PAD_KEYS`] that holds: the key the controllers ask
     /// for now, or 0.
-    fn pad_key(&self) -> u32 {
+    fn held_pad_key(&self) -> u32 {
         let buttons = self.buttons(0) & !self.key_pressed_buttons;
         let (x, y) = self.stick(0);
         let stick_moved = x.abs() > PAD_KEY_STICK || y.abs() > PAD_KEY_STICK;
@@ -423,7 +436,7 @@ pub struct Input {
     pub(crate) read: bool,
     /// The last frame ended with the program part-way through an iteration
     /// of its main loop; see [`Input::latch`].
-    pub(crate) carry: bool,
+    pub(crate) ended_mid_loop: bool,
 }
 
 /// A press or release that [`Input::tap`] saw.
@@ -446,6 +459,22 @@ struct Taps {
     /// The same for keyboard keys, by USB usage ID.
     keys_down: [u64; 4],
     keys_up: [u64; 4],
+}
+
+impl Taps {
+    /// Adds the presses and releases from `was` to `now`, for a frame that
+    /// nothing read.
+    fn add_changes(&mut self, was: &State, now: &State) {
+        for i in 0..PADS {
+            let (a, b) = (was.pads[i].buttons, now.pads[i].buttons);
+            (self.down[i], self.up[i]) = (self.down[i] | b & !a, self.up[i] | a & !b);
+        }
+        for i in 0..4 {
+            let (a, b) = (was.keys[i], now.keys[i]);
+            (self.keys_down[i], self.keys_up[i]) =
+                (self.keys_down[i] | b & !a, self.keys_up[i] | a & !b);
+        }
+    }
 }
 
 /// `now` with the inputs that changed and changed back since `before`: an
@@ -513,7 +542,7 @@ impl Default for Input {
             hidden_presses: [0; 4],
             taps: Taps::default(),
             read: false,
-            carry: false,
+            ended_mid_loop: false,
         }
     }
 }
@@ -555,7 +584,7 @@ impl Input {
     /// [`Input::tap`] saw since the last.
     ///
     /// When the last frame ended with the program part-way through an
-    /// iteration of its main loop ([`Input::carry`]) and the program read
+    /// iteration of its main loop ([`Input::ended_mid_loop`]) and the program read
     /// nothing in it, this frame compares with what was held before that
     /// frame. Each change in that frame counts as a tap, so that a press or
     /// release in that frame still shows as one in this frame. Otherwise an
@@ -568,20 +597,11 @@ impl Input {
     // console's frames. A program that keeps 60 frames per second never has
     // such a frame.
     pub fn latch(&mut self) {
-        let carry = std::mem::take(&mut self.carry) && !self.read;
+        let carry = std::mem::take(&mut self.ended_mid_loop) && !self.read;
         self.read = false;
         let mut t = std::mem::take(&mut self.taps);
         if carry {
-            // The changes in the frame that nothing read count as taps.
-            let (was, now) = (&self.before, &self.now);
-            for i in 0..PADS {
-                let (a, b) = (was.pads[i].buttons, now.pads[i].buttons);
-                (t.down[i], t.up[i]) = (t.down[i] | b & !a, t.up[i] | a & !b);
-            }
-            for i in 0..4 {
-                let (a, b) = (was.keys[i], now.keys[i]);
-                (t.keys_down[i], t.keys_up[i]) = (t.keys_down[i] | b & !a, t.keys_up[i] | a & !b);
-            }
+            t.add_changes(&self.before, &self.now);
         } else {
             self.before = self.now;
         }
@@ -682,11 +702,11 @@ impl Input {
     }
 
     /// Whether the held keyboard key types again this frame, called once per
-    /// frame. It never does once it is released. `held`: it is still down;
-    /// `keys`: the keyboard keys held now.
-    fn repeat_due(&mut self, held: bool, keys: &[u64; 4]) -> bool {
+    /// frame. It never does once it is released. `keys`: the keyboard keys
+    /// held now.
+    fn repeat_due(&mut self, still_down: bool, keys: &[u64; 4]) -> bool {
         let r = &mut self.key_repeat;
-        if !held {
+        if !still_down {
             *r = KeyRepeat::default();
             return false;
         }
@@ -704,7 +724,7 @@ impl Input {
     /// is released.
     pub(crate) fn spend_pad_key(&mut self) {
         self.pad_key_repeat = PadKeyRepeat {
-            code: self.now.pad_key(),
+            code: self.now.held_pad_key(),
             spent: true,
             ..PadKeyRepeat::default()
         };
@@ -716,7 +736,7 @@ impl Input {
     /// while both are held. Once it is released, the first continues
     /// repeating where it was.
     pub(crate) fn pad_key(&mut self) -> Option<u32> {
-        let code = self.now.pad_key();
+        let code = self.now.held_pad_key();
         let r = &mut self.pad_key_repeat;
         if code == 0 {
             *r = PadKeyRepeat::default();
@@ -793,11 +813,11 @@ impl Input {
     /// Buttons of any controller that were pressed this frame, with
     /// #B_RANY, #B_LANY and #B_ANY.
     pub(crate) fn pressed(&self) -> u32 {
-        self.buttons(0, 2)
+        self.buttons(0, Condition::PRESSED)
     }
 
     pub(crate) fn released(&self) -> u32 {
-        self.buttons(0, 3)
+        self.buttons(0, Condition::RELEASED)
     }
 
     /// Controller 0's left stick this frame, as STICK reads it.
@@ -822,9 +842,9 @@ impl Input {
     fn buttons(&self, pad: usize, function: i32) -> u32 {
         let (now, before) = (self.now.buttons(pad), self.before.buttons(pad));
         match function {
-            0 => with_any(now),
-            2 => with_any(now) & !with_any(before),
-            3 => with_any(before) & !with_any(now),
+            Condition::HELD => with_any(now),
+            Condition::PRESSED => with_any(now) & !with_any(before),
+            Condition::RELEASED => with_any(before) & !with_any(now),
             _ => {
                 let mut bits = with_any(now) & !with_any(before);
                 for (id, &held) in self.held[pad].iter().enumerate() {
@@ -846,7 +866,7 @@ impl Input {
 /// `bits` with #B_RANY, #B_LANY and #B_ANY for them.
 fn with_any(bits: u32) -> u32 {
     let any = |mask: u32| u32::from(bits & mask != 0);
-    bits | any(RANY) << 14 | any(LANY) << 15 | any(ANY) << 16
+    bits | any(RANY) << RANY_ID | any(LANY) << LANY_ID | any(ANY) << ANY_ID
 }
 
 fn int(v: &Value) -> Result<i32> {
@@ -903,6 +923,16 @@ fn sensor_args(args: &[Value]) -> Result<()> {
     Ok(())
 }
 
+/// The conditions of BUTTON, which MBUTTON and KEYBOARD take too.
+struct Condition;
+
+impl Condition {
+    const HELD: i32 = 0;
+    const REPEAT: i32 = 1;
+    const PRESSED: i32 = 2;
+    const RELEASED: i32 = 3;
+}
+
 fn condition(v: Option<&Value>) -> Result<i32> {
     opt_in_range("function", v, 0..=3, 0)
 }
@@ -928,9 +958,9 @@ fn xctrlstyle_args(args: &[Value]) -> Result<(i32, i32, Vec<i32>)> {
     let bad_toycon = |i: usize| Err(Error::new(ErrorKind::IllegalToyConType).of_arg(i));
     // Types 3, 4 and 7 to 10 take the same type again for the other hand;
     // 0 and 6 take 0, 1, 2 or 5.
-    let alone = |t: i32| 0x798 & 1 << t != 0;
-    let leads = |t: i32| 0x41 & 1 << t != 0;
-    let follows = |t: i32| (0..=5).contains(&t) && 0x27 & 1 << t != 0;
+    let alone = |t: i32| matches!(t, 3 | 4 | 7..=10);
+    let leads = |t: i32| matches!(t, 0 | 6);
+    let follows = |t: i32| matches!(t, 0 | 1 | 2 | 5);
     if args.len() >= 6 {
         let max = checking(&args[0], || match int(&args[0])? {
             2 => Ok(2),
@@ -1221,9 +1251,9 @@ impl Runtime {
                 }
                 let id = in_range("button", &args[0], 0..=4)?;
                 let bits = match condition(args.get(1))? {
-                    0 => now,
-                    1 => 0,
-                    2 => now & !before,
+                    Condition::HELD => now,
+                    Condition::REPEAT => 0,
+                    Condition::PRESSED => now & !before,
                     _ => !now & before,
                 };
                 one(out, Value::Int((bits >> id & 1) as i32))
@@ -1247,9 +1277,9 @@ impl Runtime {
                 input.keys_read.key(usage);
                 let (now, before) = (input.now.key(usage), input.before.key(usage));
                 let result = match condition(args.get(1))? {
-                    0 => now,
-                    1 => false,
-                    2 => now && !before,
+                    Condition::HELD => now,
+                    Condition::REPEAT => false,
+                    Condition::PRESSED => now && !before,
                     _ => !now && before,
                 };
                 let values = [flag(result), Value::Int(input.now.modifiers as i32)];

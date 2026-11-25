@@ -60,7 +60,9 @@ use crate::value::Num;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Var(u16);
 
-const LOCAL: u16 = 0x8000;
+/// The bit of a [`Var`] that marks a local, the top one.
+const LOCAL_BIT: u32 = 15;
+const LOCAL: u16 = 1 << LOCAL_BIT;
 
 impl Var {
     fn global(i: usize) -> Option<Var> {
@@ -77,7 +79,7 @@ impl Var {
     /// Returns the table: 0 for globals and constants, 1 for locals.
     #[inline(always)]
     pub fn table(self) -> usize {
-        usize::from(self.0 >> 15)
+        usize::from(self.0 >> LOCAL_BIT)
     }
 
     #[inline(always)]
@@ -744,6 +746,14 @@ fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(F
             5,
         );
     }
+    if let Some(for_next) = for_next_form(code, c) {
+        add(for_next, 14);
+    }
+}
+
+/// Returns the [`FastOp::ForNext`] form of `code` from its start, if the
+/// code has that form.
+fn for_next_form(code: &[Op], c: &mut Constants) -> Option<FastOp> {
     if let Some(
         &[
             Op::Load(var),
@@ -774,19 +784,17 @@ fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(F
         let apart = [step, to]
             .iter()
             .all(|v| ![var, step_slot, to_slot].contains(v));
-        add(
-            F::ForNext {
-                var,
-                step,
-                step_slot,
-                to,
-                to_slot,
-                exit,
-                apart,
-            },
-            14,
-        );
+        return Some(FastOp::ForNext {
+            var,
+            step,
+            step_slot,
+            to,
+            to_slot,
+            exit,
+            apart,
+        });
     }
+    None
 }
 
 /// Offers [`FastOp::CallArgs`] for a call at `code[at]` of `args`, which the
@@ -1001,9 +1009,10 @@ fn binary_micro(c: &Constants, op: BinaryOp, a: Var, b: Var, to: Var) -> Micro {
 /// A chain the code from an address can take.
 struct Candidate {
     steps: Vec<Micro>,
-    /// The number of instructions of `code` from the address it stands for,
+    /// The number of instructions of `code` it stands for, from its address.
     len: usize,
-    /// and the number it counts as run: more when it makes calls.
+    /// The number of instructions it counts as run: more than `len` when it
+    /// makes calls.
     charge: usize,
     /// The address where it continues.
     next: Addr,
@@ -1245,6 +1254,62 @@ fn inline(
     None
 }
 
+/// The result of a store in [`chain`]: the chain continues or ends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AfterStore {
+    /// The chain continues with the next statement.
+    Continues,
+    /// The store, and the Jump right after it, end the chain.
+    Ends,
+}
+
+/// Returns the step that jumps to `target` when `cond` is `when`. A
+/// comparison made by the last step of `ch` becomes the jump, and is removed
+/// from `ch`.
+fn jump_step(ch: &mut Chain, c: &Constants, cond: Var, target: Addr, when: bool) -> Micro {
+    let compared = match ch.micro.last() {
+        Some(
+            &(Micro::Eq(a, b, to)
+            | Micro::NotEq(a, b, to)
+            | Micro::Less(a, b, to)
+            | Micro::LessEq(a, b, to)
+            | Micro::Greater(a, b, to)
+            | Micro::GreaterEq(a, b, to)),
+        ) if to == cond => Some(Jump { a, b, target, when }),
+        _ => None,
+    };
+    // With a constant integer on the right, the jump carries it.
+    let int = compared.and_then(|j| {
+        let k = c.int(j.b)?;
+        Some(JumpInt {
+            a: j.a,
+            k,
+            target,
+            when,
+        })
+    });
+    let last = match (int, compared, ch.micro.last()) {
+        (Some(j), _, Some(Micro::Eq(..))) => Micro::JumpEqInt(j),
+        (Some(j), _, Some(Micro::NotEq(..))) => Micro::JumpNotEqInt(j),
+        (Some(j), _, Some(Micro::Less(..))) => Micro::JumpLessInt(j),
+        (Some(j), _, Some(Micro::LessEq(..))) => Micro::JumpLessEqInt(j),
+        (Some(j), _, Some(Micro::Greater(..))) => Micro::JumpGreaterInt(j),
+        (Some(j), _, Some(Micro::GreaterEq(..))) => Micro::JumpGreaterEqInt(j),
+        (_, Some(j), Some(Micro::Eq(..))) => Micro::JumpEq(j),
+        (_, Some(j), Some(Micro::NotEq(..))) => Micro::JumpNotEq(j),
+        (_, Some(j), Some(Micro::Less(..))) => Micro::JumpLess(j),
+        (_, Some(j), Some(Micro::LessEq(..))) => Micro::JumpLessEq(j),
+        (_, Some(j), Some(Micro::Greater(..))) => Micro::JumpGreater(j),
+        (_, Some(j), Some(Micro::GreaterEq(..))) => Micro::JumpGreaterEq(j),
+        _ if when => Micro::JumpIfTrue { cond, target },
+        _ => Micro::JumpIfFalse { cond, target },
+    };
+    if compared.is_some() {
+        ch.micro.pop();
+    }
+    last
+}
+
 fn chain(
     code: &[Op],
     pc: usize,
@@ -1269,8 +1334,7 @@ fn chain(
         Some(&Op::Jump(target)) => Some((at + 2, target)),
         _ => Some((at + 1, addr(at + 1)?)),
     };
-    // After a store, the chain may continue with the next statement.
-    let mut stored = |ch: &mut Chain, at: usize, calls: Calls| -> Option<bool> {
+    let mut stored = |ch: &mut Chain, at: usize, calls: Calls| -> Option<AfterStore> {
         let (len, next) = after_store(at)?;
         if len > MAX_CHAIN {
             return None;
@@ -1283,11 +1347,11 @@ fn chain(
             calls,
         });
         if len == at + 2 {
-            return Some(false);
+            return Some(AfterStore::Ends);
         }
         let charged = u8::try_from(len + calls.run).ok()?;
         ch.micro.push(Micro::Commit { to: next, charged });
-        Some(true)
+        Some(AfterStore::Continues)
     };
     let mut end = code.len();
     // No candidate is longer than MAX_CHAIN, so there is nothing to find
@@ -1327,7 +1391,7 @@ fn chain(
                     Some(last) if made => *last = to,
                     _ => ch.micro.push(Micro::Move { from: v, to }),
                 }
-                if !stored(&mut ch, at, calls)? {
+                if stored(&mut ch, at, calls)? == AfterStore::Ends {
                     return Some(());
                 }
             }
@@ -1343,7 +1407,7 @@ fn chain(
                     Some(j) => Micro::StoreIndex2 { value, base, i, j },
                     None => Micro::StoreIndex1 { value, base, i },
                 });
-                if !stored(&mut ch, at, calls)? {
+                if stored(&mut ch, at, calls)? == AfterStore::Ends {
                     return Some(());
                 }
             }
@@ -1353,47 +1417,7 @@ fn chain(
                     return None;
                 }
                 let when = matches!(op, Op::JumpIfTrue(_));
-                // A comparison made by the last step becomes the jump.
-                let compared = match ch.micro.last() {
-                    Some(
-                        &(Micro::Eq(a, b, to)
-                        | Micro::NotEq(a, b, to)
-                        | Micro::Less(a, b, to)
-                        | Micro::LessEq(a, b, to)
-                        | Micro::Greater(a, b, to)
-                        | Micro::GreaterEq(a, b, to)),
-                    ) if to == cond => Some(Jump { a, b, target, when }),
-                    _ => None,
-                };
-                // With a constant integer on the right, the jump carries it.
-                let int = compared.and_then(|j| {
-                    let k = c.int(j.b)?;
-                    Some(JumpInt {
-                        a: j.a,
-                        k,
-                        target,
-                        when,
-                    })
-                });
-                let last = match (int, compared, ch.micro.last()) {
-                    (Some(j), _, Some(Micro::Eq(..))) => Micro::JumpEqInt(j),
-                    (Some(j), _, Some(Micro::NotEq(..))) => Micro::JumpNotEqInt(j),
-                    (Some(j), _, Some(Micro::Less(..))) => Micro::JumpLessInt(j),
-                    (Some(j), _, Some(Micro::LessEq(..))) => Micro::JumpLessEqInt(j),
-                    (Some(j), _, Some(Micro::Greater(..))) => Micro::JumpGreaterInt(j),
-                    (Some(j), _, Some(Micro::GreaterEq(..))) => Micro::JumpGreaterEqInt(j),
-                    (_, Some(j), Some(Micro::Eq(..))) => Micro::JumpEq(j),
-                    (_, Some(j), Some(Micro::NotEq(..))) => Micro::JumpNotEq(j),
-                    (_, Some(j), Some(Micro::Less(..))) => Micro::JumpLess(j),
-                    (_, Some(j), Some(Micro::LessEq(..))) => Micro::JumpLessEq(j),
-                    (_, Some(j), Some(Micro::Greater(..))) => Micro::JumpGreater(j),
-                    (_, Some(j), Some(Micro::GreaterEq(..))) => Micro::JumpGreaterEq(j),
-                    _ if when => Micro::JumpIfTrue { cond, target },
-                    _ => Micro::JumpIfFalse { cond, target },
-                };
-                if compared.is_some() {
-                    ch.micro.pop();
-                }
+                let last = jump_step(&mut ch, c, cond, target, when);
                 ch.micro.push(last);
                 if at < MAX_CHAIN {
                     found.push(Candidate {
@@ -1442,8 +1466,16 @@ fn chain_cost(steps: &[Micro]) -> u32 {
         .iter()
         .filter(|m| matches!(m, Micro::Commit { .. }))
         .count() as u32;
-    3 + STEP_COST * (steps.len() as u32 - commits) + 2 * commits
+    CHAIN_SETUP_COST + STEP_COST * (steps.len() as u32 - commits) + COMMIT_COST * commits
 }
+
+/// The cost of the choosing and setup of an entry, as [`chain_cost`]
+/// weighs it: about 30 instructions.
+const CHAIN_SETUP_COST: u32 = 3;
+
+/// The cost of a [`Micro::Commit`], as [`chain_cost`] weighs it: about 20
+/// instructions.
+const COMMIT_COST: u32 = 2;
 
 /// The cost of a chain's step, as [`chain_cost`] weighs it. With the `jit`
 /// feature, a chain that stands for two or more entries wins: native code

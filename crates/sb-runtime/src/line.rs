@@ -60,19 +60,25 @@ pub const LINE_MAX: usize = 256;
 /// A line end, which text from CLIPBOARD can put into the line.
 const LINE_END: u16 = 0x0A;
 
+/// The width of the display, in pixels.
+const DISPLAY_WIDTH: f32 = 1280.0;
+/// The height of the display, in pixels.
+const DISPLAY_HEIGHT: f32 = 720.0;
+/// The height of the hint bar at the bottom of the display, in pixels.
+const HINT_BAR_HEIGHT: f32 = 16.0;
+
 /// Returns the number of console rows that a line keeps free under its
 /// cursor: the row below it and the rows that the hint bar at the bottom of
 /// the display covers whole. `height` and `aspect` come from XSCREEN, and
-/// `cell` is the console's character size. The bar is 16 pixels high on a
-/// 1280x720 display.
+/// `cell` is the console's character size.
 pub fn rows_kept_free(height: u32, aspect: f64, cell: u32) -> i64 {
     let (height, aspect) = (height as f32, aspect as f32);
-    let shown = if 720.0 / height <= 1280.0 / (aspect * height) {
-        720.0
+    let shown = if DISPLAY_HEIGHT / height <= DISPLAY_WIDTH / (aspect * height) {
+        DISPLAY_HEIGHT
     } else {
-        ((1280.0 / aspect) as i32 as f32).min(720.0)
+        ((DISPLAY_WIDTH / aspect) as i32 as f32).min(DISPLAY_HEIGHT)
     };
-    1 + (16.0 / (shown / height * cell as f32)) as i64
+    1 + (HINT_BAR_HEIGHT / (shown / height * cell as f32)) as i64
 }
 
 /// Scrolls the console up so that its cursor is `free` rows or more above
@@ -280,8 +286,7 @@ impl LineEdit {
                 self.text.remove(self.cursor);
             }
             codes::INSERT => self.overwrite = !self.overwrite,
-            // Tab types a space.
-            codes::TAB => self.type_char(0x20),
+            codes::TAB => self.type_char(u16::from(b' ')),
             0x1_0000.. => {}
             c => self.type_char(c as u16),
         }

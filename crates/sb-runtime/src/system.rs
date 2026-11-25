@@ -15,6 +15,8 @@ use crate::text::USER_CHARS;
 
 /// RND's series 0 to 7.
 const SERIES: usize = 8;
+/// PERFBEGIN's measurements 0 to 7.
+const MEASUREMENTS: usize = 8;
 
 /// One series of random numbers: TinyMT32 with its standard parameters,
 /// which gives SmileBASIC 4's numbers for the same seed (checked on
@@ -91,13 +93,13 @@ pub struct System {
     sysbeep: bool,
     /// SYSPARAM "MOUSECURSOR": whether programs show the mouse cursor.
     pub mouse_cursor: bool,
-    /// The start time of each of PERFBEGIN's eight measurements.
-    perf: [Option<Instant>; 8],
+    /// The start time of each of PERFBEGIN's measurements.
+    perf: [Option<Instant>; MEASUREMENTS],
     /// The same on the console's clock, when a console's speed is chosen.
-    perf_clock: [u64; 8],
-    /// The times PERFEND has recorded for each of the eight measurements
-    /// since RUN, for the debugger panel.
-    perf_stats: [PerfStats; 8],
+    perf_clock: [u64; MEASUREMENTS],
+    /// The times PERFEND has recorded for each measurement since RUN, for
+    /// the debugger panel.
+    perf_stats: [PerfStats; MEASUREMENTS],
 }
 
 /// The times of one PERFBEGIN and PERFEND measurement since RUN, in
@@ -149,9 +151,9 @@ impl Default for System {
             fixed_seeds: 0,
             sysbeep: true,
             mouse_cursor: false,
-            perf: [None; 8],
-            perf_clock: [0; 8],
-            perf_stats: [PerfStats::default(); 8],
+            perf: [None; MEASUREMENTS],
+            perf_clock: [0; MEASUREMENTS],
+            perf_stats: [PerfStats::default(); MEASUREMENTS],
         }
     }
 }
@@ -207,7 +209,7 @@ fn perf_id(v: &Value) -> Result<usize> {
         let n = int(v)?;
         usize::try_from(n)
             .ok()
-            .filter(|&n| n < 8)
+            .filter(|&n| n < MEASUREMENTS)
             .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("measurement {n}")))
     })
 }
@@ -464,13 +466,13 @@ impl Runtime {
     }
 
     /// The times PERFEND has recorded for each measurement since RUN.
-    pub fn perf_stats(&self) -> &[PerfStats; 8] {
+    pub fn perf_stats(&self) -> &[PerfStats; MEASUREMENTS] {
         &self.system.perf_stats
     }
 
     /// Forgets the times PERFEND has recorded, the same as RUN does.
     pub fn reset_perf_stats(&mut self) {
-        self.system.perf_stats = [PerfStats::default(); 8];
+        self.system.perf_stats = [PerfStats::default(); MEASUREMENTS];
     }
 
     /// Whether the running program shows the mouse cursor.

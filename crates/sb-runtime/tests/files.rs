@@ -35,12 +35,14 @@ fn machine(dir: &TempDir) -> Machine {
     m
 }
 
+/// The number of typed keys that arrive per frame.
+const KEYS_PER_FRAME: usize = 32;
+
 /// Types a line in lower case (it arrives in upper case) and runs it.
 fn enter(m: &mut Machine, line: &str) {
     m.type_text(line);
     m.rt.key_press(keys::ENTER);
-    // Keys arrive 32 per frame.
-    for _ in 0..=line.len() / 32 {
+    for _ in 0..=line.len() / KEYS_PER_FRAME {
         m.frame();
     }
     for _ in 0..100 {
@@ -311,12 +313,11 @@ fn edits_are_unsaved_until_save() {
     m.toggle_editor();
     ask(&mut m, "new 2");
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(m.unsaved_slots(), [] as [usize; 0]);
 }
 
-/// Edits a slot so that it has unsaved changes.
-fn touch(m: &mut Machine, slot: usize) {
+fn make_unsaved(m: &mut Machine, slot: usize) {
     enter(m, &format!("list {slot}:1"));
     m.type_text("'");
     m.frame();
@@ -336,8 +337,7 @@ fn ask(m: &mut Machine, line: &str) -> sb_runtime::confirm::Confirm {
     panic!("{line:?} did not ask");
 }
 
-/// Runs frames until DIRECT mode waits for a line again.
-fn settle(m: &mut Machine) {
+fn run_until_direct_mode(m: &mut Machine) {
     for _ in 0..10 {
         m.frame();
     }
@@ -350,7 +350,7 @@ fn load_and_new_ask_before_losing_edits() {
     let mut m = machine(&dir);
     m.set_slot(0, "?1".to_string());
     enter(&mut m, "save \"a\"");
-    touch(&mut m, 0);
+    make_unsaved(&mut m, 0);
     // A missing file fails without asking.
     enter(&mut m, "load \"nope\":?result()");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
@@ -362,23 +362,23 @@ fn load_and_new_ask_before_losing_edits() {
         ["Slot 0 has unsaved changes,", "which will be lost."]
     );
     m.rt.answer(false);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["-1", "OK"]);
     assert_eq!(m.slot(0), "'?1");
 
     ask(&mut m, "load \"a\":?result()");
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     assert_eq!(m.slot(0), "?1");
 
-    touch(&mut m, 3);
+    make_unsaved(&mut m, 3);
     enter(&mut m, "new 2");
     let c = ask(&mut m, "new");
     assert_eq!(c.lines[0], "Erase the programs in all slots.");
     assert_eq!(c.lines[2], "Slot 3 has unsaved changes,");
     m.rt.answer(false);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(m.slot(3), "'");
     // Stopping drops the question.
     ask(&mut m, "new 3");
@@ -386,7 +386,7 @@ fn load_and_new_ask_before_losing_edits() {
     assert!(m.rt.confirmation().is_none());
     ask(&mut m, "new 3");
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!((m.slot(3), m.unsaved_slots()), ("", vec![]));
 }
 
@@ -411,7 +411,7 @@ fn direct_file_commands_ask_notify_or_stay_silent() {
         ]
     );
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert!(dir.0.join("@WORKSPACE").join("TA").is_file());
 
     // The hint is given once; LOAD asks even with nothing unsaved.
@@ -419,7 +419,7 @@ fn direct_file_commands_ask_notify_or_stay_silent() {
     assert_eq!(c.lines.len(), 4);
     assert_eq!(c.accept, "Load");
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(m.slot(1), "?1");
 
     m.rt.settings.file_confirm = FileConfirm::Notify;
@@ -447,7 +447,7 @@ fn programs_ask_except_for_a_safe_load() {
     let c = ask(&mut m, "run");
     assert_eq!(c.title, "Slot 1: Save file");
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     m.rt.settings.file_confirm = FileConfirm::Notify;
     enter(&mut m, "run");
@@ -459,11 +459,11 @@ fn programs_ask_except_for_a_safe_load() {
 
     m.rt.settings.file_confirm = FileConfirm::Silent;
     m.set_slot(0, "LOAD \"A\",1:?RESULT()".to_string());
-    touch(&mut m, 1);
+    make_unsaved(&mut m, 1);
     let c = ask(&mut m, "run");
     assert_eq!(c.lines[0], "Load this file into slot 1.");
     m.rt.answer(false);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["-1", "OK"]);
 }
 
@@ -473,7 +473,7 @@ fn switching_projects_warns_of_unsaved_edits() {
     let mut m = machine(&dir);
     m.rt.storage.create_project("X").unwrap();
     enter(&mut m, "project \"x\"");
-    touch(&mut m, 2);
+    make_unsaved(&mut m, 2);
     let c = ask(&mut m, "project \"\":?result()");
     assert_eq!(
         c.lines,
@@ -485,13 +485,13 @@ fn switching_projects_warns_of_unsaved_edits() {
         ]
     );
     m.rt.answer(false);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["-1", "OK"]);
     assert_eq!(m.rt.storage.project(), "X");
 }
 
 /// Rows with PRINT's tab stops as single spaces.
-fn words(rows: &[String]) -> Vec<String> {
+fn single_spaced(rows: &[String]) -> Vec<String> {
     rows.iter()
         .map(|r| r.split_whitespace().collect::<Vec<_>>().join(" "))
         .collect()
@@ -573,7 +573,7 @@ fn loadv_keeps_the_size_of_an_array_of_the_system() {
     m.set_slot(0, program.join("\n"));
     enter(&mut m, "run");
     let out = tail(&m, 5);
-    assert_eq!(words(&out[..3]), ["2048 5 9 77", "1 3", "12"]);
+    assert_eq!(single_spaced(&out[..3]), ["2048 5 9 77", "1 3", "12"]);
     assert!(
         out[3].starts_with("Can't RESIZE this array in 0:6"),
         "{out:?}"
@@ -597,7 +597,7 @@ fn values_save_and_load() {
     m.set_slot(0, program.join("\n"));
     enter(&mut m, "run");
     assert_eq!(
-        words(&tail(&m, 6)),
+        single_spaced(&tail(&m, 6)),
         ["1", "2 6 1.5", "6 1", "1 X", "0 0 3", "OK"]
     );
     assert!(dir.0.join("@WORKSPACE").join("B@BACKUP.DAT").is_file());
@@ -775,11 +775,11 @@ fn file_names_follow_sb4s_parser() {
         ("files \"\"", "Illegal format (FILES) (\"\")"),
         ("load \"png:x\"", "File type mismatch (LOAD) (PNG file)"),
     ] {
-        assert_eq!(direct_error(&mut m, line), message, "{line}");
+        assert_eq!(direct_output(&mut m, line), message, "{line}");
     }
     let line = format!("loadg \"{}/a\",0", "b".repeat(33));
     let message = format!("File name is too long (LOADG:1) (\"{}/A\")", "B".repeat(33));
-    assert_eq!(direct_error(&mut m, &line), message);
+    assert_eq!(direct_output(&mut m, &line), message);
     // EXEC numbers no argument.
     m.set_slot(0, "EXEC \"TXT:A:B\",1".to_string());
     enter(&mut m, "run");
@@ -821,7 +821,7 @@ fn graphic_pages_save_and_load() {
     m.set_slot(0, program.join("\n"));
     enter(&mut m, "run");
     assert_eq!(
-        words(&tail(&m, 8)),
+        single_spaced(&tail(&m, 8)),
         [
             "1",
             "4 3",
@@ -876,7 +876,7 @@ fn crafted_arrays_fail_as_a_bad_file_does() {
     m.set_slot(0, program.join("\n"));
     enter(&mut m, "run");
     assert_eq!(
-        words(&tail(&m, 6)),
+        single_spaced(&tail(&m, 6)),
         ["0 1 1", "0", "0 0 0", "1", "1 0 3", "OK"]
     );
     m.set_slot(0, "SAVEG \"PIC\",0,0,0,0,3".to_string());
@@ -1037,7 +1037,7 @@ fn a_file_too_large_to_read_fails_as_a_bad_file_does() {
     ];
     m.set_slot(0, program.join("\n"));
     enter(&mut m, "run");
-    assert_eq!(words(&tail(&m, 5)), ["0", "0 0", "0", "0", "OK"]);
+    assert_eq!(single_spaced(&tail(&m, 5)), ["0", "0 0", "0", "0", "OK"]);
 }
 
 #[test]
@@ -1053,7 +1053,7 @@ fn metadata_saves_with_the_project() {
     ];
     m.set_slot(0, program.join("\n"));
     enter(&mut m, "run");
-    assert_eq!(words(&tail(&m, 2)), ["My game 13 2 FF00FF00", "OK"]);
+    assert_eq!(single_spaced(&tail(&m, 2)), ["My game 13 2 FF00FF00", "OK"]);
     let text = std::fs::read_to_string(dir.0.join("@WORKSPACE").join("@META.TXT")).unwrap();
     assert_eq!(text, "My game\nLine 1\nLine 2");
     // METASAVE leaves RESULT() unchanged.
@@ -1111,7 +1111,7 @@ fn metadata_from_smilebasic() {
         "METALOAD:METAEDIT 0 OUT T$:METAEDIT 1 OUT D$:METAEDIT 2 OUT I:?T$,LEN(D$),HEX$(I[39,39])";
     m.set_slot(0, program.to_string());
     enter(&mut m, "run");
-    assert_eq!(words(&tail(&m, 2)), ["てすと05 3 FFD2D6CA", "OK"]);
+    assert_eq!(single_spaced(&tail(&m, 2)), ["てすと05 3 FFD2D6CA", "OK"]);
 
     // METASAVE writes the emulator's files and then removes META, but
     // only once it has written them: No leaves everything unchanged.
@@ -1119,18 +1119,18 @@ fn metadata_from_smilebasic() {
     m.rt.settings.file_confirm = FileConfirm::Ask;
     ask(&mut m, "metaload:metasave");
     m.rt.answer(false);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert!(workspace.join("META").exists());
     assert!(!workspace.join("@META.TXT").exists());
     ask(&mut m, "metaload:metasave");
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert!(!workspace.join("META").exists());
     let text = std::fs::read_to_string(workspace.join("@META.TXT")).unwrap();
     assert_eq!(text, "てすと05\nHi\n");
     m.set_slot(0, program.to_string());
     enter(&mut m, "run");
-    assert_eq!(words(&tail(&m, 2)), ["てすと05 3 FFD2D6CA", "OK"]);
+    assert_eq!(single_spaced(&tail(&m, 2)), ["てすと05 3 FFD2D6CA", "OK"]);
 
     // A write that fails keeps META.
     m.rt.settings.file_confirm = FileConfirm::Silent;
@@ -1333,7 +1333,10 @@ fn saveg_checks_its_numbers_first_and_takes_a_quality_for_any_file() {
     ];
     m.set_slot(0, program.join("\n"));
     enter(&mut m, "run");
-    assert_eq!(words(&tail(&m, 4)), ["1", "1", "4 3 FF102030", "OK"]);
+    assert_eq!(
+        single_spaced(&tail(&m, 4)),
+        ["1", "1", "4 3 FF102030", "OK"]
+    );
     let png = std::fs::read(dir.0.join("@WORKSPACE").join("GQ")).unwrap();
     assert!(png.starts_with(b"\x89PNG"));
 }
@@ -1380,7 +1383,7 @@ fn delete_in_a_system_project_is_refused() {
     let mut m = machine(&dir);
     m.rt.storage.create_project("#SYS").unwrap();
     let message = "Can't SAVE to system project (DELETE:1)";
-    assert_eq!(direct_error(&mut m, "delete \"txt:#sys/a\""), message);
+    assert_eq!(direct_output(&mut m, "delete \"txt:#sys/a\""), message);
     m.set_slot(0, "A=1\nDELETE \"#SYS/A\"".to_string());
     enter(&mut m, "run");
     let message = "Can't SAVE to system project in 0:2(DELETE:1)".to_string();
@@ -1388,7 +1391,7 @@ fn delete_in_a_system_project_is_refused() {
 
     m.rt.storage.set_project("#SYS").unwrap();
     let message = "Can't SAVE to system project (DELETE:1)";
-    assert_eq!(direct_error(&mut m, "delete \"a\""), message);
+    assert_eq!(direct_output(&mut m, "delete \"a\""), message);
 }
 
 /// RENAME of a name in a `#` project is error 75 too, for each name in
@@ -1404,7 +1407,7 @@ fn rename_in_a_system_project_is_refused() {
         ("rename \"a\",\"#sys/b\"", 2),
     ] {
         let message = format!("Can't SAVE to system project (RENAME:{n})");
-        assert_eq!(direct_error(&mut m, line), message, "{line}");
+        assert_eq!(direct_output(&mut m, line), message, "{line}");
     }
     assert!(dir.0.join("@WORKSPACE").join("TA").exists());
 }
@@ -1428,7 +1431,7 @@ fn writes_in_the_current_system_project_are_refused() {
         ("metasave", "METASAVE"),
     ] {
         let message = format!("Can't SAVE to system project ({command})");
-        assert_eq!(direct_error(&mut m, line), message, "{line}");
+        assert_eq!(direct_output(&mut m, line), message, "{line}");
         assert!(m.rt.confirmation().is_none(), "{line}");
     }
     m.set_slot(0, "A=1\nSAVEV \"TXT:X\",\"1\"".to_string());
@@ -1511,11 +1514,11 @@ fn exec_over_unsaved_edits_asks_and_back_fails() {
     let mut m = machine(&dir);
     m.set_slot(1, "?1".to_string());
     enter(&mut m, "save \"a\",1");
-    touch(&mut m, 1);
+    make_unsaved(&mut m, 1);
     m.set_slot(0, "EXEC \"A\",1\n?\"PAST\"".to_string());
     ask(&mut m, "run");
     m.rt.answer(false);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert!(
         tail(&m, 2)[0].starts_with("Load failed in 0:1"),
         "{:?}",
@@ -1580,7 +1583,7 @@ fn programs_write_no_file_named_with_a_project() {
     let c = ask(&mut m, "savev \"txt:/x\",\"1\":?result()");
     assert_eq!(c.lines[3], "  File:     TXT:X");
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     assert!(workspace.join("TX").is_file());
     m.rt.settings.file_confirm = FileConfirm::Silent;
@@ -1635,7 +1638,7 @@ fn the_prompt_and_subprograms_save_in_any_project() {
 
 /// Runs a line in DIRECT mode on a clear console, and returns the text it
 /// printed after itself, joined again from the rows it wraps on.
-fn direct_error(m: &mut Machine, line: &str) -> String {
+fn direct_output(m: &mut Machine, line: &str) -> String {
     enter(m, "cls");
     enter(m, line);
     let rows = rows(m);
@@ -1666,7 +1669,7 @@ fn saves_into_a_system_project_are_refused_everywhere() {
         assert_eq!(program_error(&mut m), (message, 75, None), "{source}");
 
         let message = format!("Can't SAVE to system project ({command})");
-        assert_eq!(direct_error(&mut m, &source.to_ascii_lowercase()), message);
+        assert_eq!(direct_output(&mut m, &source.to_ascii_lowercase()), message);
 
         m.set_slot(1, format!("A=1\n{source}"));
         enter(&mut m, "save \"sub\",1");
@@ -1696,7 +1699,7 @@ fn rename_and_delete_refuse_projects_everywhere() {
         ("delete \"/a\"", "DELETE:1"),
     ] {
         let message = format!("Can't access other project in this mode ({command})");
-        assert_eq!(direct_error(&mut m, line), message, "{line}");
+        assert_eq!(direct_output(&mut m, line), message, "{line}");
     }
     m.set_slot(1, "DELETE \"TXT:/A\"".to_string());
     enter(&mut m, "save \"sub\",1");
@@ -1731,7 +1734,7 @@ fn loadg_types_of_file() {
         ("loadg \"txt:t\",0", "File type mismatch (LOADG) (TXT file)"),
         ("load \"dat:x\",1", "File type mismatch (LOAD) (DAT file)"),
     ] {
-        assert_eq!(direct_error(&mut m, line), message, "{line}");
+        assert_eq!(direct_output(&mut m, line), message, "{line}");
     }
     enter(
         &mut m,
@@ -1914,19 +1917,19 @@ fn loadg_of_a_project_name_asks_only_at_the_prompt() {
             ]
         );
         m.rt.answer(true);
-        settle(&mut m);
+        run_until_direct_mode(&mut m);
     }
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     let c = ask(&mut m, "load \"game/sub\",1");
     assert_eq!(c.title, "Slot 1: Load file");
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
 
     enter(&mut m, "project \"game\"");
     let c = ask(&mut m, "loadg \"grp:game/pic\",0:?result()");
     assert_eq!(c.title, "Load file");
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["1", "OK"]);
 
     m.rt.settings.file_confirm = FileConfirm::Notify;
@@ -2006,11 +2009,11 @@ fn changes_made_outside_show_at_the_next_command() {
     let replaced = "The file there now will be replaced.".to_string();
     assert!(ask(&mut m, "save \"b\"").lines.contains(&replaced));
     m.rt.answer(false);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     std::fs::remove_file(workspace.join("TB")).unwrap();
     assert!(!ask(&mut m, "save \"b\"").lines.contains(&replaced));
     m.rt.answer(false);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     m.rt.settings.file_confirm = FileConfirm::Silent;
 
     // Project folders, listed and switched to.
@@ -2042,7 +2045,7 @@ fn saves_to_a_missing_project_ask_and_then_fail() {
     ] {
         ask(&mut m, line);
         m.rt.answer(true);
-        settle(&mut m);
+        run_until_direct_mode(&mut m);
         let failed = format!("{command} failed: NONE not found");
         assert_eq!(tail(&m, 3), [failed.as_str(), "0", "OK"], "{line}");
     }
@@ -2079,7 +2082,7 @@ fn a_programs_file_failure_waits_on_a_dialog() {
     }
     assert!(m.is_running() && m.program_dialog().is_some());
     m.answer_dialog(DialogAnswer::Choice(0));
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["PAST0", "OK"]);
 
     // The A button closes it too.
@@ -2093,7 +2096,7 @@ fn a_programs_file_failure_waits_on_a_dialog() {
         m.rt.input.live.pads[0].buttons = buttons;
         m.frame();
     }
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["PAST0", "OK"]);
 
     // A function returns its value once the dialog closes.
@@ -2103,7 +2106,7 @@ fn a_programs_file_failure_waits_on_a_dialog() {
     );
     run_to_dialog(&mut m);
     m.answer_dialog(DialogAnswer::Choice(0));
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 3), ["PAST0", "0", "OK"]);
 
     // EXEC of a missing file is Load failed once it closes.
@@ -2111,7 +2114,7 @@ fn a_programs_file_failure_waits_on_a_dialog() {
     let d = run_to_dialog(&mut m);
     assert_eq!(d.caption, "EXEC failed");
     m.answer_dialog(DialogAnswer::Choice(0));
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert!(tail(&m, 2)[0].starts_with("Load failed"), "{:?}", rows(&m));
 
     // A question before the command is not asked again.
@@ -2121,10 +2124,10 @@ fn a_programs_file_failure_waits_on_a_dialog() {
     let c = ask(&mut m, "run");
     assert_eq!(c.title, "Save file");
     m.rt.answer(true);
-    let d = run_to_dialog_now(&mut m);
+    let d = frames_to_dialog(&mut m);
     assert_eq!(d.caption, "SAVEV failed");
     m.answer_dialog(DialogAnswer::Choice(0));
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert!(m.rt.confirmation().is_none());
     assert_eq!(tail(&m, 2), ["PAST0", "OK"]);
 
@@ -2139,7 +2142,7 @@ fn a_programs_file_failure_waits_on_a_dialog() {
 }
 
 /// Runs frames of a running program until it waits on a dialog.
-fn run_to_dialog_now(m: &mut Machine) -> sb_runtime::dialog::ProgramDialog {
+fn frames_to_dialog(m: &mut Machine) -> sb_runtime::dialog::ProgramDialog {
     for _ in 0..10 {
         m.frame();
         if let Some(d) = m.program_dialog() {
@@ -2269,7 +2272,7 @@ fn changing_a_file_that_was_in_the_folder_asks_once_whatever_the_setting() {
     );
     assert!(!c.accept_first);
     m.rt.answer(true);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     assert_eq!(
         std::fs::read(folder.join("HGLIB.PRG.txt")).unwrap(),
@@ -2286,7 +2289,7 @@ fn changing_a_file_that_was_in_the_folder_asks_once_whatever_the_setting() {
     let c = ask(&mut m, "delete \"hgtest.prg\":?result()");
     assert_eq!(c.title, "Delete file");
     m.rt.answer(false);
-    settle(&mut m);
+    run_until_direct_mode(&mut m);
     assert_eq!(tail(&m, 2), ["-1", "OK"]);
     assert!(folder.join("HGTEST.PRG.txt").is_file());
     // Ctrl+S asks by this too.
@@ -2321,7 +2324,7 @@ fn reserved_names_are_illegal_format() {
         ),
         ("files \"txt:prn\"", "Illegal format (FILES) (\"TXT:PRN\")"),
     ] {
-        assert_eq!(direct_error(&mut m, line), message, "{line}");
+        assert_eq!(direct_output(&mut m, line), message, "{line}");
     }
     enter(
         &mut m,

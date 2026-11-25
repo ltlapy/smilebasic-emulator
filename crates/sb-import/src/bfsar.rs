@@ -23,6 +23,36 @@ const SEQUENCE_CODE_TIMES_FILE: usize = 2;
 
 const DAMAGED: &str = "damaged: an offset points outside the file";
 
+/// The FSAR block of sound names.
+const FSAR_STRINGS: u16 = 0x2000;
+/// The FSAR block of tables: sounds, files and more.
+const FSAR_INFO: u16 = 0x2001;
+/// The FSAR block that holds the files inside the archive.
+const FSAR_FILES: u16 = 0x2002;
+/// The FSEQ block of sequence code.
+const FSEQ_CODE: u16 = 0x5000;
+/// The FBNK block of waves and instruments.
+const FBNK_INFO: u16 = 0x5800;
+/// The FWAR block of wave positions.
+const FWAR_INFO: u16 = 0x6800;
+/// The FWAR block that holds the FWAV files.
+const FWAR_FILES: u16 = 0x6801;
+/// The FWAV block of the format and channels.
+const FWAV_INFO: u16 = 0x7000;
+/// The FWAV block of samples.
+const FWAV_DATA: u16 = 0x7001;
+
+/// The index of the file table among the FSAR info block's references.
+const FILE_TABLE_REFERENCE: usize = 6;
+/// The reference type of a file inside the archive.
+const FILE_IN_ARCHIVE: u16 = 0x220C;
+/// The reference type of a sound's sequence details.
+const SEQUENCE_INFO: u16 = 0x2203;
+/// The offset of a sound's flags.
+const SOUND_FLAGS: usize = 20;
+/// The flag of a sound whose first value after the flags is its name.
+const SOUND_HAS_NAME: u32 = 1;
+
 /// Offsets that read past the end report the file as damaged.
 #[derive(Clone, Copy)]
 struct Bytes<'a>(&'a [u8]);
@@ -102,10 +132,9 @@ impl<'a> Bytes<'a> {
 /// The offset of each of the archive's files, by file number; `None` for
 /// a file kept outside it.
 fn files(d: Bytes) -> Result<Vec<Option<usize>>> {
-    let info = d.block(0, b"FSAR", 0x2001)?;
-    let data = d.block(0, b"FSAR", 0x2002)?;
-    // The info block's seventh reference is the file table.
-    let (_, table) = d.reference(info + 6 * 8, info)?;
+    let info = d.block(0, b"FSAR", FSAR_INFO)?;
+    let data = d.block(0, b"FSAR", FSAR_FILES)?;
+    let (_, table) = d.reference(info + FILE_TABLE_REFERENCE * 8, info)?;
     let table = table.ok_or("no file table")?;
     let mut files = Vec::new();
     for i in 0..d.offset(table)? {
@@ -113,8 +142,7 @@ fn files(d: Bytes) -> Result<Vec<Option<usize>>> {
         let mut at = None;
         if let Some(entry) = entry {
             let (kind, location) = d.reference(entry, entry)?;
-            // 0x220C: a file inside the archive.
-            if kind == 0x220C {
+            if kind == FILE_IN_ARCHIVE {
                 at = d.reference(location.ok_or("no file location")?, data)?.1;
             }
         }
@@ -134,7 +162,7 @@ fn find(d: Bytes, files: &[Option<usize>], magic: &[u8; 4]) -> Result<usize> {
 
 /// The archive's sound names, by string number.
 fn names(d: Bytes) -> Result<Vec<String>> {
-    let strings = d.block(0, b"FSAR", 0x2000)?;
+    let strings = d.block(0, b"FSAR", FSAR_STRINGS)?;
     let (_, table) = d.reference(strings, strings)?;
     let table = table.ok_or("no string table")?;
     // Each name costs a copy, so many names pointing at the same big text
@@ -160,7 +188,7 @@ pub fn sequences(archive: &[u8]) -> Result<Sequences> {
     let d = Bytes(archive);
     let files = files(d)?;
     let names = names(d)?;
-    let info = d.block(0, b"FSAR", 0x2001)?;
+    let info = d.block(0, b"FSAR", FSAR_INFO)?;
     let (_, sounds) = d.reference(info, info)?;
     let sounds = sounds.ok_or("no sound table")?;
     let mut out = Sequences::default();
@@ -168,11 +196,11 @@ pub fn sequences(archive: &[u8]) -> Result<Sequences> {
     for i in 0..d.offset(sounds)? {
         let (_, sound) = d.reference(sounds + 4 + i * 8, sounds)?;
         let Some(sound) = sound else { continue };
-        // The flags' first value is the name.
-        if d.u32(sound + 20)? & 1 == 0 {
+        let flags = sound + SOUND_FLAGS;
+        if d.u32(flags)? & SOUND_HAS_NAME == 0 {
             continue;
         }
-        let Some(name) = names.get(d.offset(sound + 24)?) else {
+        let Some(name) = names.get(d.offset(flags + 4)?) else {
             continue;
         };
         let (kind, number) = match name.split_at(1) {
@@ -186,9 +214,8 @@ pub fn sequences(archive: &[u8]) -> Result<Sequences> {
         if number >= SEQUENCE_NUMBERS {
             return Err(format!("{name}'s number is too large"));
         }
-        // 0x2203: a sequence.
         let (detail_kind, detail) = d.reference(sound + 12, sound)?;
-        let (0x2203, Some(detail)) = (detail_kind, detail) else {
+        let (SEQUENCE_INFO, Some(detail)) = (detail_kind, detail) else {
             continue;
         };
         let file = files
@@ -196,7 +223,7 @@ pub fn sequences(archive: &[u8]) -> Result<Sequences> {
             .copied()
             .flatten()
             .ok_or_else(|| format!("{name}'s sequence is missing"))?;
-        let code = d.block(file, b"FSEQ", 0x5000)?;
+        let code = d.block(file, b"FSEQ", FSEQ_CODE)?;
         let len = d
             .offset(code - 4)?
             .checked_sub(8)
@@ -231,7 +258,7 @@ pub fn bank(archive: &[u8]) -> Result<Bank> {
     let fbnk = find(d, &files, b"FBNK")?;
     let fwar = find(d, &files, b"FWAR")?;
 
-    let info = d.block(fbnk, b"FBNK", 0x5800)?;
+    let info = d.block(fbnk, b"FBNK", FBNK_INFO)?;
     let (_, wave_table) = d.reference(info, info)?;
     let (_, instrument_table) = d.reference(info + 8, info)?;
     let (wave_table, instrument_table) = (
@@ -370,6 +397,17 @@ fn key_region(d: Bytes, at: usize, keys: (u8, u8)) -> Result<Region> {
     velocity_region(d, region.ok_or("empty velocity region")?, keys)
 }
 
+/// The flag of a velocity region that has an original key.
+const REGION_ORIGINAL_KEY: usize = 0;
+/// The flag of a velocity region that has a volume.
+const REGION_VOLUME: usize = 1;
+/// The flag of a velocity region that has a pan.
+const REGION_PAN: usize = 2;
+/// The flag of a velocity region that may ignore note-off.
+const REGION_IGNORE_NOTE_OFF: usize = 4;
+/// The flag of a velocity region that has an envelope.
+const REGION_ENVELOPE: usize = 9;
+
 fn velocity_region(d: Bytes, at: usize, keys: (u8, u8)) -> Result<Region> {
     let wave = d.u32(at)?;
     let flags = d.u32(at + 4)?;
@@ -382,10 +420,10 @@ fn velocity_region(d: Bytes, at: usize, keys: (u8, u8)) -> Result<Region> {
             next += 4;
         }
     }
-    let has = |bit: u32| flags >> bit & 1 != 0;
-    let envelope = if has(9) {
+    let has = |bit: usize| flags >> bit & 1 != 0;
+    let envelope = if has(REGION_ENVELOPE) {
         // An offset to a reference to the curve.
-        let curve_ref = d.at(at, values[9] as usize)?;
+        let curve_ref = d.at(at, values[REGION_ENVELOPE] as usize)?;
         let (_, curve) = d.reference(curve_ref, curve_ref)?;
         let c = d.slice(curve.ok_or("no envelope")?, 5)?;
         Adshr {
@@ -409,11 +447,23 @@ fn velocity_region(d: Bytes, at: usize, keys: (u8, u8)) -> Result<Region> {
     Ok(Region {
         keys,
         wave: u16::try_from(wave).map_err(|_| "too many waveforms")?,
-        original_key: if has(0) { values[0] as u8 } else { 60 },
-        volume: if has(1) { values[1] as u8 } else { 127 },
-        pan: if has(2) { values[2] as u8 } else { 64 },
+        original_key: if has(REGION_ORIGINAL_KEY) {
+            values[REGION_ORIGINAL_KEY] as u8
+        } else {
+            60
+        },
+        volume: if has(REGION_VOLUME) {
+            values[REGION_VOLUME] as u8
+        } else {
+            127
+        },
+        pan: if has(REGION_PAN) {
+            values[REGION_PAN] as u8
+        } else {
+            64
+        },
         envelope,
-        ignore_note_off: has(4) && values[4] & 0xFF != 0,
+        ignore_note_off: has(REGION_IGNORE_NOTE_OFF) && values[REGION_IGNORE_NOTE_OFF] & 0xFF != 0,
     })
 }
 
@@ -423,8 +473,8 @@ type Channels<'a> = (WaveInfo, &'a [u8], Option<(WaveInfo, &'a [u8])>);
 
 /// The waveforms of an FWAR, each with its bytes.
 fn war_waves<'a>(d: Bytes<'a>, at: usize) -> Result<Vec<Channels<'a>>> {
-    let info = d.block(at, b"FWAR", 0x6800)?;
-    let files = d.block(at, b"FWAR", 0x6801)?;
+    let info = d.block(at, b"FWAR", FWAR_INFO)?;
+    let files = d.block(at, b"FWAR", FWAR_FILES)?;
     (0..d.offset(info)?)
         .map(|i| wave(d, d.at(files, d.offset(info + 4 + i * 12 + 4)?)?))
         .collect()
@@ -433,7 +483,7 @@ fn war_waves<'a>(d: Bytes<'a>, at: usize) -> Result<Vec<Channels<'a>>> {
 /// One FWAV: its first channel, and its second for the few SmileBASIC 4
 /// waves that are stereo. More channels are not kept.
 fn wave<'a>(d: Bytes<'a>, at: usize) -> Result<Channels<'a>> {
-    let info = d.block(at, b"FWAV", 0x7000)?;
+    let info = d.block(at, b"FWAV", FWAV_INFO)?;
     let channels = info + 0x14;
     let (left, bytes) = match d.offset(channels)? {
         0 => return Err("a waveform has no channels".into()),
@@ -448,8 +498,8 @@ fn wave<'a>(d: Bytes<'a>, at: usize) -> Result<Channels<'a>> {
 
 /// Channel `i` of the FWAV at `at`.
 fn channel<'a>(d: Bytes<'a>, at: usize, i: usize) -> Result<(WaveInfo, &'a [u8])> {
-    let info = d.block(at, b"FWAV", 0x7000)?;
-    let data = d.block(at, b"FWAV", 0x7001)?;
+    let info = d.block(at, b"FWAV", FWAV_INFO)?;
+    let data = d.block(at, b"FWAV", FWAV_DATA)?;
     let (format, looped) = (d.u8(info)?, d.u8(info + 1)? != 0);
     let rate = d.u32(info + 4)?;
     let loop_start = d.u32(info + 8)?;

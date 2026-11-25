@@ -129,8 +129,8 @@ pub fn snap_to_shape(
 ) -> Option<(u32, u32)> {
     let (dw, dh) = (u64::from(display.0.max(1)), u64::from(display.1.max(1)));
     let (w64, h64) = (u64::from(w), u64::from(h));
-    // Off by more than a pixel of height.
-    if (h64 * dw).abs_diff(w64 * dh) <= dw || w == 0 || h == 0 {
+    let within_a_pixel = (h64 * dw).abs_diff(w64 * dh) <= dw;
+    if within_a_pixel || w == 0 || h == 0 {
         return None;
     }
     let along = |v: u64, from: u64, to: u64| ((v * to + from / 2) / from).max(1) as u32;
@@ -161,7 +161,7 @@ pub const SETTLE: Duration = Duration::from_millis(300);
 
 /// The number of sizes in a row the system may refuse before the window's
 /// shape is left unchanged until the item is turned on again.
-const STRIKES: u32 = 2;
+const MOST_REFUSED_SIZES: u32 = 2;
 
 /// Puts the main window back to the display's shape after the user
 /// resizes it, on systems that ignore the shape the window asks for (some
@@ -174,7 +174,7 @@ pub struct KeepShape {
     /// The size last asked for, until the window's size settles after it.
     asked: Option<(u32, u32)>,
     /// The sizes asked for in a row that the system did not give.
-    strikes: u32,
+    refused_in_a_row: u32,
 }
 
 impl KeepShape {
@@ -218,8 +218,8 @@ impl KeepShape {
         // refused.
         if self.asked.take().is_some() {
             match wanted {
-                None => self.strikes = 0,
-                Some(_) => self.strikes += 1,
+                None => self.refused_in_a_row = 0,
+                Some(_) => self.refused_in_a_row += 1,
             }
         }
         self.ask(size, free, display, room)
@@ -232,7 +232,7 @@ impl KeepShape {
         display: (u32, u32),
         room: Option<(u32, u32)>,
     ) -> Option<(u32, u32)> {
-        if free || self.strikes >= STRIKES {
+        if free || self.refused_in_a_row >= MOST_REFUSED_SIZES {
             return None;
         }
         self.asked = snap_to_shape(size, display, room);
@@ -509,7 +509,7 @@ mod tests {
         assert!(keep.tick(at(1000), (800, 600), false, sb4, None).is_some());
         keep.resized(at(1100));
         assert_eq!(keep.tick(at(1500), (800, 450), false, sb4, None), None);
-        assert_eq!(keep.strikes, 0);
+        assert_eq!(keep.refused_in_a_row, 0);
     }
 
     #[test]

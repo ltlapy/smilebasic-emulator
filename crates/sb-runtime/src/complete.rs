@@ -21,8 +21,8 @@ use crate::settings::Settings;
 use crate::syntax::{ALSO_RESERVED, COMMANDS, Role, highlight, is_ident_char};
 use crate::text::TextScreen;
 
-/// The number of entries shown; the list scrolls through the rest.
-pub const ROWS: usize = 6;
+/// The list scrolls through the entries past these.
+pub const VISIBLE_ROWS: usize = 6;
 /// Cells before each entry for its tag.
 const TAG_CELLS: usize = 2;
 
@@ -348,26 +348,24 @@ pub fn names<'a>(lines: impl IntoIterator<Item = &'a [u16]>) -> Vec<Item> {
     let mut out: Vec<Item> = Vec::new();
     for line in lines {
         let (roles, _) = highlight(line);
-        // Within DIM or VAR, or CONST, and the reserved word before this
-        // one.
-        let mut declaring = false;
-        let mut constants = false;
+        let mut in_dim_or_var = false;
+        let mut in_const = false;
         let mut last_reserved = String::new();
         let mut i = 0;
         while i < line.len() {
             let role = roles[i];
             let start = i;
             if line[i] == u16::from(b':') && role == Role::Character {
-                declaring = false;
-                constants = false;
+                in_dim_or_var = false;
+                in_const = false;
             }
             if role == Role::Reserved && is_ident_char(line[i]) {
                 while i < line.len() && roles[i] == role && is_ident_char(line[i]) {
                     i += 1;
                 }
                 last_reserved = String::from_utf16_lossy(&line[start..i]).to_ascii_uppercase();
-                declaring |= matches!(last_reserved.as_str(), "DIM" | "VAR");
-                constants |= last_reserved == "CONST";
+                in_dim_or_var |= matches!(last_reserved.as_str(), "DIM" | "VAR");
+                in_const |= last_reserved == "CONST";
                 continue;
             }
             let named = matches!(role, Role::Character | Role::Label | Role::Constant);
@@ -392,27 +390,8 @@ pub fn names<'a>(lines: impl IntoIterator<Item = &'a [u16]>) -> Vec<Item> {
             // The columns of the UTF-16 line match those of the text,
             // because names and signatures are written in ASCII.
             let after = String::from_utf16_lossy(&line[i..]);
-            let (kind, detail) = match role {
-                Role::Label => (Kind::Label, String::new()),
-                Role::Constant if constants => (Kind::Constant, const_value(&after)),
-                Role::Constant => (Kind::Constant, String::new()),
-                _ if last_reserved == "DEF" => {
-                    let end = after.find([':', '\'']).unwrap_or(after.len());
-                    let signature = after[..end].trim();
-                    if signature.starts_with('(') {
-                        let close = signature.find(')').map_or(signature.len(), |c| c + 1);
-                        (Kind::Def, signature[..close].to_string())
-                    } else {
-                        (Kind::Sub, signature.to_string())
-                    }
-                }
-                _ if declaring && after.starts_with('[') => {
-                    let close = after.find(']').unwrap_or(after.len());
-                    let commas = after[..close].matches(',').count();
-                    (Kind::Variable, format!("[{}]", ",".repeat(commas)))
-                }
-                _ => (Kind::Variable, String::new()),
-            };
+            let (kind, detail) =
+                kind_and_detail(role, &last_reserved, in_dim_or_var, in_const, &after);
             last_reserved.clear();
             let key = word.to_ascii_uppercase();
             match index.get(&key) {
@@ -435,6 +414,38 @@ pub fn names<'a>(lines: impl IntoIterator<Item = &'a [u16]>) -> Vec<Item> {
         }
     }
     out
+}
+
+/// The kind of a name and its detail: a CONST's value, a DEF's arguments
+/// or an array's dimensions. `after` is the text after the name.
+fn kind_and_detail(
+    role: Role,
+    last_reserved: &str,
+    in_dim_or_var: bool,
+    in_const: bool,
+    after: &str,
+) -> (Kind, String) {
+    match role {
+        Role::Label => (Kind::Label, String::new()),
+        Role::Constant if in_const => (Kind::Constant, const_value(after)),
+        Role::Constant => (Kind::Constant, String::new()),
+        _ if last_reserved == "DEF" => {
+            let end = after.find([':', '\'']).unwrap_or(after.len());
+            let signature = after[..end].trim();
+            if signature.starts_with('(') {
+                let close = signature.find(')').map_or(signature.len(), |c| c + 1);
+                (Kind::Def, signature[..close].to_string())
+            } else {
+                (Kind::Sub, signature.to_string())
+            }
+        }
+        _ if in_dim_or_var && after.starts_with('[') => {
+            let close = after.find(']').unwrap_or(after.len());
+            let commas = after[..close].matches(',').count();
+            (Kind::Variable, format!("[{}]", ",".repeat(commas)))
+        }
+        _ => (Kind::Variable, String::new()),
+    }
 }
 
 /// A predefined constant's value as written in a program: colors
@@ -586,8 +597,8 @@ impl Completion {
         };
         self.chosen = Some(chosen);
         self.top = self.top.min(chosen);
-        if chosen >= self.top + ROWS {
-            self.top = chosen + 1 - ROWS;
+        if chosen >= self.top + VISIBLE_ROWS {
+            self.top = chosen + 1 - VISIBLE_ROWS;
         }
         Outcome::Used
     }
@@ -605,7 +616,7 @@ impl Completion {
         colors: &Palette,
     ) {
         let c = i64::from(cell);
-        let rows = self.items.len().min(ROWS);
+        let rows = self.items.len().min(VISIBLE_ROWS);
         let entry = |item: &Item| {
             let detail = match item.detail.is_empty() {
                 true => 0,

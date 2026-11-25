@@ -98,9 +98,10 @@ fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
     })
 }
 
-/// Display coordinates to the screen's own pixels, which TOFS, THOME,
-/// TROT and TSCALE place. An axis with a scale of 0 gives the home point.
-fn screen_dots(screen: &TextScreen, x: f64, y: f64) -> (f64, f64) {
+/// Converts display coordinates to pixels of the screen itself, which
+/// TOFS, THOME, TROT and TSCALE place. An axis with a scale of 0 gives the
+/// home point.
+fn display_to_screen_pixels(screen: &TextScreen, x: f64, y: f64) -> (f64, f64) {
     let (dx, dy) = (x - screen.pos.0, y - screen.pos.1);
     let (sin, cos) = screen.rot.to_radians().sin_cos();
     let (rx, ry) = (dx * cos + dy * sin, dy * cos - dx * sin);
@@ -196,7 +197,10 @@ impl Runtime {
                     },
                 };
                 let cell = if display {
-                    Some(cell_of(t, screen_dots(t, x.trunc(), y.trunc())))
+                    Some(cell_of(
+                        t,
+                        display_to_screen_pixels(t, x.trunc(), y.trunc()),
+                    ))
                 } else {
                     Some((int(&rest[0])?, int(&rest[1])?))
                 };
@@ -223,11 +227,11 @@ impl Runtime {
                         vec![Value::Real(dx), Value::Real(dy)]
                     }
                     1 => {
-                        let (cx, cy) = cell_of(t, screen_dots(t, x, y));
+                        let (cx, cy) = cell_of(t, display_to_screen_pixels(t, x, y));
                         vec![Value::Int(cx), Value::Int(cy)]
                     }
                     2 => {
-                        let (sx, sy) = screen_dots(t, x, y);
+                        let (sx, sy) = display_to_screen_pixels(t, x, y);
                         vec![Value::Real(sx), Value::Real(sy)]
                     }
                     n => return Err(out_of_range("mode", n)),
@@ -240,27 +244,9 @@ impl Runtime {
                     8 => (screen_id(&args[1])?, &args[2..]),
                     _ => (dest, &args[1..]),
                 };
-                let [x, y, w, h] = corners(&rest[..4])?;
-                let (dx, dy) = (i64::from(int(&rest[4])?), i64::from(int(&rest[5])?));
-                // Only what is on both screens makes a difference.
-                let from = &self.text[src];
-                let (xs, ys) = offsets_on(x, y, w, h, from);
-                let (to_xs, to_ys) = offsets_on(dx, dy, w, h, &self.text[dest]);
-                let xs = xs.start.max(to_xs.start)..xs.end.min(to_xs.end);
-                let ys = ys.start.max(to_ys.start)..ys.end.min(to_ys.end);
-                let width = (xs.end - xs.start).max(1) as usize;
-                let mut cells = Vec::with_capacity(width * (ys.end - ys.start).max(0) as usize);
-                for cy in ys.clone() {
-                    for cx in xs.clone() {
-                        cells.push(from.cell((x + cx) as u32, (y + cy) as u32));
-                    }
-                }
-                let t = &mut self.text[dest];
-                for (cy, row) in ys.zip(cells.chunks(width)) {
-                    for (cx, &cell) in xs.clone().zip(row) {
-                        t.set_cell((dx + cx) as i32, (dy + cy) as i32, cell);
-                    }
-                }
+                let rect = corners(&rest[..4])?;
+                let to = (i64::from(int(&rest[4])?), i64::from(int(&rest[5])?));
+                self.copy_cells(src, rect, dest, to);
                 Ok(vec![])
             }
             (Command::Tsave, Want::Outs(0), 2 | 6) => {
@@ -386,6 +372,36 @@ impl Runtime {
                 Ok(vec![])
             }
             _ => Err(no_form()),
+        }
+    }
+
+    /// Copies the cells of rectangle `[x, y, w, h]` on text screen `src`
+    /// to `(dx, dy)` on text screen `dest`, for TCOPY.
+    fn copy_cells(
+        &mut self,
+        src: usize,
+        [x, y, w, h]: [i64; 4],
+        dest: usize,
+        (dx, dy): (i64, i64),
+    ) {
+        // Only what is on both screens makes a difference.
+        let from = &self.text[src];
+        let (xs, ys) = offsets_on(x, y, w, h, from);
+        let (to_xs, to_ys) = offsets_on(dx, dy, w, h, &self.text[dest]);
+        let xs = xs.start.max(to_xs.start)..xs.end.min(to_xs.end);
+        let ys = ys.start.max(to_ys.start)..ys.end.min(to_ys.end);
+        let width = (xs.end - xs.start).max(1) as usize;
+        let mut cells = Vec::with_capacity(width * (ys.end - ys.start).max(0) as usize);
+        for cy in ys.clone() {
+            for cx in xs.clone() {
+                cells.push(from.cell((x + cx) as u32, (y + cy) as u32));
+            }
+        }
+        let t = &mut self.text[dest];
+        for (cy, row) in ys.zip(cells.chunks(width)) {
+            for (cx, &cell) in xs.clone().zip(row) {
+                t.set_cell((dx + cx) as i32, (dy + cy) as i32, cell);
+            }
         }
     }
 

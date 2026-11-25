@@ -50,6 +50,9 @@ const DOT: &str = "fonts/neodgm/SBEmulatorDot.ttf";
 const SYMBOL_CHARS: &str = ".#kgb";
 /// Cell row of the baseline's lowest pixel row (y = 0); y = -1 is row 7.
 const BASELINE_ROW: i32 = 6;
+/// The first column in a cell of a half-width glyph, one with an advance
+/// of 4 pixels or less (see `GALMURI_HALF_LEFT` in `src/half_width.rs`).
+const HALF_LEFT: i32 = 2;
 
 type Cell = [u8; 8];
 
@@ -101,7 +104,7 @@ fn parse_bdf(text: &str) -> Vec<Glyph> {
 /// that poke out above or below are moved inside when they fit.
 fn place(g: &Glyph) -> Cell {
     let [w, h, xoff, yoff] = g.bbx;
-    let left = if g.advance <= 4 { 2 } else { 0 };
+    let left = if g.advance <= 4 { HALF_LEFT } else { 0 };
     let first_row = BASELINE_ROW - (yoff + h - 1);
     let last_row = BASELINE_ROW - yoff;
     let shift = if h > 8 {
@@ -444,7 +447,7 @@ fn bdf_cells(text: &str, cell: u32, keep: impl Fn(u32) -> bool) -> BTreeMap<u32,
     let layout = cell_glyph::BdfLayout::new(&bdf);
     bdf.glyphs
         .iter()
-        .filter(|g| g.code >= 0x20 && !(0x7F..0xA0).contains(&g.code) && g.advance > 0)
+        .filter(|g| drawn(g.code) && g.advance > 0)
         .filter(|g| keep(g.code))
         .map(|g| (g.code, cell_glyph::bdf_cell(g, &layout, cell)))
         .collect()
@@ -466,7 +469,7 @@ fn outline_cells(
     codes.dedup();
     codes
         .into_iter()
-        .filter(|&c| c >= ' ' && !('\u{7F}'..'\u{A0}').contains(&c) && keep(c as u32))
+        .filter(|&c| drawn(c as u32) && keep(c as u32))
         .filter_map(|c| {
             let glyph = cell_glyph::outline_cell(font, c, cell, em_share, cell_glyph::Ink::Gray)?;
             Some((c as u32, glyph.into_iter().map(&alpha).collect()))

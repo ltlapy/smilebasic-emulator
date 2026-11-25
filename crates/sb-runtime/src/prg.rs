@@ -92,9 +92,9 @@ impl LinesCache {
     }
 }
 
-/// The key that tells whether a slot's text is still the one the cache
-/// holds, as a guard behind [`LinesCache::forget`].
-fn text_key(slot: usize, text: &str) -> (usize, usize, usize) {
+/// Returns the key that tells whether a slot's text is still the one the
+/// cache holds, as a guard behind [`LinesCache::forget`].
+fn cache_key(slot: usize, text: &str) -> (usize, usize, usize) {
     (slot, text.as_ptr() as usize, text.len())
 }
 
@@ -120,8 +120,7 @@ struct Source<'a> {
 }
 
 impl Source<'_> {
-    /// Lines as PRGSIZE counts them.
-    fn count(&self) -> usize {
+    fn prgsize_lines(&self) -> usize {
         if self.text.is_empty() {
             0
         } else {
@@ -129,8 +128,8 @@ impl Source<'_> {
         }
     }
 
-    /// Lines as the current line counts them: an empty slot has one.
-    fn len(&self) -> usize {
+    /// The lines the current line can be on: an empty slot has one.
+    fn edit_lines(&self) -> usize {
         self.starts.len()
     }
 
@@ -149,7 +148,7 @@ impl Source<'_> {
     /// The line number PRGEDIT() reports for an index: never past the
     /// last.
     fn reported(&self, line: usize) -> i32 {
-        (line + 1).min(self.count().max(1)) as i32
+        (line + 1).min(self.prgsize_lines().max(1)) as i32
     }
 
     /// Characters as PRGSIZE counts them, given the text's UTF-16 length:
@@ -223,7 +222,6 @@ impl LinesEdit<'_> {
         self.starts.splice(range, firsts);
     }
 
-    /// An empty line added after the last.
     fn push_empty(&mut self) {
         let len = self.len();
         let new = NewLines {
@@ -326,7 +324,7 @@ impl Runtime {
             text.clear();
             cache.units = Some(0);
         }
-        cache.key = Some(text_key(edit.slot, &text));
+        cache.key = Some(cache_key(edit.slot, &text));
         self.slots[edit.slot] = text;
         self.slot_changes[edit.slot] += 1;
         self.prg_edit = Some(PrgEdit {
@@ -340,7 +338,7 @@ impl Runtime {
     fn source(&mut self, slot: usize) -> Source<'_> {
         let cache = &mut self.prg_lines;
         let text = &self.slots[slot];
-        let key = text_key(slot, text);
+        let key = cache_key(slot, text);
         if cache.key != Some(key) {
             line_starts(text, &mut cache.starts);
             cache.units = None;
@@ -390,8 +388,8 @@ impl Runtime {
                 let line = match flag(rest.first(), 1)? {
                     // -1 is past the last line, and a line number after the
                     // last selects the last line.
-                    -1 => source.len(),
-                    n @ 1.. => (n as usize).min(source.len()) - 1,
+                    -1 => source.edit_lines(),
+                    n @ 1.. => (n as usize).min(source.edit_lines()) - 1,
                     n => {
                         let detail = format!("line {n}");
                         return Err(Error::with_detail(ErrorKind::OutOfRange, detail));
@@ -413,7 +411,7 @@ impl Runtime {
                 let edit = self.editing()?;
                 let source = self.source(edit.slot);
                 let text = source.line(edit.line).unwrap_or_default();
-                if seek && edit.line < source.len() {
+                if seek && edit.line < source.edit_lines() {
                     self.prg_edit = Some(PrgEdit {
                         line: edit.line + 1,
                         ..edit
@@ -423,7 +421,7 @@ impl Runtime {
             }
             (Command::Prgseek, Want::Value | Want::Outs(0), _) if args.len() <= 1 => {
                 let edit = self.editing()?;
-                let len = self.source(edit.slot).len();
+                let len = self.source(edit.slot).edit_lines();
                 let cur = edit.line.min(len - 1);
                 let (to, moved) = match flag(args.first(), 1)? {
                     1 if cur + 1 < len => (cur + 1, true),
@@ -449,7 +447,7 @@ impl Runtime {
                 // UNVERIFIED: that PRGSET does nothing too when the slot
                 // would be over its size, the same as PRGINS does.
                 let source = self.source(edit.slot);
-                let old = source.line(edit.line.min(source.len() - 1));
+                let old = source.line(edit.line.min(source.edit_lines() - 1));
                 if !self.fits(edit.slot, new.units(), old.map_or(0, |l| l.len())) {
                     return Ok(vec![]);
                 }
@@ -565,7 +563,7 @@ impl Runtime {
                 let source = self.source(slot);
                 let chars = source.chars(units) as i32;
                 let n = match kind {
-                    0 => source.count() as i32,
+                    0 => source.prgsize_lines() as i32,
                     1 => chars,
                     2 => (SLOT_CHARS - chars).max(0),
                     n => {

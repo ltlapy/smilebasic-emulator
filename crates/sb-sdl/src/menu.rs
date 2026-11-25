@@ -19,6 +19,8 @@ use crate::ui::{
 use crate::window::SCALES;
 
 const ROW_HEIGHT: u32 = 24;
+/// The mark before a command: blank, as wide as a check box.
+const NO_MARK: &str = "   ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -78,7 +80,7 @@ pub enum Action {
     ToggleKeepShape,
     /// The main window's presents wait for vsync.
     ToggleVsync,
-    /// The debugger's commands, for a stopped program.
+    // The debugger's commands, for a stopped program.
     Continue,
     StepInto,
     StepOver,
@@ -155,7 +157,7 @@ impl Action {
             Action::EditorFont(_) | Action::EditorSize(_) | Action::ColorPreset(_) => "( )",
             Action::ScreenFilter(f) if settings.screen_filter == f => "(*)",
             Action::ScreenFilter(_) => "( )",
-            _ => "   ",
+            _ => NO_MARK,
         }
     }
 
@@ -491,7 +493,7 @@ fn item_text(item: &Item, settings: &Settings, context: Context, marks: bool) ->
 /// before every label.
 fn has_marks(items: &[Item]) -> bool {
     let (settings, context) = (Settings::default(), Context::default());
-    (items.iter()).any(|i| matches!(i.entry, Entry::Do(a) if a.mark(&settings, context) != "   "))
+    (items.iter()).any(|i| matches!(i.entry, Entry::Do(a) if a.mark(&settings, context) != NO_MARK))
 }
 
 /// Returns the text on an item's right: its keys, or the arrow of a

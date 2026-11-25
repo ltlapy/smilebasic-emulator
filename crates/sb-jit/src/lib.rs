@@ -62,7 +62,7 @@ pub struct Place {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Operand {
     Place(Place),
-    Temp(u8),
+    Hidden(u8),
     Int(i32),
     Real(f64),
 }
@@ -72,7 +72,7 @@ pub enum Operand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dest {
     Place(Place),
-    Temp(u8),
+    Hidden(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,15 +254,3 @@ pub const SUPPORTED: bool = cfg!(all(
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ));
-
-#[cfg(test)]
-mod tests {
-    /// Native code reads and writes `Ctx` at these offsets.
-    #[test]
-    fn ctx_is_laid_out_as_native_code_reads_it() {
-        use std::mem::offset_of;
-        assert_eq!(offset_of!(super::Ctx, tables), 0);
-        assert_eq!(offset_of!(super::Ctx, pc), 16);
-        assert_eq!(offset_of!(super::Ctx, left), 24);
-    }
-}

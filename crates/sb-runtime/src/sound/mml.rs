@@ -179,7 +179,7 @@ const USED: u32 = 1 << 31;
 /// Removes `/comments/` and expands macros where they are used. With
 /// `seen`, a macro is expanded only at its first use, which is enough to
 /// read every body and cannot multiply.
-fn expand(text: &[char], mut seen: Option<HashSet<String>>) -> Result<Plain, Stop> {
+fn expand(text: &[char], seen: Option<HashSet<String>>) -> Result<Plain, Stop> {
     let mut plain = Vec::with_capacity(text.len());
     let mut comment = false;
     for (i, &c) in text.iter().enumerate() {
@@ -189,95 +189,110 @@ fn expand(text: &[char], mut seen: Option<HashSet<String>>) -> Result<Plain, Sto
             plain.push((c.to_ascii_uppercase(), i as u32));
         }
     }
-    let mut macros: HashMap<String, Vec<(char, u32)>> = HashMap::new();
-    let mut out = Plain {
-        text: Vec::with_capacity(plain.len()),
-        at: Vec::with_capacity(plain.len()),
-    };
-    let mut left = if seen.is_some() {
+    let left = if seen.is_some() {
         usize::MAX
     } else {
         MACRO_CHARS
     };
-    expand_into(&plain, &mut macros, &mut out, 0, None, &mut left, &mut seen)?;
-    Ok(out)
+    let mut expander = Expander {
+        macros: HashMap::new(),
+        out: Plain {
+            text: Vec::with_capacity(plain.len()),
+            at: Vec::with_capacity(plain.len()),
+        },
+        left,
+        seen,
+    };
+    expander.expand_into(&plain, 0, None)?;
+    Ok(expander.out)
 }
 
-/// Expands `text` into `out`. `used` is where the outermost macro being
-/// expanded was used: [`USED`] and the index just past its `}`.
-#[allow(clippy::too_many_arguments)]
-fn expand_into(
-    text: &[(char, u32)],
-    macros: &mut HashMap<String, Vec<(char, u32)>>,
-    out: &mut Plain,
-    depth: usize,
-    used: Option<u32>,
-    left: &mut usize,
-    seen: &mut Option<HashSet<String>>,
-) -> Result<(), Stop> {
-    let mut i = 0;
-    while i < text.len() {
-        let (c, source) = text[i];
-        if c != '{' {
-            out.text.push(c);
-            out.at.push(used.unwrap_or(source));
-            i += 1;
-            continue;
-        }
-        let at = used.map_or(source, |u| u & !USED) as usize;
-        // A definition may use other macros: `{Y={X}F}`.
-        let mut open = 0;
-        let close = (i..text.len())
-            .find(|&j| {
-                match text[j].0 {
-                    '{' => open += 1,
-                    '}' => open -= 1,
-                    _ => {}
-                }
-                open == 0
-            })
-            .ok_or(Stop::Bad(fail(at, ErrorKind::IllegalMml)))?;
-        let inside = &text[i + 1..close];
-        let (name, body) = match inside.iter().position(|&(c, _)| c == '=') {
-            Some(eq) => (&inside[..eq], Some(&inside[eq + 1..])),
-            None => (inside, None),
-        };
-        if name.is_empty() || !name.iter().all(|&(c, _)| is_name_char(c)) {
-            return Err(Stop::Bad(fail(at, ErrorKind::IllegalMml)));
-        }
-        if name.len() > MACRO_NAME_CHARS {
-            return Err(Stop::Bad(fail(at, ErrorKind::MmlMacroNameTooLong)));
-        }
-        let name: String = name.iter().map(|&(c, _)| c).collect();
-        match body {
-            Some(body) => {
-                if macros.contains_key(&name) {
-                    return Err(Stop::Bad(fail(at, ErrorKind::MmlMacroAlreadyDefined)));
-                }
-                check_body(body, macros).map_err(|kind| Stop::Bad(fail(at, kind)))?;
-                // Counted too: a macro that only defines others outputs
-                // nothing, however many times it runs.
-                *left = (left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
-                macros.insert(name, body.to_vec());
+/// The state of one [`expand`].
+struct Expander {
+    macros: HashMap<String, Vec<(char, u32)>>,
+    out: Plain,
+    /// The part of [`MACRO_CHARS`] not used yet, or `usize::MAX` when `seen`
+    /// is given.
+    left: usize,
+    /// The macros expanded so far, when each is expanded only once.
+    seen: Option<HashSet<String>>,
+}
+
+impl Expander {
+    /// Expands `text` into `out`. `used` is where the outermost macro being
+    /// expanded was used: [`USED`] and the index just past its `}`.
+    fn expand_into(
+        &mut self,
+        text: &[(char, u32)],
+        depth: usize,
+        used: Option<u32>,
+    ) -> Result<(), Stop> {
+        let mut i = 0;
+        while i < text.len() {
+            let (c, source) = text[i];
+            if c != '{' {
+                self.out.text.push(c);
+                self.out.at.push(used.unwrap_or(source));
+                i += 1;
+                continue;
             }
-            None => {
-                let undefined = fail(at, ErrorKind::MmlUndefinedMacro);
-                let body = macros.get(&name).ok_or(Stop::Bad(undefined))?;
-                if depth == MACRO_DEPTH {
-                    return Err(Stop::Bad(fail(at, ErrorKind::IllegalMml)));
+            let at = used.map_or(source, |u| u & !USED) as usize;
+            // A definition may use other macros: `{Y={X}F}`.
+            let mut open = 0;
+            let close = (i..text.len())
+                .find(|&j| {
+                    match text[j].0 {
+                        '{' => open += 1,
+                        '}' => open -= 1,
+                        _ => {}
+                    }
+                    open == 0
+                })
+                .ok_or(Stop::Bad(fail(at, ErrorKind::IllegalMml)))?;
+            let inside = &text[i + 1..close];
+            let (name, body) = match inside.iter().position(|&(c, _)| c == '=') {
+                Some(eq) => (&inside[..eq], Some(&inside[eq + 1..])),
+                None => (inside, None),
+            };
+            if name.is_empty() || !name.iter().all(|&(c, _)| is_name_char(c)) {
+                return Err(Stop::Bad(fail(at, ErrorKind::IllegalMml)));
+            }
+            if name.len() > MACRO_NAME_CHARS {
+                return Err(Stop::Bad(fail(at, ErrorKind::MmlMacroNameTooLong)));
+            }
+            let name: String = name.iter().map(|&(c, _)| c).collect();
+            match body {
+                Some(body) => {
+                    if self.macros.contains_key(&name) {
+                        return Err(Stop::Bad(fail(at, ErrorKind::MmlMacroAlreadyDefined)));
+                    }
+                    check_body(body, &self.macros).map_err(|kind| Stop::Bad(fail(at, kind)))?;
+                    // Counted too: a macro that only defines others outputs
+                    // nothing, however many times it runs.
+                    self.left =
+                        (self.left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
+                    self.macros.insert(name, body.to_vec());
                 }
-                // The 1 is for empty macros, which still cost time.
-                *left = (left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
-                let body = body.clone();
-                let used = used.or(Some(USED | (text[close].1 + 1)));
-                if seen.as_mut().is_none_or(|seen| seen.insert(name)) {
-                    expand_into(&body, macros, out, depth + 1, used, left, seen)?;
+                None => {
+                    let undefined = fail(at, ErrorKind::MmlUndefinedMacro);
+                    let body = self.macros.get(&name).ok_or(Stop::Bad(undefined))?;
+                    if depth == MACRO_DEPTH {
+                        return Err(Stop::Bad(fail(at, ErrorKind::IllegalMml)));
+                    }
+                    // The 1 is for empty macros, which still cost time.
+                    self.left =
+                        (self.left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
+                    let body = body.clone();
+                    let used = used.or(Some(USED | (text[close].1 + 1)));
+                    if self.seen.as_mut().is_none_or(|seen| seen.insert(name)) {
+                        self.expand_into(&body, depth + 1, used)?;
+                    }
                 }
             }
+            i = close + 1;
         }
-        i = close + 1;
+        Ok(())
     }
-    Ok(())
 }
 
 fn is_name_char(c: char) -> bool {
@@ -340,8 +355,8 @@ struct Parser {
     /// Each channel's volume as the text sets it, for the steps of `(` and
     /// `)`; after `V` with a variable, SmileBASIC 4's encoding of it.
     volumes: [u32; CHANNELS],
-    /// A bit for each channel used so far; channel 0 from the start.
-    chosen: u16,
+    /// A bit per channel; channel 0 is set from the start.
+    channels_used: u16,
     /// @MP, @MA or @ML has come since the last `:`.
     lfo_given: bool,
 }
@@ -630,13 +645,11 @@ impl Parser {
         let bar = fail(self.end(), ErrorKind::IllegalMml);
         let mut parts = Vec::new();
         let mut notes = 0;
-        // The error of the first `<` or `>` that left the octaves, if any.
-        let mut past = None;
-        // The end of the last part read.
-        let mut last = bar;
+        let mut octave_error = None;
+        let mut last_part_end = bar;
         loop {
             if self.at > 0 && self.text[self.at - 1] != '|' {
-                last = fail(self.end(), ErrorKind::IllegalMml);
+                last_part_end = fail(self.end(), ErrorKind::IllegalMml);
             }
             self.skip_space();
             let Some(c) = self.peek() else {
@@ -647,7 +660,7 @@ impl Parser {
                 '|' => break,
                 '<' | '>' => {
                     if let Err(e) = self.shift_octave(c == '<') {
-                        past.get_or_insert(e);
+                        octave_error.get_or_insert(e);
                     }
                     parts.push(match c {
                         '<' => ChordPart::Up,
@@ -661,14 +674,14 @@ impl Parser {
                         parts.push(ChordPart::Note(s));
                         notes += 1;
                     }
-                    None => return Err(last),
+                    None => return Err(last_part_end),
                 },
             }
         }
         if !NOTES.contains(&notes) || !matches!(parts.last(), Some(ChordPart::Note(_))) {
             return Err(bar);
         }
-        if let Some(e) = past {
+        if let Some(e) = octave_error {
             return Err(e);
         }
         self.octaves[self.channel] = octave;
@@ -727,6 +740,50 @@ impl Parser {
         })
     }
 
+    /// Reads the channel number after a `:` at `at` and switches to it.
+    ///
+    /// A channel's MML must be in one piece: going back to a channel used
+    /// earlier fails at the channel's number. `:0C:1D:0E` fails at 7 and
+    /// `:1C:2D:1E` at 7. Channel 0 counts as used from the start, so
+    /// `:1C:0D` fails at 4 and `C:1D:0E` at 5. `:0C:0D` continues in
+    /// channel 0, and `:2C:1D` passes. Leaving a channel with a `[` still
+    /// open fails there too: `[:1C]2` at 2, `[C:1D]` at 3. A number past 15
+    /// fails at its start: `:16C` at 1. A `:` naming the channel it is in is
+    /// not a switch, so it passes inside an open `[` too (`[:0C]`).
+    fn switch_channel(&mut self, at: usize) -> Result<(), Error> {
+        self.skip_space();
+        let number = self.start(self.at);
+        match self.int() {
+            Some(n @ 0..=15) => {
+                let n = n as usize;
+                if n != self.channel {
+                    if self.repeats[self.channel] > 0 {
+                        let kind = ErrorKind::MmlRepeatWithoutRepeatEnd;
+                        return Err(fail(number, kind));
+                    }
+                    if self.channels_used & 1 << n != 0 {
+                        return Err(fail(number, ErrorKind::MmlTrackAlreadyDefined));
+                    }
+                }
+                self.channels_used |= 1 << n;
+                self.channel = n;
+                // Every `:` forgets the @MP, @MA and @ML settings
+                // that their ON words send again, even one naming
+                // the channel it is in.
+                if std::mem::take(&mut self.lfo_given) {
+                    self.song.channels[n].push(Cmd::ForgetLfos);
+                }
+            }
+            Some(_) => return Err(fail(number, ErrorKind::IllegalMml)),
+            None if self.peek() == Some('$') => {
+                return Err(fail(self.start(at), ErrorKind::MmlCantUseVariable));
+            }
+            None => return Err(fail(self.start(at), ErrorKind::IllegalMml)),
+        }
+        self.in_channel = true;
+        Ok(())
+    }
+
     fn command(&mut self) -> Result<(), Error> {
         self.skip_space();
         let at = self.at;
@@ -735,48 +792,7 @@ impl Parser {
         };
         self.at += 1;
         let cmd = match c {
-            // A channel's MML must be in one piece: going back to a channel
-            // used earlier fails at the channel's number. `:0C:1D:0E` fails
-            // at 7 and `:1C:2D:1E` at 7. Channel 0 counts as used from the
-            // start, so `:1C:0D` fails at 4 and `C:1D:0E` at 5. `:0C:0D`
-            // continues in channel 0, and `:2C:1D` passes. Leaving a
-            // channel with a `[` still open fails there too: `[:1C]2` at 2,
-            // `[C:1D]` at 3. A number past 15 fails at its start: `:16C`
-            // at 1. A `:` naming the channel it is in is not a switch, so
-            // it passes inside an open `[` too (`[:0C]`).
-            ':' => {
-                self.skip_space();
-                let number = self.start(self.at);
-                match self.int() {
-                    Some(n @ 0..=15) => {
-                        let n = n as usize;
-                        if n != self.channel {
-                            if self.repeats[self.channel] > 0 {
-                                let kind = ErrorKind::MmlRepeatWithoutRepeatEnd;
-                                return Err(fail(number, kind));
-                            }
-                            if self.chosen & 1 << n != 0 {
-                                return Err(fail(number, ErrorKind::MmlTrackAlreadyDefined));
-                            }
-                        }
-                        self.chosen |= 1 << n;
-                        self.channel = n;
-                        // Every `:` forgets the @MP, @MA and @ML settings
-                        // that their ON words send again, even one naming
-                        // the channel it is in.
-                        if std::mem::take(&mut self.lfo_given) {
-                            self.song.channels[n].push(Cmd::ForgetLfos);
-                        }
-                    }
-                    Some(_) => return Err(fail(number, ErrorKind::IllegalMml)),
-                    None if self.peek() == Some('$') => {
-                        return Err(fail(self.start(at), ErrorKind::MmlCantUseVariable));
-                    }
-                    None => return Err(fail(self.start(at), ErrorKind::IllegalMml)),
-                }
-                self.in_channel = true;
-                return Ok(());
-            }
+            ':' => return self.switch_channel(at),
             'R' => Cmd::Note {
                 pitch: Pitch::Rest,
                 len: self.len()?,
@@ -998,7 +1014,7 @@ fn parse_plain(plain: Plain, text: &str) -> Result<Song, Error> {
         lengths: [Some(WHOLE / 4); CHANNELS],
         repeats: [0; CHANNELS],
         volumes: [127; CHANNELS],
-        chosen: 1,
+        channels_used: 1,
         lfo_given: false,
     };
     while p.at < p.text.len() {

@@ -4,7 +4,7 @@
 
 use sb_core::bytecode::{Compiled, Op};
 use sb_core::fuse::FastOp;
-use sb_core::host::TextHost;
+use sb_core::host::{Host, TextHost};
 use sb_core::vm::{Status, Step, Vm};
 use sb_core::watch::Watch;
 use std::panic::AssertUnwindSafe;
@@ -24,9 +24,16 @@ fn compiled(source: &str, fused: bool) -> Compiled {
 fn run(source: &str, budget: u32, fused: bool) -> (Vec<String>, String) {
     let mut host = TextHost::default();
     let mut vm = Vm::new(compiled(source, fused));
+    let seen = run_slices(source, &mut vm, &mut host, budget);
+    (seen, host.output)
+}
+
+/// Runs `vm` on `host` in slices of `budget` instructions until it ends or
+/// fails, and returns where each slice ended and how.
+fn run_slices(source: &str, vm: &mut Vm, host: &mut dyn Host, budget: u32) -> Vec<String> {
     let mut seen = Vec::new();
     for _ in 0..200_000 {
-        let result = vm.run(&mut host, budget);
+        let result = vm.run(host, budget);
         // An error holds an address, so not all of it can be compared.
         let shown = match &result {
             Ok(status) => format!("{status:?}"),
@@ -34,9 +41,8 @@ fn run(source: &str, budget: u32, fused: bool) -> (Vec<String>, String) {
         };
         let (executed, line, col) = (vm.executed(), vm.line(), vm.col());
         seen.push(format!("{shown} executed {executed} line {line} col {col}"));
-        match result {
-            Ok(Status::Ended) | Err(_) => return (seen, host.output),
-            Ok(_) => {}
+        if matches!(result, Ok(Status::Ended) | Err(_)) {
+            return seen;
         }
     }
     panic!("{source}: did not end");
@@ -1059,15 +1065,9 @@ fn a_stopped_slice_goes_on_as_without_fusing() {
 /// instruction of a fused group failed.
 #[test]
 fn errors_name_their_statement() {
-    let at = |source: &str| {
+    let at = |source: &str, fused: bool| {
         let mut host = TextHost::default();
-        let mut vm = Vm::new(compiled(source, true));
-        let e = vm.run(&mut host, 1_000_000).unwrap_err();
-        (e.kind.code(), e.line, e.col)
-    };
-    let plain = |source: &str| {
-        let mut host = TextHost::default();
-        let mut vm = Vm::new(compiled(source, false));
+        let mut vm = Vm::new(compiled(source, fused));
         let e = vm.run(&mut host, 1_000_000).unwrap_err();
         (e.kind.code(), e.line, e.col)
     };
@@ -1084,8 +1084,8 @@ fn errors_name_their_statement() {
         "A=1:B$=\"S\"\nD=A*2+1:C=(A+1)*2+B$:E=2",
         "DEF F(A)\nB=A*2+1:C=B*B\nRETURN (A+B)/(C-C)\nEND\nC=2:D=F(1)",
     ] {
-        let fused = at(source);
-        assert_eq!(fused, plain(source), "{source}");
+        let fused = at(source, true);
+        assert_eq!(fused, at(source, false), "{source}");
         assert!(fused.1 > 0, "{source}: {fused:?}");
     }
 }
@@ -1398,24 +1398,9 @@ fn run_on_host(source: &str, budget: u32, fused: bool) -> (Vec<String>, String) 
         program.fast.clear();
     }
     let mut vm = Vm::new(program).in_slot(0);
-    let mut seen = Vec::new();
-    for _ in 0..200_000 {
-        let result = vm.run(&mut host, budget);
-        let shown = match &result {
-            Ok(status) => format!("{status:?}"),
-            Err(e) => format!("{e} {:?} {} {} {:?}", e.kind, e.line, e.col, e.detail),
-        };
-        let (executed, line, col) = (vm.executed(), vm.line(), vm.col());
-        seen.push(format!("{shown} executed {executed} line {line} col {col}"));
-        match result {
-            Ok(Status::Ended) | Err(_) => {
-                seen.push(format!("count {} held {}", host.count, host.held));
-                return (seen, host.text.output);
-            }
-            Ok(_) => {}
-        }
-    }
-    panic!("{source}: did not end");
+    let mut seen = run_slices(source, &mut vm, &mut host, budget);
+    seen.push(format!("count {} held {}", host.count, host.held));
+    (seen, host.text.output)
 }
 
 const HOST_PROGRAMS: &[&str] = &[
@@ -1613,21 +1598,8 @@ fn run_callbacks(
         sprites,
     };
     let mut vm = Vm::new(compiled(source, fused));
-    let mut seen = Vec::new();
-    for _ in 0..200_000 {
-        let result = vm.run(&mut host, budget);
-        let shown = match &result {
-            Ok(status) => format!("{status:?}"),
-            Err(e) => format!("{e} {:?} {} {} {:?}", e.kind, e.line, e.col, e.detail),
-        };
-        let (executed, line, col) = (vm.executed(), vm.line(), vm.col());
-        seen.push(format!("{shown} executed {executed} line {line} col {col}"));
-        match result {
-            Ok(Status::Ended) | Err(_) => return (seen, host.text.output),
-            Ok(_) => {}
-        }
-    }
-    panic!("{source}: did not end");
+    let seen = run_slices(source, &mut vm, &mut host, budget);
+    (seen, host.text.output)
 }
 
 /// Callbacks of CALL SPRITE run the same fused as they do one instruction at

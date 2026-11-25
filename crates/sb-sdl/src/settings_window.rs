@@ -891,10 +891,6 @@ fn fit(text: &str, chars: u32) -> String {
 mod tests {
     use super::*;
 
-    fn centre(r: Rect) -> (i32, i32) {
-        ((r.x + r.w / 2) as i32, (r.y + r.h / 2) as i32)
-    }
-
     #[test]
     fn keys_and_clicks_set() {
         let mut s = Settings::default();
@@ -912,7 +908,7 @@ mod tests {
         w.key(Keycode::Down, &mut s);
         assert_eq!(PAGES[w.page].title, "Files");
         let silent = w.option_rect(1, 2);
-        assert_eq!(w.click(centre(silent), &mut s), Outcome::Stay);
+        assert_eq!(w.click(silent.center(), &mut s), Outcome::Stay);
         assert_eq!(s.file_confirm, FileConfirm::Silent);
         assert_eq!(w.chosen, 1);
         assert_eq!(w.click((0, 0), &mut s), Outcome::Close);
@@ -934,7 +930,7 @@ mod tests {
         }
         w.key(Keycode::Space, &mut s);
         assert!(!s.slow_hint && !s.skip_frames);
-        w.click(centre(w.row_rect(skip + 1)), &mut s);
+        w.click(w.row_rect(skip + 1).center(), &mut s);
         assert!(s.slow_hint);
     }
 
@@ -943,14 +939,14 @@ mod tests {
         let mut s = Settings::default();
         let mut w = SettingsWindow::new((1280, 720));
         let sound = PAGES.iter().position(|p| p.title == "Sound").unwrap();
-        w.click(centre(w.page_row(sound)), &mut s);
+        w.click(w.page_row(sound).center(), &mut s);
         assert_eq!(
-            w.click(centre(w.option_rect(0, 0)), &mut s),
+            w.click(w.option_rect(0, 0).center(), &mut s),
             Outcome::Instruments
         );
         assert!(s.smilebasic_instruments);
         assert_eq!(
-            w.click(centre(w.option_rect(0, SOUND_FONT_FILE)), &mut s),
+            w.click(w.option_rect(0, SOUND_FONT_FILE).center(), &mut s),
             Outcome::ChooseSoundFont
         );
         assert!(s.smilebasic_instruments, "unchanged until a file is chosen");
@@ -964,18 +960,18 @@ mod tests {
         };
         let mut w = SettingsWindow::new((1280, 720));
         let fonts = PAGES.iter().position(|p| p.title == "Fonts").unwrap();
-        w.click(centre(w.page_row(fonts)), &mut s);
+        w.click(w.page_row(fonts).center(), &mut s);
         // The first row is the menus' font.
-        w.click(centre(w.option_rect(0, 1)), &mut s);
+        w.click(w.option_rect(0, 1).center(), &mut s);
         assert_eq!(s.ui_font, UiFont::Smooth);
         // The bundled 16-pixel glyphs tell the frontend.
         assert_eq!(
-            w.click(centre(w.option_rect(1, 1)), &mut s),
+            w.click(w.option_rect(1, 1).center(), &mut s),
             Outcome::BundledGlyphs
         );
         assert_eq!(s.bundled_glyphs16, BundledSet::Pixel);
         assert_eq!(
-            w.click(centre(w.option_rect(2, EXTRA_FONT_FILE)), &mut s),
+            w.click(w.option_rect(2, EXTRA_FONT_FILE).center(), &mut s),
             Outcome::ChooseExtraFont
         );
         assert!(
@@ -983,15 +979,15 @@ mod tests {
             "unchanged until a file is chosen"
         );
         assert_eq!(
-            w.click(centre(w.option_rect(2, 0)), &mut s),
+            w.click(w.option_rect(2, 0).center(), &mut s),
             Outcome::ExtraFont
         );
         assert_eq!(s.editor_extra_font, None);
         // The order is a setting; the program fonts tell the frontend.
-        w.click(centre(w.option_rect(3, 2)), &mut s);
+        w.click(w.option_rect(3, 2).center(), &mut s);
         assert_eq!(s.editor_font_first, FontSource::Bundled);
         assert_eq!(
-            w.click(centre(w.option_rect(5, 1)), &mut s),
+            w.click(w.option_rect(5, 1).center(), &mut s),
             Outcome::ProgramFont
         );
         assert_eq!(s.program_font, [FontSource::SmileBasic, FontSource::File]);
@@ -1002,7 +998,7 @@ mod tests {
         let mut s = Settings::default();
         let mut w = SettingsWindow::new((1280, 720));
         let tools = PAGES.iter().position(|p| p.title == "Tools").unwrap();
-        w.click(centre(w.page_row(tools)), &mut s);
+        w.click(w.page_row(tools).center(), &mut s);
         // Enter asks for a program; Delete sets none.
         w.key(Keycode::Tab, &mut s);
         assert_eq!(w.key(Keycode::Return, &mut s), Outcome::ChooseTool(0));
@@ -1015,12 +1011,12 @@ mod tests {
         w.key(Keycode::Down, &mut s);
         assert_eq!(w.key(Keycode::Return, &mut s), Outcome::ChooseTool(1));
         // Clicks on the buttons.
-        w.click(centre(w.option_rect(1, NONE)), &mut s);
+        w.click(w.option_rect(1, NONE).center(), &mut s);
         assert_eq!(s.tools[1], "");
-        w.click(centre(w.option_rect(1, DEFAULT)), &mut s);
+        w.click(w.option_rect(1, DEFAULT).center(), &mut s);
         assert_eq!(s.tools[1], TOOLS[1]);
         assert_eq!(
-            w.click(centre(w.option_rect(2, CHOOSE)), &mut s),
+            w.click(w.option_rect(2, CHOOSE).center(), &mut s),
             Outcome::ChooseTool(2)
         );
         assert_eq!(w.chosen, 2);

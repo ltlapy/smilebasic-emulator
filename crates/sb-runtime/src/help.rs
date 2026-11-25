@@ -28,6 +28,9 @@ pub const INTRO: &str = "DEFAULTHELPKEY";
 /// The most values in HELPGET's array of colored runs. A real page has about a
 /// thousand; only a damaged file asks for more.
 const MOST_RUN_VALUES: usize = 1 << 24;
+/// A character that the help puts at some line ends, removed when a page
+/// is read.
+const ZERO_WIDTH_SPACE: u16 = 0x200B;
 
 /// Words that are not separate topics, and the topic that covers them.
 const ALIASES: &[(&str, &str)] = &[
@@ -140,8 +143,10 @@ fn page_and_size(data: &[u8], reference: u64) -> Option<(Page, usize)> {
         at = at.checked_add(span_count.checked_mul(16)?)?;
         let raw = data.get(at..at.checked_add(len)?)?;
         at += len;
-        // The help marks some line ends with zero-width spaces.
-        let units: Vec<u16> = utf16le(raw).into_iter().filter(|&u| u != 0x200B).collect();
+        let units: Vec<u16> = utf16le(raw)
+            .into_iter()
+            .filter(|&u| u != ZERO_WIDTH_SPACE)
+            .collect();
         let text = String::from_utf16_lossy(&units);
         let style = match kind {
             1 => Style::Title,
@@ -290,28 +295,28 @@ fn enclosing(line: &[u16], col: usize) -> Vec<String> {
                 _ => {}
             }
         }
-        match c {
-            0x22 => {
+        match u8::try_from(c) {
+            Ok(b'"') => {
                 // A string runs to its closing quote.
                 i += 1;
-                while i < end && line[i] != 0x22 {
+                while i < end && line[i] != u16::from(b'"') {
                     i += 1;
                 }
             }
             // In a comment, nothing.
-            0x27 => return Vec::new(),
-            0x3A => {
+            Ok(b'\'') => return Vec::new(),
+            Ok(b':') => {
                 (statement, last_word) = (None, None);
                 calls.clear();
             }
-            0x3F if statement.is_none() => statement = Some("?".into()),
-            0x28 => {
+            Ok(b'?') if statement.is_none() => statement = Some("?".into()),
+            Ok(b'(') => {
                 let before = last_word
                     .filter(|&(_, e)| e == i)
                     .map(|(s, e)| upper(&line[s..e]));
                 calls.push(before);
             }
-            0x29 => _ = calls.pop(),
+            Ok(b')') => _ = calls.pop(),
             _ => {}
         }
         i += 1;

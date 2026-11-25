@@ -19,8 +19,7 @@ pub const SB4_DISPLAY: (u32, u32) = (1280, 720);
 /// to the pixels of the frame shown in `shown`, which has `space` pixels.
 #[derive(Clone, Copy)]
 pub struct Mapping {
-    /// Pixels per window coordinate.
-    pub px: f32,
+    pub pixels_per_coord: f32,
     pub display: FRect,
     pub display_w: u32,
     pub shown: FRect,
@@ -37,8 +36,8 @@ impl Mapping {
     pub fn to_menu(self, x: f32, y: f32) -> (i32, i32) {
         match self.menu {
             Some((mx, my)) => (
-                (x * self.px - mx).floor() as i32,
-                (y * self.px - my).floor() as i32,
+                (x * self.pixels_per_coord - mx).floor() as i32,
+                (y * self.pixels_per_coord - my).floor() as i32,
             ),
             None => self.to_display(x, y),
         }
@@ -47,16 +46,16 @@ impl Mapping {
     pub fn to_display(self, x: f32, y: f32) -> (i32, i32) {
         let scale = self.display.w / self.display_w as f32;
         (
-            ((x * self.px - self.display.x) / scale) as i32,
-            ((y * self.px - self.display.y) / scale) as i32,
+            ((x * self.pixels_per_coord - self.display.x) / scale) as i32,
+            ((y * self.pixels_per_coord - self.display.y) / scale) as i32,
         )
     }
 
     pub fn to_screen(self, x: f32, y: f32) -> (i32, i32) {
         let (shown, (w, h)) = (self.shown, self.space);
         (
-            ((x * self.px - shown.x) * w as f32 / shown.w).floor() as i32,
-            ((y * self.px - shown.y) * h as f32 / shown.h).floor() as i32,
+            ((x * self.pixels_per_coord - shown.x) * w as f32 / shown.w).floor() as i32,
+            ((y * self.pixels_per_coord - shown.y) * h as f32 / shown.h).floor() as i32,
         )
     }
 
@@ -65,8 +64,8 @@ impl Mapping {
     pub fn display_to_window(self, at: (i32, i32)) -> (f32, f32) {
         let scale = self.display.w / self.display_w.max(1) as f32;
         (
-            (self.display.x + (at.0 as f32 + 0.5) * scale) / self.px,
-            (self.display.y + (at.1 as f32 + 0.5) * scale) / self.px,
+            (self.display.x + (at.0 as f32 + 0.5) * scale) / self.pixels_per_coord,
+            (self.display.y + (at.1 as f32 + 0.5) * scale) / self.pixels_per_coord,
         )
     }
 
@@ -103,8 +102,8 @@ impl Mapping {
     pub fn screen_to_window(self, x: i32, y: i32) -> (f32, f32) {
         let (shown, (w, h)) = (self.shown, self.space);
         (
-            (shown.x + (x as f32 + 0.5) * shown.w / w as f32) / self.px,
-            (shown.y + (y as f32 + 0.5) * shown.h / h as f32) / self.px,
+            (shown.x + (x as f32 + 0.5) * shown.w / w as f32) / self.pixels_per_coord,
+            (shown.y + (y as f32 + 0.5) * shown.h / h as f32) / self.pixels_per_coord,
         )
     }
 }
@@ -328,8 +327,16 @@ pub fn editor_fill(
     Fill { zoom, area }
 }
 
-/// Where the focus border's `rect`, in [`SB4_DISPLAY`] pixels, goes: the
-/// rectangle, and the window position and scale that place its units. The
+/// The place of a focus border that [`border_place`] returns.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BorderPlace {
+    pub rect: [i32; 4],
+    /// The window position and the scale that place the units of `rect`.
+    pub origin: (f32, f32),
+    pub scale: (f32, f32),
+}
+
+/// Where the focus border's `rect`, in [`SB4_DISPLAY`] pixels, goes. The
 /// border of the whole display belongs to the main interpreter. It covers
 /// the display of `main`, which is `display_h` UI pixels high, down to
 /// `ui_h`, where the screen goes too (see [`ui_height`]). The border of a
@@ -341,18 +348,26 @@ pub fn border_place(
     lcd: Mapping,
     display_h: u32,
     ui_h: u32,
-) -> ([i32; 4], (f32, f32), (f32, f32)) {
+) -> BorderPlace {
     let (w, h) = (SB4_DISPLAY.0 as i32, SB4_DISPLAY.1 as i32);
     let at = |m: Mapping| (m.display.x, m.display.y);
     match rect == [0, 0, w, h] {
         true => {
             let d = main.display;
             let scale = (d.w / main.display_w as f32, d.h / display_h as f32);
-            ([0, 0, main.display_w as i32, ui_h as i32], at(main), scale)
+            BorderPlace {
+                rect: [0, 0, main.display_w as i32, ui_h as i32],
+                origin: at(main),
+                scale,
+            }
         }
         false => {
             let s = lcd.display.w / lcd.display_w as f32;
-            (rect, at(lcd), (s, s))
+            BorderPlace {
+                rect,
+                origin: at(lcd),
+                scale: (s, s),
+            }
         }
     }
 }
@@ -915,7 +930,7 @@ mod tests {
                 // A window coordinate of one, one and a half or two pixels.
                 for px in [1.0, 1.5, 2.0] {
                     let map = Mapping {
-                        px,
+                        pixels_per_coord: px,
                         display: display(out),
                         display_w: 1280,
                         shown: fill.rect(),
@@ -969,7 +984,7 @@ mod tests {
                         // On a Retina display, two pixels per coordinate.
                         for px in [1.0, 2.0] {
                             let map = Mapping {
-                                px,
+                                pixels_per_coord: px,
                                 display: display(out),
                                 display_w: 1280,
                                 shown,
@@ -1006,7 +1021,7 @@ mod tests {
         let (shown, _) =
             desktop_screen_place(&mode, &with(NEAREST), (640, 480), display((640, 480)));
         let map = Mapping {
-            px: 1.0,
+            pixels_per_coord: 1.0,
             display: display((640, 480)),
             display_w: 1280,
             shown,
@@ -1027,7 +1042,7 @@ mod tests {
         let screen_h = display.h.min(out.1 as f32);
         let (shown, _) = screen_place(mode, &Settings::default(), true, out.0, screen_h);
         Mapping {
-            px: 1.0,
+            pixels_per_coord: 1.0,
             display,
             display_w: ui.0,
             shown,
@@ -1044,7 +1059,7 @@ mod tests {
         let out = (1280, 720);
         let mode = ScreenMode::new(400, 240);
         let map = Mapping {
-            px: 1.0,
+            pixels_per_coord: 1.0,
             display: display(out),
             display_w: 1280,
             shown: desktop_screen_place(&mode, &with(NEAREST), out, display(out)).0,
@@ -1053,16 +1068,25 @@ mod tests {
         };
         let lcd = map.lcd(false);
         let whole = border_place([0, 0, 1280, 720], map, lcd, 720, 960);
-        assert_eq!(whole, ([0, 0, 1280, 960], (0.0, 0.0), (1.0, 1.0)));
+        let want = BorderPlace {
+            rect: [0, 0, 1280, 960],
+            origin: (0.0, 0.0),
+            scale: (1.0, 1.0),
+        };
+        assert_eq!(whole, want);
         let sub = [640, 0, 640, 360];
-        assert_eq!(border_place(sub, map, lcd, 720, 960).0, sub);
+        assert_eq!(border_place(sub, map, lcd, 720, 960).rect, sub);
         // In the Simple UI a subprogram's border goes on SmileBASIC 4's
         // display, where its screen is drawn, regardless of the UI's own
         // display.
         let mode = ScreenMode::new(640, 360);
         let map = simple_map((640, 480), &mode);
         let lcd = map.lcd(true);
-        let (r, (ox, oy), (sx, sy)) = border_place(sub, map, lcd, 480, 480);
+        let BorderPlace {
+            rect: r,
+            origin: (ox, oy),
+            scale: (sx, sy),
+        } = border_place(sub, map, lcd, 480, 480);
         let shown = map.shown;
         let got = (
             ox + r[0] as f32 * sx,
@@ -1074,7 +1098,11 @@ mod tests {
         assert!((got.1 - want.1).abs() < 0.01, "{got:?} {want:?}");
         assert!((got.2 - want.2).abs() < 0.01, "{got:?} {want:?}");
         // The main interpreter's border covers the UI's display.
-        let (r, origin, (sx, _)) = border_place([0, 0, 1280, 720], map, lcd, 480, 480);
+        let BorderPlace {
+            rect: r,
+            origin,
+            scale: (sx, _),
+        } = border_place([0, 0, 1280, 720], map, lcd, 480, 480);
         assert_eq!(r, [0, 0, map.display_w as i32, 480]);
         assert_eq!(origin, (map.display.x, map.display.y));
         assert_eq!(sx, map.display.w / map.display_w as f32);
@@ -1086,7 +1114,7 @@ mod tests {
             let mode = ScreenMode::new(400, 240);
             for px in [1.0, 2.0] {
                 let map = Mapping {
-                    px,
+                    pixels_per_coord: px,
                     display: display(out),
                     display_w: 1280,
                     shown: desktop_screen_place(&mode, &with(NEAREST), out, display(out)).0,

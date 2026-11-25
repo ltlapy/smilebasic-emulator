@@ -19,8 +19,8 @@ pub struct Layer<'a> {
     /// Transparent except within `drawn`.
     fb: Framebuffer,
     texture: Option<Texture<'a>>,
-    /// The fingerprint of what `fb` and the texture hold.
-    key: Option<u64>,
+    /// The dry run's key for what `fb` and the texture hold.
+    fingerprint: Option<u64>,
     /// The rectangle around what was drawn last.
     drawn: Option<Rect>,
     /// The creator of the texture, for the enlarged copy.
@@ -85,7 +85,7 @@ impl Default for Layer<'_> {
         Layer {
             fb: Framebuffer::new(0, 0),
             texture: None,
-            key: None,
+            fingerprint: None,
             drawn: None,
             creator: None,
             sampling: Sampling::Nearest,
@@ -115,7 +115,7 @@ impl<'a> Layer<'a> {
     }
 
     fn drop_textures(&mut self) {
-        (self.texture, self.key, self.enlarged, self.refused) = (None, None, None, None);
+        (self.texture, self.fingerprint, self.enlarged, self.refused) = (None, None, None, None);
     }
 
     /// Updates the layer to what `draw` draws on a transparent frame of
@@ -130,7 +130,7 @@ impl<'a> Layer<'a> {
     ) -> Result<(), AnyError> {
         let Drawn { key, bounds, .. } = self.dry_run(size, &mut draw);
         // Without a texture, nothing was drawn yet, or it was lost.
-        if self.key == Some(key) && (self.texture.is_some() || self.drawn.is_none()) {
+        if self.fingerprint == Some(key) && (self.texture.is_some() || self.drawn.is_none()) {
             return Ok(());
         }
         if let Some(old) = self.drawn {
@@ -141,7 +141,7 @@ impl<'a> Layer<'a> {
             Some(_) => ui::union(self.drawn, bounds),
             None => bounds,
         };
-        (self.key, self.drawn) = (Some(key), bounds);
+        (self.fingerprint, self.drawn) = (Some(key), bounds);
         let Some(r) = changed else {
             return Ok(());
         };
@@ -197,7 +197,8 @@ impl<'a> Layer<'a> {
         display: FRect,
         display_w: u32,
     ) -> Result<(), AnyError> {
-        let (Some(texture), Some(r), Some(key)) = (&mut self.texture, self.drawn, self.key) else {
+        let (Some(texture), Some(r), Some(key)) = (&mut self.texture, self.drawn, self.fingerprint)
+        else {
             return Ok(());
         };
         let scale = display.w / display_w as f32;
