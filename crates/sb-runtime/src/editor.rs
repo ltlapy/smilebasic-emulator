@@ -610,6 +610,12 @@ pub(crate) fn split_lines(source: &str) -> Vec<Vec<u16>> {
     lines
 }
 
+/// The number of digits in `n` written in decimal. It is called for every
+/// frame the editor draws, so it does not make a string.
+fn decimal_digits(n: usize) -> usize {
+    n.checked_ilog10().map_or(1, |log| log as usize + 1)
+}
+
 impl Editor {
     /// An editor for a frame of `screen_w` x `screen_h` pixels in the
     /// 8-pixel font. [`Editor::draw`] adopts the frame and font it is
@@ -815,7 +821,7 @@ impl Editor {
         if self.number_tiles {
             TILE_GUTTER
         } else {
-            self.lines.len().to_string().len() + 1
+            decimal_digits(self.lines.len()) + 1
         }
     }
 
@@ -2444,6 +2450,13 @@ fn put_str(
 mod tests {
     use super::*;
     use crate::palette::SMILEBASIC;
+
+    #[test]
+    fn decimal_digits_match_the_written_number() {
+        for n in [0, 1, 9, 10, 99, 100, 999, 1000, 99_999, 100_000, usize::MAX] {
+            assert_eq!(decimal_digits(n), n.to_string().len(), "{n}");
+        }
+    }
 
     #[test]
     fn room_below_leaves_the_menu_bar_its_share() {
