@@ -16,6 +16,8 @@ Co.Ltd., and Nintendo Switch is a trademark of Nintendo.
 - [x] GPU rendering
 - [ ] SmileBASIC 3 and Petit Computer(DSi/WiiU)
 
+![The emulator's window showing a stopped program, and over it the editor's own window with the debugger panel](docs/images/screenshot.png)
+
 ## Official resources
 
 SmileBASIC's font, sounds and sprites are SmileBoom's copyrighted work, so the

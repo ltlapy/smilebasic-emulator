@@ -17,6 +17,8 @@ SmileBASIC과 Petit Computer는 SmileBoom Co.Ltd.의 상표이며, Nintendo Swit
 - [ ] SmileBASIC 3 및 Petit Computer(DSi/WiiU) 호환
 
 
+![멈춘 프로그램을 보여 주는 에뮬레이터 창과, 그 위에 겹친 에디터 창 및 디버거 패널](docs/images/screenshot.png)
+
 ## 공식 리소스
 
 SmileBASIC의 글꼴, 사운드, 스프라이트는 SmileBoom의 저작물이며, 저작권 보호를 위해 다른 것으로 대체했습니다.
