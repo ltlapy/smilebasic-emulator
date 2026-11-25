@@ -337,9 +337,6 @@ pub struct Compiled {
     /// The same for the labels in each DEF, by DEF index: the labels of a
     /// DEF are its own, the same as for GOTO.
     pub def_data_labels: Vec<HashMap<String, u32>>,
-    /// OPTION DEFINT appears somewhere in the program (see
-    /// [`VarInfo::starts_int`]).
-    pub default_int: bool,
     /// Native code for some of `fast`'s loops, made when the VM takes the
     /// program.
     #[cfg(feature = "jit")]

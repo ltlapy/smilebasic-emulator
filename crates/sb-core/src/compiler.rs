@@ -352,7 +352,6 @@ impl Compiler<'_> {
         if let Err(failed) = self.walk_source_order(&program.stmts, None) {
             self.pending.push(failed);
         }
-        self.out.default_int = self.defint_at.is_some();
         if self.defint_at.is_some() {
             let top = program
                 .stmts
